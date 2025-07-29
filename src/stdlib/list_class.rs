@@ -1,7 +1,7 @@
 use crate::codegen::CodeGenerator;
 use crate::types::WasmType;
 use crate::error::CompilerError;
-use wasm_encoder::{Instruction, MemArg};
+use wasm_encoder::{Instruction, MemArg, BlockType, ValType};
 use crate::stdlib::register_stdlib_function;
 
 /// List class implementation for Clean Language
@@ -395,17 +395,33 @@ impl ListClass {
     }
 
     fn generate_push(&self) -> Vec<Instruction> {
-        // Simplified implementation to avoid control flow issues
-        // Parameters: list_ptr, item
-        // Returns: list pointer (modified in place)
+        // Implementation of push - adds element to end of list
+        // Parameters: list_ptr (0), item (1)
+        // Returns: list pointer
         vec![
-            // Consume the parameters to avoid stack mismatch
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(1), // item
-            Instruction::Drop,        // drop it
-            // Return a placeholder list pointer
-            Instruction::I32Const(0), // Return 0 (placeholder)
+            // Get current size
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            // Calculate position for new element (size * 4 + 8)
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Const(8),
+            Instruction::I32Add,
+            // Add to list_ptr to get storage address
+            Instruction::LocalGet(0),
+            Instruction::I32Add,
+            // Store the new value
+            Instruction::LocalGet(1),
+            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            // Increment list size
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            // Return list pointer
+            Instruction::LocalGet(0),
         ]
     }
 

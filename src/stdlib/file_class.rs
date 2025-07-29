@@ -319,8 +319,9 @@ impl FileClass {
             Instruction::LocalGet(0),
             Instruction::I32Load(wasm_encoder::MemArg { offset: 0, align: 2, memory_index: 0 }), // path length
             
-            // Allocate memory for result string (placeholder - should be handled by host)
-            Instruction::I32Const(0), // resultPtr - let host handle allocation
+            // Allocate memory for result string - use simple allocation scheme
+            // For now, use fixed memory location for file read buffer
+            Instruction::I32Const(8192), // resultPtr - fixed buffer at 8KB mark
             
             // Call the file_read import function (expects 3 params: pathPtr, pathLen, resultPtr)
             Instruction::Call(import_index),

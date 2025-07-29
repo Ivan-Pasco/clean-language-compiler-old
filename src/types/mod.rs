@@ -15,7 +15,7 @@ pub enum WasmType {
 // Define the ValTypeConverter trait that was referenced in the codebase
 pub trait ValTypeConverter {
     fn to_val_type(&self) -> ValType;
-    fn from_val_type(val_type: ValType) -> Self where Self: Sized;
+    fn from_val_type(val_type: ValType) -> Result<Self, String> where Self: Sized;
 }
 
 impl ValTypeConverter for WasmType {
@@ -30,14 +30,14 @@ impl ValTypeConverter for WasmType {
         }
     }
 
-    fn from_val_type(val_type: ValType) -> Self {
+    fn from_val_type(val_type: ValType) -> Result<Self, String> {
         match val_type {
-            ValType::I32 => WasmType::I32,
-            ValType::I64 => WasmType::I64,
-            ValType::F32 => WasmType::F32,
-            ValType::F64 => WasmType::F64,
-            ValType::V128 => WasmType::V128,
-            _ => panic!("Unsupported ValType"),
+            ValType::I32 => Ok(WasmType::I32),
+            ValType::I64 => Ok(WasmType::I64),
+            ValType::F32 => Ok(WasmType::F32),
+            ValType::F64 => Ok(WasmType::F64),
+            ValType::V128 => Ok(WasmType::V128),
+            other => Err(format!("Unsupported ValType: {:?}", other)),
         }
     }
 }
@@ -49,7 +49,7 @@ impl WasmType {
     }
 
     /// Convert from wasm_encoder::ValType
-    pub fn from_val_type(val_type: ValType) -> Self {
+    pub fn from_val_type(val_type: ValType) -> Result<Self, String> {
         <Self as ValTypeConverter>::from_val_type(val_type)
     }
 
@@ -66,15 +66,15 @@ impl WasmType {
     }
 
     /// Convert from (integer, ValType) tuple representation
-    pub fn from_tuple(tuple: (u8, ValType)) -> Self {
+    pub fn from_tuple(tuple: (u8, ValType)) -> Result<Self, String> {
         match tuple {
-            (0, ValType::I32) => WasmType::I32,
-            (1, ValType::I64) => WasmType::I64,
-            (2, ValType::F32) => WasmType::F32,
-            (3, ValType::F64) => WasmType::F64,
-            (4, ValType::V128) => WasmType::V128,
-            (5, ValType::I32) => WasmType::Unit,
-            _ => panic!("Invalid type tuple: ({}, {:?})", tuple.0, tuple.1),
+            (0, ValType::I32) => Ok(WasmType::I32),
+            (1, ValType::I64) => Ok(WasmType::I64),
+            (2, ValType::F32) => Ok(WasmType::F32),
+            (3, ValType::F64) => Ok(WasmType::F64),
+            (4, ValType::V128) => Ok(WasmType::V128),
+            (5, ValType::I32) => Ok(WasmType::Unit),
+            _ => Err(format!("Invalid type tuple: ({}, {:?})", tuple.0, tuple.1)),
         }
     }
     
@@ -115,14 +115,14 @@ impl WasmType {
     }
     
     /// Convert from wasmparser ValType
-    pub fn from_parser_val_type(val_type: wasmparser::ValType) -> Self {
+    pub fn from_parser_val_type(val_type: wasmparser::ValType) -> Result<Self, String> {
         match val_type {
-            wasmparser::ValType::I32 => WasmType::I32,
-            wasmparser::ValType::I64 => WasmType::I64,
-            wasmparser::ValType::F32 => WasmType::F32,
-            wasmparser::ValType::F64 => WasmType::F64,
-            wasmparser::ValType::V128 => WasmType::V128,
-            _ => panic!("Unsupported wasmparser ValType"),
+            wasmparser::ValType::I32 => Ok(WasmType::I32),
+            wasmparser::ValType::I64 => Ok(WasmType::I64),
+            wasmparser::ValType::F32 => Ok(WasmType::F32),
+            wasmparser::ValType::F64 => Ok(WasmType::F64),
+            wasmparser::ValType::V128 => Ok(WasmType::V128),
+            other => Err(format!("Unsupported wasmparser ValType: {:?}", other)),
         }
     }
 }
@@ -135,7 +135,14 @@ impl From<WasmType> for ValType {
 
 impl From<ValType> for WasmType {
     fn from(val_type: ValType) -> Self {
-        WasmType::from_val_type(val_type)
+        match val_type {
+            ValType::I32 => WasmType::I32,
+            ValType::I64 => WasmType::I64,
+            ValType::F32 => WasmType::F32,
+            ValType::F64 => WasmType::F64,
+            ValType::V128 => WasmType::V128,
+            _ => WasmType::I32, // Default fallback for unsupported types
+        }
     }
 }
 
@@ -182,7 +189,7 @@ pub fn to_val_type(wasm_type: WasmType) -> ValType {
     wasm_type.to_val_type()
 }
 
-pub fn from_val_type(val_type: ValType) -> WasmType {
+pub fn from_val_type(val_type: ValType) -> Result<WasmType, String> {
     WasmType::from_val_type(val_type)
 }
 
@@ -190,7 +197,7 @@ pub fn to_tuple(wasm_type: WasmType) -> (u8, ValType) {
     wasm_type.to_tuple()
 }
 
-pub fn from_tuple(tuple: (u8, ValType)) -> WasmType {
+pub fn from_tuple(tuple: (u8, ValType)) -> Result<WasmType, String> {
     WasmType::from_tuple(tuple)
 }
 

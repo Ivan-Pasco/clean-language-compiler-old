@@ -342,7 +342,7 @@ impl CodeGenerator {
                     constructor_function_name,
                     vec![], // No parameters for default constructor
                     Type::Object(class.name.clone()),
-                    vec![], // Empty body for now - TODO: initialize fields to default values
+                    self.generate_constructor_body(&class)?, // Generate proper constructor body
                     None,
                 );
                 self.generate_function(&constructor_function)?;
@@ -1009,9 +1009,17 @@ impl CodeGenerator {
                             None
                         ));
                     }
-                    // Create a new empty list - for now, just return a null pointer
-                    // In a full implementation, this would allocate memory for a list structure
-                    instructions.push(Instruction::I32Const(0)); // Placeholder - null pointer
+                    // Create a new empty list using list allocator
+                    instructions.push(Instruction::I32Const(0)); // size = 0 for empty list
+                    if let Some(func_index) = self.get_function_index("list.allocate") {
+                        instructions.push(Instruction::Call(func_index));
+                    } else {
+                        return Err(CompilerError::type_error(
+                            "list.allocate function not found".to_string(),
+                            None,
+                            None
+                        ));
+                    }
                     return Ok(WasmType::I32); // Lists are represented as I32 pointers
                 }
                 
@@ -6627,5 +6635,41 @@ impl CodeGenerator {
 
         // Note: Function will be exported by the general export loop
         Ok(())
+    }
+
+    /// Generate constructor body with field initialization
+    fn generate_constructor_body(&self, class: &Class) -> Result<Vec<Statement>, CompilerError> {
+        let mut body = Vec::new();
+        
+        // Generate field initialization statements
+        for field in &class.fields {
+            let default_value = match field.type_ {
+                Type::Integer => Value::Integer(0),
+                Type::Number => Value::Number(0.0),
+                Type::String => Value::String("".to_string()),
+                Type::Boolean => Value::Boolean(false),
+                Type::List(_) => {
+                    // Create empty list assignment
+                    body.push(Statement::Assignment {
+                        target: field.name.clone(),
+                        value: Expression::Call(
+                            "list.allocate".to_string(),
+                            vec![Expression::Literal(Value::Integer(0))]
+                        ),
+                        location: Some(SourceLocation { file: String::new(), line: 0, column: 0 }),
+                    });
+                    continue;
+                }
+                _ => Value::Integer(0), // Default for other types
+            };
+            
+            body.push(Statement::Assignment {
+                target: field.name.clone(),
+                value: Expression::Literal(default_value),
+                location: Some(SourceLocation { file: String::new(), line: 0, column: 0 }),
+            });
+        }
+        
+        Ok(body)
     }
 }

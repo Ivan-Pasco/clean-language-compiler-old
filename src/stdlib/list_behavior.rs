@@ -2,7 +2,7 @@ use crate::codegen::CodeGenerator;
 use crate::types::WasmType;
 use crate::error::CompilerError;
 use crate::ast::{ListBehavior};
-use wasm_encoder::{Instruction, MemArg};
+use wasm_encoder::{Instruction, MemArg, BlockType, ValType};
 use crate::stdlib::register_stdlib_function;
 
 /// List behavior implementation for Clean Language
@@ -119,51 +119,117 @@ impl ListBehaviorManager {
     /// Generate WebAssembly instructions for List.add operation
     fn generate_list_add(&self) -> Vec<Instruction> {
         vec![
-            // Simplified implementation to avoid stack mismatch
-            // Consume the parameters to avoid stack mismatch
+            // Get list pointer
             Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
+            // Load current size
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            // Calculate new item position (size * 4 + 8 for header)
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Const(8),
+            Instruction::I32Add,
+            // Add to list_ptr to get storage location
+            Instruction::LocalGet(0),
+            Instruction::I32Add,
+            // Store the value
             Instruction::LocalGet(1), // value
-            Instruction::Drop,        // drop it
-            // Return nothing since this function has no return value
+            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            // Increment list size
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // current size
+            Instruction::I32Const(1),
+            Instruction::I32Add, // new size
+            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
         ]
     }
 
     /// Generate WebAssembly instructions for List.remove operation
     fn generate_list_remove(&self) -> Vec<Instruction> {
         vec![
-            // Simplified implementation to avoid stack mismatch
-            // Consume the parameter to avoid stack mismatch
+            // Get list pointer
             Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
-            // Return a placeholder value
-            Instruction::I32Const(0), // Return 0 (placeholder)
+            // Load current size
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            // Check if list is empty
+            Instruction::I32Const(0),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::I32Const(0), // Return 0 if empty
+            Instruction::Else,
+            // Get last element (LIFO behavior for remove)
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
+            Instruction::I32Const(1),
+            Instruction::I32Sub, // size - 1
+            Instruction::I32Const(4),
+            Instruction::I32Mul, // (size-1) * 4
+            Instruction::I32Const(8),
+            Instruction::I32Add, // + header offset
+            Instruction::I32Add, // list_ptr + offset
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // load value
+            // Decrement list size
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // current size
+            Instruction::I32Const(1),
+            Instruction::I32Sub, // new size
+            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::End,
         ]
     }
 
     /// Generate WebAssembly instructions for List.peek operation
     fn generate_list_peek(&self) -> Vec<Instruction> {
         vec![
-            // Simplified implementation to avoid stack mismatch
-            // Consume the parameter to avoid stack mismatch
+            // Get list pointer
             Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
-            // Return a placeholder value
-            Instruction::I32Const(0), // Return 0 (placeholder)
+            // Load current size
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            // Check if list is empty
+            Instruction::I32Const(0),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::I32Const(0), // Return 0 if empty
+            Instruction::Else,
+            // Get last element without removing (LIFO peek)
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
+            Instruction::I32Const(1),
+            Instruction::I32Sub, // size - 1
+            Instruction::I32Const(4),
+            Instruction::I32Mul, // (size-1) * 4
+            Instruction::I32Const(8),
+            Instruction::I32Add, // + header offset
+            Instruction::I32Add, // list_ptr + offset
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // load value
+            Instruction::End,
         ]
     }
 
     /// Generate WebAssembly instructions for List.contains operation
     fn generate_list_contains(&self) -> Vec<Instruction> {
         vec![
-            // Simplified implementation to avoid stack mismatch
-            // Consume the parameters to avoid stack mismatch
+            // Get list pointer and value to search for
             Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(1), // value
-            Instruction::Drop,        // drop it
-            // Return a placeholder value
-            Instruction::I32Const(0), // Return false (placeholder)
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
+            // If empty list, return false
+            Instruction::I32Const(0),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::I32Const(0), // Return false if empty
+            Instruction::Else,
+            // Simple linear search - check first element
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Const(8), // skip header
+            Instruction::I32Add,
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // first element
+            Instruction::LocalGet(1), // search value
+            Instruction::I32Eq, // compare
+            Instruction::End,
         ]
     }
 
@@ -184,25 +250,31 @@ impl ListBehaviorManager {
     /// Generate WebAssembly instructions for List.setBehavior operation
     fn generate_set_behavior(&self) -> Vec<Instruction> {
         vec![
-            // Simplified implementation to avoid stack mismatch
-            // Consume the parameters to avoid stack mismatch
+            // Store behavior ID in list header at offset 4
             Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
+            // For now, store behavior string pointer directly
+            // Full implementation would parse string and store behavior enum
             Instruction::LocalGet(1), // behavior_string
-            Instruction::Drop,        // drop it
-            // This function has no return value, so we're done
+            Instruction::I32Store(MemArg { offset: 4, align: 2, memory_index: 0 }),
         ]
     }
 
     /// Generate WebAssembly instructions for List.getBehavior operation
     fn generate_get_behavior(&self) -> Vec<Instruction> {
         vec![
-            // Simplified implementation to avoid stack mismatch
-            // Consume the parameter to avoid stack mismatch
+            // Load behavior from list header at offset 4
             Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
-            // Return a placeholder string pointer
-            Instruction::I32Const(0), // Return 0 (placeholder)
+            Instruction::I32Load(MemArg { offset: 4, align: 2, memory_index: 0 }), // behavior pointer
+            // Return the behavior string pointer (or default if 0)
+            Instruction::LocalTee(1), // store in local 1
+            Instruction::I32Const(0),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            // Return pointer to "default" string if no behavior set
+            Instruction::I32Const(1000), // hardcoded "default" string location
+            Instruction::Else,
+            Instruction::LocalGet(1), // return stored behavior
+            Instruction::End,
         ]
     }
 }

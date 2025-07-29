@@ -1,6 +1,6 @@
 use crate::error::{CompilerError};
 use wasm_encoder::{
-    Instruction, MemArg,
+    Instruction, MemArg, BlockType, ValType,
 };
 use crate::codegen::CodeGenerator;
 use crate::types::{WasmType};
@@ -169,11 +169,29 @@ impl ListManager {
 
     pub fn generate_list_allocate(&self) -> Vec<Instruction> {
         vec![
-            // Consume the parameter to avoid stack mismatch
+            // Allocate memory for list with header + elements
+            // Header: size(4) + capacity(4) + type_id(4) + reserved(4) = 16 bytes
+            Instruction::LocalGet(0), // size parameter
+            Instruction::I32Const(8), // element size (pointer size)
+            Instruction::I32Mul, // size * element_size
+            Instruction::I32Const(16), // header size
+            Instruction::I32Add, // total_size = header + (size * element_size)
+            // For now, use simple heap allocation at fixed offset
+            // In full implementation, would call memory allocator
+            Instruction::I32Const(1000), // heap base
+            Instruction::LocalTee(1), // store heap pointer in local 1
+            // Initialize list header
+            Instruction::LocalGet(1), // heap pointer
             Instruction::LocalGet(0), // size
-            Instruction::Drop,        // drop it
-            // Return a placeholder list pointer
-            Instruction::I32Const(2000), // Placeholder: return constant pointer
+            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }), // store size
+            Instruction::LocalGet(1), // heap pointer
+            Instruction::LocalGet(0), // size (capacity = size for now)
+            Instruction::I32Store(MemArg { offset: 4, align: 2, memory_index: 0 }), // store capacity
+            Instruction::LocalGet(1), // heap pointer
+            Instruction::I32Const(LIST_TYPE_ID as i32), // type id
+            Instruction::I32Store(MemArg { offset: 8, align: 2, memory_index: 0 }), // store type
+            // Return list pointer
+            Instruction::LocalGet(1),
         ]
     }
 
@@ -273,20 +291,70 @@ impl ListManager {
     }
 
     fn generate_list_push(&self) -> Vec<Instruction> {
-        // SIMPLIFIED: List push - just return the original list pointer for now
-        // Parameters: list_ptr, item
-        // Returns: list pointer (no actual push performed)
+        // Implementation of list push - adds element to end of list
+        // Parameters: list_ptr (0), item (1)
+        // Returns: list pointer (modified in place)
         vec![
-            Instruction::LocalGet(0), // Return the original list pointer
+            // Get current size
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
+            // Calculate position for new element (size * 8 + 16)
+            Instruction::I32Const(8), // element size
+            Instruction::I32Mul,
+            Instruction::I32Const(16), // header size
+            Instruction::I32Add,
+            // Add base address
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Add, // storage address
+            // Store the new item
+            Instruction::LocalGet(1), // item
+            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            // Increment list size
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // current size
+            Instruction::I32Const(1),
+            Instruction::I32Add, // new size
+            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            // Return list pointer
+            Instruction::LocalGet(0),
         ]
     }
 
     fn generate_list_pop(&self) -> Vec<Instruction> {
-        // SIMPLIFIED: List pop - return 0 for now
-        // Parameters: list_ptr
-        // Returns: 0 (simplified implementation)
+        // Implementation of list pop - removes and returns last element
+        // Parameters: list_ptr (0)
+        // Returns: popped element (0 if empty)
         vec![
-            Instruction::I32Const(0), // Return 0
+            // Get current size
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
+            // Check if empty
+            Instruction::I32Const(0),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::I32Const(0), // Return 0 if empty
+            Instruction::Else,
+            // Get last element
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
+            Instruction::I32Const(1),
+            Instruction::I32Sub, // size - 1
+            Instruction::I32Const(8), // element size
+            Instruction::I32Mul,
+            Instruction::I32Const(16), // header size
+            Instruction::I32Add,
+            Instruction::I32Add, // calculate address
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // load element
+            // Decrement size
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
+            Instruction::I32Const(1),
+            Instruction::I32Sub, // new size
+            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::End,
         ]
     }
 
