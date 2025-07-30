@@ -1,0 +1,146 @@
+functions:
+	void testMathOperations()
+		print("=== Math Class Operations ===")
+		
+		// Basic arithmetic
+		number a = 15.5
+		number b = 4.2
+		print("Math.add(" + a.toString() + ", " + b.toString() + ") = " + Math.add(a, b).toString())
+		print("Math.subtract(" + a.toString() + ", " + b.toString() + ") = " + Math.subtract(a, b).toString())
+		print("Math.multiply(" + a.toString() + ", " + b.toString() + ") = " + Math.multiply(a, b).toString())
+		print("Math.divide(" + a.toString() + ", " + b.toString() + ") = " + Math.divide(a, b).toString())
+		
+		// Advanced math functions
+		number x = 16.0
+		print("Math.sqrt(" + x.toString() + ") = " + Math.sqrt(x).toString())
+		print("Math.abs(-" + x.toString() + ") = " + Math.abs(-x).toString())
+		print("Math.max(" + a.toString() + ", " + b.toString() + ") = " + Math.max(a, b).toString())
+		print("Math.min(" + a.toString() + ", " + b.toString() + ") = " + Math.min(a, b).toString())
+		
+		// Rounding functions
+		number decimal = 3.7456
+		print("Math.floor(" + decimal.toString() + ") = " + Math.floor(decimal).toString())
+		print("Math.ceil(" + decimal.toString() + ") = " + Math.ceil(decimal).toString())
+		print("Math.round(" + decimal.toString() + ") = " + Math.round(decimal).toString())
+		print("Math.trunc(" + decimal.toString() + ") = " + Math.trunc(decimal).toString())
+		
+		// Trigonometric functions
+		number angle = Math.pi() / 4.0  // 45 degrees in radians
+		print("Math.sin(π/4) = " + Math.sin(angle).toString())
+		print("Math.cos(π/4) = " + Math.cos(angle).toString())
+		print("Math.tan(π/4) = " + Math.tan(angle).toString())
+		
+		// Logarithmic functions
+		number value = 10.0
+		print("Math.ln(" + value.toString() + ") = " + Math.ln(value).toString())
+		print("Math.log10(" + value.toString() + ") = " + Math.log10(value).toString())
+		print("Math.exp(1.0) = " + Math.exp(1.0).toString())
+		
+		// Constants
+		print("Math.pi() = " + Math.pi().toString())
+		print("Math.e() = " + Math.e().toString())
+		print("Math.tau() = " + Math.tau().toString())
+	
+	void testStringOperations()
+		print("=== String Class Operations ===")
+		
+		string text = "Hello, Clean Language World!"
+		string search = "Clean"
+		
+		// Basic string operations
+		print("String.length(\"" + text + "\") = " + String.length(text).toString())
+		print("String.toUpperCase(\"" + text + "\") = " + String.toUpperCase(text))
+		print("String.toLowerCase(\"" + text + "\") = " + String.toLowerCase(text))
+		
+		// Search operations
+		print("String.contains(\"" + text + "\", \"" + search + "\") = " + String.contains(text, search).toString())
+		print("String.indexOf(\"" + text + "\", \"" + search + "\") = " + String.indexOf(text, search).toString())
+		print("String.lastIndexOf(\"" + text + "\", \"l\") = " + String.lastIndexOf(text, "l").toString())
+		print("String.startsWith(\"" + text + "\", \"Hello\") = " + String.startsWith(text, "Hello").toString())
+		print("String.endsWith(\"" + text + "\", \"World!\") = " + String.endsWith(text, "World!").toString())
+		
+		// String manipulation
+		string padded = "  trim test  "
+		print("Original: \"" + padded + "\"")
+		print("String.trim(\"" + padded + "\") = \"" + String.trim(padded) + "\"")
+		print("String.trimStart(\"" + padded + "\") = \"" + String.trimStart(padded) + "\"")
+		print("String.trimEnd(\"" + padded + "\") = \"" + String.trimEnd(padded) + "\"")
+		
+		// String replacement
+		string original = "The quick brown fox"
+		print("String.replace(\"" + original + "\", \"quick\", \"slow\") = " + String.replace(original, "quick", "slow"))
+		print("String.substring(\"" + original + "\", 4, 9) = " + String.substring(original, 4, 9))
+	
+	void testListOperations()
+		print("=== List Operations ===")
+		
+		list<integer> numbers = [1, 2, 3, 4, 5]
+		list<string> words = ["apple", "banana", "cherry"]
+		
+		// Basic list operations
+		print("numbers.length() = " + numbers.length().toString())
+		print("words.length() = " + words.length().toString())
+		
+		// List access and modification
+		print("numbers[2] = " + numbers[2].toString())
+		print("words[1] = " + words[1])
+		
+		// List methods
+		numbers.push(6)
+		print("After push(6): length = " + numbers.length().toString())
+		
+		integer popped = numbers.pop()
+		print("Popped element: " + popped.toString())
+		print("After pop: length = " + numbers.length().toString())
+		
+		// List searching
+		print("numbers.contains(3) = " + numbers.contains(3).toString())
+		print("words.contains(\"grape\") = " + words.contains("grape").toString())
+		
+		// List iteration
+		print("Numbers iteration:")
+		iterate num in numbers
+			print("  " + num.toString())
+	
+	void testFileOperations() 
+		print("=== File Operations ===")
+		
+		string filename = "test_file.txt"
+		string content = "Hello from Clean Language!"
+		
+		// File operations (simplified for testing)
+		print("Testing file operations with: " + filename)
+		print("Content to write: " + content)
+		
+		// Note: Actual file I/O would be tested in integration tests
+		// Here we just demonstrate the syntax
+		boolean writeResult = file.write(filename, content)
+		print("file.write() result: " + writeResult.toString())
+		
+		boolean exists = file.exists(filename)
+		print("file.exists() result: " + exists.toString())
+		
+		if exists
+			string readContent = file.read(filename)
+			print("file.read() result: " + readContent)
+			
+			boolean appendResult = file.append(filename, " Appended text!")
+			print("file.append() result: " + appendResult.toString())
+			
+			boolean deleteResult = file.delete(filename)
+			print("file.delete() result: " + deleteResult.toString())
+
+start()
+	print("Comprehensive Standard Library Test")
+	print("====================================")
+	
+	testMathOperations()
+	print("")
+	testStringOperations()
+	print("")
+	testListOperations()
+	print("")
+	testFileOperations()
+	
+	print("")
+	print("Standard library test completed!")

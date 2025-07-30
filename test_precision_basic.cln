@@ -1,0 +1,7 @@
+start()
+	integer:8 smallInt = 127
+	integer:16 mediumInt = 32767
+	integer:32 standardInt = 100000
+	
+	number:32 singlePrecision = 3.14159
+	number:64 doublePrecision = 3.141592653589793

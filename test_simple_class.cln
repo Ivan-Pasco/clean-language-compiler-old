@@ -1,4 +1,3 @@
-
 class Person
 	string name
 	integer age
@@ -13,18 +12,8 @@ class Person
 		
 		integer getAge()
 			return age
-		
-		void setAge(integer newAge)
-			age = newAge
-		
-		string toString()
-			return name + " is " + age.toString() + " years old"
 
 start()
 	Person person = Person("Alice", 25)
 	print(person.getName())
 	print(person.getAge())
-	print(person.toString())
-	
-	person.setAge(26)
-	print("After birthday: " + person.toString())

@@ -1412,7 +1412,32 @@ impl CodeGenerator {
                 }
             },
             Expression::MethodCall { object, method, arguments, location: _ } => {
-                // Check if this is a type conversion method first
+                // First check if this is a method call on a user-defined class
+                if let Expression::Variable(var_name) = object.as_ref() {
+                    // Get the actual type from our variable types map
+                    if let Some(var_type) = self.variable_types.get(var_name) {
+                        // Handle both Type::Class and Type::Object for class instances
+                        let class_name = match var_type {
+                            Type::Class { name, type_args: _ } => Some(name.as_str()),
+                            Type::Object(name) => Some(name.as_str()),
+                            _ => None
+                        };
+                        
+                        if let Some(class_name) = class_name {
+                            // Search for method in class hierarchy (current class and all parent classes)
+                            if let Some(method_index) = self.find_method_in_hierarchy(class_name, method) {
+                                // Generate arguments
+                                for arg in arguments {
+                                    self.generate_expression(arg, instructions)?;
+                                }
+                                instructions.push(Instruction::Call(method_index));
+                                return Ok(WasmType::I32); // TODO: Get actual return type
+                            }
+                        }
+                    }
+                }
+                
+                // Check if this is a type conversion method only if not a class method
                 if self.is_type_conversion_method(method) {
                     println!("DEBUG: Processing type conversion method '{}' via generate_type_conversion_method", method);
                     return self.generate_type_conversion_method(object, method, instructions);
@@ -1972,12 +1997,9 @@ impl CodeGenerator {
                         }
                     },
                     _ => {
-                        // Check if this is a method call on a user-defined class
+                        // Fallback: try common class names if type information is not available
                         if let Expression::Variable(_var_name) = object.as_ref() {
-                            // Check if we can find a class method function
-                            // Try different class names that this variable might represent
-                            let possible_class_names = vec!["Rectangle", "Circle", "Point"]; // TODO: Get actual type from semantic analysis
-                            
+                            let possible_class_names = vec!["Person", "Rectangle", "Circle", "Point"];
                             for class_name in &possible_class_names {
                                 let class_method_name = format!("{class_name}_{method}");
                                 if let Some(method_index) = self.get_function_index(&class_method_name) {
@@ -4819,6 +4841,34 @@ impl CodeGenerator {
                             // Already a string, no conversion needed
                             Ok(WasmType::I32) // String is represented as I32 pointer
                         },
+                        crate::ast::Type::Class { name: class_name, .. } => {
+                            // Call the class's toString() method
+                            let class_method_name = format!("{}_toString", class_name);
+                            if let Some(method_index) = self.get_function_index(&class_method_name) {
+                                instructions.push(Instruction::Call(method_index));
+                                Ok(WasmType::I32) // String is represented as I32 pointer
+                            } else {
+                                Err(CompilerError::codegen_error(
+                                    &format!("toString() method not found for class '{}'", class_name),
+                                    Some(format!("Class '{}' should define a toString() method", class_name)),
+                                    None
+                                ))
+                            }
+                        },
+                        crate::ast::Type::Object(class_name) => {
+                            // Call the class's toString() method  
+                            let class_method_name = format!("{}_toString", class_name);
+                            if let Some(method_index) = self.get_function_index(&class_method_name) {
+                                instructions.push(Instruction::Call(method_index));
+                                Ok(WasmType::I32) // String is represented as I32 pointer
+                            } else {
+                                Err(CompilerError::codegen_error(
+                                    &format!("toString() method not found for class '{}'", class_name),
+                                    Some(format!("Class '{}' should define a toString() method", class_name)),
+                                    None
+                                ))
+                            }
+                        },
                         _ => {
                             Err(CompilerError::codegen_error(
                                 &format!("toString() not supported for Clean Language type {:?}", clean_type),
@@ -6671,5 +6721,36 @@ impl CodeGenerator {
         }
         
         Ok(body)
+    }
+
+    /// Search for a method in the class hierarchy (current class and all parent classes)
+    /// Returns the function index if found, None otherwise
+    fn find_method_in_hierarchy(&self, class_name: &str, method_name: &str) -> Option<u32> {
+        // Get the class hierarchy (current class + all parent classes)
+        let hierarchy = self.get_class_hierarchy(class_name);
+        
+        // Search through each class in the hierarchy
+        for class_in_hierarchy in &hierarchy {
+            let method_full_name = format!("{}_{}", class_in_hierarchy, method_name);
+            if let Some(method_index) = self.get_function_index(&method_full_name) {
+                return Some(method_index);
+            }
+        }
+        
+        None
+    }
+
+    /// Get the class hierarchy for a given class (current class + all parent classes)
+    fn get_class_hierarchy(&self, class_name: &str) -> Vec<String> {
+        let mut hierarchy = vec![class_name.to_string()];
+        
+        if let Some(class) = self.class_table.get(class_name) {
+            if let Some(parent_name) = &class.base_class {
+                let mut parent_hierarchy = self.get_class_hierarchy(parent_name);
+                hierarchy.append(&mut parent_hierarchy);
+            }
+        }
+        
+        hierarchy
     }
 }

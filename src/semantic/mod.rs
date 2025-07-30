@@ -1010,33 +1010,35 @@ impl SemanticAnalyzer {
             },
 
             Statement::FunctionApplyBlock { function_name, expressions, location: _ } => {
-                // Check that the function exists and validate signature
+                // Function apply-blocks create multiple separate function calls
+                // Each expression in the apply-block becomes a separate function call
                 if let Some(overloads) = self.function_table.get(function_name).cloned() {
-                    // For apply blocks, use the first overload for simplicity
-                    if let Some((param_types, _return_type, required_param_count)) = overloads.first() {
-                    // Check argument count
-                    if expressions.len() != *required_param_count {
+                    // Find a compatible overload that accepts a single parameter
+                    let single_param_overload = overloads.iter().find(|(param_types, _, required_count)| {
+                        *required_count == 1 && param_types.len() == 1
+                    });
+                    
+                    if let Some((param_types, _return_type, _)) = single_param_overload {
+                        // Validate each expression as a separate function call
+                        for expr in expressions.iter() {
+                            let expr_type = self.check_expression(expr)?;
+                            if !self.types_compatible(&param_types[0], &expr_type) {
+                                return Err(CompilerError::type_error(
+                                    &format!("Function '{}' expects type {:?}, but got {:?} in apply-block", 
+                                           function_name, param_types[0], expr_type),
+                                    Some("Each expression in a function apply-block must match the function's single parameter type".to_string()),
+                                    None
+                                ));
+                            }
+                        }
+                    } else {
                         return Err(CompilerError::type_error(
-                            &format!("Function '{}' expects {} arguments, but {} provided", 
-                                   function_name, required_param_count, expressions.len()),
-                            Some("Check the function signature and provide the correct number of arguments".to_string()),
+                            &format!("Function '{}' cannot be used in apply-blocks - it must accept exactly one parameter", 
+                                   function_name),
+                            Some("Function apply-blocks require functions that take a single parameter".to_string()),
                             None
                         ));
                     }
-                    
-                    // Check argument types
-                    for (i, expr) in expressions.iter().enumerate() {
-                        let expr_type = self.check_expression(expr)?;
-                        if i < param_types.len() && !self.types_compatible(&param_types[i], &expr_type) {
-                            return Err(CompilerError::type_error(
-                                &format!("Function '{}' parameter {} expects type {:?}, but got {:?}", 
-                                       function_name, i + 1, param_types[i], expr_type),
-                                Some("Check the function signature and ensure argument types match".to_string()),
-                                None
-                            ));
-                        }
-                    }
-                    } // Close the first() check
                 } else if !self.is_builtin_function(function_name) {
                     return Err(CompilerError::type_error(
                         &format!("Function '{function_name}' not found"),
@@ -2709,46 +2711,51 @@ impl SemanticAnalyzer {
                     return Ok(Type::Any);
                 }
                 
-                // Look up the class in the class table and clone the needed data
-                let class = self.class_table.get(class_name).cloned().ok_or_else(|| {
-                    CompilerError::type_error(
+                // Verify the class exists
+                if !self.class_table.contains_key(class_name) {
+                    return Err(CompilerError::type_error(
                         &format!("Class '{class_name}' not found"),
                         Some("Check if the class name is correct and the class is defined".to_string()),
                         Some(location.clone())
-                    )
-                })?;
+                    ));
+                }
 
-                // Look for the method in the class methods
-                for method_def in &class.methods {
-                    if method_def.name == method {
-                        // Check if the number of arguments matches
-                        if args.len() != method_def.parameters.len() {
-                            return Err(CompilerError::type_error(
-                                &format!("Method '{}' expects {} arguments, but {} were provided",
-                                    method, method_def.parameters.len(), args.len()),
-                                Some("Provide the correct number of arguments".to_string()),
-                                Some(location.clone())
-                            ));
-                        }
+                // Search for the method in the class hierarchy (current class and all parent classes)
+                let hierarchy = self.get_class_hierarchy(class_name);
+                for class_in_hierarchy in &hierarchy {
+                    if let Some(class_def) = self.class_table.get(class_in_hierarchy).cloned() {
+                        for method_def in &class_def.methods {
+                            if method_def.name == method {
+                                // Check if the number of arguments matches
+                                if args.len() != method_def.parameters.len() {
+                                    return Err(CompilerError::type_error(
+                                        &format!("Method '{}' expects {} arguments, but {} were provided",
+                                            method, method_def.parameters.len(), args.len()),
+                                        Some("Provide the correct number of arguments".to_string()),
+                                        Some(location.clone())
+                                    ));
+                                }
 
-                        // Clone the method parameters to avoid borrowing issues
-                        let method_params = method_def.parameters.clone();
-                        let method_return_type = method_def.return_type.clone();
+                                // Clone the method parameters to avoid borrowing issues
+                                let method_params = method_def.parameters.clone();
+                                let method_return_type = method_def.return_type.clone();
 
-                        // Check argument types
-                        for (i, (arg, param)) in args.iter().zip(method_params.iter()).enumerate() {
-                            let arg_type = self.check_expression(arg)?;
-                            if !self.types_compatible(&arg_type, &param.type_) {
-                                return Err(CompilerError::type_error(
-                                    &format!("Argument {} has incorrect type. Expected {:?}, got {:?}",
-                                        i + 1, arg_type, param.type_),
-                                    Some("Provide arguments of the correct type".to_string()),
-                                    Some(location.clone())
-                                ));
+                                // Check argument types
+                                for (i, (arg, param)) in args.iter().zip(method_params.iter()).enumerate() {
+                                    let arg_type = self.check_expression(arg)?;
+                                    if !self.types_compatible(&arg_type, &param.type_) {
+                                        return Err(CompilerError::type_error(
+                                            &format!("Argument {} has incorrect type. Expected {:?}, got {:?}",
+                                                i + 1, arg_type, param.type_),
+                                            Some("Provide arguments of the correct type".to_string()),
+                                            Some(location.clone())
+                                        ));
+                                    }
+                                }
+
+                                return Ok(method_return_type);
                             }
                         }
-
-                        return Ok(method_return_type);
                     }
                 }
 
@@ -3361,6 +3368,13 @@ impl SemanticAnalyzer {
         match (expected, actual) {
             // Numeric type promotions
             (Type::Number, Type::Integer) => true, // Integer can be promoted to Number
+            
+            // Sized integer compatibility - integer literals can be assigned to sized integers
+            (Type::IntegerSized { .. }, Type::Integer) => true,
+            
+            // Sized number compatibility - number literals can be assigned to sized numbers  
+            (Type::NumberSized { .. }, Type::Number) => true,
+            (Type::NumberSized { .. }, Type::Integer) => true, // Integer can be promoted to sized number
             
             // List element type compatibility
             (Type::List(expected_elem), Type::List(actual_elem)) => {

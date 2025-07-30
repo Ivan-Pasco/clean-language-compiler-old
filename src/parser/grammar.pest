@@ -71,7 +71,7 @@ constant_assignment = { type_ ~ identifier ~ "=" ~ expression }
 
 // Type apply-blocks: integer: count = 0, maxSize = 100 (types before generic identifiers)
 type_apply_block = { (core_type | sized_type | matrix_type | list_type | pairs_type) ~ ":" ~ indented_variable_assignments }
-indented_variable_assignments = { NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ variable_assignment ~ (NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ variable_assignment)* }
+indented_variable_assignments = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ variable_assignment ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ variable_assignment)* }
 variable_assignment = { identifier ~ "=" ~ expression }
 
 // Method apply-blocks: array.push: item1, item2, item3 (object.method before generic identifiers)
@@ -306,7 +306,7 @@ statement = {
 }
 
 // Program with proper newline handling
-program_item = { import_stmt | start_function | implicit_start_function | functions_block | tests_block | class_decl | statement }
+program_item = { import_stmt | start_function | implicit_start_function | functions_block | tests_block | class_decl | apply_block | statement }
 program = { SOI ~ NEWLINE* ~ (program_item ~ NEWLINE*)* ~ EOI }
 
 // Start function - the entry point of a Clean Language program

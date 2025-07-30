@@ -1,0 +1,21 @@
+class Calculator
+	integer value
+	
+	constructor(integer initial)
+		value = initial
+	
+	functions:
+		void add(integer amount)
+			value = value + amount
+		
+		void multiply(integer factor)
+			value = value * factor
+		
+		integer getValue()
+			return value
+
+start()
+	Calculator calc = Calculator(10)
+	calc.add(5)
+	calc.multiply(2)
+	print(calc.getValue())
