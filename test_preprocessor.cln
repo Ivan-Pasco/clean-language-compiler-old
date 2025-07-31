@@ -1,0 +1,3 @@
+functions:
+	integer a(integer n)
+		return n

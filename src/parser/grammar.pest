@@ -49,8 +49,8 @@ type_ = {
     list_type |
     pairs_type |
     generic_type |
-    sized_type |
     core_type |
+    sized_type |
     identifier |
     type_parameter
 }

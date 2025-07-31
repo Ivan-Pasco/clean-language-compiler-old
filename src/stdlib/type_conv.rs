@@ -405,10 +405,6 @@ impl TypeConvOperations {
         // Returns: string pointer (i32)
         
         vec![
-            // For now, allocate a simple conversion result
-            // In production, this would implement full integer to string conversion
-            Instruction::LocalGet(0), // Load the integer value
-            
             // Store the integer at a fixed memory location for string conversion
             Instruction::I32Const(1000), // Working memory address
             Instruction::LocalGet(0),     // Integer value

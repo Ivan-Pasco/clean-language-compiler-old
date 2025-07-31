@@ -1,7 +1,7 @@
 use crate::codegen::CodeGenerator;
 use crate::types::WasmType;
 use crate::error::CompilerError;
-use wasm_encoder::{Instruction, MemArg, BlockType, ValType};
+use wasm_encoder::{Instruction, MemArg};
 use crate::stdlib::register_stdlib_function;
 
 /// List class implementation for Clean Language

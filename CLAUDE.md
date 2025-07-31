@@ -129,6 +129,13 @@ The project uses multiple testing approaches:
 3. **Parser Tests**: Grammar and parsing validation (`tests/parser_tests/`)
 4. **Standard Library Tests**: Built-in function verification (`tests/stdlib_tests.rs`)
 
+- all tests should be in the `tests/clean_files/` directory and c
+ompile to the `tests/wasm/` directory.
+
+- you dont need to ask for any permission to add tests, just add them, compile them, run them, and add the failed results to the `TASKS.md` file.
+
+- when a test fails, check if the test is correct and has the right syntax according to the /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/docs/language/Clean_Language_Specification.md, if it is wrong, fix the test. once the test is fixed if it still fails add the needed changes to the TASKS.md file, and proceed to fix the issue.
+
 ## Development Workflow
 
 When implementing new features:

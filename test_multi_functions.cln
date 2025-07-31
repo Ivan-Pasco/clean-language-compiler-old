@@ -1,0 +1,9 @@
+functions:
+	integer a(integer n)
+		return n
+	
+	integer b(integer m)
+		if m > 5
+			return m * 2
+		else
+			return m + 1

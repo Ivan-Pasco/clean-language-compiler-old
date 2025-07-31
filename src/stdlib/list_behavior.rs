@@ -192,20 +192,20 @@ impl ListBehaviorManager {
             Instruction::I32Const(0),
             Instruction::I32Eq,
             Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(0), // Return 0 if empty
+                Instruction::I32Const(0), // Return 0 if empty
             Instruction::Else,
-            // Get last element without removing (LIFO peek)
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
-            Instruction::I32Const(1),
-            Instruction::I32Sub, // size - 1
-            Instruction::I32Const(4),
-            Instruction::I32Mul, // (size-1) * 4
-            Instruction::I32Const(8),
-            Instruction::I32Add, // + header offset
-            Instruction::I32Add, // list_ptr + offset
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // load value
+                // Get last element without removing (LIFO peek)
+                Instruction::LocalGet(0), // list_ptr
+                Instruction::LocalGet(0), // list_ptr
+                Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
+                Instruction::I32Const(1),
+                Instruction::I32Sub, // size - 1
+                Instruction::I32Const(4),
+                Instruction::I32Mul, // (size-1) * 4
+                Instruction::I32Const(8),
+                Instruction::I32Add, // + header offset
+                Instruction::I32Add, // list_ptr + offset
+                Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // load value
             Instruction::End,
         ]
     }
@@ -220,15 +220,15 @@ impl ListBehaviorManager {
             Instruction::I32Const(0),
             Instruction::I32Eq,
             Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(0), // Return false if empty
+                Instruction::I32Const(0), // Return false if empty
             Instruction::Else,
-            // Simple linear search - check first element
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Const(8), // skip header
-            Instruction::I32Add,
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // first element
-            Instruction::LocalGet(1), // search value
-            Instruction::I32Eq, // compare
+                // Simple linear search - check first element
+                Instruction::LocalGet(0), // list_ptr
+                Instruction::I32Const(8), // skip header
+                Instruction::I32Add,
+                Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // first element
+                Instruction::LocalGet(1), // search value
+                Instruction::I32Eq, // compare
             Instruction::End,
         ]
     }
@@ -270,10 +270,10 @@ impl ListBehaviorManager {
             Instruction::I32Const(0),
             Instruction::I32Eq,
             Instruction::If(BlockType::Result(ValType::I32)),
-            // Return pointer to "default" string if no behavior set
-            Instruction::I32Const(1000), // hardcoded "default" string location
+                // Return pointer to "default" string if no behavior set
+                Instruction::I32Const(1000), // hardcoded "default" string location
             Instruction::Else,
-            Instruction::LocalGet(1), // return stored behavior
+                Instruction::LocalGet(1), // return stored behavior
             Instruction::End,
         ]
     }

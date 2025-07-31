@@ -169,27 +169,23 @@ impl ListManager {
 
     pub fn generate_list_allocate(&self) -> Vec<Instruction> {
         vec![
-            // Allocate memory for list with header + elements
-            // Header: size(4) + capacity(4) + type_id(4) + reserved(4) = 16 bytes
-            Instruction::LocalGet(0), // size parameter
-            Instruction::I32Const(8), // element size (pointer size)
-            Instruction::I32Mul, // size * element_size
-            Instruction::I32Const(16), // header size
-            Instruction::I32Add, // total_size = header + (size * element_size)
-            // For now, use simple heap allocation at fixed offset
-            // In full implementation, would call memory allocator
+            // Simplified list allocation - use fixed heap base
             Instruction::I32Const(1000), // heap base
-            Instruction::LocalTee(1), // store heap pointer in local 1
-            // Initialize list header
+            Instruction::LocalSet(1), // store heap pointer in local 1 (consumes the value)
+            
+            // Initialize list header at allocated location
             Instruction::LocalGet(1), // heap pointer
             Instruction::LocalGet(0), // size
             Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }), // store size
+            
             Instruction::LocalGet(1), // heap pointer
             Instruction::LocalGet(0), // size (capacity = size for now)
             Instruction::I32Store(MemArg { offset: 4, align: 2, memory_index: 0 }), // store capacity
+            
             Instruction::LocalGet(1), // heap pointer
             Instruction::I32Const(LIST_TYPE_ID as i32), // type id
             Instruction::I32Store(MemArg { offset: 8, align: 2, memory_index: 0 }), // store type
+            
             // Return list pointer
             Instruction::LocalGet(1),
         ]
@@ -333,27 +329,29 @@ impl ListManager {
             Instruction::I32Const(0),
             Instruction::I32Eq,
             Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(0), // Return 0 if empty
+                Instruction::I32Const(0), // Return 0 if empty
             Instruction::Else,
-            // Get last element
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
-            Instruction::I32Const(1),
-            Instruction::I32Sub, // size - 1
-            Instruction::I32Const(8), // element size
-            Instruction::I32Mul,
-            Instruction::I32Const(16), // header size
-            Instruction::I32Add,
-            Instruction::I32Add, // calculate address
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // load element
-            // Decrement size
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
-            Instruction::I32Const(1),
-            Instruction::I32Sub, // new size
-            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
+                // Get last element before decrementing size
+                Instruction::LocalGet(0), // list_ptr
+                Instruction::LocalGet(0), // list_ptr
+                Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
+                Instruction::I32Const(1),
+                Instruction::I32Sub, // size - 1
+                Instruction::I32Const(8), // element size
+                Instruction::I32Mul,
+                Instruction::I32Const(16), // header size
+                Instruction::I32Add,
+                Instruction::I32Add, // calculate address
+                Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // load element value to stack
+                
+                // Decrement size (but keep element value on stack)
+                Instruction::LocalGet(0), // list_ptr
+                Instruction::LocalGet(0), // list_ptr
+                Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
+                Instruction::I32Const(1),
+                Instruction::I32Sub, // new size
+                Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
+                // Element value is still on stack as return value
             Instruction::End,
         ]
     }

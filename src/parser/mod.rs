@@ -35,6 +35,9 @@ mod type_parser;
 mod class_parser;
 mod program_parser;
 mod grammar;
+// mod lexical_analyzer;
+// mod function_parser;
+mod preprocessor;
 
 // Re-export just what's needed
 pub use parser_impl::{parse, parse_start_function, get_location, parse_with_file, ParseContext, ErrorRecoveringParser, parse_functions_block, parse_function_in_block};
@@ -43,6 +46,9 @@ pub use statement_parser::parse_statement;
 pub use type_parser::parse_type;
 pub use class_parser::parse_class;
 pub use program_parser::parse_program_ast;
+// pub use lexical_analyzer::{LexicalAnalyzer, FunctionBoundary, FunctionSegment};
+// pub use function_parser::FunctionParser;
+pub use preprocessor::FunctionPreprocessor;
 
 impl CleanParser {
     pub fn parse_program(source: &str) -> Result<Program, CompilerError> {

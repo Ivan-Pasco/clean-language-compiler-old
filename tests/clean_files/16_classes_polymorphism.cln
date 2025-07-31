@@ -20,7 +20,7 @@ class Vehicle
 			return "Vehicle stopping..."
 		
 		integer getMaxSpeed()
-			return 60  // Default speed limit
+			return 60
 
 class Car is Vehicle
 	integer doors

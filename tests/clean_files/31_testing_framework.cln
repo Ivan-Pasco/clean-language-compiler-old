@@ -23,7 +23,8 @@ functions:
 	number divide(number a, number b)
 		if b == 0.0
 			return 0.0
-		return a / b
+		else
+			return a / b
 
 // Built-in testing framework using tests: block
 tests:

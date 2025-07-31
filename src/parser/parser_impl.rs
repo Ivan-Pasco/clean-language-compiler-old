@@ -355,10 +355,76 @@ pub fn parse(source: &str) -> Result<Program, CompilerError> {
 
 pub fn parse_with_file(source: &str, file_path: &str) -> Result<Program, CompilerError> {
     let trimmed_source = source.trim();
-    let pairs = CleanParser::parse(Rule::program, trimmed_source)
-        .map_err(|e| ErrorUtils::from_pest_error(e, source, file_path))?;
+    
+    // Try traditional parsing first
+    match CleanParser::parse(Rule::program, trimmed_source) {
+        Ok(pairs) => parse_program_ast(pairs),
+        Err(pest_error) => {
+            // If traditional parsing fails and the error mentions function-related issues,
+            // try preprocessing approach
+            let error_msg = pest_error.to_string();
+            if error_msg.contains("size_specifier") || error_msg.contains("matrix_type") || 
+               error_msg.contains("list_type") || source.contains("functions:") {
+                println!("DEBUG: Traditional parsing failed, trying preprocessor approach");
+                parse_with_preprocessing(source, file_path)
+            } else {
+                Err(ErrorUtils::from_pest_error(pest_error, source, file_path))
+            }
+        }
+    }
+}
 
-    parse_program_ast(pairs)
+/// Parse using preprocessing approach for complex multi-function programs
+fn parse_with_preprocessing(source: &str, _file_path: &str) -> Result<Program, CompilerError> {
+    // Check if this is a functions-only program
+    let lines: Vec<&str> = source.lines().collect();
+    let mut has_functions_block = false;
+    let mut functions_block_content = String::new();
+    let mut in_functions_block = false;
+    
+    for line in &lines {
+        let trimmed = line.trim();
+        if trimmed == "functions:" {
+            has_functions_block = true;
+            in_functions_block = true;
+            functions_block_content.push_str(line);
+            functions_block_content.push('\n');
+        } else if in_functions_block {
+            functions_block_content.push_str(line);
+            functions_block_content.push('\n');
+        }
+    }
+    
+    if has_functions_block {
+        // Use preprocessor to parse the functions block
+        let preprocessor = super::preprocessor::FunctionPreprocessor::new(&functions_block_content);
+        match preprocessor.process_functions_block(&functions_block_content) {
+            Ok(functions) => {
+                println!("DEBUG: Preprocessor successfully parsed {} functions", functions.len());
+                Ok(Program {
+                    imports: Vec::new(),
+                    functions,
+                    classes: Vec::new(),
+                    start_function: None,
+                    tests: Vec::new(),
+                })
+            }
+            Err(e) => {
+                println!("DEBUG: Preprocessor also failed: {}", e);
+                Err(CompilerError::parse_error(
+                    format!("Both traditional parsing and preprocessing failed: {}", e),
+                    None,
+                    Some("Check function syntax and indentation".to_string())
+                ))
+            }
+        }
+    } else {
+        Err(CompilerError::parse_error(
+            "Preprocessing not applicable - no functions block found".to_string(),
+            None,
+            None
+        ))
+    }
 }
 
 pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program, CompilerError> {
@@ -545,6 +611,28 @@ pub fn get_location(pair: &Pair<Rule>) -> super::SourceLocation {
 }
 
 pub fn parse_functions_block(functions_block: Pair<Rule>) -> Result<Vec<Function>, CompilerError> {
+    // Extract source text for preprocessing
+    let source_text = functions_block.as_str();
+    
+    // Try preprocessing approach first for multi-function blocks
+    let preprocessor = super::preprocessor::FunctionPreprocessor::new(source_text);
+    match preprocessor.process_functions_block(source_text) {
+        Ok(functions) => {
+            if !functions.is_empty() {
+                println!("DEBUG: Preprocessor succeeded, found {} functions", functions.len());
+                return Ok(functions);
+            }
+        }
+        Err(e) => {
+            println!("DEBUG: Preprocessor failed: {}, falling back to traditional", e);
+        }
+    }
+    
+    // Fall back to traditional parsing
+    parse_functions_block_traditional(functions_block)
+}
+
+fn parse_functions_block_traditional(functions_block: Pair<Rule>) -> Result<Vec<Function>, CompilerError> {
     let mut functions = Vec::new();
     
     for item in functions_block.into_inner() {
@@ -1296,6 +1384,7 @@ fn _unused_parse_background_statement(pair: Pair<Rule>) -> Result<Statement, Com
         location,
     })
 }
+
 
 /// Parse a start expression for async programming
 fn _unused_parse_start_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {

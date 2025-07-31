@@ -646,34 +646,31 @@ impl StringOperations {
         // Parameters: string_ptr (0), search_ptr (1)
         // Returns: index of first occurrence, or -1 if not found
         vec![
-            // Get string length
+            // Get string length and search length
             Instruction::LocalGet(0),
             Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
-            // Get search string length
             Instruction::LocalGet(1),
             Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
-            // If search is longer than string, return -1
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
-            Instruction::I32LtS,
+            // Check if search is longer than string: if search_len > string_len, return -1
+            Instruction::I32GtS, // search_len > string_len
             Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(-1),
+                Instruction::I32Const(-1),
             Instruction::Else,
-            // Simple byte comparison - compare first bytes
-            Instruction::LocalGet(0), // string data start
-            Instruction::I32Const(16), // skip header
-            Instruction::I32Add,
-            Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
-            Instruction::LocalGet(1), // search data start
-            Instruction::I32Const(16), // skip header
-            Instruction::I32Add,
-            Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
-            Instruction::I32Eq,
-            Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(0), // Found at position 0
-            Instruction::Else,
-            Instruction::I32Const(-1), // Not found
-            Instruction::End,
+                // Simple byte comparison - compare first bytes
+                Instruction::LocalGet(0), // string data start
+                Instruction::I32Const(4), // skip length header (4 bytes)
+                Instruction::I32Add,
+                Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
+                Instruction::LocalGet(1), // search data start
+                Instruction::I32Const(4), // skip length header (4 bytes)
+                Instruction::I32Add,
+                Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
+                Instruction::I32Eq,
+                Instruction::If(BlockType::Result(ValType::I32)),
+                    Instruction::I32Const(0), // Found at position 0
+                Instruction::Else,
+                    Instruction::I32Const(-1), // Not found
+                Instruction::End,
             Instruction::End,
         ]
     }
@@ -683,35 +680,31 @@ impl StringOperations {
         // Parameters: string_ptr (0), search_ptr (1)
         // Returns: last index of search string, or -1 if not found
         vec![
-            // Get string length
+            // Get string length and search length
             Instruction::LocalGet(0),
             Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
-            // Get search string length
             Instruction::LocalGet(1),
             Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
-            // If search is longer than string, return -1
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
-            Instruction::I32LtS,
+            // Check if search is longer than string: if search_len > string_len, return -1
+            Instruction::I32GtS, // search_len > string_len
             Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(-1),
+                Instruction::I32Const(-1),
             Instruction::Else,
-            // Simple implementation - return 0 if found, -1 if not
-            // Full implementation would search backwards through string
-            Instruction::LocalGet(0), // string data
-            Instruction::I32Const(16), // skip header
-            Instruction::I32Add,
-            Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
-            Instruction::LocalGet(1), // search data
-            Instruction::I32Const(16), // skip header
-            Instruction::I32Add,
-            Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
-            Instruction::I32Eq,
-            Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(0), // Found at position 0
-            Instruction::Else,
-            Instruction::I32Const(-1), // Not found
-            Instruction::End,
+                // Simple byte comparison - compare first bytes (simplified implementation)
+                Instruction::LocalGet(0), // string data
+                Instruction::I32Const(4), // skip length header (4 bytes)
+                Instruction::I32Add,
+                Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
+                Instruction::LocalGet(1), // search data
+                Instruction::I32Const(4), // skip length header (4 bytes)
+                Instruction::I32Add,
+                Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
+                Instruction::I32Eq,
+                Instruction::If(BlockType::Result(ValType::I32)),
+                    Instruction::I32Const(0), // Found at position 0 (simplified)
+                Instruction::Else,
+                    Instruction::I32Const(-1), // Not found
+                Instruction::End,
             Instruction::End,
         ]
     }
@@ -730,18 +723,18 @@ impl StringOperations {
             // If prefix is longer than string, return false
             Instruction::I32LtS,
             Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(0), // false
+                Instruction::I32Const(0), // false
             Instruction::Else,
-            // Compare first byte as simplified check
-            Instruction::LocalGet(0), // string data
-            Instruction::I32Const(16), // skip header
-            Instruction::I32Add,
-            Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
-            Instruction::LocalGet(1), // prefix data
-            Instruction::I32Const(16), // skip header
-            Instruction::I32Add,
-            Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
-            Instruction::I32Eq, // Compare first bytes
+                // Compare first byte as simplified check
+                Instruction::LocalGet(0), // string data
+                Instruction::I32Const(16), // skip header
+                Instruction::I32Add,
+                Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
+                Instruction::LocalGet(1), // prefix data
+                Instruction::I32Const(16), // skip header
+                Instruction::I32Add,
+                Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
+                Instruction::I32Eq, // Compare first bytes
             Instruction::End,
         ]
     }
@@ -760,25 +753,25 @@ impl StringOperations {
             // If suffix is longer than string, return false
             Instruction::I32LtS,
             Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(0), // false
+                Instruction::I32Const(0), // false
             Instruction::Else,
-            // Calculate position in string where suffix should start
-            Instruction::LocalGet(0), // string length
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
-            Instruction::LocalGet(1), // suffix length
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
-            Instruction::I32Sub, // position = string_len - suffix_len
-            // Compare byte at calculated position
-            Instruction::LocalGet(0), // string data
-            Instruction::I32Const(16), // skip header
-            Instruction::I32Add,
-            Instruction::I32Add, // add position offset
-            Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
-            Instruction::LocalGet(1), // suffix data
-            Instruction::I32Const(16), // skip header
-            Instruction::I32Add,
-            Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
-            Instruction::I32Eq, // Compare bytes
+                // Calculate position in string where suffix should start
+                Instruction::LocalGet(0), // string length
+                Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+                Instruction::LocalGet(1), // suffix length
+                Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+                Instruction::I32Sub, // position = string_len - suffix_len
+                // Compare byte at calculated position
+                Instruction::LocalGet(0), // string data
+                Instruction::I32Const(16), // skip header
+                Instruction::I32Add,
+                Instruction::I32Add, // add position offset
+                Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
+                Instruction::LocalGet(1), // suffix data
+                Instruction::I32Const(16), // skip header
+                Instruction::I32Add,
+                Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }),
+                Instruction::I32Eq, // Compare bytes
             Instruction::End,
         ]
     }

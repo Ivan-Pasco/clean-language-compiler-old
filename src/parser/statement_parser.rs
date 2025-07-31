@@ -30,6 +30,7 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
         Rule::constant_apply_block => parse_constant_apply_block_statement(inner, ast_location),
         Rule::later_assignment => parse_later_assignment_statement(inner, ast_location),
         Rule::background_stmt => parse_background_statement(inner, ast_location),
+  
         Rule::expression => {
             let expr = parse_expression(inner)?;
             Ok(Statement::Expression {
@@ -473,4 +474,6 @@ fn parse_println_statement(pair: Pair<Rule>, ast_location: crate::ast::SourceLoc
         newline: true,
         location: Some(ast_location),
     })
-} 
+}
+
+ 

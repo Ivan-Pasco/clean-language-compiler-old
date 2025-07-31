@@ -576,18 +576,40 @@ impl CodeGenerator {
         }
         
         // If we're in a class context, add class fields as locals (indices param_count+N)
+        // Include fields from the entire inheritance hierarchy
         if let Some(class_name) = &self.current_class_context {
-            if let Some(class) = self.class_table.get(class_name).cloned() {
-                for field in &class.fields {
-                    let local_info = LocalVarInfo {
-                        index: self.current_function_param_count + self.current_function_locals.len() as u32,
-                        type_: WasmType::from(&field.type_).into(),
-                    };
-                    self.current_function_locals.push(local_info.clone());
-                    self.variable_map.insert(field.name.clone(), local_info);
-                    
-                    // Track field types
-                    self.variable_types.insert(field.name.clone(), field.type_.clone());
+            if let Some(_class) = self.class_table.get(class_name).cloned() {
+                // Build the inheritance hierarchy (current class + all parents)
+                let mut hierarchy = Vec::new();
+                let mut current_class_name = class_name.clone();
+                
+                while let Some(class_def) = self.class_table.get(&current_class_name) {
+                    hierarchy.push(current_class_name.clone());
+                    if let Some(ref base_class) = class_def.base_class {
+                        current_class_name = base_class.clone();
+                    } else {
+                        break;
+                    }
+                }
+                
+                // Add fields from all classes in the hierarchy (parents first)
+                for class_name_in_hierarchy in hierarchy.iter().rev() {
+                    if let Some(class_def) = self.class_table.get(class_name_in_hierarchy) {
+                        for field in &class_def.fields {
+                            // Only add if not already defined (avoid duplicates)
+                            if !self.variable_map.contains_key(&field.name) {
+                                let local_info = LocalVarInfo {
+                                    index: self.current_function_param_count + self.current_function_locals.len() as u32,
+                                    type_: WasmType::from(&field.type_).into(),
+                                };
+                                self.current_function_locals.push(local_info.clone());
+                                self.variable_map.insert(field.name.clone(), local_info);
+                                
+                                // Track field types
+                                self.variable_types.insert(field.name.clone(), field.type_.clone());
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -992,7 +1014,7 @@ impl CodeGenerator {
                     // Collect all visible variables for better suggestions
                     let variables: Vec<&str> = self.variable_map.keys().map(|s| s.as_str()).collect();
                     
-                    Err(CompilerError::function_not_found_error(
+                    Err(CompilerError::variable_not_found_error(
                         name,
                         &variables,
                         loc.unwrap_or_default()

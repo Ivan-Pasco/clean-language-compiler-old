@@ -1,0 +1,8 @@
+functions:
+	integer factorial(integer n)
+		if n <= 1
+			return 1
+		return n + 1
+	
+	integer divide(integer a, integer b)
+		return a / b
