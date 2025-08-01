@@ -4,6 +4,83 @@ use crate::error::CompilerError;
 use super::{get_location, convert_to_ast_location};
 use super::Rule;
 
+// Helper function to parse integer literals with different bases
+fn parse_integer_literal(pair: Pair<Rule>, location: &super::SourceLocation) -> Result<Expression, CompilerError> {
+    let num_str = pair.as_str();
+    let location_ast = convert_to_ast_location(location);
+    
+    let value = match pair.as_rule() {
+        Rule::hex_integer => {
+            // Remove "0x" or "0X" prefix and handle negative sign
+            let (is_negative, hex_part) = if num_str.starts_with('-') {
+                (true, &num_str[3..]) // Skip "-0x"
+            } else {
+                (false, &num_str[2..]) // Skip "0x"
+            };
+            
+            match i64::from_str_radix(hex_part, 16) {
+                Ok(val) => if is_negative { -val } else { val },
+                Err(_) => return Err(CompilerError::parse_error(
+                    format!("Invalid hexadecimal integer: {}", num_str),
+                    Some(location_ast),
+                    Some("Check that the hexadecimal digits are valid".to_string())
+                ))
+            }
+        },
+        Rule::binary_integer => {
+            // Remove "0b" or "0B" prefix and handle negative sign
+            let (is_negative, bin_part) = if num_str.starts_with('-') {
+                (true, &num_str[3..]) // Skip "-0b"
+            } else {
+                (false, &num_str[2..]) // Skip "0b"
+            };
+            
+            match i64::from_str_radix(bin_part, 2) {
+                Ok(val) => if is_negative { -val } else { val },
+                Err(_) => return Err(CompilerError::parse_error(
+                    format!("Invalid binary integer: {}", num_str),
+                    Some(location_ast),
+                    Some("Check that the binary digits are valid".to_string())
+                ))
+            }
+        },
+        Rule::octal_integer => {
+            // Remove "0o" or "0O" prefix and handle negative sign
+            let (is_negative, oct_part) = if num_str.starts_with('-') {
+                (true, &num_str[3..]) // Skip "-0o"
+            } else {
+                (false, &num_str[2..]) // Skip "0o"
+            };
+            
+            match i64::from_str_radix(oct_part, 8) {
+                Ok(val) => if is_negative { -val } else { val },
+                Err(_) => return Err(CompilerError::parse_error(
+                    format!("Invalid octal integer: {}", num_str),
+                    Some(location_ast),
+                    Some("Check that the octal digits are valid".to_string())
+                ))
+            }
+        },
+        Rule::decimal_integer => {
+            match num_str.parse::<i64>() {
+                Ok(val) => val,
+                Err(_) => return Err(CompilerError::parse_error(
+                    format!("Invalid decimal integer: {}", num_str),
+                    Some(location_ast),
+                    Some("Check that the integer is in a valid format".to_string())
+                ))
+            }
+        },
+        _ => return Err(CompilerError::parse_error(
+            format!("Unexpected integer type: {:?}", pair.as_rule()),
+            Some(location_ast),
+            Some("Expected a valid integer literal".to_string())
+        ))
+    };
+    
+    Ok(Expression::Literal(Value::Integer(value)))
+}
+
 // Helper function to convert location from parser format to AST format
 
 #[derive(Debug, Clone)]
@@ -329,16 +406,14 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::number => {
             parse_number_literal(inner)
         },
+        Rule::hex_integer | Rule::binary_integer | Rule::octal_integer | Rule::decimal_integer => {
+            // Handle specific integer types directly
+            parse_integer_literal(inner, &location)
+        },
         Rule::integer => {
-            let num_str = inner.as_str();
-            num_str.parse::<i64>()
-                .map(Value::Integer)
-                .map(Expression::Literal)
-                .map_err(|_| CompilerError::parse_error(
-                    format!("Invalid integer: {num_str}"),
-                    Some(convert_to_ast_location(&location)),
-                    Some("Check that the integer is in a valid format".to_string())
-                ))
+            // Handle legacy integer rule (fallback)
+            let integer_inner = inner.into_inner().next().unwrap();
+            parse_integer_literal(integer_inner, &location)
         },
         Rule::float => {
             let num_str = inner.as_str();

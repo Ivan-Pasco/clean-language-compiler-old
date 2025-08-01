@@ -1,299 +1,442 @@
 use crate::codegen::CodeGenerator;
 use crate::types::WasmType;
 use crate::error::CompilerError;
-use crate::ast::{ListBehavior};
+use crate::ast::ListBehavior;
 use wasm_encoder::{Instruction, MemArg, BlockType, ValType};
 use crate::stdlib::register_stdlib_function;
+use crate::codegen::LIST_TYPE_ID;
+use std::rc::Rc;
+use std::cell::RefCell;
+use crate::stdlib::memory::MemoryManager;
 
 /// List behavior implementation for Clean Language
 /// Handles different list behaviors: line (FIFO), pile (LIFO), unique (set)
+/// 
+/// List Header Layout (16 bytes):
+/// - Offset 0: Size (i32) - current number of elements
+/// - Offset 4: Capacity (i32) - allocated capacity
+/// - Offset 8: Type ID (i32) - LIST_TYPE_ID
+/// - Offset 12: Behavior (i32) - behavior flags
+/// Elements start at offset 16
 pub struct ListBehaviorManager {
-    pub behaviors: std::collections::HashMap<i32, ListBehavior>,
-    next_list_id: i32,
+    memory_manager: Rc<RefCell<MemoryManager>>,
 }
 
+// Behavior flag bits
+const BEHAVIOR_LINE: i32 = 0x01;     // FIFO queue behavior
+const BEHAVIOR_PILE: i32 = 0x02;     // LIFO stack behavior  
+const BEHAVIOR_UNIQUE: i32 = 0x04;   // Unique elements only
+
 impl ListBehaviorManager {
-    pub fn new() -> Self {
-        Self {
-            behaviors: std::collections::HashMap::new(),
-            next_list_id: 1,
-        }
-    }
-
-    /// Register a new list with default behavior
-    pub fn register_list(&mut self) -> i32 {
-        let list_id = self.next_list_id;
-        self.behaviors.insert(list_id, ListBehavior::Default);
-        self.next_list_id += 1;
-        list_id
-    }
-
-    /// Set behavior for a specific list
-    pub fn set_behavior(&mut self, list_id: i32, behavior: ListBehavior) {
-        self.behaviors.insert(list_id, behavior);
-    }
-
-    /// Get behavior for a specific list
-    pub fn get_behavior(&self, list_id: i32) -> ListBehavior {
-        self.behaviors.get(&list_id).copied().unwrap_or(ListBehavior::Default)
+    pub fn new(memory_manager: Rc<RefCell<MemoryManager>>) -> Self {
+        Self { memory_manager }
     }
 
     /// Register all list behavior functions as stdlib functions
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        self.register_behavior_operations(codegen)?;
-        self.register_property_operations(codegen)?;
-        Ok(())
-    }
-
-    fn register_behavior_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // List.add(list, value) - adds element according to behavior
+        // Property access: list.type = "behavior"
         register_stdlib_function(
             codegen,
-            "List.add",
-            &[WasmType::I32, WasmType::I32],
+            "list.setType",
+            &[WasmType::I32, WasmType::I32], // list_ptr, behavior_string_ptr
+            None,
+            self.generate_set_type()
+        )?;
+
+        // Property access: list.type
+        register_stdlib_function(
+            codegen,
+            "list.getType",
+            &[WasmType::I32], // list_ptr
+            Some(WasmType::I32), // string_ptr
+            self.generate_get_type()
+        )?;
+
+        // Behavior-aware operations
+        register_stdlib_function(
+            codegen,
+            "list.add",
+            &[WasmType::I32, WasmType::I32], // list_ptr, value
             None,
             self.generate_list_add()
         )?;
 
-        // List.remove(list) -> any - removes element according to behavior
         register_stdlib_function(
             codegen,
-            "List.remove",
-            &[WasmType::I32],
-            Some(WasmType::I32),
+            "list.remove",
+            &[WasmType::I32], // list_ptr
+            Some(WasmType::I32), // removed value
             self.generate_list_remove()
         )?;
 
-        // List.peek(list) -> any - views next element without removing
         register_stdlib_function(
             codegen,
-            "List.peek",
-            &[WasmType::I32],
-            Some(WasmType::I32),
+            "list.peek",
+            &[WasmType::I32], // list_ptr
+            Some(WasmType::I32), // next value without removal
             self.generate_list_peek()
         )?;
 
-        // List.setBehavior(list, behavior_string) - sets behavior for list
+        // Core list operations that respect behavior
         register_stdlib_function(
             codegen,
-            "List.setBehavior",
-            &[WasmType::I32, WasmType::I32],
-            None,
-            self.generate_set_behavior()
-        )?;
-
-        // List.getBehavior(list) -> string - gets current behavior
-        register_stdlib_function(
-            codegen,
-            "List.getBehavior",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_get_behavior()
-        )?;
-
-        Ok(())
-    }
-
-    fn register_property_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // List.contains(list, value) -> boolean - checks if value exists (for unique behavior)
-        register_stdlib_function(
-            codegen,
-            "List.contains",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
+            "list.contains",
+            &[WasmType::I32, WasmType::I32], // list_ptr, value
+            Some(WasmType::I32), // boolean
             self.generate_list_contains()
         )?;
 
-        // List.size(list) -> integer - gets list size
         register_stdlib_function(
             codegen,
-            "List.size",
-            &[WasmType::I32],
-            Some(WasmType::I32),
+            "list.size",
+            &[WasmType::I32], // list_ptr
+            Some(WasmType::I32), // size
             self.generate_list_size()
+        )?;
+
+        register_stdlib_function(
+            codegen,
+            "list.isEmpty",
+            &[WasmType::I32], // list_ptr
+            Some(WasmType::I32), // boolean
+            self.generate_list_is_empty()
+        )?;
+
+        register_stdlib_function(
+            codegen,
+            "list.isNotEmpty",
+            &[WasmType::I32], // list_ptr
+            Some(WasmType::I32), // boolean
+            self.generate_list_is_not_empty()
         )?;
 
         Ok(())
     }
 
-    /// Generate WebAssembly instructions for List.add operation
+    /// Generate WASM for setting list type property
+    fn generate_set_type(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: list_ptr (0), behavior_string_ptr (1)
+            // Parse behavior string and set flags
+            
+            // Load string length
+            Instruction::LocalGet(1), // behavior_string_ptr
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::LocalSet(2), // string_length
+            
+            // Initialize behavior flags to 0
+            Instruction::I32Const(0),
+            Instruction::LocalSet(3), // behavior_flags
+            
+            // Check for "line" in string
+            Instruction::LocalGet(1), // behavior_string_ptr
+            Instruction::Call(self.string_contains_line_index()), // Check if contains "line"
+            Instruction::If(BlockType::Empty),
+                Instruction::LocalGet(3),
+                Instruction::I32Const(BEHAVIOR_LINE),
+                Instruction::I32Or,
+                Instruction::LocalSet(3),
+            Instruction::End,
+            
+            // Check for "pile" in string
+            Instruction::LocalGet(1), // behavior_string_ptr
+            Instruction::Call(self.string_contains_pile_index()), // Check if contains "pile"
+            Instruction::If(BlockType::Empty),
+                Instruction::LocalGet(3),
+                Instruction::I32Const(BEHAVIOR_PILE),
+                Instruction::I32Or,
+                Instruction::LocalSet(3),
+            Instruction::End,
+            
+            // Check for "unique" in string
+            Instruction::LocalGet(1), // behavior_string_ptr
+            Instruction::Call(self.string_contains_unique_index()), // Check if contains "unique"
+            Instruction::If(BlockType::Empty),
+                Instruction::LocalGet(3),
+                Instruction::I32Const(BEHAVIOR_UNIQUE),
+                Instruction::I32Or,
+                Instruction::LocalSet(3),
+            Instruction::End,
+            
+            // Store behavior flags in list header at offset 12
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::LocalGet(3), // behavior_flags
+            Instruction::I32Store(MemArg { offset: 12, align: 2, memory_index: 0 }),
+        ]
+    }
+
+    /// Generate WASM for getting list type property
+    fn generate_get_type(&self) -> Vec<Instruction> {
+        vec![
+            // Parameter: list_ptr (0)
+            // Returns: string pointer describing behavior
+            
+            // Load behavior flags from list header
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Load(MemArg { offset: 12, align: 2, memory_index: 0 }),
+            Instruction::LocalSet(1), // behavior_flags
+            
+            // Build behavior string based on flags
+            // For now, return appropriate pre-allocated string
+            Instruction::LocalGet(1),
+            Instruction::Call(self.behavior_flags_to_string_index()),
+        ]
+    }
+
+    /// Generate WASM for behavior-aware add operation
     fn generate_list_add(&self) -> Vec<Instruction> {
         vec![
-            // Get list pointer
-            Instruction::LocalGet(0), // list_ptr
-            // Load current size
+            // Parameters: list_ptr (0), value (1)
+            
+            // Load behavior flags
             Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
-            // Calculate new item position (size * 4 + 8 for header)
-            Instruction::I32Const(4),
-            Instruction::I32Mul,
-            Instruction::I32Const(8),
-            Instruction::I32Add,
-            // Add to list_ptr to get storage location
+            Instruction::I32Load(MemArg { offset: 12, align: 2, memory_index: 0 }),
+            Instruction::LocalSet(2), // behavior_flags
+            
+            // Check for unique behavior
+            Instruction::LocalGet(2),
+            Instruction::I32Const(BEHAVIOR_UNIQUE),
+            Instruction::I32And,
+            Instruction::If(BlockType::Empty),
+                // Check if value already exists
+                Instruction::LocalGet(0),
+                Instruction::LocalGet(1),
+                Instruction::Call(self.list_contains_internal_index()),
+                Instruction::If(BlockType::Empty),
+                    // Value exists, return without adding
+                    Instruction::Return,
+                Instruction::End,
+            Instruction::End,
+            
+            // Add element based on behavior
+            // For line (FIFO) and default: add to end
+            // For pile (LIFO): also add to end (remove from end)
             Instruction::LocalGet(0),
-            Instruction::I32Add,
-            // Store the value
-            Instruction::LocalGet(1), // value
-            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
-            // Increment list size
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // current size
-            Instruction::I32Const(1),
-            Instruction::I32Add, // new size
-            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::LocalGet(1),
+            Instruction::Call(self.list_push_internal_index()),
         ]
     }
 
-    /// Generate WebAssembly instructions for List.remove operation
+    /// Generate WASM for behavior-aware remove operation
     fn generate_list_remove(&self) -> Vec<Instruction> {
         vec![
-            // Get list pointer
-            Instruction::LocalGet(0), // list_ptr
-            // Load current size
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            // Parameter: list_ptr (0)
+            // Returns: removed value (0 if empty)
+            
             // Check if list is empty
-            Instruction::I32Const(0),
-            Instruction::I32Eq,
-            Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(0), // Return 0 if empty
-            Instruction::Else,
-            // Get last element (LIFO behavior for remove)
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
-            Instruction::I32Const(1),
-            Instruction::I32Sub, // size - 1
-            Instruction::I32Const(4),
-            Instruction::I32Mul, // (size-1) * 4
-            Instruction::I32Const(8),
-            Instruction::I32Add, // + header offset
-            Instruction::I32Add, // list_ptr + offset
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // load value
-            // Decrement list size
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // current size
-            Instruction::I32Const(1),
-            Instruction::I32Sub, // new size
-            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
-            Instruction::End,
-        ]
-    }
-
-    /// Generate WebAssembly instructions for List.peek operation
-    fn generate_list_peek(&self) -> Vec<Instruction> {
-        vec![
-            // Get list pointer
-            Instruction::LocalGet(0), // list_ptr
-            // Load current size
+            Instruction::LocalGet(0),
             Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
-            // Check if list is empty
-            Instruction::I32Const(0),
-            Instruction::I32Eq,
+            Instruction::I32Eqz,
             Instruction::If(BlockType::Result(ValType::I32)),
                 Instruction::I32Const(0), // Return 0 if empty
             Instruction::Else,
-                // Get last element without removing (LIFO peek)
-                Instruction::LocalGet(0), // list_ptr
-                Instruction::LocalGet(0), // list_ptr
-                Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
-                Instruction::I32Const(1),
-                Instruction::I32Sub, // size - 1
-                Instruction::I32Const(4),
-                Instruction::I32Mul, // (size-1) * 4
-                Instruction::I32Const(8),
-                Instruction::I32Add, // + header offset
-                Instruction::I32Add, // list_ptr + offset
-                Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // load value
+                // Load behavior flags
+                Instruction::LocalGet(0),
+                Instruction::I32Load(MemArg { offset: 12, align: 2, memory_index: 0 }),
+                Instruction::LocalSet(1), // behavior_flags
+                
+                // Check for line behavior (FIFO - remove from front)
+                Instruction::LocalGet(1),
+                Instruction::I32Const(BEHAVIOR_LINE),
+                Instruction::I32And,
+                Instruction::If(BlockType::Result(ValType::I32)),
+                    Instruction::LocalGet(0),
+                    Instruction::Call(self.list_shift_internal_index()),
+                Instruction::Else,
+                    // Default and pile behavior - remove from end
+                    Instruction::LocalGet(0),
+                    Instruction::Call(self.list_pop_internal_index()),
+                Instruction::End,
             Instruction::End,
         ]
     }
 
-    /// Generate WebAssembly instructions for List.contains operation
+    /// Generate WASM for behavior-aware peek operation
+    fn generate_list_peek(&self) -> Vec<Instruction> {
+        vec![
+            // Parameter: list_ptr (0)
+            // Returns: next value without removal (0 if empty)
+            
+            // Check if list is empty
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Result(ValType::I32)),
+                Instruction::I32Const(0), // Return 0 if empty
+            Instruction::Else,
+                // Load behavior flags
+                Instruction::LocalGet(0),
+                Instruction::I32Load(MemArg { offset: 12, align: 2, memory_index: 0 }),
+                Instruction::LocalSet(1), // behavior_flags
+                
+                // Check for line behavior (FIFO - peek at front)
+                Instruction::LocalGet(1),
+                Instruction::I32Const(BEHAVIOR_LINE),
+                Instruction::I32And,
+                Instruction::If(BlockType::Result(ValType::I32)),
+                    // Get first element
+                    Instruction::LocalGet(0),
+                    Instruction::I32Const(16), // Header size
+                    Instruction::I32Add,
+                    Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+                Instruction::Else,
+                    // Default and pile behavior - peek at end
+                    Instruction::LocalGet(0),
+                    Instruction::LocalGet(0),
+                    Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
+                    Instruction::I32Const(1),
+                    Instruction::I32Sub,
+                    Instruction::I32Const(8), // Element size
+                    Instruction::I32Mul,
+                    Instruction::I32Const(16), // Header size
+                    Instruction::I32Add,
+                    Instruction::I32Add,
+                    Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+                Instruction::End,
+            Instruction::End,
+        ]
+    }
+
+    /// Generate WASM for list.contains operation
     fn generate_list_contains(&self) -> Vec<Instruction> {
         vec![
-            // Get list pointer and value to search for
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // size
-            // If empty list, return false
+            // Parameters: list_ptr (0), value (1)
+            // Returns: 1 if found, 0 if not
+            
+            // Get size
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::LocalSet(2), // size
+            
+            // Initialize counter
             Instruction::I32Const(0),
-            Instruction::I32Eq,
-            Instruction::If(BlockType::Result(ValType::I32)),
-                Instruction::I32Const(0), // Return false if empty
-            Instruction::Else,
-                // Simple linear search - check first element
-                Instruction::LocalGet(0), // list_ptr
-                Instruction::I32Const(8), // skip header
-                Instruction::I32Add,
-                Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // first element
-                Instruction::LocalGet(1), // search value
-                Instruction::I32Eq, // compare
+            Instruction::LocalSet(3), // i = 0
+            
+            // Loop through elements
+            Instruction::Block(BlockType::Result(ValType::I32)),
+                Instruction::Loop(BlockType::Empty),
+                    // Check if i >= size
+                    Instruction::LocalGet(3),
+                    Instruction::LocalGet(2),
+                    Instruction::I32GeU,
+                    Instruction::If(BlockType::Empty),
+                        Instruction::I32Const(0), // Not found
+                        Instruction::Br(2),
+                    Instruction::End,
+                    
+                    // Load element at index i
+                    Instruction::LocalGet(0),
+                    Instruction::I32Const(16),
+                    Instruction::I32Add,
+                    Instruction::LocalGet(3),
+                    Instruction::I32Const(8),
+                    Instruction::I32Mul,
+                    Instruction::I32Add,
+                    Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+                    
+                    // Compare with value
+                    Instruction::LocalGet(1),
+                    Instruction::I32Eq,
+                    Instruction::If(BlockType::Empty),
+                        Instruction::I32Const(1), // Found
+                        Instruction::Br(2),
+                    Instruction::End,
+                    
+                    // Increment counter
+                    Instruction::LocalGet(3),
+                    Instruction::I32Const(1),
+                    Instruction::I32Add,
+                    Instruction::LocalSet(3),
+                    
+                    Instruction::Br(0), // Continue loop
+                Instruction::End,
             Instruction::End,
         ]
     }
 
-    /// Generate WebAssembly instructions for List.size operation
+    /// Generate WASM for list.size operation
     fn generate_list_size(&self) -> Vec<Instruction> {
         vec![
-            // Get list pointer (arg 0)
             Instruction::LocalGet(0),
-            // Load size field
-            Instruction::I32Load(MemArg {
-                offset: 0, // size field
-                align: 2,
-                memory_index: 0,
-            }),
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
         ]
     }
 
-    /// Generate WebAssembly instructions for List.setBehavior operation
-    fn generate_set_behavior(&self) -> Vec<Instruction> {
+    /// Generate WASM for list.isEmpty operation
+    fn generate_list_is_empty(&self) -> Vec<Instruction> {
         vec![
-            // Store behavior ID in list header at offset 4
-            Instruction::LocalGet(0), // list_ptr
-            // For now, store behavior string pointer directly
-            // Full implementation would parse string and store behavior enum
-            Instruction::LocalGet(1), // behavior_string
-            Instruction::I32Store(MemArg { offset: 4, align: 2, memory_index: 0 }),
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::I32Eqz,
         ]
     }
 
-    /// Generate WebAssembly instructions for List.getBehavior operation
-    fn generate_get_behavior(&self) -> Vec<Instruction> {
+    /// Generate WASM for list.isNotEmpty operation
+    fn generate_list_is_not_empty(&self) -> Vec<Instruction> {
         vec![
-            // Load behavior from list header at offset 4
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Load(MemArg { offset: 4, align: 2, memory_index: 0 }), // behavior pointer
-            // Return the behavior string pointer (or default if 0)
-            Instruction::LocalTee(1), // store in local 1
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
             Instruction::I32Const(0),
-            Instruction::I32Eq,
-            Instruction::If(BlockType::Result(ValType::I32)),
-                // Return pointer to "default" string if no behavior set
-                Instruction::I32Const(1000), // hardcoded "default" string location
-            Instruction::Else,
-                Instruction::LocalGet(1), // return stored behavior
-            Instruction::End,
+            Instruction::I32Ne,
         ]
+    }
+
+    // Helper function indices (would be resolved from function table)
+    fn string_contains_line_index(&self) -> u32 { 300 }
+    fn string_contains_pile_index(&self) -> u32 { 301 }
+    fn string_contains_unique_index(&self) -> u32 { 302 }
+    fn behavior_flags_to_string_index(&self) -> u32 { 303 }
+    fn list_contains_internal_index(&self) -> u32 { 304 }
+    fn list_push_internal_index(&self) -> u32 { 305 }
+    fn list_shift_internal_index(&self) -> u32 { 306 }
+    fn list_pop_internal_index(&self) -> u32 { 307 }
+}
+
+/// Convert behavior enum to flags
+pub fn behavior_to_flags(behavior: ListBehavior) -> i32 {
+    match behavior {
+        ListBehavior::Default => 0,
+        ListBehavior::Line => BEHAVIOR_LINE,
+        ListBehavior::Pile => BEHAVIOR_PILE,
+        ListBehavior::Unique => BEHAVIOR_UNIQUE,
+        ListBehavior::LinePile => BEHAVIOR_LINE | BEHAVIOR_PILE,
+        ListBehavior::LineUnique => BEHAVIOR_LINE | BEHAVIOR_UNIQUE,
+        ListBehavior::PileUnique => BEHAVIOR_PILE | BEHAVIOR_UNIQUE,
+        ListBehavior::LineUniquePile => BEHAVIOR_LINE | BEHAVIOR_PILE | BEHAVIOR_UNIQUE,
     }
 }
 
-/// Helper function to parse behavior string
+/// Convert flags to behavior enum
+pub fn flags_to_behavior(flags: i32) -> ListBehavior {
+    match flags {
+        0 => ListBehavior::Default,
+        f if f == BEHAVIOR_LINE => ListBehavior::Line,
+        f if f == BEHAVIOR_PILE => ListBehavior::Pile,
+        f if f == BEHAVIOR_UNIQUE => ListBehavior::Unique,
+        f if f == (BEHAVIOR_LINE | BEHAVIOR_PILE) => ListBehavior::LinePile,
+        f if f == (BEHAVIOR_LINE | BEHAVIOR_UNIQUE) => ListBehavior::LineUnique,
+        f if f == (BEHAVIOR_PILE | BEHAVIOR_UNIQUE) => ListBehavior::PileUnique,
+        f if f == (BEHAVIOR_LINE | BEHAVIOR_PILE | BEHAVIOR_UNIQUE) => ListBehavior::LineUniquePile,
+        _ => ListBehavior::Default,
+    }
+}
+
+/// Parse behavior string to enum
 pub fn parse_behavior_string(behavior_str: &str) -> ListBehavior {
     match behavior_str {
+        "default" => ListBehavior::Default,
         "line" => ListBehavior::Line,
         "pile" => ListBehavior::Pile,
         "unique" => ListBehavior::Unique,
         "line-pile" | "linepile" => ListBehavior::LinePile,
         "line-unique" | "lineunique" => ListBehavior::LineUnique,
         "pile-unique" | "pileunique" => ListBehavior::PileUnique,
-        "line-unique-pile" | "lineuniuepile" => ListBehavior::LineUniquePile,
+        "line-unique-pile" | "lineuniquepile" => ListBehavior::LineUniquePile,
         _ => ListBehavior::Default,
     }
 }
 
-/// Helper function to convert behavior to string
+/// Convert behavior to string
 pub fn behavior_to_string(behavior: ListBehavior) -> &'static str {
     match behavior {
         ListBehavior::Default => "default",
@@ -304,5 +447,46 @@ pub fn behavior_to_string(behavior: ListBehavior) -> &'static str {
         ListBehavior::LineUnique => "line-unique",
         ListBehavior::PileUnique => "pile-unique",
         ListBehavior::LineUniquePile => "line-unique-pile",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_behavior_conversion() {
+        // Test behavior to flags
+        assert_eq!(behavior_to_flags(ListBehavior::Default), 0);
+        assert_eq!(behavior_to_flags(ListBehavior::Line), BEHAVIOR_LINE);
+        assert_eq!(behavior_to_flags(ListBehavior::Pile), BEHAVIOR_PILE);
+        assert_eq!(behavior_to_flags(ListBehavior::Unique), BEHAVIOR_UNIQUE);
+        assert_eq!(behavior_to_flags(ListBehavior::LineUnique), BEHAVIOR_LINE | BEHAVIOR_UNIQUE);
+        
+        // Test flags to behavior
+        assert_eq!(flags_to_behavior(0), ListBehavior::Default);
+        assert_eq!(flags_to_behavior(BEHAVIOR_LINE), ListBehavior::Line);
+        assert_eq!(flags_to_behavior(BEHAVIOR_PILE), ListBehavior::Pile);
+        assert_eq!(flags_to_behavior(BEHAVIOR_UNIQUE), ListBehavior::Unique);
+        assert_eq!(flags_to_behavior(BEHAVIOR_LINE | BEHAVIOR_UNIQUE), ListBehavior::LineUnique);
+    }
+
+    #[test]
+    fn test_behavior_string_parsing() {
+        assert_eq!(parse_behavior_string("line"), ListBehavior::Line);
+        assert_eq!(parse_behavior_string("pile"), ListBehavior::Pile);
+        assert_eq!(parse_behavior_string("unique"), ListBehavior::Unique);
+        assert_eq!(parse_behavior_string("line-unique"), ListBehavior::LineUnique);
+        assert_eq!(parse_behavior_string("lineunique"), ListBehavior::LineUnique);
+        assert_eq!(parse_behavior_string("invalid"), ListBehavior::Default);
+    }
+
+    #[test]
+    fn test_behavior_to_string() {
+        assert_eq!(behavior_to_string(ListBehavior::Default), "default");
+        assert_eq!(behavior_to_string(ListBehavior::Line), "line");
+        assert_eq!(behavior_to_string(ListBehavior::Pile), "pile");
+        assert_eq!(behavior_to_string(ListBehavior::Unique), "unique");
+        assert_eq!(behavior_to_string(ListBehavior::LineUnique), "line-unique");
     }
 }

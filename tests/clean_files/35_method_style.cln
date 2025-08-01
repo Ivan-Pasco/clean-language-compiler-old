@@ -1,0 +1,79 @@
+// Test method-style syntax for built-in functions
+
+functions:
+
+	void testUtilityMethods()
+
+		print("=== Testing Utility Methods ===")
+		string text = "Hello World"
+		integer textLength = text.length()
+		print("Text length: " + textLength.toString())
+		
+		boolean defined = text.isDefined()
+		print("Text is defined: " + defined.toString())
+		
+		boolean empty = text.isEmpty()
+		print("Text is empty: " + empty.toString())
+		
+		string emptyText = ""
+		boolean emptyCheck = emptyText.isEmpty()
+		print("Empty text is empty: " + emptyCheck.toString())
+
+	void testValidationMethods()
+
+		print("=== Testing Validation Methods ===")
+		integer value = 42
+		boolean condition = true
+		
+		// This would assert that condition is true
+		value.mustBeTrue(condition)
+		print("Validation passed for true condition")
+		
+		integer firstNum = 10
+		integer secondNum = 10
+		firstNum.mustBeEqual(secondNum)
+		print("Validation passed for equal values")
+
+	void testConversionMethods()
+
+		print("=== Testing Conversion Methods ===")
+		integer num = 123
+		string numStr = num.toString()
+		print("Integer to string: " + numStr)
+		
+		string numberStr = "456"
+		integer convertedNum = numberStr.toInteger()
+		print("String to integer: " + convertedNum.toString())
+		
+		integer boolValue = 1
+		boolean converted = boolValue.toBoolean()
+		print("Integer to boolean: " + converted.toString())
+
+	void testBoundaryMethods()
+
+		print("=== Testing Boundary Methods ===")
+		integer value = 15
+		integer clamped = value.keepBetween(5, 10)
+		print("Clamped 15 to [5,10]: " + clamped.toString())
+		
+		integer lowValue = 2
+		integer clampedLow = lowValue.keepBetween(5, 10)
+		print("Clamped 2 to [5,10]: " + clampedLow.toString())
+		
+		number floatValue = 7.5
+		number clampedFloat = floatValue.keepBetween(1.0, 5.0)
+		print("Clamped 7.5 to [1.0,5.0]: " + clampedFloat.toString())
+
+start()
+
+	print("Clean Language Method-Style Syntax Test")
+	print("======================================")
+	testUtilityMethods()
+	print("")
+	testValidationMethods()
+	print("")
+	testConversionMethods()
+	print("")
+	testBoundaryMethods()
+	print("")
+	print("All method-style tests completed!")

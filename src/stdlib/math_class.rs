@@ -41,56 +41,40 @@ impl MathClass {
     
     fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // Math.add(number a, number b) -> number
-        register_stdlib_function(
-            codegen,
-            "math.add",
-            &[WasmType::F64, WasmType::F64],
-            Some(WasmType::F64),
-            vec![
-                Instruction::LocalGet(0),
-                Instruction::LocalGet(1),
-                Instruction::F64Add,
-            ]
-        )?;
+        let add_impl = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::F64Add,
+        ];
+        register_stdlib_function(codegen, "math.add", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), add_impl.clone())?;
+        register_stdlib_function(codegen, "Math.add", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), add_impl)?;
         
         // Math.subtract(number a, number b) -> number
-        register_stdlib_function(
-            codegen,
-            "math.subtract",
-            &[WasmType::F64, WasmType::F64],
-            Some(WasmType::F64),
-            vec![
-                Instruction::LocalGet(0),
-                Instruction::LocalGet(1),
-                Instruction::F64Sub,
-            ]
-        )?;
+        let subtract_impl = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::F64Sub,
+        ];
+        register_stdlib_function(codegen, "math.subtract", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), subtract_impl.clone())?;
+        register_stdlib_function(codegen, "Math.subtract", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), subtract_impl)?;
         
         // Math.multiply(number a, number b) -> number
-        register_stdlib_function(
-            codegen,
-            "math.multiply",
-            &[WasmType::F64, WasmType::F64],
-            Some(WasmType::F64),
-            vec![
-                Instruction::LocalGet(0),
-                Instruction::LocalGet(1),
-                Instruction::F64Mul,
-            ]
-        )?;
+        let multiply_impl = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::F64Mul,
+        ];
+        register_stdlib_function(codegen, "math.multiply", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), multiply_impl.clone())?;
+        register_stdlib_function(codegen, "Math.multiply", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), multiply_impl)?;
         
         // Math.divide(number a, number b) -> number
-        register_stdlib_function(
-            codegen,
-            "math.divide",
-            &[WasmType::F64, WasmType::F64],
-            Some(WasmType::F64),
-            vec![
-                Instruction::LocalGet(0),
-                Instruction::LocalGet(1),
-                Instruction::F64Div,
-            ]
-        )?;
+        let divide_impl = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::F64Div,
+        ];
+        register_stdlib_function(codegen, "math.divide", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), divide_impl.clone())?;
+        register_stdlib_function(codegen, "Math.divide", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), divide_impl)?;
         
         Ok(())
     }
@@ -366,38 +350,20 @@ impl MathClass {
     }
     
     fn register_constants(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Math.pi() -> number
-        register_stdlib_function(
-            codegen,
-            "math.pi",
-            &[],
-            Some(WasmType::F64),
-            vec![
-                Instruction::F64Const(std::f64::consts::PI),
-            ]
-        )?;
+        // Math.pi() -> number - register both lowercase and uppercase variants
+        let pi_impl = vec![Instruction::F64Const(std::f64::consts::PI)];
+        register_stdlib_function(codegen, "math.pi", &[], Some(WasmType::F64), pi_impl.clone())?;
+        register_stdlib_function(codegen, "Math.pi", &[], Some(WasmType::F64), pi_impl)?;
         
-        // Math.e() -> number
-        register_stdlib_function(
-            codegen,
-            "math.e",
-            &[],
-            Some(WasmType::F64),
-            vec![
-                Instruction::F64Const(std::f64::consts::E),
-            ]
-        )?;
+        // Math.e() -> number - register both lowercase and uppercase variants
+        let e_impl = vec![Instruction::F64Const(std::f64::consts::E)];
+        register_stdlib_function(codegen, "math.e", &[], Some(WasmType::F64), e_impl.clone())?;
+        register_stdlib_function(codegen, "Math.e", &[], Some(WasmType::F64), e_impl)?;
         
-        // Math.tau() -> number
-        register_stdlib_function(
-            codegen,
-            "math.tau",
-            &[],
-            Some(WasmType::F64),
-            vec![
-                Instruction::F64Const(std::f64::consts::TAU),
-            ]
-        )?;
+        // Math.tau() -> number - register both lowercase and uppercase variants
+        let tau_impl = vec![Instruction::F64Const(std::f64::consts::TAU)];
+        register_stdlib_function(codegen, "math.tau", &[], Some(WasmType::F64), tau_impl.clone())?;
+        register_stdlib_function(codegen, "Math.tau", &[], Some(WasmType::F64), tau_impl)?;
         
         Ok(())
     }

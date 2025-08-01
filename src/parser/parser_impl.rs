@@ -5,6 +5,7 @@ use super::{CleanParser, convert_to_ast_location};
 use super::statement_parser::parse_statement;
 use super::type_parser::parse_type;
 use super::expression_parser::parse_expression;
+use super::class_parser::parse_class;
 use super::Rule;
 
 /// Parse context to track file information and improve error reporting
@@ -168,14 +169,58 @@ impl ErrorRecoveringParser {
 
     /// Split source into segments that can be parsed independently
     fn split_into_recoverable_segments(&self, source: &str) -> Vec<String> {
+        // Check if this is a functions: block program - if so, don't split it
+        if source.contains("functions:") {
+            // Return the entire source as one segment for functions: block handling
+            return vec![source.to_string()];
+        }
+        
         let lines: Vec<&str> = source.lines().collect();
         let mut segments = Vec::new();
         let mut current_segment = String::new();
         let mut in_function = false;
+        let mut in_class = false;
+        let mut class_indent_level = 0;
+        
         for line in lines {
             let trimmed = line.trim();
+            let line_indent = line.len() - line.trim_start().len();
             
-            // Detect function start
+            // Detect class start
+            if trimmed.starts_with("class ") {
+                if !current_segment.trim().is_empty() {
+                    segments.push(current_segment.clone());
+                    current_segment.clear();
+                }
+                in_class = true;
+                class_indent_level = line_indent;
+                current_segment.push_str(line);
+                current_segment.push('\n');
+                continue;
+            }
+            
+            // If we're in a class, don't split until we exit the class
+            if in_class {
+                current_segment.push_str(line);
+                current_segment.push('\n');
+                
+                // Check if we've exited the class (non-empty line at class level or less indentation)
+                if !trimmed.is_empty() && !trimmed.starts_with("//") && line_indent <= class_indent_level && !trimmed.starts_with("class ") {
+                    // We've exited the class, finalize the class segment
+                    segments.push(current_segment.clone());
+                    current_segment.clear();
+                    in_class = false;
+                    
+                    // Start new segment with current line if it's not empty
+                    if !trimmed.is_empty() {
+                        current_segment.push_str(line);
+                        current_segment.push('\n');
+                    }
+                }
+                continue;
+            }
+            
+            // Detect standalone function start (not in class)
             if trimmed.starts_with("function ") {
                 if !current_segment.trim().is_empty() {
                     segments.push(current_segment.clone());
@@ -231,6 +276,9 @@ impl ErrorRecoveringParser {
                     self.parse_function_segment(trimmed_segment)
                 } else if trimmed_segment.starts_with("class ") {
                     self.parse_class_segment(trimmed_segment)
+                } else if trimmed_segment.contains("functions:") {
+                    // Handle functions: blocks using preprocessor
+                    self.parse_functions_block_segment(trimmed_segment)
                 } else {
                     Err(crate::error::ErrorUtils::from_pest_error(pest_error, segment, &self.file_path))
                 }
@@ -264,11 +312,94 @@ impl ErrorRecoveringParser {
         ))
     }
 
+    /// Parse a functions: block segment using preprocessor
+    fn parse_functions_block_segment(&mut self, segment: &str) -> Result<Program, CompilerError> {
+        // Extract the functions block content, including start() if present
+        let lines: Vec<&str> = segment.lines().collect();
+        let mut functions_block_content = String::new();
+        let mut start_function_lines = Vec::new();
+        let mut in_functions_block = false;
+        let mut in_start_function = false;
+        let mut current_indent = 0;
+        
+        for line in &lines {
+            let trimmed = line.trim();
+            let line_indent = line.len() - line.trim_start().len();
+            
+            if trimmed == "functions:" {
+                in_functions_block = true;
+                functions_block_content.push_str(line);
+                functions_block_content.push('\n');
+            } else if in_functions_block {
+                // Check if we've exited the functions block
+                if !trimmed.is_empty() && !trimmed.starts_with("//") && line_indent == 0 {
+                    // We've exited the functions block
+                    in_functions_block = false;
+                    // Check if this is a start function
+                    if trimmed.starts_with("start()") {
+                        in_start_function = true;
+                        current_indent = line_indent;
+                        start_function_lines.push(line.to_string());
+                    }
+                } else {
+                    functions_block_content.push_str(line);
+                    functions_block_content.push('\n');
+                }
+            } else if in_start_function {
+                // Check if we're still in the start function
+                if trimmed.is_empty() || trimmed.starts_with("//") || line_indent > current_indent {
+                    start_function_lines.push(line.to_string());
+                } else {
+                    // We've exited the start function
+                    in_start_function = false;
+                }
+            } else if trimmed.starts_with("start()") {
+                in_start_function = true;
+                current_indent = line_indent;
+                start_function_lines.push(line.to_string());
+            }
+        }
+        
+        // Use preprocessor to parse the functions block
+        let preprocessor = super::preprocessor::FunctionPreprocessor::new(&functions_block_content);
+        match preprocessor.process_functions_block(&functions_block_content) {
+            Ok(functions) => {
+                
+                // Parse start function if present
+                let start_function = if !start_function_lines.is_empty() {
+                    let start_source = start_function_lines.join("\n");
+                    match CleanParser::parse(Rule::start_function, &start_source) {
+                        Ok(pairs) => {
+                            Some(parse_start_function(pairs.into_iter().next().unwrap())?)
+                        }
+                        Err(_) => {
+                            println!("DEBUG: Failed to parse start function, continuing without it");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                
+                Ok(Program {
+                    imports: Vec::new(),
+                    functions,
+                    classes: Vec::new(),
+                    start_function,
+                    tests: Vec::new(),
+                })
+            }
+            Err(e) => {
+                Err(e)
+            }
+        }
+    }
+
     /// Parse a class segment with recovery
     fn parse_class_segment(&mut self, segment: &str) -> Result<Program, CompilerError> {
         match CleanParser::parse(Rule::class_decl, segment) {
             Ok(pairs) => {
-                let class = parse_class_decl(pairs.into_iter().next().unwrap())?;
+                let class = parse_class(pairs.into_iter().next().unwrap())?;
                 Ok(Program {
                     imports: Vec::new(),
                     functions: Vec::new(),
@@ -356,19 +487,41 @@ pub fn parse(source: &str) -> Result<Program, CompilerError> {
 pub fn parse_with_file(source: &str, file_path: &str) -> Result<Program, CompilerError> {
     let trimmed_source = source.trim();
     
+    // Check if this is a functions: block program - handle it specially
+    if source.contains("functions:") {
+        match parse_with_preprocessing(source, file_path) {
+            Ok(program) => {
+                return Ok(program);
+            }
+            Err(_e) => {
+                // Continue to traditional parsing as fallback
+            }
+        }
+    }
+    
     // Try traditional parsing first
     match CleanParser::parse(Rule::program, trimmed_source) {
         Ok(pairs) => parse_program_ast(pairs),
         Err(pest_error) => {
-            // If traditional parsing fails and the error mentions function-related issues,
-            // try preprocessing approach
+            // If traditional parsing fails, use recovery parsing instead of preprocessing
             let error_msg = pest_error.to_string();
-            if error_msg.contains("size_specifier") || error_msg.contains("matrix_type") || 
-               error_msg.contains("list_type") || source.contains("functions:") {
-                println!("DEBUG: Traditional parsing failed, trying preprocessor approach");
-                parse_with_preprocessing(source, file_path)
-            } else {
-                Err(ErrorUtils::from_pest_error(pest_error, source, file_path))
+            println!("DEBUG: Traditional parsing failed ({}), trying recovery parsing", error_msg);
+            
+            // Use recovery parsing which handles both classes and functions correctly
+            match super::CleanParser::parse_program_with_recovery(source, file_path) {
+                Ok(program) => {
+                    println!("DEBUG: Recovery parsing succeeded!");
+                    Ok(program)
+                },
+                Err(errors) => {
+                    println!("DEBUG: Recovery parsing also failed with {} errors", errors.len());
+                    // Return the first error from recovery parsing, or the original error if recovery had no errors
+                    if let Some(first_error) = errors.first() {
+                        Err(first_error.clone())
+                    } else {
+                        Err(ErrorUtils::from_pest_error(pest_error, source, file_path))
+                    }
+                }
             }
         }
     }
@@ -400,7 +553,6 @@ fn parse_with_preprocessing(source: &str, _file_path: &str) -> Result<Program, C
         let preprocessor = super::preprocessor::FunctionPreprocessor::new(&functions_block_content);
         match preprocessor.process_functions_block(&functions_block_content) {
             Ok(functions) => {
-                println!("DEBUG: Preprocessor successfully parsed {} functions", functions.len());
                 Ok(Program {
                     imports: Vec::new(),
                     functions,
@@ -410,12 +562,24 @@ fn parse_with_preprocessing(source: &str, _file_path: &str) -> Result<Program, C
                 })
             }
             Err(e) => {
-                println!("DEBUG: Preprocessor also failed: {}", e);
-                Err(CompilerError::parse_error(
-                    format!("Both traditional parsing and preprocessing failed: {}", e),
-                    None,
-                    Some("Check function syntax and indentation".to_string())
-                ))
+                println!("DEBUG: Preprocessor failed: {}, falling back to traditional parsing of full source", e);
+                // Fall back to traditional parsing of the FULL source, not just functions block
+                match CleanParser::parse(Rule::program, source) {
+                    Ok(pairs) => {
+                        println!("DEBUG: Traditional parsing succeeded after preprocessor failure");
+                        parse_program_ast(pairs)
+                    }
+                    Err(traditional_error) => {
+                        println!("DEBUG: Both preprocessing and traditional parsing failed");
+                        println!("DEBUG: Preprocessor error: {}", e);
+                        println!("DEBUG: Traditional error: {}", traditional_error);
+                        Err(CompilerError::parse_error(
+                            format!("Both traditional parsing and preprocessing failed: {}", e),
+                            None,
+                            Some("Check function syntax and indentation".to_string())
+                        ))
+                    }
+                }
             }
         }
     } else {
@@ -441,6 +605,7 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
                 match inner.as_rule() {
                     Rule::program_item => {
                         for program_item_inner in inner.into_inner() {
+                            println!("DEBUG: Parsing program item: {:?}", program_item_inner.as_rule());
                             match program_item_inner.as_rule() {
                                 Rule::import_stmt => {
                                     if let Statement::Import { imports: import_items, location: _ } = parse_import_statement(program_item_inner)? {
@@ -448,6 +613,7 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
                                     }
                                 },
                                 Rule::functions_block => {
+                                    println!("DEBUG: Found standalone functions_block rule (not part of class)");
                                     let block_functions = parse_functions_block(program_item_inner)?;
                                     functions.extend(block_functions);
                                 },
@@ -461,7 +627,9 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
                                     start_function = Some(func);
                                 },
                                 Rule::class_decl => {
-                                    let class = parse_class_decl(program_item_inner)?;
+                                    println!("DEBUG: Found class_decl rule, calling parse_class");
+                                    let class = parse_class(program_item_inner)?;
+                                    println!("DEBUG: parse_class returned class: {}", class.name);
                                     classes.push(class);
                                 },
                                 Rule::tests_block => {
@@ -513,6 +681,10 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
         });
     }
 
+    println!("DEBUG: Building program with {} functions, {} classes", functions.len(), classes.len());
+    for (i, class) in classes.iter().enumerate() {
+        println!("DEBUG: Class {}: {} with {} methods", i, class.name, class.methods.len());
+    }
     let program = Program {
         imports,
         functions,
@@ -611,15 +783,35 @@ pub fn get_location(pair: &Pair<Rule>) -> super::SourceLocation {
 }
 
 pub fn parse_functions_block(functions_block: Pair<Rule>) -> Result<Vec<Function>, CompilerError> {
+    parse_functions_block_with_context(functions_block, None)
+}
+
+pub fn parse_functions_block_with_context(
+    functions_block: Pair<Rule>, 
+    class_context: Option<super::preprocessor::ClassContext>
+) -> Result<Vec<Function>, CompilerError> {
     // Extract source text for preprocessing
     let source_text = functions_block.as_str();
     
+    println!("DEBUG: parse_functions_block_with_context called with class_context: {:?}", 
+        class_context.as_ref().map(|c| &c.class_name));
+    
     // Try preprocessing approach first for multi-function blocks
-    let preprocessor = super::preprocessor::FunctionPreprocessor::new(source_text);
+    let preprocessor = if let Some(context) = class_context {
+        println!("DEBUG: Creating preprocessor with class context: {}", context.class_name);
+        super::preprocessor::FunctionPreprocessor::with_class_context(source_text, context)
+    } else {
+        println!("DEBUG: Creating preprocessor without class context");
+        super::preprocessor::FunctionPreprocessor::new(source_text)
+    };
+    
     match preprocessor.process_functions_block(source_text) {
         Ok(functions) => {
             if !functions.is_empty() {
                 println!("DEBUG: Preprocessor succeeded, found {} functions", functions.len());
+                for (i, func) in functions.iter().enumerate() {
+                    println!("DEBUG: Function {}: {} - description: {:?}", i, func.name, func.description);
+                }
                 return Ok(functions);
             }
         }
@@ -633,6 +825,7 @@ pub fn parse_functions_block(functions_block: Pair<Rule>) -> Result<Vec<Function
 }
 
 fn parse_functions_block_traditional(functions_block: Pair<Rule>) -> Result<Vec<Function>, CompilerError> {
+    println!("DEBUG: Using traditional functions block parsing (no class context)");
     let mut functions = Vec::new();
     
     for item in functions_block.into_inner() {
@@ -737,7 +930,7 @@ pub fn parse_test_case(test_pair: Pair<Rule>) -> Result<TestCase, CompilerError>
     ))
 }
 
-pub fn parse_class_decl(class_pair: Pair<Rule>) -> Result<Class, CompilerError> {
+pub fn parse_class_decl_OLD_UNUSED(class_pair: Pair<Rule>) -> Result<Class, CompilerError> {
     let mut class_name = String::new();
     let mut type_parameters = Vec::new();
     let mut base_class = None;
@@ -917,7 +1110,7 @@ fn parse_constructor_parameter(param_pair: Pair<Rule>) -> Result<Parameter, Comp
 
     for item in param_pair.into_inner() {
         match item.as_rule() {
-            Rule::constructor_type => {
+            Rule::type_ => {
                 param_type = Some(parse_type(item)?);
             },
             Rule::identifier => {
@@ -1190,6 +1383,28 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
                                         body.push(parse_statement(stmt_pair)?);
                                     }
                                 }
+                            }
+                        },
+                        Rule::statement => {
+                            // Handle single statement function bodies
+                            found_body = true;
+                            // Check if this statement contains an input_declaration
+                            let inner = body_item.clone().into_inner().next().unwrap();
+                            if inner.as_rule() == Rule::standalone_input_declaration {
+                                // Parse as parameter and add to parameters list
+                                let param = parse_standalone_input_declaration_as_parameter(inner)?;
+                                // Check for duplicate parameter names
+                                if parameters.iter().any(|p| p.name == param.name) {
+                                    return Err(CompilerError::parse_error(
+                                        format!("Duplicate parameter name '{param_name}' in function '{func_name}'", param_name = param.name, func_name = func_name),
+                                        location.clone(),
+                                        None,
+                                    ));
+                                }
+                                parameters.push(param);
+                            } else {
+                                // Regular statement
+                                body.push(parse_statement(body_item)?);
                             }
                         },
                         _ => {}

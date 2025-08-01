@@ -1,0 +1,8 @@
+// Test type precision modifiers - simple version
+
+functions:
+	void testSimple()
+		integer:8 value = 42
+
+start()
+	testSimple()

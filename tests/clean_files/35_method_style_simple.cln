@@ -1,0 +1,16 @@
+// Simple test of method-style syntax functions
+
+functions:
+
+	void testMethodStyle()
+
+		print("Testing method-style functions")
+		string text = "Hello"
+		integer len = text.length()
+		print("Text length: " + len.toString())
+
+start()
+
+	print("Method Style Simple Test")
+	testMethodStyle()
+	print("Test completed")

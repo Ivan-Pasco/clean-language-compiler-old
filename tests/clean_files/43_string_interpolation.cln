@@ -1,0 +1,11 @@
+// Test string interpolation
+
+functions:
+	void testStringInterpolation()
+		string name = "World"
+		integer count = 42
+		string greeting = "Hello {name}!"
+		string countMessage = "Count is {count}"
+
+start()
+	testStringInterpolation()

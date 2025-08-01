@@ -1,0 +1,21 @@
+// Test property assignment functionality for list behavior modifiers
+
+functions:
+	void testPropertyAssignment()
+		// Create a list
+		list<integer> items = [1, 2, 3]
+		
+		// Test assigning "line" behavior (FIFO queue)
+		items.type = "line"
+		
+		// Test assigning "pile" behavior (LIFO stack)
+		items.type = "pile" 
+		
+		// Test assigning "unique" behavior (no duplicates)
+		items.type = "unique"
+		
+		// Test assigning combined behavior
+		items.type = "line,unique"
+
+start()
+	testPropertyAssignment()

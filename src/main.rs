@@ -242,9 +242,31 @@ async fn handle_compile(input: String, output: String, _opt_level: u8, test: boo
     
     let source = fs::read_to_string(&input)?;
     
-    // Parse the program to check for tests
+    // Try to parse the program to check for tests, with fallback to recovery parsing
     use clean_language_compiler::parser::CleanParser;
-    let program = CleanParser::parse_program_with_file(&source, &input)?;
+    use clean_language_compiler::compile_with_recovery;
+    
+    let (program, use_recovery) = match CleanParser::parse_program_with_file(&source, &input) {
+        Ok(program) => {
+            println!("DEBUG: Parsed program with {} functions, {} classes", program.functions.len(), program.classes.len());
+            for (i, class) in program.classes.iter().enumerate() {
+                println!("DEBUG: Class {}: {} with {} methods", i, class.name, class.methods.len());
+            }
+            (program, false)
+        },
+        Err(_parse_error) => {
+            // If regular parsing fails, try recovery parsing
+            println!("🔄 Regular parsing failed, trying recovery compilation...");
+            match CleanParser::parse_program_with_recovery(&source, &input) {
+                Ok(program) => (program, true),
+                Err(recovery_errors) => {
+                    eprintln!("❌ Both regular and recovery parsing failed.");
+                    eprintln!("Recovery errors: {:?}", recovery_errors);
+                    return Err("Parsing failed".into());
+                }
+            }
+        }
+    };
     
     // Run tests if requested
     if test && !program.tests.is_empty() {
@@ -254,7 +276,22 @@ async fn handle_compile(input: String, output: String, _opt_level: u8, test: boo
         println!("⚠️  No tests found to run");
     }
     
-    let wasm_binary = compile_with_file(&source, &input)?;
+    // Use appropriate compilation method
+    let wasm_binary = if use_recovery {
+        println!("🔧 Using recovery compilation...");
+        match compile_with_recovery(&source, &input) {
+            Ok(binary) => binary,
+            Err(errors) => {
+                eprintln!("❌ Recovery compilation failed with {} errors:", errors.len());
+                for (i, error) in errors.iter().enumerate() {
+                    eprintln!("Error {}: {}", i + 1, error);
+                }
+                return Err("Compilation failed".into());
+            }
+        }
+    } else {
+        compile_with_file(&source, &input)?
+    };
     
     if let Some(parent) = Path::new(&output).parent() {
         fs::create_dir_all(parent)?;

@@ -1,6 +1,0 @@
-functions:
-	integer factorial(integer n)
-		return n + 1
-	
-	integer divide(integer a, integer b)
-		return a / b

@@ -1,0 +1,8 @@
+// Test static method calls
+
+functions:
+	void testStaticMethods()
+		number result1 = math.max(5.0, 10.0)
+
+start()
+	testStaticMethods()

@@ -1,0 +1,14 @@
+// Test extended numeric literals
+
+functions:
+	void testNumericLiterals()
+		integer hexValue = 0xFF
+		integer binValue = 0b1010
+		integer octValue = 0o777
+		integer decValue = 42
+		integer negHex = -0x10
+		integer negBin = -0b1111
+		integer negOct = -0o20
+
+start()
+	testNumericLiterals()

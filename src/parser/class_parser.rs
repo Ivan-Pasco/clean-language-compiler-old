@@ -5,9 +5,13 @@ use super::{get_location, convert_to_ast_location};
 use super::Rule;
 use super::statement_parser::parse_statement;
 use super::type_parser::parse_type;
-use super::parser_impl::parse_functions_block;
+use super::parser_impl::parse_functions_block_with_context;
+use super::preprocessor::ClassContext;
 
 pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
+    println!("DEBUG: parse_class called from class_parser.rs");
+    println!("DEBUG: parse_class pair rule: {:?}", pair.as_rule());
+    println!("DEBUG: parse_class pair content: {}", pair.as_str());
     let mut name = String::new();
     let mut type_parameters = Vec::new();
     let mut description = None;
@@ -26,6 +30,37 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
                 for param in item.into_inner() {
                     if param.as_rule() == Rule::type_parameter {
                         type_parameters.push(param.as_str().to_string());
+                    }
+                }
+            },
+            Rule::indented_class_body => {
+                for class_item in item.into_inner() {
+                    println!("DEBUG: Found class_item with rule: {:?}", class_item.as_rule());
+                    match class_item.as_rule() {
+                        Rule::class_field => {
+                            let field = parse_class_field(class_item, ast_location.clone())?;
+                            fields.push(field);
+                        },
+                        Rule::constructor => {
+                            println!("DEBUG: Found constructor in class {}", name);
+                            constructor = Some(parse_constructor(class_item, ast_location.clone())?);
+                            println!("DEBUG: Constructor parsed successfully for class {}", name);
+                        },
+                        Rule::functions_block => {
+                            println!("DEBUG: Found functions_block in class {}", name);
+                            // Create class context for preprocessor with all fields collected so far
+                            let class_context = ClassContext {
+                                class_name: name.clone(),
+                                fields: fields.clone(),
+                                base_class: base_class.clone(),
+                            };
+                            
+                            println!("DEBUG: Calling parse_functions_block_with_context for class {}", name);
+                            let class_methods = parse_functions_block_with_context(class_item, Some(class_context))?;
+                            println!("DEBUG: Got {} methods from functions_block", class_methods.len());
+                            methods.extend(class_methods);
+                        },
+                        _ => {}
                     }
                 }
             },
@@ -83,13 +118,6 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
                     }
                 }
             },
-            Rule::constructor => {
-                constructor = Some(parse_constructor(item, ast_location.clone())?);
-            },
-            Rule::functions_block => {
-                let class_methods = parse_functions_block(item)?;
-                methods.extend(class_methods);
-            },
             _ => {}
         }
     }
@@ -104,6 +132,48 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
         methods,
         constructor,
         location: Some(ast_location),
+    })
+}
+
+fn parse_class_field(pair: Pair<Rule>, location: crate::ast::SourceLocation) -> Result<Field, CompilerError> {
+    let mut parts = pair.into_inner();
+    
+    let type_part = parts.next().ok_or_else(|| CompilerError::parse_error(
+        "Class field missing type".to_string(),
+        Some(location.clone()),
+        Some("Class fields must have a type".to_string())
+    ))?;
+    
+    let name_part = parts.next().ok_or_else(|| CompilerError::parse_error(
+        "Class field missing name".to_string(),
+        Some(location.clone()),
+        Some("Class fields must have a name".to_string())
+    ))?;
+    
+    if name_part.as_rule() != Rule::identifier {
+        return Err(CompilerError::parse_error(
+            "Expected identifier for class field name".to_string(),
+            Some(location.clone()),
+            Some("Class fields must have valid identifiers".to_string())
+        ));
+    }
+    
+    let name = name_part.as_str().to_string();
+    let type_ = parse_type(type_part)?;
+    
+    // Check for default value
+    let default_value = if let Some(expr_part) = parts.next() {
+        Some(super::expression_parser::parse_expression(expr_part)?)
+    } else {
+        None
+    };
+    
+    Ok(Field {
+        name,
+        type_,
+        visibility: Visibility::Public, // Default visibility for class fields
+        is_static: false,
+        default_value,
     })
 }
 

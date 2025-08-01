@@ -2,21 +2,41 @@
 /// 
 /// This approach completely isolates individual functions before parsing,
 /// preventing PEG parser boundary issues that cause statement fallback to expression parsing.
+/// Enhanced to maintain class context when processing class methods in functions: blocks.
 
 use pest::Parser;
-use crate::ast::Function;
+use crate::ast::{Function, Type, Field, Visibility};
 use crate::error::CompilerError;
 use super::{CleanParser, Rule};
 
 /// Preprocessor that handles functions block parsing by isolating individual functions
 pub struct FunctionPreprocessor {
     source: String,
+    /// Class context for when processing class methods
+    class_context: Option<ClassContext>,
+}
+
+/// Class context information for processing class methods
+#[derive(Debug, Clone)]
+pub struct ClassContext {
+    pub class_name: String,
+    pub fields: Vec<Field>,
+    pub base_class: Option<String>,
 }
 
 impl FunctionPreprocessor {
     pub fn new(source: &str) -> Self {
         Self {
             source: source.to_string(),
+            class_context: None,
+        }
+    }
+    
+    /// Create a new preprocessor with class context for processing class methods
+    pub fn with_class_context(source: &str, class_context: ClassContext) -> Self {
+        Self {
+            source: source.to_string(),
+            class_context: Some(class_context),
         }
     }
     
@@ -34,11 +54,14 @@ impl FunctionPreprocessor {
         // Parse each function in complete isolation
         for (_index, segment) in function_segments.iter().enumerate() {
             // Create a complete, standalone functions block with just this one function
+            // Ensure proper indentation structure by adding a newline after functions:
             let isolated_source = format!("functions:\n{}", segment);
             
             // Parse this isolated function
             match self.parse_isolated_function(&isolated_source) {
-                Ok(function) => functions.push(function),
+                Ok(function) => {
+                    functions.push(function);
+                },
                 Err(error) => {
                     // For now, just return the error without location adjustment
                     // In a full implementation, we'd adjust the error location
@@ -96,15 +119,18 @@ impl FunctionPreprocessor {
                 // This line belongs to the current function body
                 current_function_lines.push(line.to_string());
             } else if indentation <= base_indentation && !current_function_lines.is_empty() {
-                // This line starts a new function or ends the functions block
+                // This line might start a new function or end the functions block
                 if self.is_function_declaration_line(line) {
                     // Save current function and start new one
                     segments.push(current_function_lines.join("\n"));
                     current_function_lines.clear();
                     base_indentation = indentation;
                     current_function_lines.push(line.to_string());
+                } else if trimmed.is_empty() {
+                    // Empty line at base level - might be separating functions, add to current function
+                    current_function_lines.push(line.to_string());
                 } else {
-                    // End of functions block
+                    // Non-empty line that's not a function declaration - end of functions block
                     break;
                 }
             }
@@ -132,9 +158,13 @@ impl FunctionPreprocessor {
             let before_paren = &trimmed[..paren_pos];
             let parts: Vec<&str> = before_paren.split_whitespace().collect();
             
-            // Should be either "identifier(" or "type identifier("
+            // Special case: start() is not a function declaration in a functions block
+            if parts.len() == 1 && parts[0] == "start" {
+                return false;
+            }
+            
+            // Functions in functions: blocks must have explicit return types: "type identifier("
             match parts.len() {
-                1 => self.is_valid_identifier(parts[0]),
                 2 => self.is_valid_type(parts[0]) && self.is_valid_identifier(parts[1]),
                 _ => false,
             }
@@ -167,8 +197,7 @@ impl FunctionPreprocessor {
         matches!(s, "integer" | "number" | "string" | "boolean" | "void" | "any") ||
         s.starts_with("list<") ||
         s.starts_with("matrix<") ||
-        s.starts_with("pairs<") ||
-        self.is_valid_identifier(s)
+        s.starts_with("pairs<")
     }
     
     /// Parse an isolated function from a complete functions block
@@ -188,7 +217,14 @@ impl FunctionPreprocessor {
                     if inner_pair.as_rule() == Rule::indented_functions_block {
                         for func_pair in inner_pair.into_inner() {
                             if func_pair.as_rule() == Rule::function_in_block {
-                                return super::parser_impl::parse_function_in_block(func_pair);
+                                let mut function = super::parser_impl::parse_function_in_block(func_pair)?;
+                                
+                                // If we have class context, mark this as a class method
+                                if let Some(ref class_ctx) = self.class_context {
+                                    function = self.enhance_function_with_class_context(function, class_ctx)?;
+                                }
+                                
+                                return Ok(function);
                             }
                         }
                     }
@@ -201,6 +237,25 @@ impl FunctionPreprocessor {
             None,
             None
         ))
+    }
+    
+    /// Enhance a function with class context information
+    /// This allows the semantic analyzer to properly handle class field access
+    fn enhance_function_with_class_context(&self, mut function: Function, class_ctx: &ClassContext) -> Result<Function, CompilerError> {
+        // Mark the function as a method by storing class context in a custom attribute
+        // The semantic analyzer will use this information to inject class fields into scope
+        
+        // For now, we'll use the function's description field to store class context
+        // In a production implementation, we'd add a proper class_context field to Function
+        let class_info = format!("CLASS_CONTEXT:{}", class_ctx.class_name);
+        
+        function.description = Some(match function.description {
+            Some(existing) => format!("{}\n{}", existing, class_info),
+            None => class_info,
+        });
+        
+        
+        Ok(function)
     }
     
     /// Get line offset for a function index (for error reporting)

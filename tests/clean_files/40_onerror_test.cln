@@ -1,0 +1,17 @@
+// Test onError expressions
+
+functions:
+	integer safeFunction()
+		return 42
+	
+	integer riskyFunction()
+		// This will work fine for testing
+		return 100
+	
+	void testOnError()
+		// Simple onError expression
+		integer result1 = safeFunction() onError 0
+		integer result2 = riskyFunction() onError -1
+
+start()
+	testOnError()

@@ -1,0 +1,11 @@
+// Test conditional expressions
+
+functions:
+	void testConditionals()
+		boolean flag = true
+		integer value1 = if flag then 42 else 0
+		string message = if flag then "yes" else "no"
+		integer comparison = if 5 > 3 then 100 else 200
+
+start()
+	testConditionals()

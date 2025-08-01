@@ -1,0 +1,14 @@
+// Test type precision modifiers
+
+functions:
+	void testTypePrecision()
+		integer:8 small = 127
+		integer:16 medium = 32767
+		integer:32 large = 2147483647
+		integer:64 huge = 9223372036854775807
+		integer:8u smallUnsigned = 255
+		number:32 singlePrecision = 3.14
+		number:64 doublePrecision = 3.141592653589793
+
+start()
+	testTypePrecision()

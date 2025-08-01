@@ -18,10 +18,11 @@ impl Scope {
     }
 
     pub fn define_variable<S: Into<String>>(&mut self, name: S, type_: Type) {
+        let name_str = name.into();
         if let Some(current_scope) = self.scope_stack.last_mut() {
-            current_scope.insert(name.into(), type_);
+            current_scope.insert(name_str, type_);
         } else {
-            self.variables.insert(name.into(), type_);
+            self.variables.insert(name_str, type_);
         }
     }
 

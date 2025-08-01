@@ -207,7 +207,7 @@ impl InstructionGenerator {
             (WasmType::I32, WasmType::I32) if self.type_manager.is_string_type(left) || self.type_manager.is_string_type(right) => {
                 match op {
                     ast::BinaryOperator::Add => { 
-                        if let Some(string_concat_index) = self.get_function_index("string_concat") {
+                        if let Some(string_concat_index) = self.get_function_index("string.concat") {
                             instructions.push(Instruction::Call(string_concat_index)); 
                             Ok(WasmType::I32) 
                         } else {

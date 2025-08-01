@@ -16,6 +16,26 @@ pub mod list_class;
 pub mod file_class;
 pub mod http_class;
 pub mod list_behavior;
+pub mod method_style;
+pub mod conditional;
+pub mod multiline;
+pub mod error_handling;
+pub mod static_methods;
+pub mod test_framework;
+pub mod string_interpolation;
+pub mod type_precision;
+pub mod default_parameters;
+pub mod numeric_literals;
+pub mod matrix_literals;
+pub mod pairs_type;
+pub mod string_advanced;
+pub mod list_advanced;
+pub mod math_advanced;
+pub mod file_advanced;
+pub mod http_advanced;
+pub mod console_input;
+pub mod async_programming;
+pub mod import_system;
 
 // Re-exports for convenience
 pub use numeric_ops::NumericOperations;
@@ -32,6 +52,26 @@ pub use list_class::ListClass;
 pub use file_class::FileClass;
 pub use http_class::HttpClass;
 pub use list_behavior::ListBehaviorManager;
+pub use method_style::MethodStyleManager;
+pub use conditional::ConditionalManager;
+pub use multiline::MultilineManager;
+pub use error_handling::ErrorHandlingManager;
+pub use static_methods::StaticMethodManager;
+pub use test_framework::TestFrameworkManager;
+pub use string_interpolation::StringInterpolationManager;
+pub use type_precision::TypePrecisionManager;
+pub use default_parameters::DefaultParameterManager;
+pub use numeric_literals::NumericLiteralsManager;
+pub use matrix_literals::MatrixLiteralsManager;
+pub use pairs_type::PairsTypeManager;
+pub use string_advanced::StringAdvancedManager;
+pub use list_advanced::ListAdvancedManager;
+pub use math_advanced::MathAdvancedManager;
+pub use file_advanced::FileAdvancedManager;
+pub use http_advanced::HttpAdvancedManager;
+pub use console_input::ConsoleInputManager;
+pub use async_programming::AsyncProgrammingManager;
+pub use import_system::ImportSystemManager;
 pub use console_ops::{ConsoleOperations, ConsoleClass};
 
 use crate::error::CompilerError;
@@ -58,12 +98,54 @@ pub struct StandardLibrary {
     http_class: HttpClass,
     #[allow(dead_code)]
     list_behavior: ListBehaviorManager,
+    #[allow(dead_code)]
+    method_style: MethodStyleManager,
+    #[allow(dead_code)]
+    conditional: ConditionalManager,
+    #[allow(dead_code)]
+    multiline: MultilineManager,
+    #[allow(dead_code)]
+    error_handling: ErrorHandlingManager,
+    #[allow(dead_code)]
+    static_methods: StaticMethodManager,
+    #[allow(dead_code)]
+    test_framework: TestFrameworkManager,
+    #[allow(dead_code)]
+    string_interpolation: StringInterpolationManager,
+    #[allow(dead_code)]
+    type_precision: TypePrecisionManager,
+    #[allow(dead_code)]
+    default_parameters: DefaultParameterManager,
+    #[allow(dead_code)]
+    numeric_literals: NumericLiteralsManager,
+    #[allow(dead_code)]
+    matrix_literals: MatrixLiteralsManager,
+    #[allow(dead_code)]
+    pairs_type: PairsTypeManager,
+    #[allow(dead_code)]
+    string_advanced: StringAdvancedManager,
+    #[allow(dead_code)]
+    list_advanced: ListAdvancedManager,
+    #[allow(dead_code)]
+    math_advanced: MathAdvancedManager,
+    #[allow(dead_code)]
+    file_advanced: FileAdvancedManager,
+    #[allow(dead_code)]
+    http_advanced: HttpAdvancedManager,
+    #[allow(dead_code)]
+    console_input: ConsoleInputManager,
+    #[allow(dead_code)]
+    async_programming: AsyncProgrammingManager,
+    #[allow(dead_code)]
+    import_system: ImportSystemManager,
+    memory_manager: Rc<RefCell<MemoryManager>>,
     console_ops: ConsoleOperations,
     console_class: ConsoleClass,
 }
 
 impl StandardLibrary {
     pub fn new() -> Self {
+        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(HEAP_START as u32))));
         Self {
             string_ops: StringOperations::new(HEAP_START),
             numeric_ops: NumericOperations::new(),
@@ -74,7 +156,28 @@ impl StandardLibrary {
             list_class: ListClass::new(),
             file_class: FileClass::new(),
             http_class: HttpClass::new(),
-            list_behavior: ListBehaviorManager::new(),
+            list_behavior: ListBehaviorManager::new(memory_manager.clone()),
+            method_style: MethodStyleManager::new(memory_manager.clone()),
+            conditional: ConditionalManager::new(memory_manager.clone()),
+            multiline: MultilineManager::new(memory_manager.clone()),
+            error_handling: ErrorHandlingManager::new(memory_manager.clone()),
+            static_methods: StaticMethodManager::new(memory_manager.clone()),
+            test_framework: TestFrameworkManager::new(memory_manager.clone()),
+            string_interpolation: StringInterpolationManager::new(memory_manager.clone()),
+            type_precision: TypePrecisionManager::new(memory_manager.clone()),
+            default_parameters: DefaultParameterManager::new(memory_manager.clone()),
+            numeric_literals: NumericLiteralsManager::new(memory_manager.clone()),
+            matrix_literals: MatrixLiteralsManager::new(memory_manager.clone()),
+            pairs_type: PairsTypeManager::new(memory_manager.clone()),
+            string_advanced: StringAdvancedManager::new(memory_manager.clone()),
+            list_advanced: ListAdvancedManager::new(memory_manager.clone()),
+            math_advanced: MathAdvancedManager::new(memory_manager.clone()),
+            file_advanced: FileAdvancedManager::new(memory_manager.clone()),
+            http_advanced: HttpAdvancedManager::new(memory_manager.clone()),
+            console_input: ConsoleInputManager::new(memory_manager.clone()),
+            async_programming: AsyncProgrammingManager::new(memory_manager.clone()),
+            import_system: ImportSystemManager::new(memory_manager.clone()),
+            memory_manager,
             console_ops: ConsoleOperations::new(HEAP_START),
             console_class: ConsoleClass::new(),
         }
@@ -92,7 +195,27 @@ impl StandardLibrary {
         // self.list_class.register_functions(codegen)?;
         // self.file_class.register_functions(codegen)?;
         // self.http_class.register_functions(codegen)?;
-        // self.list_behavior.register_functions(codegen)?;
+        self.list_behavior.register_functions(codegen)?;
+        self.method_style.register_functions(codegen)?;
+        self.conditional.register_functions(codegen)?;
+        self.multiline.register_functions(codegen)?;
+        self.error_handling.register_functions(codegen)?;
+        self.static_methods.register_functions(codegen)?;
+        self.test_framework.register_functions(codegen)?;
+        self.string_interpolation.register_functions(codegen)?;
+        self.type_precision.register_functions(codegen)?;
+        self.default_parameters.register_functions(codegen)?;
+        self.numeric_literals.register_functions(codegen)?;
+        self.matrix_literals.register_functions(codegen)?;
+        self.pairs_type.register_functions(codegen)?;
+        self.string_advanced.register_functions(codegen)?;
+        self.list_advanced.register_functions(codegen)?;
+        self.math_advanced.register_functions(codegen)?;
+        self.file_advanced.register_functions(codegen)?;
+        self.http_advanced.register_functions(codegen)?;
+        self.console_input.register_functions(codegen)?;
+        self.async_programming.register_functions(codegen)?;
+        self.import_system.register_functions(codegen)?;
         self.console_ops.register_functions(codegen)?;
         self.console_class.register_functions(codegen)?;
         Ok(())

@@ -5,7 +5,14 @@ COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n" | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 // Keywords and identifiers
 keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background") ~ !(ASCII_ALPHANUMERIC | "_") }
 identifier = @{ !keyword ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
-integer = @{ "-"? ~ ASCII_DIGIT+ }
+
+// Extended numeric literals
+hex_integer = @{ "-"? ~ "0" ~ ("x" | "X") ~ ASCII_HEX_DIGIT+ }
+binary_integer = @{ "-"? ~ "0" ~ ("b" | "B") ~ ASCII_BIN_DIGIT+ }
+octal_integer = @{ "-"? ~ "0" ~ ("o" | "O") ~ ASCII_OCT_DIGIT+ }
+decimal_integer = @{ "-"? ~ ASCII_DIGIT+ }
+
+integer = _{ hex_integer | binary_integer | octal_integer | decimal_integer }
 float = @{ "-"? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
 number = _{ float | integer }
 boolean = { "true" | "false" }
@@ -49,8 +56,8 @@ type_ = {
     list_type |
     pairs_type |
     generic_type |
-    core_type |
     sized_type |
+    core_type |
     identifier |
     type_parameter
 }
@@ -211,13 +218,17 @@ indented_functions_block = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ function_in_blo
 function_in_block = { function_type? ~ identifier ~ "(" ~ parameter_list? ~ ")" ~ function_body }
 
 // Function body can have setup blocks (description and input) or just statements
+// Also supports single-line function bodies
 function_body = { 
-    (NEWLINE ~ INDENT+ ~ setup_block ~ NEWLINE ~ INDENT+ ~ function_statements) | 
-    (NEWLINE ~ INDENT+ ~ function_statements) 
+    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block ~ (empty_line)* ~ NEWLINE ~ (empty_line)* ~ INDENT+ ~ function_statements) | 
+    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ function_statements) |
+    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block) |
+    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ statement) | // Single indented statement
+    (NEWLINE ~ (empty_line)*) // Allow empty function body
 }
 
 // Function statements - statements inside function body
-function_statements = { statement ~ (NEWLINE ~ INDENT+ ~ statement)* }
+function_statements = { statement ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ statement)* }
 
 // Function return type (excludes generic identifiers)
 function_type = { 
@@ -254,16 +265,7 @@ class_decl = {
 constructor = { "constructor" ~ "(" ~ constructor_parameter_list? ~ ")" ~ constructor_block? }
 constructor_block = { NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ statement ~ (NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ statement)* }
 constructor_parameter_list = { constructor_parameter ~ ("," ~ constructor_parameter)* }
-constructor_parameter = { (constructor_type ~ identifier) | identifier }
-constructor_type = { 
-    sized_type |
-    core_type |
-    matrix_type |
-    list_type |
-    pairs_type |
-    generic_type |
-    type_parameter
-}
+constructor_parameter = { (type_ ~ identifier) | identifier }
 
 // Import statements - supports both specification and simple syntax
 // import Math                    # simple module import
