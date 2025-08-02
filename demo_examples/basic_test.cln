@@ -1,5 +1,0 @@
-// Basic test without parentheses
-
-function start
-    integer x = 5
-    print x

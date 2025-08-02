@@ -3,7 +3,7 @@ WHITESPACE = _{ " " | "\r" }
 COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n" | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 
 // Keywords and identifiers
-keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background") ~ !(ASCII_ALPHANUMERIC | "_") }
+keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start") ~ !(ASCII_ALPHANUMERIC | "_") }
 identifier = @{ !keyword ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Extended numeric literals
@@ -109,19 +109,28 @@ indented_block_with_declarations = { NEWLINE ~ INDENT+ ~ input_declaration ~ (NE
 setup_block = { (description_block ~ NEWLINE ~ input_block) | (input_block ~ NEWLINE ~ description_block) | input_block | description_block }
 
 // Object access and method calls
-builtin_class_name = { "list" | "file" | "http" | "math" }
-function_call = { identifier ~ type_arguments? ~ "(" ~ (expression ~ ("," ~ expression)*)? ~ ")" }
-method_call_base = { builtin_class_name | identifier | "(" ~ expression ~ ")" }
-method_name = { identifier | "number" | "integer" | "boolean" }
-method_call_segment = { "." ~ method_name ~ "(" ~ (expression ~ ("," ~ expression)*)? ~ ")" }
+builtin_class_name = { "list" | "file" | "http" | "math" | "input" | "Math" | "String" | "List" | "File" | "Http" | "Console" }
+static_class_name = { "Math" | "String" | "List" | "File" | "Http" | "Console" }
+function_call = { identifier ~ type_arguments? ~ "(" ~ (logical_expression ~ ("," ~ logical_expression)*)? ~ ")" }
+
+// Method call syntax for value.method() patterns
+method_call_base = { builtin_class_name | identifier | "(" ~ logical_expression ~ ")" }
+method_name = { identifier | "number" | "integer" | "boolean" | "length" | "isDefined" | "isNotDefined" | "isEmpty" | "isNotEmpty" | "mustBeTrue" | "mustBeFalse" | "mustBeEqual" | "mustNotBeEqual" | "toString" | "toInteger" | "toNumber" | "toBoolean" | "keepBetween" | "yesNo" | "prompt" }
+method_call_segment = { "." ~ method_name ~ "(" ~ (logical_expression ~ ("," ~ logical_expression)*)? ~ ")" }
 method_call = { method_call_base ~ method_call_segment+ }
+
+// Static method call syntax for ClassName.method() patterns
+static_method_call = { static_class_name ~ "." ~ method_name ~ "(" ~ (logical_expression ~ ("," ~ logical_expression)*)? ~ ")" }
+
+// Property access and list access
 property_access = { identifier ~ ("." ~ identifier)+ }
-list_access = { identifier ~ "[" ~ expression ~ "]" }
+list_access = { identifier ~ "[" ~ logical_expression ~ "]" }
 
 // Primary expressions
 primary = { 
     conditional_expr |
     base_call |
+    static_method_call |
     method_call |
     number |
     boolean |
@@ -133,7 +142,7 @@ primary = {
     property_access |
     error_variable |
     identifier |
-    "(" ~ expression ~ ")" |
+    "(" ~ logical_expression ~ ")" |
     multiline_parenthesized_expr
 }
 
@@ -144,7 +153,7 @@ base_call = { "base" ~ "(" ~ (expression ~ ("," ~ expression)*)? ~ ")" }
 error_variable = { "error" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Conditional expressions: if condition then value else value
-conditional_expr = { "if" ~ expression ~ "then" ~ expression ~ "else" ~ expression }
+conditional_expr = { "if" ~ logical_expression ~ "then" ~ logical_expression ~ "else" ~ logical_expression }
 
 // Multi-line expressions within parentheses (allows newlines and indentation)
 multiline_parenthesized_expr = { "(" ~ NEWLINE* ~ (INDENT* ~ multiline_expression)? ~ NEWLINE* ~ INDENT* ~ ")" }
@@ -178,10 +187,10 @@ matrix_literal = { "[" ~ matrix_row ~ ("," ~ matrix_row)* ~ "]" }
 // Type-first variable declarations (no let keyword)
 variable_decl = { type_ ~ identifier ~ ("=" ~ expression)? }
 
-// Print statements (explicit forms to handle non-parentheses syntax)
-print_stmt = { "print" ~ expression }
-printl_stmt = { "printl" ~ expression }
-println_stmt = { "println" ~ expression }
+// Print statements (supporting both syntaxes: print expr and print(expr))
+print_stmt = { "print" ~ (("(" ~ expression ~ ")") | expression) }
+printl_stmt = { "printl" ~ (("(" ~ expression ~ ")") | expression) }
+println_stmt = { "println" ~ (("(" ~ expression ~ ")") | expression) }
 
 // Assignment
 assignment = { (property_access | identifier) ~ "=" ~ expression }
@@ -241,8 +250,7 @@ function_type = {
     type_parameter
 }
 
-// Private blocks
-private_block = { "private" ~ ":" ~ indented_functions_block }
+// Private blocks (removed duplicate - defined later in async/import section)
 
 // Tests block
 tests_block = { "tests" ~ ":" ~ indented_tests_block }
@@ -283,14 +291,20 @@ import_list = { import_item ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ import_item)*
 import_stmt = { ("import" ~ ":" ~ NEWLINE ~ (empty_line)* ~ INDENT+ ~ import_list) | ("import" ~ identifier) | ("import" ~ ":" ~ import_item) }
 
 // Async expressions and statements  
-later_assignment = { "later" ~ identifier ~ "=" ~ "start" ~ expression }
+start_expr = { "start" ~ expression }
+later_assignment = { "later" ~ identifier ~ "=" ~ start_expr }
 background_stmt = { "background" ~ expression }
+
+// Import and export blocks (consolidate with import_stmt)
+import_block = { "import" ~ ":" ~ NEWLINE ~ (empty_line)* ~ INDENT+ ~ import_list }
+private_block = { "private" ~ ":" ~ indented_private_list }
+indented_private_list = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ private_item ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ private_item)* }
+private_item = { identifier | function_in_block }
 
 // Update statements to include async features and imports
 statement = {
     return_stmt |
     error_stmt |
-    on_error_block |
     if_stmt |
     iterate_stmt |
     range_iterate_stmt |
@@ -299,16 +313,17 @@ statement = {
     background_stmt |
     standalone_input_declaration |
     apply_block |
-    print_stmt |
-    printl_stmt |
     println_stmt |
+    printl_stmt |
+    print_stmt |
     variable_decl |
     assignment |
+    start_expr |
     expression
 }
 
 // Program with proper newline handling
-program_item = { import_stmt | start_function | implicit_start_function | functions_block | tests_block | class_decl | apply_block | statement }
+program_item = { import_stmt | import_block | private_block | start_function | implicit_start_function | functions_block | tests_block | class_decl | apply_block | statement }
 program = { SOI ~ NEWLINE* ~ (program_item ~ NEWLINE*)* ~ EOI }
 
 // Start function - the entry point of a Clean Language program

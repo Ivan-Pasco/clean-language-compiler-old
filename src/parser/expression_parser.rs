@@ -156,9 +156,22 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
             let location = convert_to_ast_location(&get_location(&pair));
             Ok(Expression::ErrorVariable { location })
         }
+        Rule::start_expr => {
+            // Parse start expression - async start
+            let location = convert_to_ast_location(&get_location(&pair));
+            let inner = pair.into_inner().next().unwrap();
+            let expr = parse_expression(inner)?;
+            Ok(Expression::StartExpression {
+                expression: Box::new(expr),
+                location,
+            })
+        }
         _ => {
-            // For backward compatibility, try parsing as base_expression
-            parse_base_expression(pair)
+            Err(CompilerError::parse_error(
+                format!("Unsupported expression rule: {:?}", pair.as_rule()),
+                Some(convert_to_ast_location(&get_location(&pair))),
+                Some("Expected expression, on_error_expr, on_error_block, base_expression, start_expr, or error_variable".to_string())
+            ))
         }
     }
 }
@@ -443,6 +456,7 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::matrix_literal => parse_matrix_literal(inner),
         Rule::function_call => parse_function_call(inner),
         Rule::method_call => parse_method_call(inner),
+        Rule::static_method_call => parse_static_method_call(inner),
         Rule::property_access => parse_property_access(inner),
         Rule::list_access => parse_list_access(inner),
         Rule::error_variable => {
@@ -470,6 +484,10 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::base_call => {
             // Handle base constructor calls: base(args...)
             parse_base_call(inner)
+        },
+        Rule::start_expr => {
+            // Handle start expressions: start expression
+            parse_start_expression(inner)
         },
         _ => Err(CompilerError::parse_error(
             format!("Unexpected primary expression: {}", inner.as_str()),
@@ -651,8 +669,8 @@ pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError
     let mut arguments = Vec::new();
     
     for arg in inner {
-        if let Rule::expression = arg.as_rule() {
-            arguments.push(parse_expression(arg)?);
+        if let Rule::logical_expression = arg.as_rule() {
+            arguments.push(parse_logical_expression(arg)?);
         }
     }
     
@@ -701,8 +719,8 @@ pub fn parse_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
                     
                     // Parse arguments from the remaining segments
                     for arg in seg_inner {
-                        if let Rule::expression = arg.as_rule() {
-                            arguments.push(parse_expression(arg)?);
+                        if let Rule::logical_expression = arg.as_rule() {
+                            arguments.push(parse_logical_expression(arg)?);
                         }
                     }
                     
@@ -925,13 +943,50 @@ pub fn parse_base_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let mut arguments = Vec::new();
     
     for arg in pair.into_inner() {
-        if let Rule::expression = arg.as_rule() {
-            arguments.push(parse_expression(arg)?);
+        if let Rule::logical_expression = arg.as_rule() {
+            arguments.push(parse_logical_expression(arg)?);
         }
     }
     
     Ok(Expression::BaseCall {
         arguments,
+        location: convert_to_ast_location(&location),
+    })
+}
+
+pub fn parse_static_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = get_location(&pair);
+    let mut inner = pair.into_inner();
+    
+    // Parse: ClassName.method(args...)
+    let class_name = inner.next().unwrap().as_str().to_string();
+    let method_name = inner.next().unwrap().as_str().to_string();
+    let mut arguments = Vec::new();
+    
+    // Parse arguments
+    for arg in inner {
+        if let Rule::logical_expression = arg.as_rule() {
+            arguments.push(parse_logical_expression(arg)?);
+        }
+    }
+    
+    Ok(Expression::StaticMethodCall {
+        class_name,
+        method: method_name,
+        arguments,
+        location: convert_to_ast_location(&location),
+    })
+}
+
+pub fn parse_start_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = get_location(&pair);
+    let mut inner = pair.into_inner();
+    
+    // Parse: start expression
+    let expression = parse_expression(inner.next().unwrap())?;
+    
+    Ok(Expression::StartExpression {
+        expression: Box::new(expression),
         location: convert_to_ast_location(&location),
     })
 } 

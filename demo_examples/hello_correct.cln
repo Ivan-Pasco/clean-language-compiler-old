@@ -1,5 +1,0 @@
-// Hello World - Correct Clean Language syntax
-
-start()
-    print "Hello, Clean Language World!"
-    print "Welcome to the demonstration!"

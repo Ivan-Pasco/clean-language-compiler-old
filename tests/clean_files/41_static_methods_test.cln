@@ -3,6 +3,10 @@
 functions:
 	void testStaticMethods()
 		number result1 = math.max(5.0, 10.0)
+		print("math.max result: ")
+		print(result1.toString())
 
 start()
+	print("Static methods test starting")
 	testStaticMethods()
+	print("Static methods test completed")

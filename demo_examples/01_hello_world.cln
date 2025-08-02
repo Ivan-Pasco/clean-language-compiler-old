@@ -1,6 +1,0 @@
-// Hello World Example - Basic Clean Language program
-// This demonstrates the simplest possible Clean Language program
-
-function start()
-    print "Hello, Clean Language World!"
-    print "Welcome to the Clean Language compiler demonstration!"

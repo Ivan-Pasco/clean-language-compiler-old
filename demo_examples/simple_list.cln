@@ -1,7 +1,0 @@
-// Simple List Demo
-
-start()
-    list<integer> numbers = [1, 2, 3, 4, 5]
-    
-    print "List Demo:"
-    print numbers

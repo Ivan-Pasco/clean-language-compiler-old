@@ -1,0 +1,32 @@
+// Error Handling QA Test
+// Tests how parser handles invalid syntax for new patterns
+
+functions:
+
+	void testErrorHandling()
+		// Valid syntax that should work
+		string text = "Hello"
+		integer length = text.length()
+		print("Valid syntax works")
+		
+		// The following lines would cause errors if uncommented:
+		
+		// Invalid method call syntax
+		// integer result = text.invalidMethod()
+		
+		// Invalid static method call
+		// string result = NonExistentClass.method()
+		
+		// Invalid async syntax
+		// invalid_keyword someFunction()
+		
+		// Invalid import syntax 
+		// import NonExistentModule
+		
+		print("Error handling test completed")
+
+start()
+
+	print("Error Handling QA Test")
+	testErrorHandling()
+	print("Test completed")

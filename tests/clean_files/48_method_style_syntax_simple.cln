@@ -1,0 +1,26 @@
+// Simple QA Test for Method-Style Syntax
+// Tests basic method-style calls
+
+functions:
+
+	void testMethodStyle()
+
+		// Test basic toString method
+		integer age = 25
+		string ageText = age.toString()
+		print("Age as text: ")
+		print(ageText)
+		
+		// Test length method on string
+		string text = "Hello"
+		integer length = text.length()
+		print("Text length: ")
+		print(length.toString())
+		
+		print("Simple method-style test completed")
+
+start()
+
+	print("Method Style QA Test")
+	testMethodStyle()
+	print("Test completed")

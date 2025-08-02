@@ -31,6 +31,76 @@ impl StaticMethodManager {
 
     /// Register Math class static methods
     fn register_math_static_methods(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+        // Math.add(a, b) - Add two numbers
+        register_stdlib_function_with_locals(
+            codegen,
+            "Math.add",
+            &[WasmType::F64, WasmType::F64], // a, b
+            Some(WasmType::F64), // result
+            &[], // no locals needed
+            self.generate_math_add()
+        )?;
+
+        // Math.subtract(a, b) - Subtract two numbers
+        register_stdlib_function_with_locals(
+            codegen,
+            "Math.subtract",
+            &[WasmType::F64, WasmType::F64], // a, b
+            Some(WasmType::F64), // result
+            &[], // no locals needed
+            self.generate_math_subtract()
+        )?;
+
+        // Math.multiply(a, b) - Multiply two numbers
+        register_stdlib_function_with_locals(
+            codegen,
+            "Math.multiply",
+            &[WasmType::F64, WasmType::F64], // a, b
+            Some(WasmType::F64), // result
+            &[], // no locals needed
+            self.generate_math_multiply()
+        )?;
+
+        // Math.divide(a, b) - Divide two numbers
+        register_stdlib_function_with_locals(
+            codegen,
+            "Math.divide",
+            &[WasmType::F64, WasmType::F64], // a, b
+            Some(WasmType::F64), // result
+            &[], // no locals needed
+            self.generate_math_divide()
+        )?;
+
+        // Math.max(a, b) - Return maximum of two numbers
+        register_stdlib_function_with_locals(
+            codegen,
+            "Math.max",
+            &[WasmType::F64, WasmType::F64], // a, b
+            Some(WasmType::F64), // result
+            &[], // no locals needed
+            self.generate_math_max()
+        )?;
+
+        // Math.min(a, b) - Return minimum of two numbers
+        register_stdlib_function_with_locals(
+            codegen,
+            "Math.min",
+            &[WasmType::F64, WasmType::F64], // a, b
+            Some(WasmType::F64), // result
+            &[], // no locals needed
+            self.generate_math_min()
+        )?;
+
+        // Math.abs(a) - Return absolute value
+        register_stdlib_function_with_locals(
+            codegen,
+            "Math.abs",
+            &[WasmType::F64], // a
+            Some(WasmType::F64), // result
+            &[], // no locals needed
+            self.generate_math_abs()
+        )?;
+
         // Math.random() - Generate random number between 0 and 1
         register_stdlib_function_with_locals(
             codegen,
@@ -96,6 +166,56 @@ impl StaticMethodManager {
             self.generate_string_empty()
         )?;
 
+        // String.length(text) - Get string length
+        register_stdlib_function_with_locals(
+            codegen,
+            "String.length",
+            &[WasmType::I32], // string pointer
+            Some(WasmType::I32), // length
+            &[], // no locals needed
+            self.generate_string_length()
+        )?;
+
+        // String.toUpperCase(text) - Convert to uppercase
+        register_stdlib_function_with_locals(
+            codegen,
+            "String.toUpperCase",
+            &[WasmType::I32], // string pointer
+            Some(WasmType::I32), // uppercase string pointer
+            &[WasmType::I32, WasmType::I32], // result_ptr, i
+            self.generate_string_to_upper_case()
+        )?;
+
+        // String.toLowerCase(text) - Convert to lowercase
+        register_stdlib_function_with_locals(
+            codegen,
+            "String.toLowerCase",
+            &[WasmType::I32], // string pointer
+            Some(WasmType::I32), // lowercase string pointer
+            &[WasmType::I32, WasmType::I32], // result_ptr, i
+            self.generate_string_to_lower_case()
+        )?;
+
+        // String.contains(text, substring) - Check if text contains substring
+        register_stdlib_function_with_locals(
+            codegen,
+            "String.contains",
+            &[WasmType::I32, WasmType::I32], // text_ptr, substring_ptr
+            Some(WasmType::I32), // boolean result
+            &[WasmType::I32], // found_index
+            self.generate_string_contains()
+        )?;
+
+        // String.trim(text) - Remove leading and trailing whitespace
+        register_stdlib_function_with_locals(
+            codegen,
+            "String.trim",
+            &[WasmType::I32], // string pointer
+            Some(WasmType::I32), // trimmed string pointer
+            &[WasmType::I32, WasmType::I32], // start_pos, end_pos
+            self.generate_string_trim()
+        )?;
+
         // String.fromInteger(value) - Convert integer to string
         register_stdlib_function_with_locals(
             codegen,
@@ -149,6 +269,36 @@ impl StaticMethodManager {
             Some(WasmType::I32), // empty list pointer
             &[WasmType::I32], // allocation result
             self.generate_list_empty()
+        )?;
+
+        // List.length(list) - Get list length
+        register_stdlib_function_with_locals(
+            codegen,
+            "List.length",
+            &[WasmType::I32], // list pointer
+            Some(WasmType::I32), // length
+            &[], // no locals needed
+            self.generate_list_length()
+        )?;
+
+        // List.get(list, index) - Get element at index
+        register_stdlib_function_with_locals(
+            codegen,
+            "List.get",
+            &[WasmType::I32, WasmType::I32], // list_ptr, index
+            Some(WasmType::I32), // element value
+            &[WasmType::I32], // element_ptr
+            self.generate_list_get()
+        )?;
+
+        // List.contains(list, value) - Check if list contains value
+        register_stdlib_function_with_locals(
+            codegen,
+            "List.contains",
+            &[WasmType::I32, WasmType::I32], // list_ptr, value
+            Some(WasmType::I32), // boolean result
+            &[WasmType::I32, WasmType::I32], // i, found
+            self.generate_list_contains()
         )?;
 
         // List.range(start, end) - Create list with range of integers
@@ -257,6 +407,75 @@ impl StaticMethodManager {
         )?;
 
         Ok(())
+    }
+
+    /// Generate WASM for Math.add(a, b)
+    fn generate_math_add(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: a (0), b (1)
+            Instruction::LocalGet(0), // a
+            Instruction::LocalGet(1), // b
+            Instruction::F64Add,
+        ]
+    }
+
+    /// Generate WASM for Math.subtract(a, b)
+    fn generate_math_subtract(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: a (0), b (1)
+            Instruction::LocalGet(0), // a
+            Instruction::LocalGet(1), // b
+            Instruction::F64Sub,
+        ]
+    }
+
+    /// Generate WASM for Math.multiply(a, b)
+    fn generate_math_multiply(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: a (0), b (1)
+            Instruction::LocalGet(0), // a
+            Instruction::LocalGet(1), // b
+            Instruction::F64Mul,
+        ]
+    }
+
+    /// Generate WASM for Math.divide(a, b)
+    fn generate_math_divide(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: a (0), b (1)
+            Instruction::LocalGet(0), // a
+            Instruction::LocalGet(1), // b
+            Instruction::F64Div,
+        ]
+    }
+
+    /// Generate WASM for Math.max(a, b)
+    fn generate_math_max(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: a (0), b (1)
+            Instruction::LocalGet(0), // a
+            Instruction::LocalGet(1), // b
+            Instruction::F64Max,
+        ]
+    }
+
+    /// Generate WASM for Math.min(a, b)
+    fn generate_math_min(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: a (0), b (1)
+            Instruction::LocalGet(0), // a
+            Instruction::LocalGet(1), // b
+            Instruction::F64Min,
+        ]
+    }
+
+    /// Generate WASM for Math.abs(a)
+    fn generate_math_abs(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: a (0)
+            Instruction::LocalGet(0), // a
+            Instruction::F64Abs,
+        ]
     }
 
     /// Generate WASM for Math.random()
@@ -399,6 +618,69 @@ impl StaticMethodManager {
         ]
     }
 
+    /// Generate WASM for String.length(text)
+    fn generate_string_length(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: text_ptr (0)
+            // Get length from string header
+            Instruction::LocalGet(0), // text_ptr
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // load length
+        ]
+    }
+
+    /// Generate WASM for String.toUpperCase(text)
+    fn generate_string_to_upper_case(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: text_ptr (0)
+            // Locals: result_ptr (1), i (2)
+            
+            // Call existing string_to_upper_case function
+            Instruction::LocalGet(0),
+            Instruction::Call(self.get_string_to_upper_function_index()),
+        ]
+    }
+
+    /// Generate WASM for String.toLowerCase(text)
+    fn generate_string_to_lower_case(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: text_ptr (0)
+            // Locals: result_ptr (1), i (2)
+            
+            // Call existing string_to_lower_case function
+            Instruction::LocalGet(0),
+            Instruction::Call(self.get_string_to_lower_function_index()),
+        ]
+    }
+
+    /// Generate WASM for String.contains(text, substring)
+    fn generate_string_contains(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: text_ptr (0), substring_ptr (1)
+            // Local: found_index (2)
+            
+            // Call existing string_contains function
+            Instruction::LocalGet(0), // text
+            Instruction::LocalGet(1), // substring
+            Instruction::Call(self.get_string_contains_function_index()),
+            
+            // Check if found (index >= 0)
+            Instruction::I32Const(-1),
+            Instruction::I32Ne, // not equal to -1 means found
+        ]
+    }
+
+    /// Generate WASM for String.trim(text)
+    fn generate_string_trim(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: text_ptr (0)
+            // Locals: start_pos (1), end_pos (2)
+            
+            // Call existing string_trim function
+            Instruction::LocalGet(0),
+            Instruction::Call(self.get_string_trim_function_index()),
+        ]
+    }
+
     /// Generate WASM for String.fromInteger(value)
     fn generate_string_from_integer(&self) -> Vec<Instruction> {
         vec![
@@ -496,6 +778,42 @@ impl StaticMethodManager {
             
             // Return list pointer
             Instruction::LocalGet(0),
+        ]
+    }
+
+    /// Generate WASM for List.length(list)
+    fn generate_list_length(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: list_ptr (0)
+            // Get size from list header
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }), // load size
+        ]
+    }
+
+    /// Generate WASM for List.get(list, index)
+    fn generate_list_get(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: list_ptr (0), index (1)
+            // Local: element_ptr (2)
+            
+            // Call existing list get function
+            Instruction::LocalGet(0), // list
+            Instruction::LocalGet(1), // index
+            Instruction::Call(self.get_list_get_function_index()),
+        ]
+    }
+
+    /// Generate WASM for List.contains(list, value)
+    fn generate_list_contains(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: list_ptr (0), value (1)
+            // Locals: i (2), found (3)
+            
+            // Call existing list contains function
+            Instruction::LocalGet(0), // list
+            Instruction::LocalGet(1), // value
+            Instruction::Call(self.get_list_contains_function_index()),
         ]
     }
 
@@ -743,19 +1061,25 @@ impl StaticMethodManager {
     fn get_false_string_function_index(&self) -> u32 { 709 }
     fn get_string_length_function_index(&self) -> u32 { 710 }
     fn get_string_repeat_copy_function_index(&self) -> u32 { 711 }
-    fn get_create_list_function_index(&self) -> u32 { 712 }
-    fn get_fill_range_function_index(&self) -> u32 { 713 }
-    fn get_fill_repeat_function_index(&self) -> u32 { 714 }
-    fn get_file_open_function_index(&self) -> u32 { 715 }
-    fn get_file_close_function_index(&self) -> u32 { 716 }
-    fn get_file_read_all_function_index(&self) -> u32 { 717 }
-    fn get_file_write_function_index(&self) -> u32 { 718 }
-    fn get_http_request_function_index(&self) -> u32 { 719 }
-    fn get_http_execute_function_index(&self) -> u32 { 720 }
-    fn get_http_set_data_function_index(&self) -> u32 { 721 }
-    fn get_http_cleanup_function_index(&self) -> u32 { 722 }
-    fn get_console_clear_function_index(&self) -> u32 { 723 }
-    fn get_console_read_function_index(&self) -> u32 { 724 }
+    fn get_string_to_upper_function_index(&self) -> u32 { 712 }
+    fn get_string_to_lower_function_index(&self) -> u32 { 713 }
+    fn get_string_contains_function_index(&self) -> u32 { 714 }
+    fn get_string_trim_function_index(&self) -> u32 { 715 }
+    fn get_list_get_function_index(&self) -> u32 { 716 }
+    fn get_list_contains_function_index(&self) -> u32 { 717 }
+    fn get_create_list_function_index(&self) -> u32 { 718 }
+    fn get_fill_range_function_index(&self) -> u32 { 719 }
+    fn get_fill_repeat_function_index(&self) -> u32 { 720 }
+    fn get_file_open_function_index(&self) -> u32 { 721 }
+    fn get_file_close_function_index(&self) -> u32 { 722 }
+    fn get_file_read_all_function_index(&self) -> u32 { 723 }
+    fn get_file_write_function_index(&self) -> u32 { 724 }
+    fn get_http_request_function_index(&self) -> u32 { 725 }
+    fn get_http_execute_function_index(&self) -> u32 { 726 }
+    fn get_http_set_data_function_index(&self) -> u32 { 727 }
+    fn get_http_cleanup_function_index(&self) -> u32 { 728 }
+    fn get_console_clear_function_index(&self) -> u32 { 729 }
+    fn get_console_read_function_index(&self) -> u32 { 730 }
 }
 
 #[cfg(test)]

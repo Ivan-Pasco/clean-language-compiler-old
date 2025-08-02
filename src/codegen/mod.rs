@@ -2253,8 +2253,8 @@ impl CodeGenerator {
                     self.generate_expression(arg, instructions)?;
                 }
                 
-                // Create function name from class and method
-                let function_name = format!("{class_name}_{method}");
+                // Create function name from class and method (use dot notation for stdlib functions)
+                let function_name = format!("{class_name}.{method}");
                 
                 // Find the function index
                 if let Some(method_index) = self.get_function_index(&function_name) {

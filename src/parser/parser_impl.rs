@@ -268,7 +268,7 @@ impl ErrorRecoveringParser {
         let trimmed_segment = segment.trim();
         
         // Try to parse as a complete program first
-        match CleanParser::parse(Rule::program, trimmed_segment) {
+        match <CleanParser as Parser<Rule>>::parse(Rule::program, trimmed_segment) {
             Ok(pairs) => parse_program_ast(pairs),
             Err(pest_error) => {
                 // Try to parse as individual components
@@ -289,7 +289,7 @@ impl ErrorRecoveringParser {
     /// Parse a function segment with recovery
     fn parse_function_segment(&mut self, segment: &str) -> Result<Program, CompilerError> {
         // Try to parse as start function first
-        if let Ok(pairs) = CleanParser::parse(Rule::start_function, segment) {
+        if let Ok(pairs) = <CleanParser as Parser<Rule>>::parse(Rule::start_function, segment) {
             let start_func = parse_start_function(pairs.into_iter().next().unwrap())?;
             return Ok(Program {
                 imports: Vec::new(),
@@ -368,7 +368,7 @@ impl ErrorRecoveringParser {
                 // Parse start function if present
                 let start_function = if !start_function_lines.is_empty() {
                     let start_source = start_function_lines.join("\n");
-                    match CleanParser::parse(Rule::start_function, &start_source) {
+                    match <CleanParser as Parser<Rule>>::parse(Rule::start_function, &start_source) {
                         Ok(pairs) => {
                             Some(parse_start_function(pairs.into_iter().next().unwrap())?)
                         }
@@ -397,7 +397,7 @@ impl ErrorRecoveringParser {
 
     /// Parse a class segment with recovery
     fn parse_class_segment(&mut self, segment: &str) -> Result<Program, CompilerError> {
-        match CleanParser::parse(Rule::class_decl, segment) {
+        match <CleanParser as Parser<Rule>>::parse(Rule::class_decl, segment) {
             Ok(pairs) => {
                 let class = parse_class(pairs.into_iter().next().unwrap())?;
                 Ok(Program {
@@ -461,7 +461,7 @@ impl ErrorRecoveringParser {
 
     fn parse_internal(&mut self, source: &str) -> Result<Program, CompilerError> {
         let trimmed_source = source.trim();
-        let pairs = CleanParser::parse(Rule::program, trimmed_source)
+        let pairs = <CleanParser as Parser<Rule>>::parse(Rule::program, trimmed_source)
             .map_err(|e| crate::error::ErrorUtils::from_pest_error(e, source, &self.file_path))?;
 
         parse_program_ast(pairs)
@@ -478,7 +478,7 @@ enum PartialNode {
 
 pub fn parse(source: &str) -> Result<Program, CompilerError> {
     let trimmed_source = source.trim();
-    let pairs = CleanParser::parse(Rule::program, trimmed_source)
+    let pairs = <CleanParser as Parser<Rule>>::parse(Rule::program, trimmed_source)
         .map_err(|e| ErrorUtils::from_pest_error(e, source, "<unknown>"))?;
 
     parse_program_ast(pairs)
@@ -500,7 +500,7 @@ pub fn parse_with_file(source: &str, file_path: &str) -> Result<Program, Compile
     }
     
     // Try traditional parsing first
-    match CleanParser::parse(Rule::program, trimmed_source) {
+    match <CleanParser as Parser<Rule>>::parse(Rule::program, trimmed_source) {
         Ok(pairs) => parse_program_ast(pairs),
         Err(pest_error) => {
             // If traditional parsing fails, use recovery parsing instead of preprocessing
@@ -564,7 +564,7 @@ fn parse_with_preprocessing(source: &str, _file_path: &str) -> Result<Program, C
             Err(e) => {
                 println!("DEBUG: Preprocessor failed: {}, falling back to traditional parsing of full source", e);
                 // Fall back to traditional parsing of the FULL source, not just functions block
-                match CleanParser::parse(Rule::program, source) {
+                match <CleanParser as Parser<Rule>>::parse(Rule::program, source) {
                     Ok(pairs) => {
                         println!("DEBUG: Traditional parsing succeeded after preprocessor failure");
                         parse_program_ast(pairs)
@@ -1646,7 +1646,7 @@ mod tests {
     #[test]
     fn test_parse_function_in_block_valid() {
         let source = "integer add()\n\tinput\n\t\tinteger a\n\t\tinteger b\n\treturn a + b";
-        let mut pairs = CleanParser::parse(Rule::function_in_block, source).unwrap();
+        let mut pairs = <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source).unwrap();
         let pair = pairs.next().unwrap();
         let func = parse_function_in_block(pair).unwrap();
         assert_eq!(func.name, "add");
@@ -1659,7 +1659,7 @@ mod tests {
     #[test]
     fn test_parse_function_in_block_duplicate_param() {
         let source = "integer add()\n\tinput\n\t\tinteger a\n\t\tinteger a\n\treturn a + a";
-        let mut pairs = CleanParser::parse(Rule::function_in_block, source).unwrap();
+        let mut pairs = <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source).unwrap();
         let pair = pairs.next().unwrap();
         let err = parse_function_in_block(pair).unwrap_err();
         assert!(err.to_string().contains("Duplicate parameter name"));
@@ -1668,7 +1668,7 @@ mod tests {
     #[test]
     fn test_parse_function_in_block_missing_name() {
         let source = "integer ()\n\treturn 42";
-        let result = CleanParser::parse(Rule::function_in_block, source);
+        let result = <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("identifier") || err.to_string().contains("size_specifier"));
@@ -1677,7 +1677,7 @@ mod tests {
     #[test]
     fn debug_parse_tree_for_function_in_block() {
         let source = "integer add()\n\tinput\n\t\tinteger a\n\t\tinteger b\n\t\n\treturn a + b";
-        let mut pairs = CleanParser::parse(Rule::function_in_block, source).unwrap();
+        let mut pairs = <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source).unwrap();
         let pair = pairs.next().unwrap();
         println!("Parse tree: {:#?}", pair);
     }

@@ -50,7 +50,7 @@ impl FunctionParser {
         let wrapped_source = format!("functions:\n{}", segment.source);
         
         // Parse with pest
-        let parse_result = CleanParser::parse(Rule::functions_block, &wrapped_source);
+        let parse_result = <CleanParser as Parser<Rule>>::parse(Rule::functions_block, &wrapped_source);
         let pairs = parse_result.map_err(|e| {
             CompilerError::syntax_error(
                 &format!("Failed to parse function {}: {}", segment.boundary.function_name, e),

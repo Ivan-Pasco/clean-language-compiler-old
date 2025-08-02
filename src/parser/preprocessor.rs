@@ -203,7 +203,7 @@ impl FunctionPreprocessor {
     /// Parse an isolated function from a complete functions block
     fn parse_isolated_function(&self, source: &str) -> Result<Function, CompilerError> {
         // Parse the complete source
-        let parse_result = CleanParser::parse(Rule::functions_block, source)
+        let parse_result = <CleanParser as Parser<Rule>>::parse(Rule::functions_block, source)
             .map_err(|e| CompilerError::syntax_error(
                 &format!("Failed to parse isolated function: {}", e),
                 None,

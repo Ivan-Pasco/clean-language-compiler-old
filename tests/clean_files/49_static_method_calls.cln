@@ -1,0 +1,68 @@
+// Comprehensive QA Test for Static Method Calls
+// Tests all static method call syntax: ClassName.method()
+
+functions:
+
+	void testStaticMethods()
+
+		// Test Math class static methods
+		number result = Math.add(5.0, 3.0)
+		print("Math.add(5.0, 3.0): ")
+		print(result.toString())
+		
+		number maximum = Math.max(10.5, 7.2)
+		print("Math.max(10.5, 7.2): ")
+		print(maximum.toString())
+		
+		number absolute = Math.abs(-42.5)
+		print("Math.abs(-42.5): ")
+		print(absolute.toString())
+		
+		// Test String class static methods
+		integer textLength = String.length("Hello World")
+		print("String.length('Hello World'): ")
+		print(textLength.toString())
+		
+		string upperText = String.toUpperCase("hello")
+		print("String.toUpperCase('hello'): ")
+		print(upperText)
+		
+		string lowerText = String.toLowerCase("WORLD")
+		print("String.toLowerCase('WORLD'): ")
+		print(lowerText)
+		
+		boolean contains = String.contains("Hello World", "World")
+		print("String.contains('Hello World', 'World'): ")
+		print(contains.toString())
+		
+		string trimmed = String.trim("  spaced  ")
+		print("String.trim('  spaced  '): '")
+		print(trimmed)
+		print("'")
+		
+		// Test List class static methods
+		list<integer> numbers = [1, 2, 3, 4, 5]
+		integer listLength = List.length(numbers)
+		print("List.length([1,2,3,4,5]): ")
+		print(listLength.toString())
+		
+		integer firstItem = List.get(numbers, 0)
+		print("List.get(numbers, 0): ")
+		print(firstItem.toString())
+		
+		boolean hasItem = List.contains(numbers, 3)
+		print("List.contains(numbers, 3): ")
+		print(hasItem.toString())
+		
+		// Test File class static methods (placeholder implementations)
+		boolean fileExists = File.exists("test.txt")
+		print("File.exists('test.txt'): ")
+		print(fileExists.toString())
+		
+		print("Static method calls test completed successfully!")
+
+start()
+
+	print("Static Method Calls QA Test")
+	testStaticMethods()
+	print("Test completed")

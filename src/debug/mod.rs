@@ -1,7 +1,8 @@
+use pest::Parser;
 use crate::error::CompilerError;
 use crate::ast::{Program, Function, Statement, Expression, Type};
 use crate::error::{CompilerWarning};
-use crate::parser::Rule;
+use crate::parser::{Rule, CleanParser};
 use std::fmt::Write;
 
 /// Debug utilities for Clean Language development
@@ -400,7 +401,7 @@ impl DebugUtils {
             _ => return Err(format!("Unknown rule: {rule_name}")),
         };
 
-        match CleanParser::parse(rule, source) {
+        match <CleanParser as Parser<Rule>>::parse(rule, source) {
             Ok(pairs) => {
                 let mut result = String::new();
                 for pair in pairs {

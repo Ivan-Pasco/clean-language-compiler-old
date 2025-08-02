@@ -1197,7 +1197,7 @@ impl ErrorUtils {
                 (message, suggestions, help)
             },
             ErrorVariant::CustomError { message } => {
-                let suggestions = ErrorUtils::suggest_syntax_fixes(message);
+                let suggestions = ErrorUtils::suggest_syntax_fixes(&message);
                 let help = Some("Check the Clean Language syntax documentation".to_string());
                 (message.clone(), suggestions, help)
             },

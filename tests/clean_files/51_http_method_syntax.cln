@@ -1,0 +1,60 @@
+// Comprehensive QA Test for HTTP Method Syntax  
+// Tests http.method() calls for HTTP operations
+
+start()
+    // Test http.get() method
+    string getResponse = http.get("https://api.example.com/users")
+    print("GET response length: ")
+    print(getResponse.length().toString())
+    
+    // Test http.post() method
+    string postData = "{\"name\": \"John\", \"email\": \"john@example.com\"}"
+    string postResponse = http.post("https://api.example.com/users", postData)
+    print("POST response length: ")
+    print(postResponse.length().toString())
+    
+    // Test http.put() method
+    string putData = "{\"name\": \"Jane\", \"email\": \"jane@example.com\"}"
+    string putResponse = http.put("https://api.example.com/users/123", putData)
+    print("PUT response length: ")
+    print(putResponse.length().toString())
+    
+    // Test http.patch() method
+    string patchData = "{\"email\": \"newemail@example.com\"}"
+    string patchResponse = http.patch("https://api.example.com/users/123", patchData)
+    print("PATCH response length: ")
+    print(patchResponse.length().toString())
+    
+    // Test http.delete() method
+    string deleteResponse = http.delete("https://api.example.com/users/123")
+    print("DELETE response length: ")
+    print(deleteResponse.length().toString())
+    
+    // Test method chaining with HTTP responses
+    string apiData = http.get("https://api.weather.com/current")
+    boolean hasData = apiData.isNotEmpty()
+    print("Weather API has data: ")
+    print(hasData.toString())
+    
+    // Test HTTP methods with validation
+    string userList = http.get("https://api.example.com/users")
+    userList.mustBeFalse(userList.isEmpty())
+    print("User list retrieved successfully")
+    
+    // Test multiple HTTP operations
+    string endpoint = "https://api.example.com"
+    string userData = http.get(endpoint + "/user/profile")
+    string settingsData = http.get(endpoint + "/user/settings")
+    
+    print("Profile data length: ")
+    print(userData.length().toString())
+    print("Settings data length: ")
+    print(settingsData.length().toString())
+    
+    // Test HTTP with JSON-style data
+    string jsonPayload = "{\"status\": \"active\", \"type\": \"premium\"}"
+    string updateResponse = http.post("https://api.example.com/account", jsonPayload)
+    print("Account update response: ")
+    print(updateResponse.length().toString())
+    
+    print("HTTP method syntax test completed successfully!")

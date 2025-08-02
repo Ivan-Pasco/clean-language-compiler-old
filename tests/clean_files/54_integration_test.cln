@@ -1,0 +1,132 @@
+// Comprehensive Integration Test
+// Tests combinations of all new syntax patterns
+
+import:
+    Math
+    String
+    List
+    Http
+
+private:
+    internalValidation
+    secretKey
+
+functions:
+    // Public function using method-style and static calls
+    boolean processUserInput()
+        // Get user data with input methods
+        string name = input("Enter your name: ")
+        integer age = input.integer("Enter your age: ")
+        boolean confirmed = input.yesNo("Confirm registration? ")
+        
+        // Validate using method-style syntax
+        name.mustBeFalse(name.isEmpty())
+        age.mustBeTrue(age > 0)
+        age.mustBeTrue(age < 150)
+        
+        // Process using static methods and method chaining
+        string cleanName = String.trim(name).toString()
+        integer validAge = age.keepBetween(18, 120)
+        
+        // Use HTTP methods for data submission
+        string userData = "{\"name\": \"" + cleanName + "\", \"age\": " + validAge.toString() + "}"
+        later response = start http.post("https://api.example.com/users", userData)
+        
+        // Background logging
+        background logUserAction("User registration attempted")
+        
+        return confirmed and response.isNotEmpty()
+    
+    // Function using async keywords with method chaining
+    list<string> fetchAndProcessData()
+        // Start multiple async operations
+        later data1 = start http.get("https://api.example.com/data1")
+        later data2 = start http.get("https://api.example.com/data2")
+        later data3 = start http.get("https://api.example.com/data3")
+        
+        // Process results with method-style calls
+        list<string> results = []
+        
+        // Wait for and validate results
+        data1.mustBeFalse(data1.isEmpty())
+        data2.mustBeFalse(data2.isEmpty())
+        data3.mustBeFalse(data3.isEmpty())
+        
+        // Use static methods for processing
+        string processed1 = String.toUpperCase(data1)
+        string processed2 = String.toLowerCase(data2)
+        string processed3 = String.trim(data3)
+        
+        // Build result list
+        results = List.push(results, processed1)
+        results = List.push(results, processed2)
+        results = List.push(results, processed3)
+        
+        // Background cleanup
+        background clearCache()
+        
+        return results
+    
+    // Private helper functions
+    void internalValidation(string data)
+        data.mustBeTrue(data.length() > 0)
+    
+    string secretKey()
+        return "secret-api-key-123"
+    
+    void logUserAction(string action)
+        string timestamp = Math.floor(Math.random() * 1000000.0).toString()
+        print("LOG [" + timestamp + "]: " + action)
+    
+    void clearCache()
+        print("Cache cleared in background")
+
+start()
+    // Test complex integration scenario
+    print("Starting integration test...")
+    
+    // Combine static methods with method-style calls
+    number value = Math.sqrt(144.0)
+    string valueText = value.toString().toUpperCase()
+    print("Computed value: " + valueText)
+    
+    // Test async with HTTP and validation
+    later apiStatus = start http.get("https://api.example.com/status")
+    
+    // Use input methods with validation chains
+    string testInput = input("Enter test data: ")
+    string cleanInput = testInput.trim().toString()
+    cleanInput.mustBeFalse(cleanInput.isEmpty())
+    
+    // Test method chaining with async results
+    string status = apiStatus
+    boolean validStatus = status.isNotEmpty()
+    print("API status valid: " + validStatus.toString())
+    
+    // Test static method combinations
+    list<integer> numbers = [5, 2, 8, 1, 9]
+    integer listLength = List.length(numbers)
+    integer maxValue = Math.max(8.0, 9.0).toInteger()
+    
+    print("List length: " + listLength.toString())
+    print("Max value: " + maxValue.toString())
+    
+    // Test background operations with method calls
+    background http.post("https://api.example.com/analytics", "{\"event\": \"test_completed\"}")
+    
+    // Test comprehensive user processing
+    boolean userProcessed = processUserInput()
+    print("User processing result: " + userProcessed.toString())
+    
+    // Test data fetching and processing
+    list<string> processedData = fetchAndProcessData()
+    integer dataCount = processedData.length()
+    print("Processed data items: " + dataCount.toString())
+    
+    // Final validation with all patterns
+    string finalMessage = "Integration test completed successfully!"
+    finalMessage.mustBeFalse(finalMessage.isEmpty())
+    boolean messageValid = finalMessage.isDefined()
+    
+    print("Final message valid: " + messageValid.toString())
+    print(finalMessage)
