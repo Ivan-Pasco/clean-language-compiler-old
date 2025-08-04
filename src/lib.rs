@@ -222,7 +222,7 @@ start()
 
             match compile_with_file(source, "stdlib_test.clean") {
                 Ok(wasm_binary) => {
-                    println!("✓ {name}: {} bytes", wasm_binary.len());
+                    println!("✓ {name}: {len} bytes", len = wasm_binary.len());
                     assert!(!wasm_binary.is_empty());
                     passed += 1;
                 }

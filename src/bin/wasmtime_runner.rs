@@ -49,16 +49,16 @@ fn allocate_string_in_memory(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
-        eprintln!("Usage: {} <wasm_file>", args[0]);
+        eprintln!("Usage: {program} <wasm_file>", program = args[0]);
         return Ok(());
     }
 
     let wasm_file = &args[1];
-    println!("🚀 Loading WebAssembly file: {}", wasm_file);
+    println!("🚀 Loading WebAssembly file: {wasm_file}");
 
     // Read the WASM file
     let wasm_bytes = fs::read(wasm_file)?;
-    println!("📦 File size: {} bytes", wasm_bytes.len());
+    println!("📦 File size: {len} bytes", len = wasm_bytes.len());
 
     // Create engine and store
     let engine = Engine::default();
@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mem = match caller.get_export("memory") {
                 Some(Extern::Memory(mem)) => mem,
                 _ => {
-                    print!("[print: ptr={}, len={}]", ptr, len);
+                    print!("[print: ptr={ptr}, len={len}]");
                     return;
                 }
             };
@@ -93,11 +93,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            println!("🔍 DEBUG: Raw bytes at ptr {}: {:?}", ptr, data);
+            println!("🔍 DEBUG: Raw bytes at ptr {ptr}: {data:?}");
 
             match std::str::from_utf8(data) {
                 Ok(s) => {
-                    println!("🔍 DEBUG: Decoded string: '{}'", s);
+                    println!("🔍 DEBUG: Decoded string: '{s}'");
                     print!("{}", s);
                 }
                 Err(_) => print!("[invalid utf8: {} bytes]", len),
@@ -127,8 +127,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             match std::str::from_utf8(data) {
-                Ok(s) => println!("{}", s),
-                Err(_) => println!("[invalid utf8: {} bytes]", len),
+                Ok(s) => println!("{s}"),
+                Err(_) => println!("[invalid utf8: {len} bytes]"),
             }
         },
     )?;
@@ -140,7 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add printl_simple function: printl_simple(value: i32) -> void
     linker.func_wrap("env", "printl_simple", |value: i32| {
-        println!("{}", value);
+        println!("{value}");
     })?;
 
     // Add file operation stubs (they won't be used in this test)
@@ -249,9 +249,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "env",
         "float_to_string",
         |mut caller: Caller<'_, ()>, value: f64| -> i32 {
-            println!("🔍 DEBUG: float_to_string called with value = {}", value);
+            println!("🔍 DEBUG: float_to_string called with value = {value}");
             let string_value = value.to_string();
-            println!("🔍 DEBUG: Converted to string: '{}'", string_value);
+            println!("🔍 DEBUG: Converted to string: '{string_value}'");
 
             // CRITICAL DEBUG: Check if the function is even being called
             println!(
@@ -263,7 +263,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(memory) = caller.get_export("memory") {
                 if let Some(memory) = memory.into_memory() {
                     let result = allocate_string_in_memory(&memory, &mut caller, &string_value);
-                    println!("🔍 DEBUG: float_to_string returning address {}", result);
+                    println!("🔍 DEBUG: float_to_string returning address {result}");
                     return result;
                 }
             }

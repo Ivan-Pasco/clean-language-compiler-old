@@ -110,7 +110,7 @@ impl HttpClient {
         let parts: Vec<&str> = without_protocol.splitn(2, '/').collect();
         let host = parts[0].to_string();
         let path = if parts.len() > 1 {
-            format!("/{}", parts[1])
+            format!("/{parts[1]}")
         } else {
             "/".to_string()
         };

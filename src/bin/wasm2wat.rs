@@ -6,14 +6,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 3 {
-        eprintln!("Usage: {} <input.wasm> <output.wat>", args[0]);
+        eprintln!("Usage: {program} <input.wasm> <output.wat>", program = args[0]);
         std::process::exit(1);
     }
 
     let input_file = &args[1];
     let output_file = &args[2];
 
-    println!("Converting {} to {}...", input_file, output_file);
+    println!("Converting {input_file} to {output_file}...");
 
     let wasm_content = fs::read(input_file)?;
     let wat_content = convert_wasm_to_wat(&wasm_content)?;
@@ -31,7 +31,7 @@ fn convert_wasm_to_wat(wasm_bytes: &[u8]) -> Result<String, Box<dyn std::error::
     for payload in parser.parse_all(wasm_bytes) {
         match payload? {
             Payload::Version { num, .. } => {
-                output.push_str(&format!("  ;; WebAssembly version: {}\n", num));
+                output.push_str(&format!("  ;; WebAssembly version: {num}\n"));
             }
             Payload::TypeSection(reader) => {
                 output.push_str("  ;; Type section\n");

@@ -443,7 +443,7 @@ async fn handle_package(package_cmd: PackageCommands) -> Result<(), Box<dyn std:
                 Ok(manifest) => {
                     println!(
                         "📦 Package: {}",
-                        format!("{} {}", manifest.package.name, manifest.package.version)
+                        format!("{} {manifest.package.name, manifest.package.version}")
                     );
 
                     if let Some(deps) = &manifest.dependencies {
@@ -495,7 +495,7 @@ async fn handle_package(package_cmd: PackageCommands) -> Result<(), Box<dyn std:
                 Ok(manifest) => {
                     println!(
                         "📤 Publishing {}...",
-                        format!("{} {}", manifest.package.name, manifest.package.version)
+                        format!("{} {manifest.package.name, manifest.package.version}")
                     );
                     println!("📡 Package publishing not yet implemented");
                 }
@@ -578,7 +578,7 @@ async fn handle_comprehensive_test(verbose: bool) -> Result<(), Box<dyn std::err
 
     for (name, source) in test_cases {
         print!("Testing {name}: ");
-        match compile_with_file(source, &format!("{}_test.clean", name.to_lowercase())) {
+        match compile_with_file(source, &format!("{name.to_lowercase(}_test.clean"))) {
             Ok(wasm_binary) => {
                 println!("✓ {} bytes", wasm_binary.len());
                 passed += 1;
@@ -872,7 +872,7 @@ fn run_tests(
             .description
             .as_ref()
             .map(|d| d.clone())
-            .unwrap_or_else(|| format!("Test #{}", i + 1));
+            .unwrap_or_else(|| format!("Test #{i + 1}"));
 
         // For now, we'll implement a basic test runner
         // In a full implementation, this would compile and run the test expression

@@ -582,7 +582,7 @@ fn parse_import_block_statement(
                                 }
                             } else {
                                 // Format: ModuleName.symbol or ModuleName.symbol as alias
-                                let symbol_name = format!("{}.{}", first_part, second_str);
+                                let symbol_name = format!("{}.{first_part, second_str}");
                                 if let Some(as_keyword) = item_parts.next() {
                                     if as_keyword.as_str() == "as" {
                                         let alias = item_parts.next().unwrap().as_str();
@@ -646,7 +646,7 @@ fn parse_private_block_statement(
                                 match item.as_rule() {
                                     Rule::identifier => {
                                         private_items.push(crate::ast::ImportItem {
-                                            name: format!("private:{}", item.as_str()),
+                                            name: format!("private:{item.as_str(}")),
                                             alias: None,
                                         });
                                     }

@@ -248,7 +248,7 @@ impl CodeGenerator {
         // ------------------------------------------------------------------
         // 3. Store class information and setup field maps
         // ------------------------------------------------------------------
-        println!("DEBUG: PARSE Program has {} classes", program.classes.len());
+        println!("DEBUG: PARSE Program has {count} classes", count = program.classes.len());
         for class in &program.classes {
             println!(
                 "DEBUG: PARSE Class '{}' has constructor: {}",
@@ -299,7 +299,7 @@ impl CodeGenerator {
         for class in &program.classes {
             // Prepare constructor if it exists
             if let Some(constructor) = &class.constructor {
-                let constructor_function_name = format!("{}_constructor", class.name);
+                let constructor_function_name = format!("{class_name}_constructor", class_name = class.name);
                 println!(
                     "DEBUG: PREPARE Preparing constructor function '{constructor_function_name}'"
                 );
@@ -319,7 +319,7 @@ impl CodeGenerator {
 
             // Prepare class methods as static functions
             for method in &class.methods {
-                let static_function_name = format!("{}_{}", class.name, method.name);
+                let static_function_name = format!("{class_name}_{method_name}", class_name = class.name, method_name = method.name);
                 let mut static_function = method.clone();
                 static_function.name = static_function_name;
                 self.prepare_function_type(&static_function)?;
@@ -345,7 +345,7 @@ impl CodeGenerator {
                 // Set class context for constructor generation
                 self.current_class_context = Some(class.name.clone());
 
-                let constructor_function_name = format!("{}_constructor", class.name);
+                let constructor_function_name = format!("{class_name}_constructor", class_name = class.name);
                 let constructor_function = ast::Function::new(
                     constructor_function_name,
                     constructor.parameters.clone(),
@@ -361,7 +361,7 @@ impl CodeGenerator {
                 // Generate a default constructor (no parameters, initializes fields to default values)
                 self.current_class_context = Some(class.name.clone());
 
-                let constructor_function_name = format!("{}_constructor", class.name);
+                let constructor_function_name = format!("{class_name}_constructor", class_name = class.name);
                 let constructor_function = ast::Function::new(
                     constructor_function_name,
                     vec![], // No parameters for default constructor
@@ -380,7 +380,7 @@ impl CodeGenerator {
                 // Set class context for method generation
                 self.current_class_context = Some(class.name.clone());
 
-                let static_function_name = format!("{}_{}", class.name, method.name);
+                let static_function_name = format!("{class_name}_{method_name}", class_name = class.name, method_name = method.name);
                 let mut static_function = method.clone();
                 static_function.name = static_function_name;
                 self.generate_function(&static_function)?;
@@ -820,7 +820,7 @@ impl CodeGenerator {
         // Find the function index from the function map (set by prepare_function_type)
         let function_index = self.function_map.get(&function.name).ok_or_else(|| {
             CompilerError::codegen_error(
-                &format!("Function '{}' not found in function map", function.name),
+                &format!("Function '{function_name}' not found in function map", function_name = function.name),
                 None,
                 None,
             )
@@ -1330,7 +1330,7 @@ impl CodeGenerator {
                             1,
                             args.len(),
                             None,
-                            Some(format!("Print functions expect exactly 1 argument, but {} were provided", args.len()))
+                            Some(format!("Print functions expect exactly 1 argument, but {count} were provided", count = args.len()))
                         ));
                     }
                     // Generate print call - this handles the stack properly
@@ -1347,7 +1347,7 @@ impl CodeGenerator {
                             1,
                             args.len(),
                             None,
-                            Some(format!("HTTP function '{}' expects exactly 1 argument (URL), but {} were provided", func_name, args.len()))
+                            Some(format!("HTTP function '{func_name}' expects exactly 1 argument (URL), but {count} were provided", count = args.len()))
                         ));
                     }
                     // Generate HTTP call with URL parameter
@@ -1363,7 +1363,7 @@ impl CodeGenerator {
                             2,
                             args.len(),
                             None,
-                            Some(format!("HTTP function '{}' expects exactly 2 arguments (URL, data), but {} were provided", func_name, args.len()))
+                            Some(format!("HTTP function '{func_name}' expects exactly 2 arguments (URL, data), but {count} were provided", count = args.len()))
                         ));
                     }
                     // Generate HTTP call with URL and data parameters
@@ -1398,7 +1398,7 @@ impl CodeGenerator {
                             2,
                             args.len(),
                             None,
-                            Some(format!("{} expects exactly 2 arguments (path, content), but {} were provided", func_name, args.len()))
+                            Some(format!("{func_name} expects exactly 2 arguments (path, content), but {count} were provided", count = args.len()))
                         ));
                     }
                     self.generate_file_call(func_name, args, instructions)?;
@@ -1701,7 +1701,7 @@ impl CodeGenerator {
 
                 // Check if this is a type conversion method only if not a class method
                 if self.is_type_conversion_method(method) {
-                    println!("DEBUG: Processing type conversion method '{}' via generate_type_conversion_method", method);
+                    println!("DEBUG: Processing type conversion method '{method}' via generate_type_conversion_method");
                     return self.generate_type_conversion_method(object, method, instructions);
                 }
 
@@ -1892,7 +1892,7 @@ impl CodeGenerator {
                         };
 
                         // Try to find the type-based method function
-                        let type_method_name = format!("{}.{}", type_name, method);
+                        let type_method_name = format!("{type_name}.{method}");
 
                         if let Some(&function_index) = self.function_map.get(&type_method_name) {
                             // Generate the object expression (variable value)
@@ -2542,7 +2542,7 @@ impl CodeGenerator {
 
                         // Try to find a function with the method name (fallback for arrays)
                         if let Some(method_index) =
-                            self.get_function_index(&format!("{}_{}", "array", method))
+                            self.get_function_index(&format!("array_{method}"))
                         {
                             instructions.push(Instruction::Call(method_index));
                             Ok(WasmType::I32) // Default return type
@@ -2838,7 +2838,7 @@ impl CodeGenerator {
                 // Generate proper async execution with future creation
 
                 // Step 1: Create a unique future ID
-                let future_id = format!("future_{}", self.function_count);
+                let future_id = format!("future_{count}", count = self.function_count);
                 let future_id_ptr = self.add_string_to_pool(&future_id);
                 let future_id_len = future_id.len() as i32;
 
@@ -2853,7 +2853,7 @@ impl CodeGenerator {
                 instructions.push(Instruction::LocalSet(future_handle_local));
 
                 // Step 4: Start background task to execute the expression
-                let task_name = format!("start_expr_{}", self.function_count);
+                let task_name = format!("start_expr_{count}", count = self.function_count);
                 let task_name_ptr = self.add_string_to_pool(&task_name);
                 let task_name_len = task_name.len() as i32;
 
@@ -2912,7 +2912,7 @@ impl CodeGenerator {
                         // we're getting PropertyAccess instead of MethodCall
 
                         // Check if this is part of a function call pattern
-                        let qualified_name = format!("{}.{}", namespace, property);
+                        let qualified_name = format!("{namespace}.{property}");
 
                         // WORKAROUND: Since this PropertyAccess should represent a function call,
                         // and the parser is not generating the right AST, we need to return
@@ -2987,7 +2987,7 @@ impl CodeGenerator {
                     if let Expression::Variable(base_name) = nested_object.as_ref() {
                         // Build the qualified name: base.nested_property.property
                         let qualified_name =
-                            format!("{}.{}.{}", base_name, nested_property, property);
+                            format!("{base_name}.{nested_property}.{property}");
 
                         // This is likely a function reference that should be called with arguments
                         // For now, return a placeholder that represents this function reference
@@ -3493,7 +3493,7 @@ impl CodeGenerator {
     ) -> Result<WasmType, CompilerError> {
         match value {
             Value::Number(n) => {
-                println!("DEBUG: generate_value for Number: {}", n);
+                println!("DEBUG: generate_value for Number: {n}");
                 instructions.push(Instruction::F64Const(*n));
                 Ok(WasmType::F64)
             }
@@ -4782,7 +4782,7 @@ impl CodeGenerator {
 
         // DEBUG: Print function registration info for function 75
         if function_index == 75 {
-            println!("DEBUG: Function index 75 is '{}'", name);
+            println!("DEBUG: Function index 75 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 183
@@ -5761,7 +5761,7 @@ impl CodeGenerator {
                             name: class_name, ..
                         } => {
                             // Call the class's toString() method
-                            let class_method_name = format!("{}_toString", class_name);
+                            let class_method_name = format!("{class_name}_toString");
                             if let Some(method_index) = self.get_function_index(&class_method_name)
                             {
                                 instructions.push(Instruction::Call(method_index));
@@ -5782,7 +5782,7 @@ impl CodeGenerator {
                         }
                         crate::ast::Type::Object(class_name) => {
                             // Call the class's toString() method
-                            let class_method_name = format!("{}_toString", class_name);
+                            let class_method_name = format!("{class_name}_toString");
                             if let Some(method_index) = self.get_function_index(&class_method_name)
                             {
                                 instructions.push(Instruction::Call(method_index));
@@ -5878,7 +5878,7 @@ impl CodeGenerator {
                 }
             }
             _ => Err(CompilerError::codegen_error(
-                &format!("Unknown type conversion method: {}", method),
+                &format!("Unknown type conversion method: {method}"),
                 None,
                 None,
             )),
@@ -5905,7 +5905,7 @@ impl CodeGenerator {
 
         // For now, return a placeholder until we have full WASM memory access
         // In a complete implementation, this would read from the WASM linear memory
-        Ok(format!("string@{}", ptr))
+        Ok(format!("string@{ptr}"))
     }
 
     /// Call a function by name with the given arguments
@@ -6080,7 +6080,7 @@ impl CodeGenerator {
             self.generate_statements(&constructor.body, &mut instructions)?;
 
             // Add constructor to function table
-            let constructor_name = format!("{}_constructor", class.name);
+            let constructor_name = format!("{class_name}_constructor", class_name = class.name);
             self.function_map
                 .insert(constructor_name.clone(), self.function_count);
             self.function_count += 1;
@@ -6109,7 +6109,7 @@ impl CodeGenerator {
             self.generate_statements(&method.body, &mut instructions)?;
 
             // Add method to function table
-            let method_name = format!("{}_{}", class.name, method.name);
+            let method_name = format!("{class_name}_{method_name}", class_name = class.name, method_name = method.name);
             self.function_map
                 .insert(method_name.clone(), self.function_count);
             self.function_count += 1;
@@ -6426,7 +6426,7 @@ impl CodeGenerator {
             Some(&index) => index,
             None => {
                 return Err(CompilerError::codegen_error(
-                    &format!("HTTP import function '{}' not found", func_name),
+                    &format!("HTTP import function '{func_name}' not found"),
                     Some("Make sure HTTP imports are properly registered".to_string()),
                     None,
                 ));
@@ -6438,7 +6438,7 @@ impl CodeGenerator {
                 // Single parameter: URL
                 if args.len() != 1 {
                     return Err(CompilerError::codegen_error(
-                        &format!("HTTP function '{}' expects 1 argument", func_name),
+                        &format!("HTTP function '{func_name}' expects 1 argument"),
                         None,
                         None,
                     ));
@@ -6454,7 +6454,7 @@ impl CodeGenerator {
                 // Two parameters: URL and data
                 if args.len() != 2 {
                     return Err(CompilerError::codegen_error(
-                        &format!("HTTP function '{}' expects 2 arguments", func_name),
+                        &format!("HTTP function '{func_name}' expects 2 arguments"),
                         None,
                         None,
                     ));
@@ -6471,7 +6471,7 @@ impl CodeGenerator {
             }
             _ => {
                 return Err(CompilerError::codegen_error(
-                    &format!("Unknown HTTP function: {}", func_name),
+                    &format!("Unknown HTTP function: {func_name}"),
                     None,
                     None,
                 ));
@@ -6492,7 +6492,7 @@ impl CodeGenerator {
             Some(&index) => index,
             None => {
                 return Err(CompilerError::codegen_error(
-                    &format!("File import function '{}' not found", func_name),
+                    &format!("File import function '{func_name}' not found"),
                     Some("Make sure file imports are properly registered".to_string()),
                     None,
                 ));
@@ -6504,7 +6504,7 @@ impl CodeGenerator {
                 // Single parameter: file path
                 if args.len() != 1 {
                     return Err(CompilerError::codegen_error(
-                        &format!("File function '{}' expects 1 argument", func_name),
+                        &format!("File function '{func_name}' expects 1 argument"),
                         None,
                         None,
                     ));
@@ -6523,7 +6523,7 @@ impl CodeGenerator {
                 // Single parameter: file path
                 if args.len() != 1 {
                     return Err(CompilerError::codegen_error(
-                        &format!("File function '{}' expects 1 argument", func_name),
+                        &format!("File function '{func_name}' expects 1 argument"),
                         None,
                         None,
                     ));
@@ -6539,7 +6539,7 @@ impl CodeGenerator {
                 // Two parameters: file path and content
                 if args.len() != 2 {
                     return Err(CompilerError::codegen_error(
-                        &format!("File function '{}' expects 2 arguments", func_name),
+                        &format!("File function '{func_name}' expects 2 arguments"),
                         None,
                         None,
                     ));
@@ -6556,7 +6556,7 @@ impl CodeGenerator {
             }
             _ => {
                 return Err(CompilerError::codegen_error(
-                    &format!("Unknown file function: {}", func_name),
+                    &format!("Unknown file function: {func_name}"),
                     None,
                     None,
                 ));
@@ -6634,7 +6634,7 @@ impl CodeGenerator {
                 // Stack now has [content_ptr, length] which is correct for import functions
             } else {
                 return Err(CompilerError::codegen_error(
-                    &format!("Method call '{}' must evaluate to a string pointer", method),
+                    &format!("Method call '{method}' must evaluate to a string pointer"),
                     None,
                     None,
                 ));
@@ -7578,7 +7578,7 @@ impl CodeGenerator {
                 instructions.push(Instruction::LocalGet(local.index));
             } else {
                 return Err(CompilerError::parse_error(
-                    format!("Object '{}' not found", object_name),
+                    format!("Object '{object_name}' not found"),
                     None,
                     Some("Check if the object is declared".to_string()),
                 ));
@@ -7806,7 +7806,7 @@ impl CodeGenerator {
     ) -> Result<(), CompilerError> {
         // Generate a unique task ID for this background task
         let task_id = self.function_count;
-        let task_name = format!("bg_task_{}", task_id);
+        let task_name = format!("bg_task_{task_id}");
         let _task_name_ptr = self.add_string_to_pool(&task_name);
         let _task_name_len = task_name.len() as i32;
 
@@ -7953,7 +7953,7 @@ impl CodeGenerator {
         // Generate individual getter functions for each variable
         for (var_name, (var_type, var_value)) in &self.start_function_variables.clone() {
             self.generate_single_getter_function(
-                &format!("get_{}", var_name),
+                &format!("get_{var_name}"),
                 var_type,
                 *var_value,
             )?;
@@ -8140,7 +8140,7 @@ impl CodeGenerator {
 
         // Search through each class in the hierarchy
         for class_in_hierarchy in &hierarchy {
-            let method_full_name = format!("{}_{}", class_in_hierarchy, method_name);
+            let method_full_name = format!("{}_{class_in_hierarchy, method_name}");
             if let Some(method_index) = self.get_function_index(&method_full_name) {
                 return Some(method_index);
             }

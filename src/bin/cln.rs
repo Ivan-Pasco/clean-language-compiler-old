@@ -40,7 +40,7 @@ fn main() -> Result<(), CompilerError> {
             } else {
                 // Generate output filename from input
                 match Path::new(input_file).file_stem() {
-                    Some(stem) => format!("{}.wasm", stem.to_string_lossy()),
+                    Some(stem) => format!("{stem}.wasm", stem = stem.to_string_lossy()),
                     None => format!("{input_file}.wasm"),
                 }
             };
@@ -286,7 +286,7 @@ fn display_error(error: &CompilerError, _source: &str, file_path: &str) {
             }
         }
         CompilerError::Type { context } => {
-            eprintln!("❌ Type Error: {}", context.message);
+            eprintln!("❌ Type Error: {message}", message = context.message);
 
             if let Some(location) = &context.location {
                 eprintln!(
@@ -307,7 +307,7 @@ fn display_error(error: &CompilerError, _source: &str, file_path: &str) {
             }
         }
         _ => {
-            eprintln!("❌ Error: {}", error);
+            eprintln!("❌ Error: {error}");
         }
     }
 

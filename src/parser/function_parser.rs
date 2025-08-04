@@ -47,13 +47,13 @@ impl FunctionParser {
     /// Parse a single function segment
     fn parse_function_segment(&self, segment: &FunctionSegment) -> Result<Function, CompilerError> {
         // Create a minimal functions block wrapper for parsing
-        let wrapped_source = format!("functions:\n{}", segment.source);
+        let wrapped_source = format!("functions:\n{segment.source}");
 
         // Parse with pest
         let parse_result = <CleanParser as Parser<Rule>>::parse(Rule::functions_block, &wrapped_source);
         let pairs = parse_result.map_err(|e| {
             CompilerError::syntax_error(
-                &format!("Failed to parse function {}: {}", segment.boundary.function_name, e),
+                &format!("Failed to parse function {}: {segment.boundary.function_name, e}"),
                 None,
                 Some(SourceLocation {
                     line: 1,
@@ -76,7 +76,7 @@ impl FunctionParser {
         }
 
         Err(CompilerError::syntax_error(
-            &format!("No function found in segment for {}", segment.boundary.function_name),
+            &format!("No function found in segment for {segment.boundary.function_name}"),
             None,
             Some(SourceLocation {
                 line: 1,

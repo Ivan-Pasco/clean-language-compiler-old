@@ -169,7 +169,7 @@ impl PackageManager {
     pub fn load_manifest<P: AsRef<Path>>(path: P) -> Result<PackageManifest, CompilerError> {
         let content = fs::read_to_string(&path).map_err(|e| {
             CompilerError::io_error(
-                &format!("Failed to read package manifest: {}", e),
+                &format!("Failed to read package manifest: {e}"),
                 Some(path.as_ref().to_string_lossy().to_string()),
                 None,
             )
@@ -196,11 +196,11 @@ impl PackageManager {
     ) -> Result<(), CompilerError> {
         let content = if path.as_ref().extension().and_then(|s| s.to_str()) == Some("json") {
             serde_json::to_string_pretty(manifest).map_err(|e| {
-                CompilerError::io_error(&format!("Failed to serialize manifest: {}", e), None, None)
+                CompilerError::io_error(&format!("Failed to serialize manifest: {e}"), None, None)
             })?
         } else {
             toml::to_string_pretty(manifest).map_err(|e| {
-                CompilerError::io_error(&format!("Failed to serialize manifest: {}", e), None, None)
+                CompilerError::io_error(&format!("Failed to serialize manifest: {e}"), None, None)
             })?
         };
 
@@ -322,11 +322,11 @@ impl PackageManager {
 
         // Skip if already installed
         if install_path.exists() {
-            println!("⏭️  {} {} already installed", package.name, package.version);
+            println!("⏭️  {name} {version} already installed", name = package.name, version = package.version);
             return Ok(());
         }
 
-        println!("📥 Installing {} {}...", package.name, package.version);
+        println!("📥 Installing {name} {version}...", name = package.name, version = package.version);
 
         match &package.source {
             PackageSource::Registry { url } => {
@@ -343,11 +343,11 @@ impl PackageManager {
             }
             PackageSource::Local { path } => {
                 // Local packages don't need installation, just reference
-                println!("🔗 Linking local package: {}", path.display());
+                println!("🔗 Linking local package: {path}", path = path.display());
             }
         }
 
-        println!("✅ Installed {} {}", package.name, package.version);
+        println!("✅ Installed {name} {version}", name = package.name, version = package.version);
         Ok(())
     }
 
@@ -363,13 +363,13 @@ impl PackageManager {
         // For now, we'll simulate the process
         fs::create_dir_all(install_path).map_err(|e| {
             CompilerError::io_error(
-                &format!("Failed to create install directory: {}", e),
+                &format!("Failed to create install directory: {e}"),
                 None,
                 None,
             )
         })?;
 
-        println!("📡 Downloading {} {} from {}", name, version, registry_url);
+        println!("📡 Downloading {name} {version} from {registry_url}");
 
         // Simulate package download and extraction
         // In a real implementation, this would:
@@ -389,13 +389,13 @@ impl PackageManager {
     ) -> Result<(), CompilerError> {
         fs::create_dir_all(install_path).map_err(|e| {
             CompilerError::io_error(
-                &format!("Failed to create install directory: {}", e),
+                &format!("Failed to create install directory: {e}"),
                 None,
                 None,
             )
         })?;
 
-        println!("🌿 Cloning from Git: {}", git_url);
+        println!("🌿 Cloning from Git: {git_url}");
 
         // In a real implementation, this would use git2 or similar to clone the repository
         // For now, we'll simulate the process
@@ -411,13 +411,13 @@ impl PackageManager {
     ) -> Result<(), CompilerError> {
         fs::create_dir_all(install_path).map_err(|e| {
             CompilerError::io_error(
-                &format!("Failed to create install directory: {}", e),
+                &format!("Failed to create install directory: {e}"),
                 None,
                 None,
             )
         })?;
 
-        println!("📁 Copying from local path: {}", source_path.display());
+        println!("📁 Copying from local path: {path}", path = source_path.display());
 
         // Copy package files to install location
         self.copy_dir_recursive(source_path, install_path)?;
@@ -429,16 +429,16 @@ impl PackageManager {
     fn copy_dir_recursive(&self, src: &Path, dst: &Path) -> Result<(), CompilerError> {
         if !dst.exists() {
             fs::create_dir_all(dst).map_err(|e| {
-                CompilerError::io_error(&format!("Failed to create directory: {}", e), None, None)
+                CompilerError::io_error(&format!("Failed to create directory: {e}"), None, None)
             })?;
         }
 
         for entry in fs::read_dir(src).map_err(|e| {
-            CompilerError::io_error(&format!("Failed to read directory: {}", e), None, None)
+            CompilerError::io_error(&format!("Failed to read directory: {e}"), None, None)
         })? {
             let entry = entry.map_err(|e| {
                 CompilerError::io_error(
-                    &format!("Failed to read directory entry: {}", e),
+                    &format!("Failed to read directory entry: {e}"),
                     None,
                     None,
                 )
@@ -450,7 +450,7 @@ impl PackageManager {
                 self.copy_dir_recursive(&src_path, &dst_path)?;
             } else {
                 fs::copy(&src_path, &dst_path).map_err(|e| {
-                    CompilerError::io_error(&format!("Failed to copy file: {}", e), None, None)
+                    CompilerError::io_error(&format!("Failed to copy file: {e}"), None, None)
                 })?;
             }
         }
@@ -512,9 +512,9 @@ impl PackageManager {
 
         if removed {
             Self::save_manifest(&manifest, manifest_path)?;
-            println!("✅ Removed dependency: {}", name);
+            println!("✅ Removed dependency: {name}");
         } else {
-            println!("⚠️  Dependency not found: {}", name);
+            println!("⚠️  Dependency not found: {name}");
         }
 
         Ok(())
@@ -595,7 +595,7 @@ impl Version {
         let parts: Vec<&str> = version_str.split('.').collect();
         if parts.len() < 3 {
             return Err(CompilerError::parse_error(
-                &format!("Invalid version format: {}", version_str),
+                &format!("Invalid version format: {version_str}"),
                 None,
                 Some("Version must be in format 'major.minor.patch'".to_string()),
             ));

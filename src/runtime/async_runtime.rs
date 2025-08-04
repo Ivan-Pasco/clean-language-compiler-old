@@ -266,7 +266,7 @@ impl FutureHandle {
             value: value_i32,
         });
 
-        println!("🔮 Future '{}' resolved with: {result:?}", self.id);
+        println!("🔮 Future '{id}' resolved with: {result:?}", id = self.id);
     }
 
     /// Check if the future is resolved

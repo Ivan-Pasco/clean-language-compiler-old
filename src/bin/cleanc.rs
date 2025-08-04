@@ -30,8 +30,8 @@ fn main() -> Result<(), CompilerError> {
             } else {
                 // Remove the extension (e.g. ".cln") safely and append ".wasm"
                 match Path::new(input_file).file_stem() {
-                    Some(stem) => format!("{}.wasm", stem.to_string_lossy()),
-                    None => format!("{}.wasm", input_file), // fallback – should not happen
+                    Some(stem) => format!("{stem}.wasm", stem = stem.to_string_lossy()),
+                    None => format!("{input_file}.wasm"), // fallback – should not happen
                 }
             };
 
@@ -51,7 +51,7 @@ fn main() -> Result<(), CompilerError> {
             print_usage();
         }
         _ => {
-            println!("Unknown command: {}", args[1]);
+            println!("Unknown command: {command}", command = args[1]);
             print_usage();
         }
     }
@@ -70,17 +70,17 @@ fn print_usage() {
 }
 
 fn compile_file(input_file: &str, output_file: &str) -> Result<(), CompilerError> {
-    println!("Compiling {} to {}...", input_file, output_file);
+    println!("Compiling {input_file} to {output_file}...");
 
     // Read the input file
     let mut source = String::new();
     let mut file = fs::File::open(input_file)
-        .map_err(|e| CompilerError::io_error(format!("Failed to open file: {}", e), None, None))?;
+        .map_err(|e| CompilerError::io_error(format!("Failed to open file: {e}"), None, None))?;
     file.read_to_string(&mut source)
-        .map_err(|e| CompilerError::io_error(format!("Failed to read file: {}", e), None, None))?;
+        .map_err(|e| CompilerError::io_error(format!("Failed to read file: {e}"), None, None))?;
 
     // Debug: Print source code
-    println!("Source code:\n{}", source);
+    println!("Source code:\n{source}");
 
     // Parse the program with enhanced error reporting
     let program = match CleanParser::parse_program_with_file(&source, input_file) {
@@ -92,7 +92,7 @@ fn compile_file(input_file: &str, output_file: &str) -> Result<(), CompilerError
     };
 
     // Debug print the parsed AST
-    println!("Parsed AST: {:#?}", program);
+    println!("Parsed AST: {program:#?}");
 
     // Semantic analysis with enhanced error reporting
     let mut semantic_analyzer = SemanticAnalyzer::new();
@@ -110,7 +110,7 @@ fn compile_file(input_file: &str, output_file: &str) -> Result<(), CompilerError
 
     // Write the output file
     fs::write(output_file, wasm_binary).map_err(|e| {
-        CompilerError::io_error(format!("Failed to write output file: {}", e), None, None)
+        CompilerError::io_error(format!("Failed to write output file: {e}"), None, None)
     })?;
 
     println!("Compilation successful!");
@@ -118,18 +118,18 @@ fn compile_file(input_file: &str, output_file: &str) -> Result<(), CompilerError
 }
 
 fn execute_file(input_file: &str) -> Result<(), CompilerError> {
-    println!("Executing {}...", input_file);
+    println!("Executing {input_file}...");
 
     // Check if the file exists
     if !Path::new(input_file).exists() {
         // If the input is a .cln file, compile it first
         if input_file.ends_with(".cln") {
-            let wasm_file = format!("{}.wasm", input_file.trim_end_matches(".cln"));
+            let wasm_file = format!("{file_stem}.wasm", file_stem = input_file.trim_end_matches(".cln"));
             compile_file(input_file, &wasm_file)?;
             return execute_file(&wasm_file);
         } else {
             return Err(CompilerError::io_error(
-                format!("File not found: {}", input_file),
+                format!("File not found: {input_file}"),
                 None,
                 None,
             ));
@@ -138,14 +138,14 @@ fn execute_file(input_file: &str) -> Result<(), CompilerError> {
 
     // If it's not a WASM file, try to compile it first
     if !input_file.ends_with(".wasm") {
-        let wasm_file = format!("{}.wasm", input_file);
+        let wasm_file = format!("{input_file}.wasm");
         compile_file(input_file, &wasm_file)?;
         return execute_file(&wasm_file);
     }
 
     // Read the WASM file
     let wasm_bytes = fs::read(input_file).map_err(|e| {
-        CompilerError::io_error(format!("Failed to read WASM file: {}", e), None, None)
+        CompilerError::io_error(format!("Failed to read WASM file: {e}"), None, None)
     })?;
 
     // Use wasmtime to execute the WASM file
@@ -156,7 +156,7 @@ fn execute_file(input_file: &str) -> Result<(), CompilerError> {
             Ok(())
         }
         Err(e) => Err(CompilerError::runtime_error(
-            format!("Failed to execute WASM: {}", e),
+            format!("Failed to execute WASM: {e}"),
             None,
             None,
         )),
@@ -172,7 +172,7 @@ fn run_wasm_with_wasmtime(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
                 Ok(()) => Ok(()),
                 Err(e) => {
                     // Show the actual error before falling back
-                    println!("⚠️  Async runtime failed with error: {}", e);
+                    println!("⚠️  Async runtime failed with error: {e}");
                     println!("   Falling back to synchronous execution");
                     run_wasm_sync(wasm_bytes)
                 }
@@ -195,7 +195,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
     // Create the engine
     let engine = Engine::new(&config).map_err(|e| {
         CompilerError::runtime_error(
-            format!("Failed to create WebAssembly engine: {}", e),
+            format!("Failed to create WebAssembly engine: {e}"),
             None,
             None,
         )
@@ -204,7 +204,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
     // Create a module from the bytes
     let module = Module::new(&engine, wasm_bytes).map_err(|e| {
         CompilerError::runtime_error(
-            format!("Failed to create WebAssembly module: {}", e),
+            format!("Failed to create WebAssembly module: {e}"),
             None,
             None,
         )
@@ -250,7 +250,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create print function: {}", e),
+                format!("Failed to create print function: {e}"),
                 None,
                 None,
             )
@@ -271,7 +271,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
 
                             if start + len <= data.len() {
                                 if let Ok(string) = std::str::from_utf8(&data[start..start + len]) {
-                                    println!("{}", string);
+                                    println!("{string}");
                                 } else {
                                     println!("[invalid UTF-8]");
                                 }
@@ -288,7 +288,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create printl function: {}", e),
+                format!("Failed to create printl function: {e}"),
                 None,
                 None,
             )
@@ -306,7 +306,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create print_simple function: {}", e),
+                format!("Failed to create print_simple function: {e}"),
                 None,
                 None,
             )
@@ -318,13 +318,13 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             "env",
             "printl_simple",
             |_caller: Caller<'_, ()>, value: i32| {
-                println!("{}", value);
+                println!("{value}");
                 Ok(())
             },
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create printl_simple function: {}", e),
+                format!("Failed to create printl_simple function: {e}"),
                 None,
                 None,
             )
@@ -342,7 +342,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create http_get function: {}", e),
+                format!("Failed to create http_get function: {e}"),
                 None,
                 None,
             )
@@ -364,7 +364,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create http_post function: {}", e),
+                format!("Failed to create http_post function: {e}"),
                 None,
                 None,
             )
@@ -386,7 +386,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create http_put function: {}", e),
+                format!("Failed to create http_put function: {e}"),
                 None,
                 None,
             )
@@ -408,7 +408,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create http_patch function: {}", e),
+                format!("Failed to create http_patch function: {e}"),
                 None,
                 None,
             )
@@ -425,7 +425,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create http_delete function: {}", e),
+                format!("Failed to create http_delete function: {e}"),
                 None,
                 None,
             )
@@ -476,7 +476,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create int_to_string function: {}", e),
+                format!("Failed to create int_to_string function: {e}"),
                 None,
                 None,
             )
@@ -525,7 +525,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create float_to_string function: {}", e),
+                format!("Failed to create float_to_string function: {e}"),
                 None,
                 None,
             )
@@ -570,7 +570,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create bool_to_string function: {}", e),
+                format!("Failed to create bool_to_string function: {e}"),
                 None,
                 None,
             )
@@ -612,7 +612,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create string_to_int function: {}", e),
+                format!("Failed to create string_to_int function: {e}"),
                 None,
                 None,
             )
@@ -651,7 +651,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create string_to_float function: {}", e),
+                format!("Failed to create string_to_float function: {e}"),
                 None,
                 None,
             )
@@ -718,7 +718,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
                         let str2 = read_string(str2_ptr, &data);
 
                         // Concatenate strings
-                        let result = format!("{}{}", str1, str2);
+                        let result = format!("{str1}{str2}");
                         let result_bytes = result.as_bytes();
 
                         // For now, use a simple approach: find space in existing memory
@@ -756,7 +756,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create string_concat function: {}", e),
+                format!("Failed to create string_concat function: {e}"),
                 None,
                 None,
             )
@@ -827,7 +827,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create string_compare function: {}", e),
+                format!("Failed to create string_compare function: {e}"),
                 None,
                 None,
             )
@@ -899,7 +899,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create memory_allocate function: {}", e),
+                format!("Failed to create memory_allocate function: {e}"),
                 None,
                 None,
             )
@@ -948,7 +948,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create memory_retain function: {}", e),
+                format!("Failed to create memory_retain function: {e}"),
                 None,
                 None,
             )
@@ -1010,7 +1010,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create memory_release function: {}", e),
+                format!("Failed to create memory_release function: {e}"),
                 None,
                 None,
             )
@@ -1073,7 +1073,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create memory_collect_garbage function: {}", e),
+                format!("Failed to create memory_collect_garbage function: {e}"),
                 None,
                 None,
             )
@@ -1140,7 +1140,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create file_write function: {}", e),
+                format!("Failed to create file_write function: {e}"),
                 None,
                 None,
             )
@@ -1217,7 +1217,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create file_read function: {}", e),
+                format!("Failed to create file_read function: {e}"),
                 None,
                 None,
             )
@@ -1240,7 +1240,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
                                 if let Ok(path) = std::str::from_utf8(&data[start..start + len]) {
                                     // Check if file exists
                                     let exists = Path::new(path).exists();
-                                    println!("📁 [FILE EXISTS] File '{}' exists: {}", path, exists);
+                                    println!("📁 [FILE EXISTS] File '{path}' exists: {exists}");
                                     return if exists { 1 } else { 0 };
                                 }
                             }
@@ -1254,7 +1254,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create file_exists function: {}", e),
+                format!("Failed to create file_exists function: {e}"),
                 None,
                 None,
             )
@@ -1304,7 +1304,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create file_delete function: {}", e),
+                format!("Failed to create file_delete function: {e}"),
                 None,
                 None,
             )
@@ -1377,7 +1377,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create file_append function: {}", e),
+                format!("Failed to create file_append function: {e}"),
                 None,
                 None,
             )
@@ -1415,13 +1415,13 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
                     "unnamed_future".to_string()
                 };
 
-                println!("🔮 [ASYNC] Creating future: {}", future_name);
+                println!("🔮 [ASYNC] Creating future: {future_name}");
                 1 // Return future handle ID
             },
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create create_future function: {}", e),
+                format!("Failed to create create_future function: {e}"),
                 None,
                 None,
             )
@@ -1456,14 +1456,14 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
                     "unnamed_task".to_string()
                 };
 
-                println!("🔄 [ASYNC] Starting background task: {}", task_name);
+                println!("🔄 [ASYNC] Starting background task: {task_name}");
                 // Return a task ID (in real implementation, this would be managed by the async runtime)
                 (rand::random::<u32>() % 1000 + 1) as i32
             },
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create start_background_task function: {}", e),
+                format!("Failed to create start_background_task function: {e}"),
                 None,
                 None,
             )
@@ -1498,13 +1498,13 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
                     "unnamed_operation".to_string()
                 };
 
-                println!("🔄 [ASYNC] Executing background operation: {}", operation);
+                println!("🔄 [ASYNC] Executing background operation: {operation}");
                 1 // Return success
             },
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create execute_background function: {}", e),
+                format!("Failed to create execute_background function: {e}"),
                 None,
                 None,
             )
@@ -1524,7 +1524,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create resolve_future function: {}", e),
+                format!("Failed to create resolve_future function: {e}"),
                 None,
                 None,
             )
@@ -1539,7 +1539,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create pow function: {}", e),
+                format!("Failed to create pow function: {e}"),
                 None,
                 None,
             )
@@ -1551,7 +1551,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create sin function: {}", e),
+                format!("Failed to create sin function: {e}"),
                 None,
                 None,
             )
@@ -1563,7 +1563,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create cos function: {}", e),
+                format!("Failed to create cos function: {e}"),
                 None,
                 None,
             )
@@ -1575,7 +1575,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create tan function: {}", e),
+                format!("Failed to create tan function: {e}"),
                 None,
                 None,
             )
@@ -1586,7 +1586,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.ln()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(format!("Failed to create ln function: {}", e), None, None)
+            CompilerError::runtime_error(format!("Failed to create ln function: {e}"), None, None)
         })?;
 
     linker
@@ -1595,7 +1595,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create log10 function: {}", e),
+                format!("Failed to create log10 function: {e}"),
                 None,
                 None,
             )
@@ -1607,7 +1607,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create log2 function: {}", e),
+                format!("Failed to create log2 function: {e}"),
                 None,
                 None,
             )
@@ -1619,7 +1619,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create exp function: {}", e),
+                format!("Failed to create exp function: {e}"),
                 None,
                 None,
             )
@@ -1631,7 +1631,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create exp2 function: {}", e),
+                format!("Failed to create exp2 function: {e}"),
                 None,
                 None,
             )
@@ -1643,7 +1643,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create sqrt function: {}", e),
+                format!("Failed to create sqrt function: {e}"),
                 None,
                 None,
             )
@@ -1655,7 +1655,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create sinh function: {}", e),
+                format!("Failed to create sinh function: {e}"),
                 None,
                 None,
             )
@@ -1667,7 +1667,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create cosh function: {}", e),
+                format!("Failed to create cosh function: {e}"),
                 None,
                 None,
             )
@@ -1679,7 +1679,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create tanh function: {}", e),
+                format!("Failed to create tanh function: {e}"),
                 None,
                 None,
             )
@@ -1691,7 +1691,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create asin function: {}", e),
+                format!("Failed to create asin function: {e}"),
                 None,
                 None,
             )
@@ -1703,7 +1703,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create acos function: {}", e),
+                format!("Failed to create acos function: {e}"),
                 None,
                 None,
             )
@@ -1715,7 +1715,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create atan function: {}", e),
+                format!("Failed to create atan function: {e}"),
                 None,
                 None,
             )
@@ -1726,7 +1726,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             std::f64::consts::PI
         })
         .map_err(|e| {
-            CompilerError::runtime_error(format!("Failed to create pi function: {}", e), None, None)
+            CompilerError::runtime_error(format!("Failed to create pi function: {e}"), None, None)
         })?;
 
     linker
@@ -1734,7 +1734,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             std::f64::consts::E
         })
         .map_err(|e| {
-            CompilerError::runtime_error(format!("Failed to create e function: {}", e), None, None)
+            CompilerError::runtime_error(format!("Failed to create e function: {e}"), None, None)
         })?;
 
     linker
@@ -1743,7 +1743,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         })
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create abs function: {}", e),
+                format!("Failed to create abs function: {e}"),
                 None,
                 None,
             )
@@ -1820,7 +1820,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
                         }
                     }
                     Err(e) => {
-                        println!("❌ [INPUT] Error reading input: {}", e);
+                        println!("❌ [INPUT] Error reading input: {e}");
                     }
                 }
 
@@ -1829,7 +1829,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create input function: {}", e),
+                format!("Failed to create input function: {e}"),
                 None,
                 None,
             )
@@ -1881,7 +1881,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
                             }
                         }
                         Err(e) => {
-                            println!("❌ [INPUT INTEGER] Error reading input: {}", e);
+                            println!("❌ [INPUT INTEGER] Error reading input: {e}");
                             return 0;
                         }
                     }
@@ -1890,7 +1890,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create input_integer function: {}", e),
+                format!("Failed to create input_integer function: {e}"),
                 None,
                 None,
             )
@@ -1944,7 +1944,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
                             }
                         }
                         Err(e) => {
-                            println!("❌ [INPUT FLOAT] Error reading input: {}", e);
+                            println!("❌ [INPUT FLOAT] Error reading input: {e}");
                             return 0.0;
                         }
                     }
@@ -1953,7 +1953,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create input_float function: {}", e),
+                format!("Failed to create input_float function: {e}"),
                 None,
                 None,
             )
@@ -2002,21 +2002,21 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
                     }
                 }
                 Err(e) => {
-                    println!("❌ [INPUT YES/NO] Error reading input: {}", e);
+                    println!("❌ [INPUT YES/NO] Error reading input: {e}");
                     return 0;
                 }
             }
         }
     })
     .map_err(|e| CompilerError::runtime_error(
-        format!("Failed to create input_yesno function: {}", e),
+        format!("Failed to create input_yesno function: {e}"),
         None, None
     ))?;
 
     // Instantiate the module
     let instance = linker.instantiate(&mut store, &module).map_err(|e| {
         CompilerError::runtime_error(
-            format!("Failed to instantiate WebAssembly module: {}", e),
+            format!("Failed to instantiate WebAssembly module: {e}"),
             None,
             None,
         )
@@ -2034,7 +2034,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         // Call the start function
         start.call(&mut store, &[], &mut results).map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to call start function: {}", e),
+                format!("Failed to call start function: {e}"),
                 None,
                 None,
             )
@@ -2062,7 +2062,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         // Call the start function
         start.call(&mut store, &[], &mut results).map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to call _start function: {}", e),
+                format!("Failed to call _start function: {e}"),
                 None,
                 None,
             )
@@ -2090,12 +2090,12 @@ fn display_enhanced_error(error: &CompilerError, _source: &str, file_path: &str)
     // ErrorUtils import removed as it's unused
 
     eprintln!("\n🚨 Compilation Error 🚨");
-    eprintln!("File: {}", file_path);
+    eprintln!("File: {file_path}");
     eprintln!();
 
     match error {
         CompilerError::Syntax { context } => {
-            eprintln!("❌ Syntax Error: {}", context.message);
+            eprintln!("❌ Syntax Error: {message}", message = context.message);
 
             if let Some(location) = &context.location {
                 eprintln!(
@@ -2106,22 +2106,22 @@ fn display_enhanced_error(error: &CompilerError, _source: &str, file_path: &str)
 
             if let Some(snippet) = &context.source_snippet {
                 eprintln!("\n📝 Source Context:");
-                eprintln!("{}", snippet);
+                eprintln!("{snippet}");
             }
 
             if let Some(help) = &context.help {
-                eprintln!("💡 Help: {}", help);
+                eprintln!("💡 Help: {help}");
             }
 
             if !context.suggestions.is_empty() {
                 eprintln!("\n🔧 Suggestions:");
                 for suggestion in &context.suggestions {
-                    eprintln!("  • {}", suggestion);
+                    eprintln!("  • {suggestion}");
                 }
             }
         }
         CompilerError::Type { context } => {
-            eprintln!("❌ Type Error: {}", context.message);
+            eprintln!("❌ Type Error: {message}", message = context.message);
 
             if let Some(location) = &context.location {
                 eprintln!(
@@ -2131,18 +2131,18 @@ fn display_enhanced_error(error: &CompilerError, _source: &str, file_path: &str)
             }
 
             if let Some(help) = &context.help {
-                eprintln!("💡 Help: {}", help);
+                eprintln!("💡 Help: {help}");
             }
 
             if !context.suggestions.is_empty() {
                 eprintln!("\n🔧 Suggestions:");
                 for suggestion in &context.suggestions {
-                    eprintln!("  • {}", suggestion);
+                    eprintln!("  • {suggestion}");
                 }
             }
         }
         _ => {
-            eprintln!("❌ Error: {}", error);
+            eprintln!("❌ Error: {error}");
         }
     }
 

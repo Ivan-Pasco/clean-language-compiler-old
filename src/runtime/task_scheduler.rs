@@ -439,14 +439,14 @@ impl TaskScheduler {
                 match task.state {
                     TaskState::Pending => {
                         task.state = TaskState::Cancelled;
-                        println!("🚫 Cancelled pending task {task_id} '{}'", task.name);
+                        println!("🚫 Cancelled pending task {task_id} '{name}'", name = task.name);
                     }
                     TaskState::Running => {
                         if let Some(handle) = &task.handle {
                             handle.abort();
                         }
                         task.state = TaskState::Cancelled;
-                        println!("🚫 Cancelled running task {task_id} '{}'", task.name);
+                        println!("🚫 Cancelled running task {task_id} '{name}'", name = task.name);
                     }
                     _ => {
                         return Err(CompilerError::runtime_error(

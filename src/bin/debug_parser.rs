@@ -18,7 +18,7 @@ fn print_pairs(pair: pest::iterators::Pair<Rule>, indent: usize) {
 }
 
 fn test_rule(rule: Rule, input: &str, rule_name: &str) {
-    println!("\n=== Testing {} ===", rule_name);
+    println!("\n=== Testing {rule_name} ===");
     println!("Input: {:?}", input);
 
     match CleanParser::parse(rule, input) {
@@ -29,7 +29,7 @@ fn test_rule(rule: Rule, input: &str, rule_name: &str) {
             }
         }
         Err(e) => {
-            println!("FAILED: {}", e);
+            println!("FAILED: {e}");
         }
     }
 }
@@ -37,14 +37,14 @@ fn test_rule(rule: Rule, input: &str, rule_name: &str) {
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
-        eprintln!("Usage: {} <file>", args[0]);
+        eprintln!("Usage: {program} <file>", program = args[0]);
         std::process::exit(1);
     }
 
     let source =
         fs::read_to_string(&args[1]).unwrap_or_else(|e| panic!("Failed to read file: {}", e));
 
-    println!("Source code: {}", source);
+    println!("Source code: {source}");
     println!("Hex dump:");
     for (i, byte) in source.bytes().enumerate() {
         print!("{:02x} ", byte);

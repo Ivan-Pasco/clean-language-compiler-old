@@ -18,7 +18,7 @@ start()
 
     println!("Compiling with compile_minimal...");
     let wasm_binary = compile_minimal(source).expect("Failed to compile");
-    println!("Generated WASM binary size: {}", wasm_binary.len());
+    println!("Generated WASM binary size: {len}", len = wasm_binary.len());
 
     println!("Creating engine...");
     let engine = Engine::default();
@@ -27,7 +27,7 @@ start()
     match Module::new(&engine, &wasm_binary) {
         Ok(_module) => println!("Module created successfully!"),
         Err(e) => {
-            println!("Failed to create module: {}", e);
+            println!("Failed to create module: {e}");
 
             // Write the binary to a file for inspection
             std::fs::write("test_minimal_debug.wasm", &wasm_binary)

@@ -58,7 +58,7 @@ impl FunctionPreprocessor {
             // Create a complete, standalone functions block with just this one function
             // Normalize indentation to match functions: block expectations
             let normalized_segment = self.normalize_function_indentation(segment);
-            let isolated_source = format!("functions:\n{}", normalized_segment);
+            let isolated_source = format!("functions:\n{normalized_segment}");
 
             // Parse this isolated function
             match self.parse_isolated_function(&isolated_source) {
@@ -260,10 +260,10 @@ impl FunctionPreprocessor {
 
         // For now, we'll use the function's description field to store class context
         // In a production implementation, we'd add a proper class_context field to Function
-        let class_info = format!("CLASS_CONTEXT:{}", class_ctx.class_name);
+        let class_info = format!("CLASS_CONTEXT:{class_ctx.class_name}");
 
         function.description = Some(match function.description {
-            Some(existing) => format!("{}\n{}", existing, class_info),
+            Some(existing) => format!("{existing}\n{class_info}"),
             None => class_info,
         });
 

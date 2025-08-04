@@ -43,7 +43,7 @@ pub fn parse_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
                 "void" => Ok(Type::Void),
                 "any" => Ok(Type::Any),
                 _ => Err(CompilerError::parse_error(
-                    format!("Unknown core type: {}", type_str),
+                    format!("Unknown core type: {type_str}"),
                     Some(ast_location),
                     Some(
                         "Valid core types are: boolean, integer, number, string, void, any"

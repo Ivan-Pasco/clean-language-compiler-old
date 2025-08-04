@@ -36,7 +36,7 @@ impl MethodStyleManager {
 
         for type_name in &types {
             // Length methods for strings and lists
-            let length_name = format!("{}.length", type_name);
+            let length_name = format!("{type_name}.length");
             register_stdlib_function(
                 codegen,
                 &length_name,
@@ -48,7 +48,7 @@ impl MethodStyleManager {
             // Check if value is defined (not null/undefined)
             register_stdlib_function(
                 codegen,
-                &format!("{}.isDefined", type_name),
+                &format!("{type_name}.isDefined"),
                 &[WasmType::I32],    // value pointer
                 Some(WasmType::I32), // boolean
                 self.generate_value_is_defined(),
@@ -56,7 +56,7 @@ impl MethodStyleManager {
 
             register_stdlib_function(
                 codegen,
-                &format!("{}.isNotDefined", type_name),
+                &format!("{type_name}.isNotDefined"),
                 &[WasmType::I32],    // value pointer
                 Some(WasmType::I32), // boolean
                 self.generate_value_is_not_defined(),
@@ -65,7 +65,7 @@ impl MethodStyleManager {
             // Check if value is empty
             register_stdlib_function(
                 codegen,
-                &format!("{}.isEmpty", type_name),
+                &format!("{type_name}.isEmpty"),
                 &[WasmType::I32],    // value pointer
                 Some(WasmType::I32), // boolean
                 self.generate_value_is_empty(),
@@ -73,7 +73,7 @@ impl MethodStyleManager {
 
             register_stdlib_function(
                 codegen,
-                &format!("{}.isNotEmpty", type_name),
+                &format!("{type_name}.isNotEmpty"),
                 &[WasmType::I32],    // value pointer
                 Some(WasmType::I32), // boolean
                 self.generate_value_is_not_empty(),
@@ -95,7 +95,7 @@ impl MethodStyleManager {
             // Assert that condition is true
             register_stdlib_function(
                 codegen,
-                &format!("{}.mustBeTrue", type_name),
+                &format!("{type_name}.mustBeTrue"),
                 &[WasmType::I32, WasmType::I32], // value pointer, condition
                 None,                            // void
                 self.generate_must_be_true(),
@@ -104,7 +104,7 @@ impl MethodStyleManager {
             // Assert that condition is false
             register_stdlib_function(
                 codegen,
-                &format!("{}.mustBeFalse", type_name),
+                &format!("{type_name}.mustBeFalse"),
                 &[WasmType::I32, WasmType::I32], // value pointer, condition
                 None,                            // void
                 self.generate_must_be_false(),
@@ -113,7 +113,7 @@ impl MethodStyleManager {
             // Assert that two values are equal
             register_stdlib_function(
                 codegen,
-                &format!("{}.mustBeEqual", type_name),
+                &format!("{type_name}.mustBeEqual"),
                 &[WasmType::I32, WasmType::I32], // value1 pointer, value2 pointer
                 None,                            // void
                 self.generate_must_be_equal(),
@@ -122,7 +122,7 @@ impl MethodStyleManager {
             // Assert that two values are not equal
             register_stdlib_function(
                 codegen,
-                &format!("{}.mustNotBeEqual", type_name),
+                &format!("{type_name}.mustNotBeEqual"),
                 &[WasmType::I32, WasmType::I32], // value1 pointer, value2 pointer
                 None,                            // void
                 self.generate_must_not_be_equal(),
@@ -144,7 +144,7 @@ impl MethodStyleManager {
             // String conversion
             register_stdlib_function(
                 codegen,
-                &format!("{}.toString", type_name),
+                &format!("{type_name}.toString"),
                 &[WasmType::I32],    // value pointer
                 Some(WasmType::I32), // string pointer
                 self.generate_value_to_string(),
@@ -153,7 +153,7 @@ impl MethodStyleManager {
             // Integer conversion
             register_stdlib_function(
                 codegen,
-                &format!("{}.toInteger", type_name),
+                &format!("{type_name}.toInteger"),
                 &[WasmType::I32],    // value pointer
                 Some(WasmType::I32), // integer value
                 self.generate_value_to_integer(),
@@ -162,7 +162,7 @@ impl MethodStyleManager {
             // Number conversion - handle both I32 and F64 inputs
             register_stdlib_function(
                 codegen,
-                &format!("{}.toNumber", type_name),
+                &format!("{type_name}.toNumber"),
                 &[WasmType::I32],    // value pointer (for most types)
                 Some(WasmType::F64), // number value
                 self.generate_value_to_number_from_ptr(),
@@ -171,7 +171,7 @@ impl MethodStyleManager {
             // Boolean conversion
             register_stdlib_function(
                 codegen,
-                &format!("{}.toBoolean", type_name),
+                &format!("{type_name}.toBoolean"),
                 &[WasmType::I32],    // value pointer
                 Some(WasmType::I32), // boolean value
                 self.generate_value_to_boolean(),

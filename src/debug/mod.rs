@@ -110,7 +110,7 @@ impl DebugUtils {
     fn statement_to_string(stmt: &Statement) -> String {
         match stmt {
             Statement::VariableDecl { name, type_, .. } => {
-                format!("var {} : {}", name, Self::type_to_string(type_))
+                format!("var {name} : {}", Self::type_to_string(type_))
             }
             Statement::Assignment { target, .. } => {
                 format!("assign to {target}")
@@ -140,7 +140,7 @@ impl DebugUtils {
                     then_branch.len()
                 );
                 if let Some(else_stmts) = else_branch {
-                    result.push_str(&format!(", else: {} stmts", else_stmts.len()));
+                    result.push_str(&format!(", else: {len} stmts", len = else_stmts.len()));
                 }
                 result.push(')');
                 result
@@ -155,7 +155,7 @@ impl DebugUtils {
             Expression::Literal(val) => format!("{val:?}"),
             Expression::Variable(name) => name.clone(),
             Expression::Call(name, arguments) => {
-                format!("{}({})", name, arguments.len())
+                format!("{name}({len})", len = arguments.len())
             }
             Expression::Binary(left, operator, right) => {
                 format!(
@@ -357,12 +357,12 @@ impl DebugUtils {
         for (line_num, line) in lines.iter().enumerate() {
             // Check for mixed indentation
             if line.starts_with(' ') && line.contains('\t') {
-                issues.push(format!("Line {}: Mixed spaces and tabs", line_num + 1));
+                issues.push(format!("Line {line_num + 1}: Mixed spaces and tabs"));
             }
 
             // Check for trailing whitespace
             if line.ends_with(' ') || line.ends_with('\t') {
-                issues.push(format!("Line {}: Trailing whitespace", line_num + 1));
+                issues.push(format!("Line {line_num + 1}: Trailing whitespace"));
             }
 
             // Check line length
@@ -388,14 +388,14 @@ impl DebugUtils {
         let mut report = String::new();
 
         report.push_str(&format!("=== Debug Report for {file_path} ===\n"));
-        report.push_str(&format!("Source length: {} characters\n", source.len()));
-        report.push_str(&format!("Source lines: {}\n", source.lines().count()));
+        report.push_str(&format!("Source length: {len} characters\n", len = source.len()));
+        report.push_str(&format!("Source lines: {count}\n", count = source.lines().count()));
 
         match parse_result {
             Ok(program) => {
                 report.push_str("✅ Parsing: SUCCESS\n");
-                report.push_str(&format!("Functions: {}\n", program.functions.len()));
-                report.push_str(&format!("Classes: {}\n", program.classes.len()));
+                report.push_str(&format!("Functions: {len}\n", len = program.functions.len()));
+                report.push_str(&format!("Classes: {len}\n", len = program.classes.len()));
                 report.push_str(&format!(
                     "Has start function: {}\n",
                     program.start_function.is_some()
@@ -408,7 +408,7 @@ impl DebugUtils {
         }
 
         if !warnings.is_empty() {
-            report.push_str(&format!("⚠️  Warnings: {}\n", warnings.len()));
+            report.push_str(&format!("⚠️  Warnings: {len}\n", len = warnings.len()));
             for warning in warnings {
                 report.push_str(&format!("  - {warning}\n"));
             }
@@ -417,7 +417,7 @@ impl DebugUtils {
         // Add style analysis
         let style_issues = Self::validate_style(source);
         if !style_issues.is_empty() {
-            report.push_str(&format!("🎨 Style Issues: {}\n", style_issues.len()));
+            report.push_str(&format!("🎨 Style Issues: {len}\n", len = style_issues.len()));
             for issue in style_issues {
                 report.push_str(&format!("  - {issue}\n"));
             }
@@ -523,7 +523,7 @@ impl DebugUtils {
 
             // Detect arrow function syntax
             if trimmed.contains("->") {
-                suggestions.push(format!("Line {}: Clean Language doesn't use '->' syntax. Use 'function returnType name()' format", line_num + 1));
+                suggestions.push(format!("Line {line_num + 1}: Clean Language doesn't use '->' syntax. Use 'function returnType name()' format"));
             }
 
             // Detect let keyword

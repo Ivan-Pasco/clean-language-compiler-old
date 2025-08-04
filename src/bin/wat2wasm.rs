@@ -12,13 +12,13 @@ fn main() {
     let input_file = &args[1];
     let output_file = &args[2];
 
-    println!("Converting {} to {}...", input_file, output_file);
+    println!("Converting {input_file} to {output_file}...");
 
     // Read the WAT file
     let wat_content = match fs::read_to_string(input_file) {
         Ok(content) => content,
         Err(e) => {
-            println!("Error reading file {}: {}", input_file, e);
+            println!("Error reading file {input_file}: {e}");
             return;
         }
     };
@@ -27,14 +27,14 @@ fn main() {
     let wasm_binary = match wat::parse_str(&wat_content) {
         Ok(wasm) => wasm,
         Err(e) => {
-            println!("Error parsing WAT: {}", e);
+            println!("Error parsing WAT: {e}");
             return;
         }
     };
 
     // Write the WASM file
     if let Err(e) = fs::write(output_file, wasm_binary) {
-        println!("Error writing file {}: {}", output_file, e);
+        println!("Error writing file {output_file}: {e}");
         return;
     }
 

@@ -14,7 +14,7 @@ start()
     println!("Compiling source...");
     let wasm_binary = match compile(source) {
         Ok(binary) => {
-            println!("✓ Compilation successful! Generated {} bytes", binary.len());
+            println!("✓ Compilation successful! Generated {len} bytes", len = binary.len());
 
             // Write to file for debugging
             fs::write("debug_lib_output.wasm", &binary).expect("Failed to write WASM file");
@@ -23,7 +23,7 @@ start()
             binary
         }
         Err(e) => {
-            println!("✗ Compilation failed: {}", e);
+            println!("✗ Compilation failed: {e}");
             return;
         }
     };
@@ -36,7 +36,7 @@ start()
             module
         }
         Err(e) => {
-            println!("✗ Module creation failed: {}", e);
+            println!("✗ Module creation failed: {e}");
             return;
         }
     };
@@ -49,7 +49,7 @@ start()
             instance
         }
         Err(e) => {
-            println!("✗ Instance creation failed: {}", e);
+            println!("✗ Instance creation failed: {e}");
             return;
         }
     };
@@ -60,7 +60,7 @@ start()
         let mut results = [];
         match start_func.call(&mut store, &[], &mut results) {
             Ok(_) => println!("✓ Function call successful!"),
-            Err(e) => println!("✗ Function call failed: {}", e),
+            Err(e) => println!("✗ Function call failed: {e}"),
         }
     } else {
         println!("✗ Start function not found");
@@ -68,6 +68,6 @@ start()
 
     println!("\nAvailable exports:");
     for export in module.exports() {
-        println!("  - {}: {:?}", export.name(), export.ty());
+        println!("  - {name}: {ty:?}", name = export.name(), ty = export.ty());
     }
 }

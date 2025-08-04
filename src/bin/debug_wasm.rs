@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let wasm_bytes = fs::read(&args[1])?;
-    println!("WASM file size: {} bytes", wasm_bytes.len());
+    println!("WASM file size: {len} bytes", len = wasm_bytes.len());
 
     // Try to parse the WASM file
     let parser = Parser::new(0);
@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("📝 Type Section:");
                 for (i, ty) in reader.into_iter().enumerate() {
                     let rec_group = ty?;
-                    println!("  Type {}: {:?}", i, rec_group);
+                    println!("  Type {i}: {rec_group:?}");
                     type_count += 1;
                 }
             }
@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("🔧 Function Section:");
                 for (i, type_index) in reader.into_iter().enumerate() {
                     let type_idx = type_index?;
-                    println!("  Function {}: uses type {}", i, type_idx);
+                    println!("  Function {i}: uses type {type_idx}");
                     function_count += 1;
                 }
             }
@@ -50,10 +50,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Payload::CodeSectionStart { count, .. } => {
-                println!("💻 Code Section: {} functions", count);
+                println!("💻 Code Section: {count} functions");
             }
             Payload::CodeSectionEntry(body) => {
-                println!("  Function body: {} bytes", body.range().len());
+                println!("  Function body: {len} bytes", len = body.range().len());
 
                 // Get function locals
                 let locals_reader = body.get_locals_reader()?;
@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         break;
                     }
                 }
-                println!("    Operations: {}", ops.join(", "));
+                println!("    Operations: {ops}", ops = ops.join(", "));
             }
             Payload::MemorySection(_) => {
                 println!("💾 Memory Section found");
@@ -84,10 +84,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n🎯 Analysis:");
-    println!("Total types: {}", type_count);
-    println!("Total functions: {}", function_count);
+    println!("Total types: {type_count}");
+    println!("Total functions: {function_count}");
     if let Some(start_idx) = start_function_index {
-        println!("Start function exported at index: {}", start_idx);
+        println!("Start function exported at index: {start_idx}");
     }
 
     // Validate the entire WASM module
@@ -95,7 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match wasmparser::validate(&wasm_bytes) {
         Ok(_) => println!("✅ WASM validation passed!"),
         Err(e) => {
-            println!("❌ WASM validation failed: {}", e);
+            println!("❌ WASM validation failed: {e}");
             println!("Error details: {:?}", e);
         }
     }

@@ -214,7 +214,7 @@ impl TypeChecker {
                     _ => Err(CompilerError::type_error(
                         location.line,
                         location.column,
-                        format!("Unknown operator: {}", op),
+                        format!("Unknown operator: {op}"),
                     )),
                 }
             }
@@ -224,7 +224,7 @@ impl TypeChecker {
                         return Err(CompilerError::type_error(
                             location.line,
                             location.column,
-                            format!("Function {} expects {} arguments but got {}", function, func_type.params.len(), args.len()),
+                            format!("Function {} expects {} arguments but got {function, func_type.params.len(}"), args.len()),
                         ));
                     }
                     for (arg, expected_type) in args.iter().zip(func_type.params.iter()) {

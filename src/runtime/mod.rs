@@ -222,7 +222,7 @@ impl CleanRuntime {
                                     if let Ok(string) =
                                         std::str::from_utf8(&data[start..start + len])
                                     {
-                                        println!("{}", string);
+                                        println!("{string}");
                                     } else {
                                         println!("[invalid UTF-8]");
                                     }
@@ -261,7 +261,7 @@ impl CleanRuntime {
                                     if let Ok(string) =
                                         std::str::from_utf8(&data[start..start + len])
                                     {
-                                        println!("{}", string);
+                                        println!("{string}");
                                     } else {
                                         println!("[invalid UTF-8]");
                                     }
@@ -307,7 +307,7 @@ impl CleanRuntime {
                 "env",
                 "printl_simple",
                 |_caller: Caller<'_, ()>, value: i32| {
-                    println!("{}", value);
+                    println!("{value}");
                     Ok(())
                 },
             )
@@ -351,7 +351,7 @@ impl CleanRuntime {
                       _future_name_len: i32|
                       -> i32 {
                     let mut resolver = future_resolver_clone.lock().unwrap();
-                    let future_id = format!("future_{}", resolver.futures.len());
+                    let future_id = format!("future_{resolver.futures.len(}"));
                     resolver.create_future(future_id.clone());
                     println!("🔮 Created future: {future_id}");
                     1 // Return success
@@ -400,7 +400,7 @@ impl CleanRuntime {
                         started_at: Instant::now(),
                         status: TaskStatus::Running,
                     };
-                    println!("🔄 Executing background operation #{}", task.id);
+                    println!("🔄 Executing background operation #{id}", id = task.id);
                     tasks.push(task);
 
                     // Simulate background work
@@ -844,8 +844,8 @@ impl CleanRuntime {
                                 let client = get_http_client();
                                 match client.get(url) {
                                     Ok(response) => {
-                                        println!("✅ [HTTP GET] Real response received: {} bytes", response.body.len());
-                                        println!("📄 [HTTP GET] Response body:\n{}", response.body);
+                                        println!("✅ [HTTP GET] Real response received: {len} bytes", len = response.body.len());
+                                        println!("📄 [HTTP GET] Response body:\n{body}", body = response.body);
                                         return 1; // Success indicator
                                     }
                                     Err(e) => {
@@ -889,8 +889,8 @@ impl CleanRuntime {
                                 let client = get_http_client();
                                 match client.post(url, body) {
                                     Ok(response) => {
-                                        println!("✅ [HTTP POST] Real response received: {} bytes", response.body.len());
-                                        println!("📄 [HTTP POST] Response body:\n{}", response.body);
+                                        println!("✅ [HTTP POST] Real response received: {len} bytes", len = response.body.len());
+                                        println!("📄 [HTTP POST] Response body:\n{body}", body = response.body);
                                         return 1; // Success indicator
                                     }
                                     Err(e) => {
@@ -934,8 +934,8 @@ impl CleanRuntime {
                                 let client = get_http_client();
                                 match client.put(url, body) {
                                     Ok(response) => {
-                                        println!("✅ [HTTP PUT] Real response received: {} bytes", response.body.len());
-                                        println!("📄 [HTTP PUT] Response body:\n{}", response.body);
+                                        println!("✅ [HTTP PUT] Real response received: {len} bytes", len = response.body.len());
+                                        println!("📄 [HTTP PUT] Response body:\n{body}", body = response.body);
                                         return 1; // Success indicator
                                     }
                                     Err(e) => {
@@ -979,8 +979,8 @@ impl CleanRuntime {
                                 let client = get_http_client();
                                 match client.patch(url, body) {
                                     Ok(response) => {
-                                        println!("✅ [HTTP PATCH] Real response received: {} bytes", response.body.len());
-                                        println!("📄 [HTTP PATCH] Response body:\n{}", response.body);
+                                        println!("✅ [HTTP PATCH] Real response received: {len} bytes", len = response.body.len());
+                                        println!("📄 [HTTP PATCH] Response body:\n{body}", body = response.body);
                                         return 1; // Success indicator
                                     }
                                     Err(e) => {
@@ -1019,8 +1019,8 @@ impl CleanRuntime {
                                 let client = get_http_client();
                                 match client.delete(url) {
                                     Ok(response) => {
-                                        println!("✅ [HTTP DELETE] Real response received: {} bytes", response.body.len());
-                                        println!("📄 [HTTP DELETE] Response body:\n{}", response.body);
+                                        println!("✅ [HTTP DELETE] Real response received: {len} bytes", len = response.body.len());
+                                        println!("📄 [HTTP DELETE] Response body:\n{body}", body = response.body);
                                         return 1; // Success indicator
                                     }
                                     Err(e) => {

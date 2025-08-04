@@ -183,7 +183,7 @@ impl MemoryManager {
             Some(block) => block.ref_count,
             None => {
                 return Err(CompilerError::memory_error(
-                    format!("Invalid pointer: {}", ptr),
+                    format!("Invalid pointer: {ptr}"),
                     Some("Ensure pointer is within valid memory range".to_string()),
                     None,
                 ));
@@ -227,7 +227,7 @@ impl MemoryManager {
             Ok(())
         } else {
             Err(CompilerError::memory_error(
-                format!("Invalid pointer: {}", ptr),
+                format!("Invalid pointer: {ptr}"),
                 Some("Ensure pointer is within valid memory range".to_string()),
                 None,
             ))
@@ -243,7 +243,7 @@ impl MemoryManager {
             Ok(())
         } else {
             Err(CompilerError::memory_error(
-                format!("Invalid pointer: {}", ptr),
+                format!("Invalid pointer: {ptr}"),
                 Some("Ensure pointer is within valid memory range".to_string()),
                 None,
             ))
@@ -258,7 +258,7 @@ impl MemoryManager {
             Some(block) => (block.ref_count, block.is_root),
             None => {
                 return Err(CompilerError::memory_error(
-                    format!("Invalid pointer for release: {}", ptr),
+                    format!("Invalid pointer for release: {ptr}"),
                     Some("Ensure pointer is within valid memory range".to_string()),
                     None,
                 ));
@@ -302,7 +302,7 @@ impl MemoryManager {
             Ok(block.type_id)
         } else {
             Err(CompilerError::memory_error(
-                format!("Invalid pointer: {}", ptr),
+                format!("Invalid pointer: {ptr}"),
                 Some("Ensure pointer is within valid memory range".to_string()),
                 None,
             ))
@@ -312,7 +312,7 @@ impl MemoryManager {
     pub fn store_i32(&mut self, ptr: usize, value: i32) -> Result<(), CompilerError> {
         if !self.is_valid_pointer(ptr) {
             return Err(CompilerError::memory_error(
-                format!("Invalid pointer: {}", ptr),
+                format!("Invalid pointer: {ptr}"),
                 Some("Ensure pointer is within valid memory range".to_string()),
                 None,
             ));
@@ -331,7 +331,7 @@ impl MemoryManager {
     pub fn store_u8(&mut self, ptr: usize, value: u8) -> Result<(), CompilerError> {
         if !self.is_valid_pointer(ptr) {
             return Err(CompilerError::memory_error(
-                format!("Invalid pointer: {}", ptr),
+                format!("Invalid pointer: {ptr}"),
                 Some("Ensure pointer is within valid memory range".to_string()),
                 None,
             ));
@@ -350,7 +350,7 @@ impl MemoryManager {
     pub fn store_f64(&mut self, ptr: usize, value: f64) -> Result<(), CompilerError> {
         if !self.is_valid_pointer(ptr) {
             return Err(CompilerError::memory_error(
-                format!("Invalid pointer: {}", ptr),
+                format!("Invalid pointer: {ptr}"),
                 Some("Ensure pointer is within valid memory range".to_string()),
                 None,
             ));

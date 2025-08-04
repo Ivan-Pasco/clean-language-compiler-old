@@ -361,18 +361,18 @@ impl FutureHandle {
         if let Some(receiver) = self.receiver.take() {
             match receiver.await {
                 Ok(value) => {
-                    println!("🎯 Future '{}' awaited successfully: {value:?}", self.id);
+                    println!("🎯 Future '{id}' awaited successfully: {value:?}", id = self.id);
                     Ok(value)
                 }
                 Err(_) => Err(CompilerError::runtime_error(
-                    format!("Future '{}' was cancelled or dropped", self.id),
+                    format!("Future '{self.id}' was cancelled or dropped"),
                     None,
                     None,
                 )),
             }
         } else {
             Err(CompilerError::runtime_error(
-                format!("Future '{}' handle already consumed", self.id),
+                format!("Future '{self.id}' handle already consumed"),
                 None,
                 None,
             ))
