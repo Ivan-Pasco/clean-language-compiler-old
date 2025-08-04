@@ -647,10 +647,10 @@ impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}.{}.{}", self.major, self.minor, self.patch)?;
         if let Some(pre) = &self.pre_release {
-            write!(f, "-{}", pre)?;
+            write!(f, "-{pre}")?;
         }
         if let Some(build) = &self.build {
-            write!(f, "+{}", build)?;
+            write!(f, "+{build}")?;
         }
         Ok(())
     }

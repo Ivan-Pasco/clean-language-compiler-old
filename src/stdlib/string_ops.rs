@@ -147,7 +147,7 @@ impl StringManager {
         // Check length
         if value.len() > length {
             return Err(CompilerError::type_error(
-                format!("String too long: {} > {value.len(}"), length),
+                format!("String too long: {} > {}", length, value.len()),
                 Some("Ensure the string fits within allocated space".to_string()),
                 None,
             ));
@@ -181,7 +181,7 @@ impl StringManager {
         // Check bounds
         if index >= length {
             return Err(CompilerError::type_error(
-                format!("String index out of bounds: {} >= {index, length}"),
+                format!("String index out of bounds: {} >= {}", index, length),
                 Some("Ensure index is within string bounds".to_string()),
                 None,
             ));
@@ -216,7 +216,7 @@ impl StringManager {
         // Check bounds
         if index >= length {
             return Err(CompilerError::type_error(
-                format!("String index out of bounds: {} >= {index, length}"),
+                format!("String index out of bounds: {} >= {}", index, length),
                 Some("Ensure index is within string bounds".to_string()),
                 None,
             ));

@@ -1253,7 +1253,7 @@ impl SemanticAnalyzer {
             // Check if field type is valid
             if !self.is_valid_type(&field.type_) {
                 return Err(CompilerError::type_error(
-                    format!("Invalid type for field {}: {field.name, field.type_}"),
+                    format!("Invalid type for field {}: {:?}", field.name, field.type_),
                     None,
                     None,
                 ));
@@ -1670,7 +1670,7 @@ impl SemanticAnalyzer {
                     .iter()
                     .map(|field| {
                         Parameter::new(
-                            format!("{field.name}Param"), // e.g., "nameParam", "ageParam"
+                            format!("{}Param", field.name), // e.g., "nameParam", "ageParam"
                             field.type_.clone(),
                         )
                     })
@@ -1772,7 +1772,7 @@ impl SemanticAnalyzer {
 
         // Get class hierarchy to include inherited fields
         let hierarchy = self.get_class_hierarchy(class_name);
-        println!("DEBUG: Class hierarchy for {}: {:?}", class_name, hierarchy);
+        println!("DEBUG: Class hierarchy for {class_name}: {hierarchy:?}");
 
         for class_name_in_hierarchy in hierarchy {
             if let Some(class_def) = self.class_table.get(&class_name_in_hierarchy) {
@@ -2050,9 +2050,9 @@ impl SemanticAnalyzer {
                 value,
                 location,
             } => {
-                println!("DEBUG: Assignment - target: {}, value: {:?}", target, value);
+                println!("DEBUG: Assignment - target: {target}, value: {value:?}");
                 let value_type = self.check_expression(value)?;
-                println!("DEBUG: Assignment - value_type: {:?}", value_type);
+                println!("DEBUG: Assignment - value_type: {value_type:?}");
 
                 if let Some(var_type) = self.current_scope.lookup_variable(target) {
                     if !self.types_compatible(&var_type, &value_type) {
@@ -2682,7 +2682,7 @@ impl SemanticAnalyzer {
                             "integer" => {
                                 if arguments.len() != 1 {
                                     return Err(CompilerError::type_error(
-                                        format!("input.integer() expects 1 argument, but {arguments.len(} were provided")),
+                                        format!("input.integer() expects 1 argument, but {} were provided", arguments.len()),
                                         Some("Provide a prompt string".to_string()),
                                         Some(location.clone())
                                     ));
@@ -2703,7 +2703,7 @@ impl SemanticAnalyzer {
                             "number" => {
                                 if arguments.len() != 1 {
                                     return Err(CompilerError::type_error(
-                                        format!("input.number() expects 1 argument, but {arguments.len(} were provided")),
+                                        format!("input.number() expects 1 argument, but {} were provided", arguments.len()),
                                         Some("Provide a prompt string".to_string()),
                                         Some(location.clone())
                                     ));
@@ -2724,7 +2724,7 @@ impl SemanticAnalyzer {
                             "yesNo" => {
                                 if arguments.len() != 1 {
                                     return Err(CompilerError::type_error(
-                                        format!("input.yesNo() expects 1 argument, but {arguments.len(} were provided")),
+                                        format!("input.yesNo() expects 1 argument, but {} were provided", arguments.len()),
                                         Some("Provide a prompt string".to_string()),
                                         Some(location.clone())
                                     ));
@@ -2884,7 +2884,7 @@ impl SemanticAnalyzer {
                         } else {
                             // Module not found in imports, but it might be a valid module name
                             // Check if we have a qualified function in the function table
-                            let qualified_name = format!("{}.{module_name, method}");
+                            let qualified_name = format!("{module_name}.{method}");
                             if self.function_table.contains_key(&qualified_name) {
                                 return self.check_function_call(
                                     &qualified_name,
@@ -2895,7 +2895,7 @@ impl SemanticAnalyzer {
                         }
                     } else {
                         // No imports, but check if we have a qualified function in the function table
-                        let qualified_name = format!("{}.{module_name, method}");
+                        let qualified_name = format!("{module_name}.{method}");
                         if self.function_table.contains_key(&qualified_name) {
                             return self.check_function_call(
                                 &qualified_name,
@@ -2910,7 +2910,7 @@ impl SemanticAnalyzer {
                 if let Expression::Variable(module_name) = &**object {
                     // Only treat as module call if it's NOT defined as a variable in current scope
                     if self.current_scope.lookup_variable(module_name).is_none() {
-                        let qualified_name = format!("{}.{module_name, method}");
+                        let qualified_name = format!("{module_name}.{method}");
                         println!(
                             "DEBUG: Checking for function '{}' in function table",
                             qualified_name
@@ -2933,7 +2933,7 @@ impl SemanticAnalyzer {
                             // Check if this looks like a module method call but function not found
                             if module_name.chars().next().unwrap_or('a').is_uppercase() {
                                 return Err(CompilerError::type_error(
-                                    format!("Function '{}' not found in module '{method, module_name}'"),
+                                    format!("Function '{}' not found in module '{}'", method, module_name),
                                     Some("Available functions can be checked in the module definition".to_string()),
                                     Some(location.clone())
                                 ));
@@ -3328,7 +3328,7 @@ impl SemanticAnalyzer {
             if let Some(ref imports) = self.current_imports.clone() {
                 if imports.resolved_imports.contains_key(module_name) {
                     // This is an imported module, check if we have a qualified function
-                    let qualified_name = format!("{}.{module_name, method}");
+                    let qualified_name = format!("{}.{}", module_name, method);
                     println!(
                         "DEBUG: Checking imported qualified function: {}",
                         qualified_name
@@ -3345,7 +3345,7 @@ impl SemanticAnalyzer {
             }
 
             // Also check if we have a qualified function regardless of imports
-            let qualified_name = format!("{}.{module_name, method}");
+            let qualified_name = format!("{}.{}", module_name, method);
             println!("DEBUG: Checking qualified function: {}", qualified_name);
             if self.function_table.contains_key(&qualified_name) {
                 println!("DEBUG: Found function: {}", qualified_name);
@@ -3366,7 +3366,7 @@ impl SemanticAnalyzer {
                     };
 
                     // Try to find the type-based method function
-                    let type_method_name = format!("{}.{type_name, method}");
+                    let type_method_name = format!("{}.{}", type_name, method);
 
                     if self.function_table.contains_key(&type_method_name) {
                         return self.check_function_call(
@@ -3389,7 +3389,7 @@ impl SemanticAnalyzer {
             (Type::Integer, "keepBetween") => {
                 if args.len() != 2 {
                     return Err(CompilerError::type_error(
-                        format!("Method 'keepBetween' expects 2 arguments (min, max), but {args.len(} were provided")),
+                        format!("Method 'keepBetween' expects 2 arguments (min, max), but {} were provided", args.len()),
                         Some("Usage: value.keepBetween(min, max)".to_string()),
                         Some(location.clone())
                     ));
@@ -3399,7 +3399,7 @@ impl SemanticAnalyzer {
                     let arg_type = self.check_expression(arg)?;
                     if !self.types_compatible(&Type::Integer, &arg_type) {
                         return Err(CompilerError::type_error(
-                            format!("Argument {i + 1} to 'keepBetween' must be an integer"),
+                            format!("Argument {} to 'keepBetween' must be an integer", i + 1),
                             Some("Provide integer values for min and max".to_string()),
                             Some(location.clone()),
                         ));
@@ -3411,7 +3411,7 @@ impl SemanticAnalyzer {
             (Type::Integer, "mustBeTrue") => {
                 if args.len() != 1 {
                     return Err(CompilerError::type_error(
-                        format!("Method 'mustBeTrue' expects 1 argument (condition), but {args.len(} were provided")),
+                        format!("Method 'mustBeTrue' expects 1 argument (condition), but {} were provided", args.len()),
                         Some("Usage: value.mustBeTrue(condition)".to_string()),
                         Some(location.clone())
                     ));
@@ -3455,7 +3455,7 @@ impl SemanticAnalyzer {
             (Type::Number, "keepBetween") => {
                 if args.len() != 2 {
                     return Err(CompilerError::type_error(
-                        format!("Method 'keepBetween' expects 2 arguments (min, max), but {args.len(} were provided")),
+                        format!("Method 'keepBetween' expects 2 arguments (min, max), but {} were provided", args.len()),
                         Some("Usage: value.keepBetween(min, max)".to_string()),
                         Some(location.clone())
                     ));
@@ -3465,7 +3465,7 @@ impl SemanticAnalyzer {
                     let arg_type = self.check_expression(arg)?;
                     if !self.types_compatible(&Type::Number, &arg_type) {
                         return Err(CompilerError::type_error(
-                            format!("Argument {i + 1} to 'keepBetween' must be a float"),
+                            format!("Argument {} to 'keepBetween' must be a float", i + 1),
                             Some("Provide float values for min and max".to_string()),
                             Some(location.clone()),
                         ));
@@ -3524,7 +3524,7 @@ impl SemanticAnalyzer {
                 }
                 // If not a List generic, fall through to default handling
                 return Err(CompilerError::type_error(
-                    &format!("Cannot call method '{method, object_type}' on type {:?}"),
+                    &format!("Cannot call method '{}' on type {:?}", method, object_type),
                     Some("Methods can only be called on objects".to_string()),
                     Some(location.clone()),
                 ));
@@ -3699,7 +3699,7 @@ impl SemanticAnalyzer {
                     let arg_type = self.check_expression(arg)?;
                     if !self.types_compatible(&Type::Integer, &arg_type) {
                         return Err(CompilerError::type_error(
-                            format!("Argument {i + 1} to 'substring' must be an integer"),
+                            format!("Argument {} to 'substring' must be an integer", i + 1),
                             Some("Usage: text.substring(0, 5)".to_string()),
                             Some(location.clone()),
                         ));
@@ -3720,7 +3720,7 @@ impl SemanticAnalyzer {
                     let arg_type = self.check_expression(arg)?;
                     if !self.types_compatible(&Type::String, &arg_type) {
                         return Err(CompilerError::type_error(
-                            format!("Argument {i + 1} to 'replace' must be a string"),
+                            format!("Argument {} to 'replace' must be a string", i + 1),
                             Some("Usage: text.replace(\"old\", \"new\")".to_string()),
                             Some(location.clone()),
                         ));
@@ -3949,7 +3949,7 @@ impl SemanticAnalyzer {
             (_, "mustBeTrue") => {
                 if args.len() != 1 {
                     return Err(CompilerError::type_error(
-                        format!("Method 'mustBeTrue' expects 1 argument (condition), but {args.len(} were provided")),
+                        format!("Method 'mustBeTrue' expects 1 argument (condition), but {} were provided", args.len()),
                         Some("Usage: value.mustBeTrue(condition)".to_string()),
                         Some(location.clone())
                     ));
@@ -3969,7 +3969,7 @@ impl SemanticAnalyzer {
             (_, "mustBeFalse") => {
                 if args.len() != 1 {
                     return Err(CompilerError::type_error(
-                        format!("Method 'mustBeFalse' expects 1 argument (condition), but {args.len(} were provided")),
+                        format!("Method 'mustBeFalse' expects 1 argument (condition), but {} were provided", args.len()),
                         Some("Usage: value.mustBeFalse(condition)".to_string()),
                         Some(location.clone())
                     ));
@@ -4005,7 +4005,7 @@ impl SemanticAnalyzer {
             (_, "mustNotBeEqual") => {
                 if args.len() != 1 {
                     return Err(CompilerError::type_error(
-                        format!("Method 'mustNotBeEqual' expects 1 argument (other), but {args.len(} were provided")),
+                        format!("Method 'mustNotBeEqual' expects 1 argument (other), but {} were provided", args.len()),
                         Some("Usage: value.mustNotBeEqual(other)".to_string()),
                         Some(location.clone())
                     ));
@@ -4035,7 +4035,7 @@ impl SemanticAnalyzer {
                     "get" => {
                         if args.len() != 2 {
                             return Err(CompilerError::type_error(
-                                format!("Method 'get' expects 2 arguments (row, col), but {args.len(} were provided")),
+                                format!("Method 'get' expects 2 arguments (row, col), but {} were provided", args.len()),
                                 Some("Usage: matrix.get(row, col)".to_string()),
                                 Some(location.clone())
                             ));
@@ -4045,7 +4045,7 @@ impl SemanticAnalyzer {
                             let arg_type = self.check_expression(arg)?;
                             if !self.types_compatible(&Type::Integer, &arg_type) {
                                 return Err(CompilerError::type_error(
-                                    format!("Argument {i + 1} to 'get' must be an integer"),
+                                    format!("Argument {} to 'get' must be an integer", i + 1),
                                     Some("Provide integer values for row and col".to_string()),
                                     Some(location.clone()),
                                 ));
@@ -4056,7 +4056,7 @@ impl SemanticAnalyzer {
                     "set" => {
                         if args.len() != 3 {
                             return Err(CompilerError::type_error(
-                                format!("Method 'set' expects 3 arguments (row, col, value), but {args.len(} were provided")),
+                                format!("Method 'set' expects 3 arguments (row, col, value), but {} were provided", args.len()),
                                 Some("Usage: matrix.set(row, col, value)".to_string()),
                                 Some(location.clone())
                             ));
@@ -4210,13 +4210,13 @@ impl SemanticAnalyzer {
 
                 // No matching global function found either
                 Err(CompilerError::type_error(
-                    &format!("Method '{}' not found in class '{method, class_name}' or as a global function"),
+                    &format!("Method '{}' not found in class '{}' or as a global function", method, class_name),
                     Some("Check if the method name is correct and defined in the class hierarchy or as a global function".to_string()),
                     Some(location.clone())
                 ))
             }
             _ => Err(CompilerError::type_error(
-                &format!("Cannot call method '{method, object_type}' on type {:?}"),
+                &format!("Cannot call method '{}' on type {:?}", method, object_type),
                 Some("Methods can only be called on objects".to_string()),
                 Some(location.clone()),
             )),

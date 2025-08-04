@@ -2968,7 +2968,7 @@ impl CodeGenerator {
                                 ))
                             }
                             _ => Err(CompilerError::codegen_error(
-                                &format!("Property access on type {:?} not supported", object_type),
+                                &format!("Property access on type {object_type:?} not supported"),
                                 Some(
                                     "Property access is only supported on objects and lists"
                                         .to_string(),
@@ -4787,57 +4787,57 @@ impl CodeGenerator {
 
         // DEBUG: Print function registration info for function 183
         if function_index == 183 {
-            println!("DEBUG: Function index 183 is '{}'", name);
+            println!("DEBUG: Function index 183 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 253
         if function_index == 253 {
-            println!("DEBUG: Function index 253 is '{}'", name);
+            println!("DEBUG: Function index 253 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 267
         if function_index == 267 {
-            println!("DEBUG: Function index 267 is '{}'", name);
+            println!("DEBUG: Function index 267 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 268
         if function_index == 268 {
-            println!("DEBUG: Function index 268 is '{}'", name);
+            println!("DEBUG: Function index 268 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 269
         if function_index == 269 {
-            println!("DEBUG: Function index 269 is '{}'", name);
+            println!("DEBUG: Function index 269 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 272
         if function_index == 272 {
-            println!("DEBUG: Function index 272 is '{}'", name);
+            println!("DEBUG: Function index 272 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 277
         if function_index == 277 {
-            println!("DEBUG: Function index 277 is '{}'", name);
+            println!("DEBUG: Function index 277 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 278
         if function_index == 278 {
-            println!("DEBUG: Function index 278 is '{}'", name);
+            println!("DEBUG: Function index 278 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 284
         if function_index == 284 {
-            println!("DEBUG: Function index 284 is '{}'", name);
+            println!("DEBUG: Function index 284 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 286
         if function_index == 286 {
-            println!("DEBUG: Function index 286 is '{}'", name);
+            println!("DEBUG: Function index 286 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 295
         if function_index == 295 {
-            println!("DEBUG: Function index 295 is '{}'", name);
+            println!("DEBUG: Function index 295 is '{name}'");
         }
 
         // Register with instruction_generator for internal tracking
@@ -4897,10 +4897,7 @@ impl CodeGenerator {
         // Update other tracking data
         self.function_names.push(name.to_string());
         if name == "float_to_string" {
-            println!(
-                "DEBUG: Adding float_to_string to function_map at index {} (potential DUPLICATE)",
-                function_index
-            );
+            println!("DEBUG: Adding float_to_string to function_map at index {function_index} (potential DUPLICATE)");
         }
         self.function_map.insert(name.to_string(), function_index);
         self.function_count += 1;
@@ -5554,10 +5551,7 @@ impl CodeGenerator {
             instructions.len()
         );
         let object_type = self.generate_expression(object, instructions)?;
-        println!(
-            "DEBUG: Object expression generated, type: {:?}",
-            object_type
-        );
+        println!("DEBUG: Object expression generated, type: {object_type:?}");
         println!(
             "DEBUG: Instructions after object generation: {} instructions",
             instructions.len()
@@ -5587,10 +5581,7 @@ impl CodeGenerator {
                         // For other types (like strings), we'd need more complex conversion
                         // For now, just return an error
                         Err(CompilerError::codegen_error(
-                            &format!(
-                                "Conversion from {:?} to integer not yet implemented",
-                                object_type
-                            ),
+                            &format!("Conversion from {object_type:?} to integer not yet implemented"),
                             None,
                             None,
                         ))
@@ -5609,10 +5600,7 @@ impl CodeGenerator {
                         Ok(WasmType::F64)
                     }
                     _ => Err(CompilerError::codegen_error(
-                        &format!(
-                            "Conversion from {:?} to float not yet implemented",
-                            object_type
-                        ),
+                        &format!("Conversion from {object_type:?} to float not yet implemented"),
                         None,
                         None,
                     )),
@@ -5661,10 +5649,7 @@ impl CodeGenerator {
                             if let Some(float_to_string_index) =
                                 self.get_function_index("float_to_string")
                             {
-                                println!(
-                                    "DEBUG: Found float_to_string at function index {}",
-                                    float_to_string_index
-                                );
+                                println!("DEBUG: Found float_to_string at function index {float_to_string_index}");
 
                                 // Verify the function mapping
                                 if let Some(actual_name) = self
@@ -8140,7 +8125,7 @@ impl CodeGenerator {
 
         // Search through each class in the hierarchy
         for class_in_hierarchy in &hierarchy {
-            let method_full_name = format!("{}_{class_in_hierarchy, method_name}");
+            let method_full_name = format!("{class_in_hierarchy}_{method_name}");
             if let Some(method_index) = self.get_function_index(&method_full_name) {
                 return Some(method_index);
             }

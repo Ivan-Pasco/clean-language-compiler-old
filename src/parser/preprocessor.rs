@@ -260,7 +260,7 @@ impl FunctionPreprocessor {
 
         // For now, we'll use the function's description field to store class context
         // In a production implementation, we'd add a proper class_context field to Function
-        let class_info = format!("CLASS_CONTEXT:{class_ctx.class_name}");
+        let class_info = format!("CLASS_CONTEXT:{}", class_ctx.class_name);
 
         function.description = Some(match function.description {
             Some(existing) => format!("{existing}\n{class_info}"),

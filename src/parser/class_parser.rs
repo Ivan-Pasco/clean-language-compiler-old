@@ -51,7 +51,7 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
                             println!("DEBUG: Constructor parsed successfully for class {name}");
                         }
                         Rule::functions_block => {
-                            println!("DEBUG: Found functions_block in class {}", name);
+                            println!("DEBUG: Found functions_block in class {name}");
                             // Create class context for preprocessor with all fields collected so far
                             let class_context = ClassContext {
                                 class_name: name.clone(),
@@ -59,10 +59,7 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
                                 base_class: base_class.clone(),
                             };
 
-                            println!(
-                                "DEBUG: Calling parse_functions_block_with_context for class {}",
-                                name
-                            );
+                            println!("DEBUG: Calling parse_functions_block_with_context for class {name}");
                             let class_methods = parse_functions_block_with_context(
                                 class_item,
                                 Some(class_context),

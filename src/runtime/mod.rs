@@ -184,7 +184,7 @@ impl CleanRuntime {
                                     if let Ok(string) =
                                         std::str::from_utf8(&data[start..start + len])
                                     {
-                                        print!("{}", string);
+                                        print!("{string}");
                                     } else {
                                         print!("[invalid UTF-8]");
                                     }
@@ -290,7 +290,7 @@ impl CleanRuntime {
                 "env",
                 "print_simple",
                 |_caller: Caller<'_, ()>, value: i32| {
-                    print!("{}", value);
+                    print!("{value}");
                     Ok(())
                 },
             )
@@ -351,7 +351,7 @@ impl CleanRuntime {
                       _future_name_len: i32|
                       -> i32 {
                     let mut resolver = future_resolver_clone.lock().unwrap();
-                    let future_id = format!("future_{resolver.futures.len(}"));
+                    let future_id = format!("future_{}", resolver.futures.len());
                     resolver.create_future(future_id.clone());
                     println!("🔮 Created future: {future_id}");
                     1 // Return success
@@ -1726,7 +1726,7 @@ impl CleanRuntime {
                     };
 
                     // Display prompt and get user input
-                    print!("{}", prompt);
+                    print!("{prompt}");
                     use std::io::{self, Write};
                     io::stdout().flush().unwrap();
 
@@ -1814,7 +1814,7 @@ impl CleanRuntime {
                     // Get integer input with validation and retry
                     use std::io::{self, Write};
                     loop {
-                        print!("{}", prompt);
+                        print!("{prompt}");
                         io::stdout().flush().unwrap();
 
                         let mut input = String::new();
@@ -1873,7 +1873,7 @@ impl CleanRuntime {
             // Get float input with validation and retry
             use std::io::{self, Write};
             loop {
-                print!("{}", prompt);
+                print!("{prompt}");
                 io::stdout().flush().unwrap();
 
                 let mut input = String::new();
@@ -1926,7 +1926,7 @@ impl CleanRuntime {
             // Get yes/no input with validation and retry
             use std::io::{self, Write};
             loop {
-                print!("{}", prompt);
+                print!("{prompt}");
                 io::stdout().flush().unwrap();
 
                 let mut input = String::new();

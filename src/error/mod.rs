@@ -309,9 +309,9 @@ impl From<ErrorContext> for String {
         };
 
         if let Some(code) = &error.error_code {
-            result.push_str(&format!("{} [{}]: {severity_str, code, error.message}\n"));
+            result.push_str(&format!("{} [{}]: {}\n", severity_str, code, error.message));
         } else {
-            result.push_str(&format!("{}: {severity_str, error.message}\n"));
+            result.push_str(&format!("{}: {}\n", severity_str, error.message));
         }
 
         // Location information
@@ -326,7 +326,7 @@ impl From<ErrorContext> for String {
         if let Some(snippet) = &error.source_snippet {
             result.push_str("   |\n");
             for (i, line) in snippet.lines().enumerate() {
-                result.push_str(&format!("{:3} | {i + 1, line}\n"));
+                result.push_str(&format!("{:3} | {}\n", i + 1, line));
             }
             result.push_str("   |\n");
         }
@@ -564,7 +564,7 @@ impl CompilerError {
         source_snippet: Option<String>,
     ) -> Self {
         let message = if expected.len() == 1 {
-            format!("Expected {}, found '{expected[0], found}'")
+            format!("Expected {}, found '{}'", expected[0], found)
         } else if expected.len() == 2 {
             format!(
                 "Expected {} or {}, found '{}'",
@@ -1276,7 +1276,7 @@ impl ErrorUtils {
 
                 // Add error pointer
                 let pointer_offset = location.column.saturating_sub(1);
-                let pointer_line = format!("     | {" ".repeat(pointer_offset}^"));
+                let pointer_line = format!("     | {}^", " ".repeat(pointer_offset));
 
                 // If we have a span, show the full error range
                 if error_span.1 > error_span.0 {
@@ -1329,9 +1329,9 @@ impl ErrorUtils {
                         .collect();
 
                     message = if expected.len() == 1 {
-                        format!("Expected {expected[0]}")
+                        format!("Expected {}", expected[0])
                     } else {
-                        format!("Expected one of: {expected.join(", "}"))
+                        format!("Expected one of: {}", expected.join(", "))
                     };
 
                     // Add context-specific suggestions
@@ -1347,9 +1347,9 @@ impl ErrorUtils {
                         .collect();
 
                     if !message.is_empty() {
-                        message.push_str(&format!(", but found {unexpected.join(" or "}")));
+                        message.push_str(&format!(", but found {}", unexpected.join(" or ")));
                     } else {
-                        message = format!("Unexpected {unexpected.join(" or "}"));
+                        message = format!("Unexpected {}", unexpected.join(" or "));
                     }
                 }
 
@@ -1638,7 +1638,7 @@ impl ErrorUtils {
             analysis.push("\n📍 Error Locations:".to_string());
             error_locations.sort_by_key(|(line, _)| *line);
             for (line, error_type) in error_locations {
-                analysis.push(format!("   Line {}: {line, error_type}"));
+                analysis.push(format!("   Line {line}: {error_type}"));
             }
         }
 

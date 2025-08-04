@@ -365,14 +365,14 @@ impl FutureHandle {
                     Ok(value)
                 }
                 Err(_) => Err(CompilerError::runtime_error(
-                    format!("Future '{self.id}' was cancelled or dropped"),
+                    format!("Future '{}' was cancelled or dropped", self.id),
                     None,
                     None,
                 )),
             }
         } else {
             Err(CompilerError::runtime_error(
-                format!("Future '{self.id}' handle already consumed"),
+                format!("Future '{}' handle already consumed", self.id),
                 None,
                 None,
             ))

@@ -268,7 +268,7 @@ pub fn parse_logical_expression(pair: Pair<Rule>) -> Result<Expression, Compiler
                     "or" => BinaryOperator::Or,
                     _ => {
                         return Err(CompilerError::parse_error(
-                            format!("Invalid logical operator: {item.as_str(}")),
+                            format!("Invalid logical operator: {}", item.as_str()),
                             Some(convert_to_ast_location(&get_location(&item))),
                             Some("Valid logical operators are: and, or".to_string()),
                         ))
@@ -330,7 +330,7 @@ pub fn parse_comparison_expression(pair: Pair<Rule>) -> Result<Expression, Compi
                     "is" => BinaryOperator::Is,
                     _ => {
                         return Err(CompilerError::parse_error(
-                            format!("Invalid comparison operator: {item.as_str(}")),
+                            format!("Invalid comparison operator: {}", item.as_str()),
                             Some(convert_to_ast_location(&get_location(&item))),
                             Some(
                                 "Valid comparison operators are: ==, !=, <, <=, >, >=, is"
@@ -389,7 +389,7 @@ pub fn parse_unary_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
                     "-" => UnaryOperator::Negate,
                     _ => {
                         return Err(CompilerError::parse_error(
-                            format!("Invalid unary operator: {item.as_str(}")),
+                            format!("Invalid unary operator: {}", item.as_str()),
                             Some(convert_to_ast_location(&get_location(&item))),
                             Some("Valid unary operators are: not, -".to_string()),
                         ))
@@ -456,7 +456,7 @@ pub fn parse_additive_expression(pair: Pair<Rule>) -> Result<Expression, Compile
                     "-" => BinaryOperator::Subtract,
                     _ => {
                         return Err(CompilerError::parse_error(
-                            format!("Invalid additive operator: {item.as_str(}")),
+                            format!("Invalid additive operator: {}", item.as_str()),
                             Some(convert_to_ast_location(&get_location(&item))),
                             Some("Valid additive operators are: +, -".to_string()),
                         ))
@@ -517,7 +517,7 @@ pub fn parse_multiplicative_expression(pair: Pair<Rule>) -> Result<Expression, C
                     "%" => BinaryOperator::Modulo,
                     _ => {
                         return Err(CompilerError::parse_error(
-                            format!("Invalid multiplicative operator: {item.as_str(}")),
+                            format!("Invalid multiplicative operator: {}", item.as_str()),
                             Some(convert_to_ast_location(&get_location(&item))),
                             Some("Valid multiplicative operators are: *, /, %".to_string()),
                         ))
@@ -575,7 +575,7 @@ pub fn parse_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
                     "^" => BinaryOperator::Power,
                     _ => {
                         return Err(CompilerError::parse_error(
-                            format!("Invalid power operator: {item.as_str(}")),
+                            format!("Invalid power operator: {}", item.as_str()),
                             Some(convert_to_ast_location(&get_location(&item))),
                             Some("Valid power operator is: ^".to_string()),
                         ))
@@ -663,7 +663,7 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                 "false" => false,
                 _ => {
                     return Err(CompilerError::parse_error(
-                        format!("Invalid boolean: {inner.as_str(}")),
+                        format!("Invalid boolean: {}", inner.as_str()),
                         Some(convert_to_ast_location(&location)),
                         Some("Boolean values must be 'true' or 'false'".to_string()),
                     ))
@@ -714,7 +714,7 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
             parse_start_expression(inner)
         }
         _ => Err(CompilerError::parse_error(
-            format!("Unexpected primary expression: {inner.as_str(}")),
+            format!("Unexpected primary expression: {}", inner.as_str()),
             Some(convert_to_ast_location(&location)),
             Some("Expected a literal, identifier, or function call".to_string()),
         )),
@@ -1060,7 +1060,7 @@ pub fn parse_multiline_expression(pair: Pair<Rule>) -> Result<Expression, Compil
                     "^" => BinaryOperator::Power,
                     _ => {
                         return Err(CompilerError::parse_error(
-                            format!("Invalid arithmetic operator: {item.as_str(}")),
+                            format!("Invalid arithmetic operator: {}", item.as_str()),
                             Some(convert_to_ast_location(&get_location(&item))),
                             Some("Valid arithmetic operators are: +, -, *, /, %, ^".to_string()),
                         ))
@@ -1074,7 +1074,7 @@ pub fn parse_multiline_expression(pair: Pair<Rule>) -> Result<Expression, Compil
                     "or" => BinaryOperator::Or,
                     _ => {
                         return Err(CompilerError::parse_error(
-                            format!("Invalid logical operator: {item.as_str(}")),
+                            format!("Invalid logical operator: {}", item.as_str()),
                             Some(convert_to_ast_location(&get_location(&item))),
                             Some("Valid logical operators are: and, or".to_string()),
                         ))
@@ -1093,7 +1093,7 @@ pub fn parse_multiline_expression(pair: Pair<Rule>) -> Result<Expression, Compil
                     "is" => BinaryOperator::Is,
                     _ => {
                         return Err(CompilerError::parse_error(
-                            format!("Invalid comparison operator: {item.as_str(}")),
+                            format!("Invalid comparison operator: {}", item.as_str()),
                             Some(convert_to_ast_location(&get_location(&item))),
                             Some(
                                 "Valid comparison operators are: ==, !=, <, <=, >, >=, is"

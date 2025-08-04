@@ -533,7 +533,7 @@ impl ListManager {
 
         if index >= size {
             return Err(CompilerError::type_error(
-                format!("List index out of bounds: {} >= {index, size}"),
+                format!("List index out of bounds: {} >= {}", index, size),
                 Some("Ensure index is within list bounds".to_string()),
                 None,
             ));
@@ -567,7 +567,7 @@ impl ListManager {
 
         if index >= size {
             return Err(CompilerError::type_error(
-                format!("List index out of bounds: {} >= {index, size}"),
+                format!("List index out of bounds: {} >= {}", index, size),
                 Some("Ensure index is within list bounds".to_string()),
                 None,
             ));

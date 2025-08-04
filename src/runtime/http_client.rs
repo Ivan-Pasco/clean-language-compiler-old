@@ -27,10 +27,7 @@ impl HttpClient {
         let (host, path) = self.parse_url(url)?;
 
         // Create HTTP request
-        let request = format!(
-            "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Clean-Language/1.0\r\nConnection: close\r\n\r\n",
-            path, host
-        );
+        let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Clean-Language/1.0\r\nConnection: close\r\n\r\n");
 
         self.send_request(&host, &request)
     }
@@ -83,10 +80,7 @@ impl HttpClient {
 
         let (host, path) = self.parse_url(url)?;
 
-        let request = format!(
-            "DELETE {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Clean-Language/1.0\r\nConnection: close\r\n\r\n",
-            path, host
-        );
+        let request = format!("DELETE {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Clean-Language/1.0\r\nConnection: close\r\n\r\n");
 
         self.send_request(&host, &request)
     }
@@ -110,7 +104,7 @@ impl HttpClient {
         let parts: Vec<&str> = without_protocol.splitn(2, '/').collect();
         let host = parts[0].to_string();
         let path = if parts.len() > 1 {
-            format!("/{parts[1]}")
+            format!("/{}", parts[1])
         } else {
             "/".to_string()
         };

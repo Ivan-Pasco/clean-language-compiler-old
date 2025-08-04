@@ -357,12 +357,12 @@ impl DebugUtils {
         for (line_num, line) in lines.iter().enumerate() {
             // Check for mixed indentation
             if line.starts_with(' ') && line.contains('\t') {
-                issues.push(format!("Line {line_num + 1}: Mixed spaces and tabs"));
+                issues.push(format!("Line {}: Mixed spaces and tabs", line_num + 1));
             }
 
             // Check for trailing whitespace
             if line.ends_with(' ') || line.ends_with('\t') {
-                issues.push(format!("Line {line_num + 1}: Trailing whitespace"));
+                issues.push(format!("Line {}: Trailing whitespace", line_num + 1));
             }
 
             // Check line length
@@ -523,7 +523,7 @@ impl DebugUtils {
 
             // Detect arrow function syntax
             if trimmed.contains("->") {
-                suggestions.push(format!("Line {line_num + 1}: Clean Language doesn't use '->' syntax. Use 'function returnType name()' format"));
+                suggestions.push(format!("Line {}: Clean Language doesn't use '->' syntax. Use 'function returnType name()' format", line_num + 1));
             }
 
             // Detect let keyword
