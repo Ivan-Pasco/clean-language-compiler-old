@@ -124,7 +124,7 @@ impl WasmType {
             wasmparser::ValType::F32 => Ok(WasmType::F32),
             wasmparser::ValType::F64 => Ok(WasmType::F64),
             wasmparser::ValType::V128 => Ok(WasmType::V128),
-            other => Err(format!("Unsupported wasmparser ValType: {:?}", other)),
+            other => Err(format!("Unsupported wasmparser ValType: {other:?}")),
         }
     }
 }

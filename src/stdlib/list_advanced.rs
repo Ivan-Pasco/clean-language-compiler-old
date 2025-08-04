@@ -718,8 +718,6 @@ impl ListAdvancedManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codegen::CodeGenerator;
-    use crate::types::WasmType;
 
     #[test]
     fn test_list_advanced_creation() {

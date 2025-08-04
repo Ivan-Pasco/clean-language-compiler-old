@@ -745,7 +745,7 @@ mod tests {
         let test_manager = TestFrameworkManager::new(memory_manager.clone());
 
         // Test that manager is created successfully
-        assert!(test_manager.memory_manager.borrow().data.len() > 0);
+        assert!(test_manager.memory_manager.borrow().data.is_empty());
     }
 
     #[test]

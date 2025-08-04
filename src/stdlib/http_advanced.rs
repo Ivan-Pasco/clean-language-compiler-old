@@ -1033,7 +1033,6 @@ impl HttpAdvancedManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codegen::CodeGenerator;
     use crate::stdlib::MemoryManager;
 
     #[test]

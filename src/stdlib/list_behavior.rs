@@ -1,6 +1,5 @@
 use crate::ast::ListBehavior;
 use crate::codegen::CodeGenerator;
-use crate::codegen::LIST_TYPE_ID;
 use crate::error::CompilerError;
 use crate::stdlib::memory::MemoryManager;
 use crate::stdlib::register_stdlib_function;

@@ -377,7 +377,7 @@ mod tests {
         let conditional_manager = ConditionalManager::new(memory_manager.clone());
 
         // Test that manager is created successfully
-        assert!(conditional_manager.memory_manager.borrow().data.len() > 0);
+        assert!(conditional_manager.memory_manager.borrow().data.is_empty());
     }
 
     #[test]

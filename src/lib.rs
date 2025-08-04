@@ -103,8 +103,8 @@ mod integration_tests {
                 assert!(!wasm_binary.is_empty());
             }
             Err(error) => {
-                println!("✗ Basic integration test failed: {}", error);
-                panic!("Integration test failed: {}", error);
+                println!("✗ Basic integration test failed: {error}");
+                panic!("Integration test failed: {error}");
             }
         }
     }
@@ -130,7 +130,7 @@ start()
                 assert!(!wasm_binary.is_empty());
             }
             Err(error) => {
-                println!("✗ Function integration test failed: {}", error);
+                println!("✗ Function integration test failed: {error}");
                 // Don't panic here as this might reveal integration issues we need to fix
             }
         }
@@ -155,7 +155,7 @@ start()
                 assert!(!wasm_binary.is_empty());
             }
             Err(error) => {
-                println!("✗ Type checking integration test failed: {}", error);
+                println!("✗ Type checking integration test failed: {error}");
                 // This might reveal type system integration issues
             }
         }
@@ -174,10 +174,7 @@ start()
                 println!("⚠ Error propagation test: Expected error but compilation succeeded");
             }
             Err(error) => {
-                println!(
-                    "✓ Error propagation test: Correctly caught error: {}",
-                    error
-                );
+                println!("✓ Error propagation test: Correctly caught error: {error}");
                 // Check that the error contains useful information about the undefined function
                 assert!(error.to_string().contains("undefined_function"));
                 assert!(error.to_string().contains("not found"));
@@ -220,24 +217,24 @@ start()
         let total = test_cases.len();
 
         for (name, source) in test_cases {
-            println!("\n--- Testing {} ---", name);
-            println!("Source: {}", source);
+            println!("\n--- Testing {name} ---");
+            println!("Source: {source}");
 
             match compile_with_file(source, "stdlib_test.clean") {
                 Ok(wasm_binary) => {
-                    println!("✓ {}: {} bytes", name, wasm_binary.len());
+                    println!("✓ {name}: {} bytes", wasm_binary.len());
                     assert!(!wasm_binary.is_empty());
                     passed += 1;
                 }
                 Err(error) => {
-                    println!("✗ {} failed: {}", name, error);
+                    println!("✗ {name} failed: {error}");
                     // Don't panic here as some stdlib functions might not be fully implemented yet
                 }
             }
         }
 
         println!("\n=== Summary ===");
-        println!("Passed: {}/{}", passed, total);
+        println!("Passed: {passed}/{total}");
 
         // At least basic functionality should work
         assert!(passed > 0, "No stdlib integration tests passed");

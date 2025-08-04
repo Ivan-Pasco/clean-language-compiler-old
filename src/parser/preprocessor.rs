@@ -1,5 +1,5 @@
 use super::{CleanParser, Rule};
-use crate::ast::{Field, Function, Type, Visibility};
+use crate::ast::{Field, Function};
 use crate::error::CompilerError;
 /// Preprocessing solution for handling multiple functions in Clean Language
 ///

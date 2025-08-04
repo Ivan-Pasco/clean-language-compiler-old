@@ -597,8 +597,6 @@ impl MathAdvancedManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codegen::CodeGenerator;
-    use crate::types::WasmType;
 
     #[test]
     fn test_math_advanced_creation() {

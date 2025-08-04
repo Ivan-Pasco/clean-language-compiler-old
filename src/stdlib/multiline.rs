@@ -319,7 +319,7 @@ mod tests {
         let multiline_manager = MultilineManager::new(memory_manager.clone());
 
         // Test that manager is created successfully
-        assert!(multiline_manager.memory_manager.borrow().data.len() > 0);
+        assert!(multiline_manager.memory_manager.borrow().data.is_empty());
     }
 
     #[test]

@@ -891,7 +891,7 @@ mod tests {
         let literals_manager = NumericLiteralsManager::new(memory_manager.clone());
 
         // Test that manager is created successfully
-        assert!(literals_manager.memory_manager.borrow().data.len() > 0);
+        assert!(literals_manager.memory_manager.borrow().data.is_empty());
     }
 
     #[test]

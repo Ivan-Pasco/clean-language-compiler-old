@@ -996,6 +996,7 @@ pub fn parse_test_case(test_pair: Pair<Rule>) -> Result<TestCase, CompilerError>
     ))
 }
 
+#[allow(non_snake_case)]
 pub fn parse_class_decl_OLD_UNUSED(class_pair: Pair<Rule>) -> Result<Class, CompilerError> {
     let mut class_name = String::new();
     let mut type_parameters = Vec::new();

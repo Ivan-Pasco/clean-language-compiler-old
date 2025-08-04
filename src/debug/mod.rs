@@ -1,8 +1,7 @@
 use crate::ast::{Expression, Function, Program, Statement, Type};
 use crate::error::CompilerError;
 use crate::error::CompilerWarning;
-use crate::parser::{CleanParser, Rule};
-use pest::Parser;
+use crate::parser::Rule;
 use std::fmt::Write;
 
 /// Debug utilities for Clean Language development

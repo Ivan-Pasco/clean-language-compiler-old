@@ -301,8 +301,7 @@ impl CodeGenerator {
             if let Some(constructor) = &class.constructor {
                 let constructor_function_name = format!("{}_constructor", class.name);
                 println!(
-                    "DEBUG: PREPARE Preparing constructor function '{}'",
-                    constructor_function_name
+                    "DEBUG: PREPARE Preparing constructor function '{constructor_function_name}'"
                 );
                 let constructor_function = ast::Function::new(
                     constructor_function_name,
@@ -796,7 +795,7 @@ impl CodeGenerator {
         if function.name == "start" {
             println!("🔥 CRITICAL DEBUG: Complete start function instruction sequence:");
             for (i, instruction) in instructions.iter().enumerate() {
-                println!("  {}: {:?}", i, instruction);
+                println!("  {i}: {instruction:?}");
             }
             println!("🔥 END start function instructions\n");
         }
@@ -3682,11 +3681,6 @@ impl CodeGenerator {
 
     /// Register method-style operation functions using WASM instructions from MethodStyleManager
     fn register_method_style_operations(&mut self) -> Result<(), CompilerError> {
-        use crate::stdlib::memory::MemoryManager;
-        use crate::stdlib::method_style::MethodStyleManager;
-        use std::cell::RefCell;
-        use std::rc::Rc;
-
         // DUPLICATE REGISTRATION DISABLED: MethodStyleManager already registered via StandardLibrary
         // Create a MemoryManager and MethodStyleManager instance and register its functions
         // let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(10))));
@@ -7903,7 +7897,7 @@ impl CodeGenerator {
     }
 
     /// REMOVED: track_statements_in_context - no longer needed with runtime code generation
-
+    ///
     /// Extract constant values from simple expressions for result tracking (legacy method)
     #[allow(dead_code)]
     fn extract_constant_value(&self, expr: &Expression) -> Option<i32> {

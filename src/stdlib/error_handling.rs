@@ -477,7 +477,7 @@ mod tests {
         let error_manager = ErrorHandlingManager::new(memory_manager.clone());
 
         // Test that manager is created successfully
-        assert!(error_manager.memory_manager.borrow().data.len() > 0);
+        assert!(error_manager.memory_manager.borrow().data.is_empty());
     }
 
     #[test]
