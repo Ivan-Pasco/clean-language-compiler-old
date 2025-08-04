@@ -169,7 +169,8 @@ impl CodeGenerator {
         codegen.register_file_imports()?;
         codegen.register_http_imports()?;
         codegen.register_type_conversion_imports()?;
-        codegen.register_stdlib_functions()?;
+        // DUPLICATE REGISTRATION DISABLED: StandardLibrary approach used instead
+        // codegen.register_stdlib_functions()?;
 
         // Manually register memory.allocate for testing purposes
         // TEMPORARILY DISABLED for debugging stack validation issues
@@ -240,7 +241,8 @@ impl CodeGenerator {
         // ------------------------------------------------------------------
         // 2. Register standard library functions AFTER imports (they get indices 14+)
         // ------------------------------------------------------------------
-        self.register_stdlib_functions()?;
+        // DUPLICATE REGISTRATION DISABLED: StandardLibrary approach used instead
+        // self.register_stdlib_functions()?;
 
         // ------------------------------------------------------------------
         // 3. Store class information and setup field maps
@@ -3203,10 +3205,11 @@ impl CodeGenerator {
         use std::rc::Rc;
         use std::cell::RefCell;
         
+        // DUPLICATE REGISTRATION DISABLED: MethodStyleManager already registered via StandardLibrary
         // Create a MemoryManager and MethodStyleManager instance and register its functions
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(10))));
-        let method_style_manager = MethodStyleManager::new(memory_manager);
-        method_style_manager.register_functions(self)?;
+        // let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(10))));
+        // let method_style_manager = MethodStyleManager::new(memory_manager);
+        // method_style_manager.register_functions(self)?;
         Ok(())
     }
     

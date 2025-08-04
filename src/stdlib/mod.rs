@@ -174,6 +174,7 @@ impl StandardLibrary {
     }
 
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+        // Register all standard library functions systematically
         self.string_ops.register_functions(codegen)?;
         self.numeric_ops.register_functions(codegen)?;
         self.matrix_ops.register_functions(codegen)?;
@@ -184,9 +185,7 @@ impl StandardLibrary {
         self.file_class.register_functions(codegen)?;
         // self.http_class.register_functions(codegen)?;
         self.list_behavior.register_functions(codegen)?;
-        println!("DEBUG: StandardLibrary - About to register MethodStyleManager functions");
         self.method_style.register_functions(codegen)?;
-        println!("DEBUG: StandardLibrary - MethodStyleManager functions registered");
         self.conditional.register_functions(codegen)?;
         self.multiline.register_functions(codegen)?;
         self.error_handling.register_functions(codegen)?;
@@ -206,6 +205,7 @@ impl StandardLibrary {
         self.import_system.register_functions(codegen)?;
         self.console_ops.register_functions(codegen)?;
         self.console_class.register_functions(codegen)?;
+        // All standard library functions registered successfully
         Ok(())
     }
 }
@@ -281,6 +281,7 @@ pub(crate) fn register_stdlib_function(
     return_type: Option<WasmType>, 
     instructions: Vec<Instruction>
 ) -> Result<u32, CompilerError> {
+    // Function registration completed successfully
     codegen.register_function(name, params, return_type, &instructions)
 }
 
@@ -293,6 +294,7 @@ pub(crate) fn register_stdlib_function_with_locals(
     local_types: &[WasmType], // Additional local variable types beyond parameters
     instructions: Vec<Instruction>
 ) -> Result<u32, CompilerError> {
+    // Function registration with locals completed successfully
     codegen.register_function_with_locals(name, params, return_type, local_types, &instructions)
 }
 

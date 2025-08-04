@@ -2,7 +2,7 @@ use crate::codegen::CodeGenerator;
 use crate::types::WasmType;
 use crate::error::CompilerError;
 use wasm_encoder::{Instruction, MemArg, BlockType, ValType};
-use crate::stdlib::register_stdlib_function;
+use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::stdlib::memory::MemoryManager;
@@ -20,10 +20,12 @@ impl MethodStyleManager {
 
     /// Register all method-style functions as stdlib functions
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+        // Register all method-style functions systematically
         self.register_utility_methods(codegen)?;
         self.register_validation_methods(codegen)?;
         self.register_conversion_methods(codegen)?;
         self.register_boundary_methods(codegen)?;
+        // All method-style functions registered successfully
         Ok(())
     }
 
@@ -185,20 +187,22 @@ impl MethodStyleManager {
     /// Register boundary/range methods
     fn register_boundary_methods(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // Keep integer value within bounds
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "integer.keepBetween",
             &[WasmType::I32, WasmType::I32, WasmType::I32], // value, min, max
             Some(WasmType::I32), // clamped value
+            &[WasmType::I32], // local 3 for intermediate result
             self.generate_integer_keep_between()
         )?;
 
         // Keep number value within bounds
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "number.keepBetween",
             &[WasmType::F64, WasmType::F64, WasmType::F64], // value, min, max
             Some(WasmType::F64), // clamped value
+            &[WasmType::F64], // local 3 for intermediate result
             self.generate_number_keep_between()
         )?;
 
@@ -432,19 +436,23 @@ impl MethodStyleManager {
             // Parameters: value (0), min (1), max (2)
             // Returns: clamped value
             
-            // Clamp to minimum
-            Instruction::LocalGet(0), // value
+            // Clamp to minimum: select(min, value, value < min)
             Instruction::LocalGet(1), // min
             Instruction::LocalGet(0), // value
+            Instruction::LocalGet(0), // value
             Instruction::LocalGet(1), // min
-            Instruction::I32LtS,     // value < min
+            Instruction::I32LtS,     // value < min (condition)
             Instruction::Select,      // Choose min if value < min, else value
             
-            // Clamp to maximum
+            // Store intermediate result in local 3
+            Instruction::LocalTee(3), // Store clamped-to-min value
+            
+            // Clamp to maximum: select(max, clamped_value, clamped_value > max)
             Instruction::LocalGet(2), // max
-            Instruction::LocalTee(3), // Store in local 3, keep on stack
-            Instruction::LocalGet(3), // max again
-            Instruction::I32GtS,     // clamped_value > max
+            Instruction::LocalGet(3), // clamped_value
+            Instruction::LocalGet(3), // clamped_value
+            Instruction::LocalGet(2), // max
+            Instruction::I32GtS,     // clamped_value > max (condition)
             Instruction::Select,      // Choose max if > max, else clamped_value
         ]
     }
@@ -455,19 +463,23 @@ impl MethodStyleManager {
             // Parameters: value (0), min (1), max (2)
             // Returns: clamped value
             
-            // Clamp to minimum
-            Instruction::LocalGet(0), // value
+            // Clamp to minimum: select(min, value, value < min)
             Instruction::LocalGet(1), // min
             Instruction::LocalGet(0), // value
+            Instruction::LocalGet(0), // value
             Instruction::LocalGet(1), // min
-            Instruction::F64Lt,       // value < min
+            Instruction::F64Lt,       // value < min (condition)
             Instruction::Select,      // Choose min if value < min, else value
             
-            // Clamp to maximum
+            // Store intermediate result in local 3
+            Instruction::LocalTee(3), // Store clamped-to-min value
+            
+            // Clamp to maximum: select(max, clamped_value, clamped_value > max)
             Instruction::LocalGet(2), // max
-            Instruction::LocalTee(3), // Store in local 3, keep on stack
-            Instruction::LocalGet(3), // max again
-            Instruction::F64Gt,       // clamped_value > max
+            Instruction::LocalGet(3), // clamped_value
+            Instruction::LocalGet(3), // clamped_value
+            Instruction::LocalGet(2), // max
+            Instruction::F64Gt,       // clamped_value > max (condition)
             Instruction::Select,      // Choose max if > max, else clamped_value
         ]
     }
