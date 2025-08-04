@@ -17,6 +17,6 @@ impl<T: StdlibError> From<T> for CompilerError {
 /// Implementation of StdlibError for anyhow::Error which is used by wasmtime
 impl StdlibError for anyhow::Error {
     fn to_compiler_error(&self) -> CompilerError {
-        CompilerError::runtime_error(format!("Runtime error: {}", self), None, None)
+        CompilerError::runtime_error(format!("Runtime error: {self}"), None, None)
     }
 }

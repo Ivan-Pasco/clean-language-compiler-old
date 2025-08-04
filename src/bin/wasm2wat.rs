@@ -53,7 +53,7 @@ fn convert_wasm_to_wat(wasm_bytes: &[u8]) -> Result<String, Box<dyn std::error::
                 output.push_str("  ;; Function section\n");
                 for item in reader {
                     let type_idx = item?;
-                    output.push_str(&format!("  (func (type {}))\n", type_idx));
+                    output.push_str(&format!("  (func (type {type_idx}))\n"));
                 }
             }
             Payload::ExportSection(reader) => {
@@ -85,7 +85,7 @@ fn convert_wasm_to_wat(wasm_bytes: &[u8]) -> Result<String, Box<dyn std::error::
                 output.push_str("  ;; Memory section\n");
                 for item in reader {
                     let memory = item?;
-                    output.push_str(&format!("  (memory {})\n", memory.initial));
+                    output.push_str(&format!("  (memory {initial})\n", initial = memory.initial));
                 }
             }
             _ => {

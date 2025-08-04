@@ -39,7 +39,7 @@ impl ValTypeConverter for WasmType {
             ValType::F32 => Ok(WasmType::F32),
             ValType::F64 => Ok(WasmType::F64),
             ValType::V128 => Ok(WasmType::V128),
-            other => Err(format!("Unsupported ValType: {:?}", other)),
+            other => Err(format!("Unsupported ValType: {other:?}")),
         }
     }
 }
@@ -76,7 +76,11 @@ impl WasmType {
             (3, ValType::F64) => Ok(WasmType::F64),
             (4, ValType::V128) => Ok(WasmType::V128),
             (5, ValType::I32) => Ok(WasmType::Unit),
-            _ => Err(format!("Invalid type tuple: ({}, {:?})", tuple.0, tuple.1)),
+            _ => Err(format!(
+                "Invalid type tuple: ({tuple_0}, {tuple_1:?})",
+                tuple_0 = tuple.0,
+                tuple_1 = tuple.1
+            )),
         }
     }
 

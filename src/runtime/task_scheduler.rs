@@ -324,7 +324,11 @@ impl TaskScheduler {
             if let Some(task) = tasks.get_mut(&task_id) {
                 task.state = TaskState::Running;
                 task.started_at = Some(Instant::now());
-                println!("🚀 Starting task '{}' (ID: {})", task.name, task.id);
+                println!(
+                    "🚀 Starting task '{task_name}' (ID: {task_id})",
+                    task_name = task.name,
+                    task_id = task.id
+                );
             }
         }
 

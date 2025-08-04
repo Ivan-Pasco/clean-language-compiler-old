@@ -211,7 +211,7 @@ impl FunctionPreprocessor {
         let parse_result = <CleanParser as Parser<Rule>>::parse(Rule::functions_block, source)
             .map_err(|e| {
                 CompilerError::syntax_error(
-                    &format!("Failed to parse isolated function: {}", e),
+                    &format!("Failed to parse isolated function: {e}"),
                     None,
                     None,
                 )

@@ -523,10 +523,7 @@ pub fn parse_with_file(source: &str, file_path: &str) -> Result<Program, Compile
         Err(pest_error) => {
             // If traditional parsing fails, use recovery parsing instead of preprocessing
             let error_msg = pest_error.to_string();
-            println!(
-                "DEBUG: Traditional parsing failed ({}), trying recovery parsing",
-                error_msg
-            );
+            println!("DEBUG: Traditional parsing failed ({error_msg}), trying recovery parsing");
 
             // Use recovery parsing which handles both classes and functions correctly
             match super::CleanParser::parse_program_with_recovery(source, file_path) {
@@ -584,7 +581,7 @@ fn parse_with_preprocessing(source: &str, _file_path: &str) -> Result<Program, C
                 tests: Vec::new(),
             }),
             Err(e) => {
-                println!("DEBUG: Preprocessor failed: {}, falling back to traditional parsing of full source", e);
+                println!("DEBUG: Preprocessor failed: {e}, falling back to traditional parsing of full source");
                 // Fall back to traditional parsing of the FULL source, not just functions block
                 match <CleanParser as Parser<Rule>>::parse(Rule::program, source) {
                     Ok(pairs) => {
@@ -593,10 +590,10 @@ fn parse_with_preprocessing(source: &str, _file_path: &str) -> Result<Program, C
                     }
                     Err(traditional_error) => {
                         println!("DEBUG: Both preprocessing and traditional parsing failed");
-                        println!("DEBUG: Preprocessor error: {}", e);
-                        println!("DEBUG: Traditional error: {}", traditional_error);
+                        println!("DEBUG: Preprocessor error: {e}");
+                        println!("DEBUG: Traditional error: {traditional_error}");
                         Err(CompilerError::parse_error(
-                            format!("Both traditional parsing and preprocessing failed: {}", e),
+                            format!("Both traditional parsing and preprocessing failed: {e}"),
                             None,
                             Some("Check function syntax and indentation".to_string()),
                         ))
@@ -659,7 +656,10 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
                                 Rule::class_decl => {
                                     println!("DEBUG: Found class_decl rule, calling parse_class");
                                     let class = parse_class(program_item_inner)?;
-                                    println!("DEBUG: parse_class returned class: {}", class.name);
+                                    println!(
+                                        "DEBUG: parse_class returned class: {class_name}",
+                                        class_name = class.name
+                                    );
                                     classes.push(class);
                                 }
                                 Rule::tests_block => {

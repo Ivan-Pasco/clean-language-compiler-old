@@ -26,7 +26,7 @@ fn allocate_string_in_memory(
 
     // Ensure we have enough memory
     if offset + total_size >= data.len() {
-        println!("⚠️  WARNING: Not enough WASM memory for string allocation. Offset: {}, Size: {}, Memory: {}", offset, total_size, data.len());
+        println!("⚠️  WARNING: Not enough WASM memory for string allocation. Offset: {offset}, Size: {total_size}, Memory: {memory_len}", memory_len = data.len());
         return 0; // Return null pointer on failure
     }
 
@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "env",
         "print",
         |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-            println!("\n🔍 DEBUG: print() called with ptr={}, len={}", ptr, len);
+            println!("\n🔍 DEBUG: print() called with ptr={ptr}, len={len}");
 
             let mem = match caller.get_export("memory") {
                 Some(Extern::Memory(mem)) => mem,
@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mem = match caller.get_export("memory") {
                 Some(Extern::Memory(mem)) => mem,
                 _ => {
-                    println!("[printl: ptr={}, len={}]", ptr, len);
+                    println!("[printl: ptr={ptr}, len={len}]");
                     return;
                 }
             };
@@ -121,7 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let data = match mem.data(&caller).get(ptr as usize..(ptr + len) as usize) {
                 Some(data) => data,
                 None => {
-                    println!("[printl: invalid range ptr={}, len={}]", ptr, len);
+                    println!("[printl: invalid range ptr={ptr}, len={len}]");
                     return;
                 }
             };

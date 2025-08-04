@@ -276,11 +276,7 @@ impl StdLib {
             .memory
             .allocate(data.len() + 4, 3)
             .map_err(|e| {
-                CompilerError::runtime_error(
-                    &format!("String allocation failed: {}", e),
-                    None,
-                    None,
-                )
+                CompilerError::runtime_error(&format!("String allocation failed: {e}"), None, None)
             })
     }
 

@@ -192,7 +192,7 @@ start()
         assert!(result.is_err(), "Invalid syntax should produce an error");
 
         if let Err(error) = result {
-            println!("Error: {}", error);
+            println!("Error: {error}");
             // The error should contain useful information
             assert!(error.to_string().contains("Syntax error"));
         }
@@ -344,10 +344,10 @@ start()
 
         for (i, source) in test_cases.iter().enumerate() {
             let result = CleanParser::parse_program(source);
-            assert!(result.is_err(), "Test case {} should fail: {}", i, source);
+            assert!(result.is_err(), "Test case {i} should fail: {source}");
 
             if let Err(error) = result {
-                println!("Test case {}: {}", i, error);
+                println!("Test case {i}: {error}");
                 // Each error should be informative
                 assert!(!error.to_string().is_empty());
             }
@@ -360,7 +360,7 @@ start()
         let result = CleanParser::parse_program(source);
 
         if let Err(error) = result {
-            println!("Error without file path: {}", error);
+            println!("Error without file path: {error}");
         }
     }
 
@@ -376,7 +376,7 @@ start()
         assert!(result.is_err(), "Invalid syntax should produce an error");
 
         if let Err(error) = result {
-            println!("Enhanced error with file path: {}", error);
+            println!("Enhanced error with file path: {error}");
             assert!(error.to_string().contains(file_path));
         }
     }

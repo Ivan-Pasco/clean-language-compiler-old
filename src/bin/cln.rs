@@ -41,7 +41,7 @@ fn main() -> Result<(), CompilerError> {
                 // Generate output filename from input
                 match Path::new(input_file).file_stem() {
                     Some(stem) => format!("{}.wasm", stem.to_string_lossy()),
-                    None => format!("{}.wasm", input_file),
+                    None => format!("{input_file}.wasm"),
                 }
             };
 
@@ -86,7 +86,7 @@ fn main() -> Result<(), CompilerError> {
             Ok(())
         }
         _ => {
-            eprintln!("❌ Unknown command: {}", args[1]);
+            eprintln!("❌ Unknown command: {command}", command = args[1]);
             print_usage();
             Ok(())
         }
@@ -94,7 +94,7 @@ fn main() -> Result<(), CompilerError> {
 }
 
 fn print_usage() {
-    println!("🧹 Clean Language Compiler (cln) v{}", VERSION);
+    println!("🧹 Clean Language Compiler (cln) v{VERSION}");
     println!("Author: Ivan Pasco Lizarraga");
     println!("Website: https://www.cleanlanguage.dev");
     println!();
@@ -120,14 +120,14 @@ fn print_usage() {
 }
 
 fn print_version() {
-    println!("Clean Language Compiler v{}", VERSION);
+    println!("Clean Language Compiler v{VERSION}");
     println!("Author: Ivan Pasco Lizarraga");
     println!("Date: 17-07-2025");
     println!("Website: https://www.cleanlanguage.dev");
 }
 
 fn compile_file(input_file: &str, output_file: &str) -> Result<(), CompilerError> {
-    println!("🔨 Compiling {} → {}", input_file, output_file);
+    println!("🔨 Compiling {input_file} → {output_file}");
 
     // Read the input file
     let source = read_source_file(input_file)?;
@@ -148,22 +148,23 @@ fn compile_file(input_file: &str, output_file: &str) -> Result<(), CompilerError
 
     // Write the output file
     fs::write(output_file, wasm_binary).map_err(|e| {
-        CompilerError::io_error(format!("Failed to write output file: {}", e), None, None)
+        CompilerError::io_error(format!("Failed to write output file: {e}"), None, None)
     })?;
 
-    println!("✅ Compilation successful! Generated {}", output_file);
+    println!("✅ Compilation successful! Generated {output_file}");
     Ok(())
 }
 
 fn run_file(input_file: &str) -> Result<(), CompilerError> {
-    println!("🚀 Running {}", input_file);
+    println!("🚀 Running {input_file}");
 
     // Check if it's a WASM file or Clean source
     if input_file.ends_with(".wasm") {
         execute_wasm_file(input_file)
     } else {
         // Compile first, then run
-        let temp_wasm = format!("{}.temp.wasm", input_file.trim_end_matches(".cln"));
+        let file_stem = input_file.trim_end_matches(".cln");
+        let temp_wasm = format!("{file_stem}.temp.wasm");
         compile_file(input_file, &temp_wasm)?;
         let result = execute_wasm_file(&temp_wasm);
 
@@ -175,7 +176,7 @@ fn run_file(input_file: &str) -> Result<(), CompilerError> {
 }
 
 fn parse_file(input_file: &str) -> Result<(), CompilerError> {
-    println!("📝 Parsing {}", input_file);
+    println!("📝 Parsing {input_file}");
 
     let source = read_source_file(input_file)?;
     let _program = parse_source(&source, input_file)?;
@@ -185,7 +186,7 @@ fn parse_file(input_file: &str) -> Result<(), CompilerError> {
 }
 
 fn check_file(input_file: &str) -> Result<(), CompilerError> {
-    println!("🔍 Type checking {}", input_file);
+    println!("🔍 Type checking {input_file}");
 
     let source = read_source_file(input_file)?;
     let program = parse_source(&source, input_file)?;
@@ -204,7 +205,7 @@ fn check_file(input_file: &str) -> Result<(), CompilerError> {
 fn read_source_file(input_file: &str) -> Result<String, CompilerError> {
     fs::read_to_string(input_file).map_err(|e| {
         CompilerError::io_error(
-            format!("Failed to read file '{}': {}", input_file, e),
+            format!("Failed to read file '{input_file}': {e}"),
             None,
             None,
         )
@@ -222,11 +223,11 @@ fn parse_source(
 }
 
 fn execute_wasm_file(wasm_file: &str) -> Result<(), CompilerError> {
-    println!("⚡ Executing {}", wasm_file);
+    println!("⚡ Executing {wasm_file}");
 
     // Read the WASM file
     let wasm_bytes = fs::read(wasm_file).map_err(|e| {
-        CompilerError::io_error(format!("Failed to read WASM file: {}", e), None, None)
+        CompilerError::io_error(format!("Failed to read WASM file: {e}"), None, None)
     })?;
 
     // Use the async runtime to execute
@@ -238,9 +239,9 @@ fn execute_wasm_file(wasm_file: &str) -> Result<(), CompilerError> {
                     Ok(())
                 }
                 Err(e) => {
-                    eprintln!("❌ Execution failed: {}", e);
+                    eprintln!("❌ Execution failed: {e}");
                     Err(CompilerError::runtime_error(
-                        format!("Failed to execute WASM: {}", e),
+                        format!("Failed to execute WASM: {e}"),
                         None,
                         None,
                     ))
@@ -259,12 +260,12 @@ fn execute_wasm_file(wasm_file: &str) -> Result<(), CompilerError> {
 fn display_error(error: &CompilerError, _source: &str, file_path: &str) {
     eprintln!();
     eprintln!("💥 Compilation Error");
-    eprintln!("📁 File: {}", file_path);
+    eprintln!("📁 File: {file_path}");
     eprintln!();
 
     match error {
         CompilerError::Syntax { context } => {
-            eprintln!("❌ Syntax Error: {}", context.message);
+            eprintln!("❌ Syntax Error: {message}", message = context.message);
 
             if let Some(location) = &context.location {
                 eprintln!(
@@ -274,13 +275,13 @@ fn display_error(error: &CompilerError, _source: &str, file_path: &str) {
             }
 
             if let Some(help) = &context.help {
-                eprintln!("💡 Help: {}", help);
+                eprintln!("💡 Help: {help}");
             }
 
             if !context.suggestions.is_empty() {
                 eprintln!("🔧 Suggestions:");
                 for suggestion in &context.suggestions {
-                    eprintln!("  • {}", suggestion);
+                    eprintln!("  • {suggestion}");
                 }
             }
         }
@@ -295,13 +296,13 @@ fn display_error(error: &CompilerError, _source: &str, file_path: &str) {
             }
 
             if let Some(help) = &context.help {
-                eprintln!("💡 Help: {}", help);
+                eprintln!("💡 Help: {help}");
             }
 
             if !context.suggestions.is_empty() {
                 eprintln!("🔧 Suggestions:");
                 for suggestion in &context.suggestions {
-                    eprintln!("  • {}", suggestion);
+                    eprintln!("  • {suggestion}");
                 }
             }
         }
