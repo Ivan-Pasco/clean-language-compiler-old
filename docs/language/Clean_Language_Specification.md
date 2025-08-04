@@ -26,11 +26,11 @@ Clean Language is a modern, type-safe programming language designed to compile t
 
 ### Design Goals
 - **Type Safety**: Strong static typing with type inference
-- **Simplicity**: Clean, readable syntax without unnecessary complexity
+- **Simplicity**: Clean, readable syntax with "one way to do things"
 - **Performance**: Efficient compilation to WebAssembly
 - **Expressiveness**: First-class support for mathematical operations and data structures
 - **Error Handling**: Comprehensive error handling and recovery mechanisms
-- **Developer Experience**: Default parameter values for cleaner APIs and optional configuration
+- **Developer Experience**: Method-style syntax and intuitive patterns
 
 ### File Extension
 Clean Language source files use the `.cln` extension.
@@ -84,8 +84,9 @@ These are essential implementation rules that must be followed by the Clean Lang
                value = newValue
    ```
 
-5. **Drop `Utils` suffix from standard library classes**
-   - ✅ Use `Math`, `String`, `List`, `File` — not `MathUtils`, etc.
+5. **Use lowercase namespace functions**
+   - ✅ Use `math.sqrt()`, `string.concat()`, `list.sort()` — not `Math.sqrt()`, `String.concat()`
+   - ❌ No capitalized namespace names
 
 6. **Use natural generic container syntax**
    - ✅ `list<item>`, `matrix<type>`
@@ -94,6 +95,12 @@ These are essential implementation rules that must be followed by the Clean Lang
 7. **Clean uses `any` as the single generic placeholder type**
    - It represents a value of any type, determined when the function or class is used
    - No explicit type parameter declarations needed - `any` is automatically generic
+
+8. **One way to do things**
+   - Basic math: Use operators (`a + b`, `a * b`)
+   - Advanced math: Use functions (`math.sqrt()`, `math.sin()`)
+   - Object operations: Use method-style (`text.length()`, `value.toString()`)
+   - Utility functions: Use namespace calls (`string.concat()`, `list.sort()`)
 
 ### Implementation Notes
 - These rules ensure consistency with Clean's philosophy of simplicity and readability
@@ -215,6 +222,9 @@ greeting = "Hello, {name}!"     // Results in "Hello, World!"
 // Simple property access allowed
 user = User("Alice", 25)
 message = "User {user.name} is {user.age} years old"
+
+// Note: Complex method calls in strings are not supported
+// ❌ "Hello {user.name}, you have {messages.count()} messages"
 ```
 
 #### Boolean Literals
@@ -245,59 +255,94 @@ false
 | Type&nbsp;(keyword) | Description | Default Mapping | Literal Examples |
 |---------------------|-------------|-----------------|------------------|
 | `boolean`  | Logical value (`true` / `false`) | 1 bit | `true`, `false` |
-| `integer`  | Whole numbers, signed | Platform optimal (≥32 bits) | `42`, `-17` |
-| `number`    | Decimal numbers | Platform optimal (≥64 bits) | `3.14`, `6.02e23` |
+| `integer`  | Whole numbers, signed | 32-bit | `42`, `-17` |
+| `number`    | Decimal numbers | 64-bit | `3.14`, `6.02e23` |
 | `string`   | UTF-8 text, dynamically sized | — | `"Hello"` |
 | `void`     | No value / empty return type | 0 bytes | *(function return only)* |
 
-### Precision Control
+**Type System Philosophy:**
+Clean Language uses platform-optimal defaults for all numeric types. The `integer` type is 32-bit and the `number` type is 64-bit, providing the best balance of performance and precision for most applications.
 
-Clean Language supports explicit precision control for numeric types using type modifiers:
+### Precision Control for Larger Numbers
+
+Clean Language supports **precision modifiers** for both integers and numbers when you need larger ranges or different precision levels:
 
 #### Integer Precision Modifiers
 
-| Type Syntax | WebAssembly Type | Size | Range | Use Case |
-|-------------|------------------|------|-------|----------|
-| `integer:8`  | i32 (clamped) | 8-bit | -128 to 127 | Small values, memory optimization |
-| `integer:16` | i32 (clamped) | 16-bit | -32,768 to 32,767 | Medium values, coordinates |
-| `integer:32` | i32 | 32-bit | -2³¹ to 2³¹-1 | Default integer size |
-| `integer:64` | i64 | 64-bit | -2⁶³ to 2⁶³-1 | Large numbers, timestamps |
-
-#### Float Precision Modifiers
-
-| Type Syntax | WebAssembly Type | Size | Precision | Use Case |
-|-------------|------------------|------|-----------|----------|
-| `number:32`  | f32 | 32-bit | IEEE 754 single | Default number, graphics |
-| `number:64`  | f64 | 64-bit | IEEE 754 double | High precision, scientific computing |
-
-#### Examples
-
 ```clean
-// Integer precision examples
-integer:8 red = 255              // Color component (0-255)
-integer:16 coordinate = 1024     // Screen coordinate
-integer:32 count = 1000000       // Default integer (can omit :32)
-integer:64 timestamp = 1640995200000  // Unix timestamp in milliseconds
+// Standard integer (32-bit, -2,147,483,648 to 2,147,483,647)
+integer standard = 2147483647
 
-// Float precision examples  
-number:32 temperature = 23.5      // Default number (can omit :32)
-number:64 preciseValue = 3.141592653589793  // High precision calculation
+// 8-bit integer (-128 to 127)
+integer:8 small = 127
 
-// Apply-blocks with precision
-integer:8:
-    red = 255
-    green = 128
-    blue = 64
+// 16-bit integer (-32,768 to 32,767)  
+integer:16 medium = 32767
 
-number:64:
-    pi = 3.141592653589793
-    e = 2.718281828459045
+// 32-bit integer (same as standard integer)
+integer:32 large = 2147483647
+
+// 64-bit integer (-9,223,372,036,854,775,808 to 9,223,372,036,854,775,807)
+integer:64 huge = 9223372036854775807
+
+// Unsigned variants (positive numbers only)
+integer:8u smallUnsigned = 255      // 0 to 255
+integer:16u mediumUnsigned = 65535  // 0 to 65,535
+integer:32u largeUnsigned = 4294967295  // 0 to 4,294,967,295
+integer:64u hugeUnsigned = 18446744073709551615  // 0 to 18,446,744,073,709,551,615
 ```
 
-#### Default Behavior
-- `integer` without modifier defaults to `integer:32`
-- `number` without modifier defaults to `number:32`
-- This maintains backward compatibility with existing code
+#### Number Precision Modifiers
+
+```clean
+// Standard number (64-bit double precision)
+number standard = 3.141592653589793
+
+// 32-bit single precision (faster, less precision)
+number:32 singlePrecision = 3.14
+
+// 64-bit double precision (same as standard number)
+number:64 doublePrecision = 3.141592653589793
+```
+
+#### When to Use Precision Modifiers
+
+**Use Larger Precision When:**
+- **`integer:64`**: Working with very large whole numbers (timestamps, IDs, big calculations)
+- **`number:64`**: Scientific computing, financial calculations requiring high precision
+- **Unsigned integers**: When you know values will always be positive (array indices, counts)
+
+**Use Smaller Precision When:**
+- **`integer:8`**: Small counters, flags, or when memory is critical
+- **`integer:16`**: Medium-sized numbers with memory constraints
+- **`number:32`**: Graphics programming, real-time applications where speed matters more than precision
+
+**Examples:**
+```clean
+functions:
+    void demonstratePrecision()
+        // Large calculations
+        integer:64 population = 8000000000
+        integer:64 timestamp = 1640995200000
+        
+        // High-precision calculations
+        number:64 pi = 3.141592653589793
+        number:64 e = 2.718281828459045
+        
+        // Memory-efficient small numbers
+        integer:8 counter = 0
+        integer:16 portNumber = 8080
+        
+        // Graphics calculations (speed over precision)
+        number:32 screenX = 1920.0
+        number:32 screenY = 1080.0
+```
+
+**Performance Characteristics:**
+- **Memory Usage**: Smaller precision types use less memory
+- **Speed**: 32-bit operations are typically faster than 64-bit on most platforms
+- **Precision**: 64-bit numbers provide ~15 decimal digits vs ~7 for 32-bit
+- **Range**: 64-bit integers can handle numbers up to ~9 quintillion vs ~2 billion for 32-bit
 
 ### Composite & Generic Types
 
@@ -1607,16 +1652,39 @@ Clean Language provides built-in utility classes for common operations. All stan
 - No `Utils` suffix in class names
 - Use `any` for generic operations
 
-### Math Class
+### Math Module
+
+The math module follows Clean Language's "one way to do things" principle. Basic arithmetic operations use operators, while advanced mathematical functions use methods.
+
+**Basic Arithmetic - Use Operators:**
+- Addition: `a + b` (not `math.add(a, b)`)
+- Subtraction: `a - b` (not `math.subtract(a, b)`)
+- Multiplication: `a * b` (not `math.multiply(a, b)`)
+- Division: `a / b` (not `math.divide(a, b)`)
+- Exponentiation: `a ^ b` (not `math.pow(a, b)`)
+
+**Advanced Mathematics - Use Functions:**
 
 ```clean
-class Math
+// Core mathematical operations
+math.sqrt(x), math.abs(x), math.max(a, b), math.min(a, b)
+
+// Rounding and precision functions
+math.floor(x), math.ceil(x), math.round(x), math.trunc(x), math.sign(x)
+
+// Trigonometric functions (complete support)
+math.sin(x), math.cos(x), math.tan(x), math.asin(x), math.acos(x), math.atan(x), math.atan2(y, x)
+
+// Logarithmic and exponential functions
+math.ln(x), math.log10(x), math.log2(x), math.exp(x), math.exp2(x)
+
+// Hyperbolic functions
+math.sinh(x), math.cosh(x), math.tanh(x)
+
+// Mathematical constants
+math.pi(), math.e(), math.tau()
+```
     functions:
-        // Basic arithmetic
-        number add(number a, number b)
-        number subtract(number a, number b)
-        number multiply(number a, number b)
-        number divide(number a, number b)
         
         // Core mathematical operations
         number sqrt(number x)
@@ -1661,44 +1729,48 @@ class Math
 // Usage Examples
 functions:
     void start()
-        // Basic calculations
-        number result = Math.add(5.0, 3.0)
-        float maximum = Math.max(10.5, 7.2)
+        // Basic calculations - using operators for basic math
+        number result = 5.0 + 3.0               // Use + operator, not math.add()
+        number maximum = math.max(10.5, 7.2)    // Use math functions for advanced operations
         
         // Geometry - calculate circle area
         number radius = 5.0
-        number area = Math.multiply(Math.pi(), radius ^ 2.0)
+        number area = math.pi() * (radius ^ 2.0)  // Use operators for basic arithmetic
         
         // Trigonometry - find triangle sides
-        number angle = Math.divide(Math.pi(), 4.0)  // 45 degrees in radians
-        number opposite = Math.multiply(10.0, Math.sin(angle))
-        number adjacent = Math.multiply(10.0, Math.cos(angle))
+        number angle = math.pi() / 4.0           // Use / operator, not math.divide()
+        number opposite = 10.0 * math.sin(angle) // Use * operator, not math.multiply()
+        number adjacent = 10.0 * math.cos(angle)
         
         // Rounding numbers for display
         number price = 19.99567
-        number rounded = Math.round(price)  // 20.0
-        number floored = Math.floor(price)  // 19.0
+        number rounded = math.round(price)  // 20.0
+        number floored = math.floor(price)  // 19.0
         
         // Logarithmic calculations
-        number growth = Math.exp(0.05)      // e^0.05 for 5% growth
-        number halfLife = Math.log2(100.0)  // How many times to halve 100 to get 1
+        number growth = math.exp(0.05)      // e^0.05 for 5% growth
+        number halfLife = math.log2(100.0)  // How many times to halve 100 to get 1
         
         // Distance calculations using Pythagorean theorem
         number dx = 3.0
         number dy = 4.0
-        number distance = Math.sqrt(Math.add(dx ^ 2.0, dy ^ 2.0))
+        number distance = math.sqrt((dx ^ 2.0) + (dy ^ 2.0))  // Use + operator, not math.add()
         
         // Absolute values for different types
-        number numberAbs = Math.abs(-5.7)    // 5.7
-        integer intAbs = Math.abs(-42)     // 42
+        number numberAbs = math.abs(-5.7)    // 5.7
+        integer intAbs = math.abs(-42)     // 42
 ```
 
-### String Class
+### String Module
 
-The String class provides powerful text manipulation capabilities. Whether you're processing user input, formatting output, or analyzing text data, String has all the tools you need for effective text handling.
+The string module provides powerful text manipulation capabilities. Whether you're processing user input, formatting output, or analyzing text data, string has all the tools you need for effective text handling.
 
 ```clean
-class String
+// Core operations
+string.length(text), string.concat(a, b), string.contains(text, search)
+string.split(text, delimiter), string.upper(text), string.lower(text)
+string.trim(text), string.replace(text, old, new)
+```
     functions:
         // Basic operations
         integer length(string text)
@@ -1820,53 +1892,57 @@ functions:
     void start()
         // Basic text processing
         string userInput = "  Hello World!  "
-        string cleaned = String.trim(userInput)        // "Hello World!"
-        integer length = String.length(cleaned)        // 12
+        string cleaned = string.trim(userInput)        // "Hello World!"
+        integer length = string.length(cleaned)        // 12
         
         // Case normalization for comparisons
         string email1 = "USER@EXAMPLE.COM"
         string email2 = "user@example.com"
-        boolean same = String.toLowerCase(email1) == String.toLowerCase(email2)  // true
+        boolean same = string.lower(email1) == string.lower(email2)  // true
         
         // Text searching and validation
         string filename = "document.pdf"
-        boolean isPdf = String.endsWith(filename, ".pdf")     // true
-        integer dotPos = String.lastIndexOf(filename, ".")    // 8
+        boolean isPdf = string.endsWith(filename, ".pdf")     // true
+        integer dotPos = string.lastIndexOf(filename, ".")    // 8
         
         // URL processing
         string url = "https://api.example.com/users"
-        boolean isHttps = String.startsWith(url, "https://")  // true
-        boolean hasApi = String.contains(url, "api")          // true
+        boolean isHttps = string.startsWith(url, "https://")  // true
+        boolean hasApi = string.contains(url, "api")          // true
         
         // Text parsing and reconstruction
         string csvLine = "John,Doe,25,Engineer"
-        list<string> fields = String.split(csvLine, ",")     // ["John", "Doe", "25", "Engineer"]
-        string fullName = String.join([fields[0], fields[1]], " ")  // "John Doe"
+        list<string> fields = string.split(csvLine, ",")     // ["John", "Doe", "25", "Engineer"]
+        string fullName = string.join([fields[0], fields[1]], " ")  // "John Doe"
         
         // Text replacement and cleaning
         string messyText = "Hello    World"
-        string cleaned = String.replaceAll(messyText, "    ", " ")  // "Hello World"
+        string cleaned = string.replaceAll(messyText, "    ", " ")  // "Hello World"
         
         // Formatting and padding
         string number = "42"
-        string padded = String.padStart(number, 5, "0")       // "00042"
+        string padded = string.padStart(number, 5, "0")       // "00042"
         
         // Character-level operations
         string word = "Hello"
-        string firstChar = String.charAt(word, 0)             // "H"
-        integer charCode = String.charCodeAt(word, 0)         // 72 (ASCII for 'H')
+        string firstChar = string.charAt(word, 0)             // "H"
+        integer charCode = string.charCodeAt(word, 0)         // 72 (ASCII for 'H')
         
         // Input validation
         string userField = "   "
-        boolean isValid = !String.isBlank(userField)          // false
+        boolean isValid = !string.isBlank(userField)          // false
 ```
 
-### List Class
+### List Module
 
-The List class provides powerful data collection capabilities. Whether you're managing lists of items, processing data sets, or organizing information, List has all the tools you need for effective data manipulation.
+The list module provides powerful data collection capabilities. Whether you're managing lists of items, processing data sets, or organizing information, list has all the tools you need for effective data manipulation.
 
 ```clean
-class List
+// Essential operations
+list.add(list, item), list.remove(list, index), list.get(list, index)
+list.length(list), list.contains(list, item)
+list.sort(list), list.reverse(list), list.join(list, separator)
+```
     functions:
         // Basic operations - fundamental list access
         integer length(list<any> array)
@@ -2005,56 +2081,58 @@ functions:
     void start()
         // Basic array operations
         list<integer> numbers = [1, 2, 3]
-        integer size = List.length(numbers)           // 3
-        integer first = List.get(numbers, 0)          // 1
-        List.set(numbers, 1, 99)                      // [1, 99, 3]
+        integer size = list.length(numbers)           // 3
+        integer first = list.get(numbers, 0)          // 1
+        list.set(numbers, 1, 99)                      // [1, 99, 3]
         
         // Building and modifying lists
         list<string> fruits = ["apple", "banana"]
-        fruits = List.push(fruits, "orange")          // ["apple", "banana", "orange"]
-        string lastFruit = List.pop(fruits)           // "orange", fruits becomes ["apple", "banana"]
+        fruits = list.add(fruits, "orange")          // ["apple", "banana", "orange"]
+        string lastFruit = list.remove(fruits, 2)           // "orange", fruits becomes ["apple", "banana"]
         
         // Searching through data
         list<integer> scores = [85, 92, 78, 96, 88]
-        boolean hasHighScore = List.contains(scores, 96)     // true
-        integer position = List.indexOf(scores, 92)          // 1
+        boolean hasHighScore = list.contains(scores, 96)     // true
+        integer position = list.indexOf(scores, 92)          // 1
         
         // Data processing and transformation
         list<integer> data = [1, 2, 3, 4, 5]
-        list<integer> doubled = List.map(data, x => x * 2)  // [2, 4, 6, 8, 10]
-        list<integer> evens = List.filter(data, x => x % 2 == 0)  // [2, 4]
-        integer sum = List.reduce(data, (total, x) => total + x, 0)  // 15
+        list<integer> doubled = list.map(data, x => x * 2)  // [2, 4, 6, 8, 10]
+        list<integer> evens = list.filter(data, x => x % 2 == 0)  // [2, 4]
+        integer sum = list.reduce(data, (total, x) => total + x, 0)  // 15
         
         // List manipulation
         list<string> names1 = ["Alice", "Bob"]
         list<string> names2 = ["Charlie", "Diana"]
-        list<string> allNames = List.concat(names1, names2)  // ["Alice", "Bob", "Charlie", "Diana"]
-        list<string> reversed = List.reverse(allNames)       // ["Diana", "Charlie", "Bob", "Alice"]
+        list<string> allNames = list.concat(names1, names2)  // ["Alice", "Bob", "Charlie", "Diana"]
+        list<string> reversed = list.reverse(allNames)       // ["Diana", "Charlie", "Bob", "Alice"]
         
         // Working with sections of lists
         list<integer> bigList = [10, 20, 30, 40, 50]
-        list<integer> middle = List.slice(bigList, 1, 4)     // [20, 30, 40]
+        list<integer> middle = list.slice(bigList, 1, 4)     // [20, 30, 40]
         
         // Text processing with lists
         list<string> words = ["hello", "world", "from", "Clean"]
-        string sentence = List.join(words, " ")               // "hello world from Clean"
+        string sentence = list.join(words, " ")               // "hello world from Clean"
         
         // Creating lists programmatically
-        list<string> greetings = List.fill(3, "Hello")       // ["Hello", "Hello", "Hello"]
-        list<integer> countdown = List.range(5, 1)           // [5, 4, 3, 2, 1]
+        list<string> greetings = list.fill(3, "Hello")       // ["Hello", "Hello", "Hello"]
+        list<integer> countdown = list.range(5, 1)           // [5, 4, 3, 2, 1]
         
         // Validation and utility
-        boolean isEmpty = List.isEmpty([])                    // true
-        string firstWord = List.first(words)                  // "hello"
-        string lastWord = List.last(words)                    // "Clean"
+        boolean isEmpty = list.isEmpty([])                    // true
+        string firstWord = list.first(words)                  // "hello"
+        string lastWord = list.last(words)                    // "Clean"
 ```
 
-### File Class
+### File Module
 
-The File class makes working with files simple and straightforward. Whether you need to read configuration files, save user data, or process text documents, File has you covered with easy-to-use methods.
+The file module makes working with files simple and straightforward. Whether you need to read configuration files, save user data, or process text documents, file has you covered with easy-to-use methods.
 
 ```clean
-class File
+// Basic I/O
+file.read(path), file.write(path, content), file.exists(path)
+```
     functions:
         // Reading files
         string read(string path)
@@ -2087,31 +2165,33 @@ class File
 functions:
     void start()
         // Read a configuration file
-        string config = File.read("settings.txt")
+        string config = file.read("settings.txt")
         
         // Process a log file line by line
-        list<string> logLines = File.lines("app.log")
+        list<string> logLines = file.lines("app.log")
         
         // Save user data
-        File.write("user_data.txt", "John Doe, 25, Engineer")
+        file.write("user_data.txt", "John Doe, 25, Engineer")
         
         // Add to a log file
-        File.append("activity.log", "User logged in at 2:30 PM")
+        file.append("activity.log", "User logged in at 2:30 PM")
         
         // Check if a file exists before reading
-        if File.exists("backup.txt")
-            string backup = File.read("backup.txt")
+        if file.exists("backup.txt")
+            string backup = file.read("backup.txt")
         
         // Clean up temporary files
-        File.delete("temp_data.txt")
+        file.delete("temp_data.txt")
 ```
 
-### Http Class
+### Http Module
 
-The Http class makes web requests simple and intuitive. Whether you're fetching data from APIs, submitting forms, or building web applications, Http provides all the essential HTTP methods you need.
+The http module makes web requests simple and intuitive. Whether you're fetching data from APIs, submitting forms, or building web applications, http provides all the essential HTTP methods you need.
 
 ```clean
-class Http
+// Core requests
+http.get(url), http.post(url, body)
+```
     functions:
         // GET - Retrieve data from a server
         string get(string url)
@@ -2142,210 +2222,115 @@ class Http
 functions:
     void start()
         // Fetch user data from an API
-        string users = Http.get("https://api.example.com/users")
+        string users = http.get("https://api.example.com/users")
         
         // Create a new user
         string newUser = "{\"name\": \"Alice\", \"email\": \"alice@example.com\"}"
-        string response = Http.post("https://api.example.com/users", newUser)
+        string response = http.post("https://api.example.com/users", newUser)
         
         // Update user information
         string updatedUser = "{\"name\": \"Alice Smith\", \"email\": \"alice.smith@example.com\"}"
-        Http.put("https://api.example.com/users/123", updatedUser)
+        http.put("https://api.example.com/users/123", updatedUser)
         
         // Partially update user (just the email)
         string emailUpdate = "{\"email\": \"newemail@example.com\"}"
-        Http.patch("https://api.example.com/users/123", emailUpdate)
+        http.patch("https://api.example.com/users/123", emailUpdate)
         
         // Remove a user
-        Http.delete("https://api.example.com/users/123")
+        http.delete("https://api.example.com/users/123")
         
         // Fetch weather data
-        string weather = Http.get("https://api.weather.com/current?city=London")
+        string weather = http.get("https://api.weather.com/current?city=London")
 ```
 
 ## Method-Style Syntax
 
-Clean Language supports both traditional function calls and modern method-style syntax. This makes your code more readable and intuitive by allowing you to call functions directly on values.
+Clean Language uses method-style syntax as the primary pattern for object operations. This makes your code more readable and intuitive by allowing you to call functions directly on values.
 
-### How It Works
+### Primary Pattern
 
-Instead of writing `function(value, parameters)`, you can write `value.function(parameters)`. This feels more natural and reads like English!
+Method-style syntax is the preferred way to work with objects and values:
 
-**Traditional Style:**
 ```clean
-integer textLength = length(myText)
-string upperText = toUpperCase(myText)
-```
-
-**Method Style (Same Result):**
-```clean
+// Method-style syntax (preferred)
 integer textLength = myText.length()
 string upperText = myText.toUpperCase()
+list.add(myList, item)
+value.toString()
 ```
 
-### Available Method-Style Functions
+### Namespace Functions
 
-#### Utility Functions
-These work on any value and help with common tasks:
-
-**Length and Size Functions:**
+For utility functions, use lowercase namespace calls:
 
 ```clean
-// Get the length of text, lists, or collections
-integer size = myText.length()
-integer count = myList.length()
-
-// Check if something is empty or has content
-boolean empty = myText.isEmpty()
-boolean hasContent = myList.isNotEmpty()
-
-// Check if a value exists (not null/undefined)
-boolean exists = myValue.isDefined()
-boolean missing = myValue.isNotDefined()
-
-// Keep numbers within bounds (like volume controls)
-integer volume = userInput.keepBetween(0, 100)
-number temperature = reading.keepBetween(-10.0, 50.0)
-
-// Get default values for types
-integer defaultNumber = defaultInt()        // Returns 0
-number defaultDecimal = defaultNumber()       // Returns 0.0
-boolean defaultFlag = defaultBool()         // Returns false
+// Namespace functions (lowercase)
+math.sqrt(16)
+string.concat("a", "b")
+list.sort(myList)
 ```
 
-**Validation and Checking Functions:**
+### Method-Style Syntax Examples
+
+Method-style syntax is the preferred way to work with objects and values:
 
 ```clean
-// Check if something is empty or has content
-boolean empty = myText.isEmpty()
-boolean hasContent = myList.isNotEmpty()
+// Text operations
+string text = "Hello World"
+integer length = text.length()
+string upper = text.toUpperCase()
+string lower = text.toLowerCase()
+string trimmed = text.trim()
 
-// Check if a value exists (not null/undefined)
-boolean exists = myValue.isDefined()
-boolean missing = myValue.isNotDefined()
+// List operations
+list<integer> numbers = [1, 2, 3]
+integer size = numbers.length()
+boolean empty = numbers.isEmpty()
+numbers.add(4)
+
+// Value conversions
+integer age = 25
+string ageText = age.toString()
+number decimal = age.toNumber()
+
+// Object properties
+user.name
+user.age
+user.toString()
 ```
 
-**Boundary and Range Functions:**
+### Namespace Functions
+
+For utility functions, use lowercase namespace calls:
 
 ```clean
-// Keep numbers within bounds (like volume controls)
-integer volume = userInput.keepBetween(0, 100)
-number temperature = reading.keepBetween(-10.0, 50.0)
-```
+// Math operations
+math.sqrt(16)
+math.max(10, 20)
+math.pi()
 
-**Default Value Pattern:**
+// String operations
+string.concat("Hello", "World")
+string.split("a,b,c", ",")
+string.trim("  text  ")
 
-```clean
-// Use 'or' for elegant default values - much cleaner!
-integer count = userInput or 0              // If userInput is null/undefined, use 0
-string name = userName or "Anonymous"       // If userName is empty, use "Anonymous"
-number rate = configRate or 1.0             // If configRate is missing, use 1.0
-boolean enabled = setting or true          // If setting is undefined, use true
-```
-
-#### Type Conversion Functions
-Convert values from one type to another - perfect for user input and data processing:
-
-```clean
-// Convert numbers to different types
-string numberText = age.toString()          // 25 → "25"
-number decimal = wholeNumber.toNumber()       // 42 → 42.0
-integer rounded = price.toInteger()         // 19.99 → 19
-
-// Convert text to numbers
-integer userAge = ageInput.toInteger()      // "25" → 25
-number userHeight = heightInput.toNumber()    // "5.8" → 5.8
-
-// Convert to true/false values
-boolean isValid = userChoice.toBoolean()    // "true" → true
-
-// Chain conversions together!
-string result = temperature.toFloat().toString()  // "98.6" → 98.6 → "98.6"
-```
-
-#### Validation Functions
-Make sure your data is correct with friendly assertion methods:
-
-```clean
-// Check that conditions are true
-userAge.mustBeTrue(userAge > 0)           // Ensures age is positive
-password.mustBeTrue(password.length() >= 8)  // Ensures strong password
-
-// Check that conditions are false  
-email.mustBeFalse(email.isEmpty())        // Ensures email isn't empty
-
-// Check that two values match
-confirmPassword.mustBeEqual(originalPassword)  // Password confirmation
-
-// Check that two values are different
-newPassword.mustNotBeEqual(oldPassword)   // Ensures password was changed
-```
-
-### Method Chaining
-
-One of the best features is **method chaining** - you can call multiple methods in a row:
-
-```clean
-// Clean up and validate user input in one line
-string cleanEmail = userInput.trim().toLowerCase().toString()
-
-// Process numbers with multiple steps
-integer finalScore = rawScore.keepBetween(0, 100).toInteger()
-
-// Complex text processing
-string result = messyText
-    .trim()                    // Remove extra spaces
-    .toLowerCase()             // Make lowercase  
-    .toString()                // Ensure it's text
+// List operations
+list.sort(myList)
+list.reverse(myList)
+list.join(myList, ", ")
 ```
 
 ### When to Use Each Style
 
 **Use Method Style When:**
 - Working with a specific value (like `text.length()`)
-- Chaining multiple operations together
-- The code reads more naturally
+- Accessing object properties (like `user.name`)
+- Converting values (like `value.toString()`)
 
-**Use Traditional Style When:**
-- Calling utility functions like `Math.sqrt()`
-- Working with multiple parameters of equal importance
-- Following existing code patterns
-
-### Real-World Examples
-
-```clean
-functions:
-    void processUserData()
-        // User registration form processing with elegant defaults
-        string email = (userEmail or "").trim().toLowerCase()
-        boolean validEmail = email.length().keepBetween(5, 100)
-        
-        // Age validation with method chaining and defaults
-        integer age = (ageInput or "18").toInteger().keepBetween(13, 120)
-        age.mustBeTrue(age >= 18)  // Must be adult
-        
-        // Password strength checking
-        password.mustBeTrue(password.length() >= 8)
-        confirmPassword.mustBeEqual(password)
-        
-        // Format display text with defaults
-        string firstName = userFirstName or "User"
-        string welcome = "Welcome, ".concat(firstName.trim())
-        string ageText = "Age: ".concat(age.toString())
-        
-    void dataProcessing()
-        // List processing with methods
-        list<string> names = ["Alice", "Bob", "Charlie"]
-        integer count = names.length()
-        boolean hasData = names.isNotEmpty()
-        
-        // Number processing
-        list<number> scores = [85.5, 92.3, 78.9]
-        number average = calculateAverage(scores).keepBetween(0.0, 100.0)
-        string displayScore = average.toString().concat("%")
-```
-
-This method-style syntax makes Clean Language feel modern and intuitive while keeping all the power of traditional function calls!
+**Use Namespace Functions When:**
+- Calling utility functions (like `math.sqrt()`)
+- Working with multiple parameters (like `string.concat()`)
+- Using library functions (like `list.sort()`)
 
 ## Modules and Imports
 

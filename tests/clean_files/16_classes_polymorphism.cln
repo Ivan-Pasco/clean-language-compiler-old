@@ -10,16 +10,16 @@ class Vehicle
 		year = vehicleYear
 	
 	functions:
-		string getInfo()
+		getInfo()
 			return year.toString() + " " + make + " " + model
 		
-		string start()
+		start()
 			return "Vehicle starting..."
 		
-		string stop()
+		stop()
 			return "Vehicle stopping..."
 		
-		integer getMaxSpeed()
+		getMaxSpeed()
 			return 60
 
 class Car is Vehicle
@@ -32,22 +32,22 @@ class Car is Vehicle
 		isElectric = electric
 	
 	functions:
-		string start()
+		start()
 			if isElectric
 				return make + " " + model + " starting silently (electric)"
 			else
 				return make + " " + model + " engine starting"
 		
-		string stop()
+		stop()
 			return make + " " + model + " parking"
 		
-		integer getMaxSpeed()
+		getMaxSpeed()
 			if isElectric
 				return 120
 			else
 				return 100
 		
-		string getCarDetails()
+		getCarDetails()
 			string electric_status = ""
 			if isElectric
 				electric_status = "Electric"
@@ -63,19 +63,19 @@ class Motorcycle is Vehicle
 		hasSidecar = sidecar
 	
 	functions:
-		string start()
+		start()
 			return make + " " + model + " motorcycle roaring to life"
 		
-		string stop()
+		stop()
 			return make + " " + model + " motorcycle stopping"
 		
-		integer getMaxSpeed()
+		getMaxSpeed()
 			if hasSidecar
 				return 80
 			else
 				return 140
 		
-		string getBikeDetails()
+		getBikeDetails()
 			string sidecar_status = ""
 			if hasSidecar
 				sidecar_status = "with sidecar"
@@ -84,7 +84,7 @@ class Motorcycle is Vehicle
 			return getInfo() + " (" + sidecar_status + ")"
 
 functions:
-	void demonstratePolymorphism(Vehicle vehicle)
+	demonstratePolymorphism(Vehicle vehicle)
 		print("=== Vehicle Demonstration ===")
 		print("Info: " + vehicle.getInfo())
 		print("Starting: " + vehicle.start())
@@ -92,7 +92,7 @@ functions:
 		print("Stopping: " + vehicle.stop())
 		print("")
 	
-	void testVehicleArray(list<Vehicle> vehicles)
+	testVehicleArray(list<Vehicle> vehicles)
 		print("Testing polymorphic behavior with vehicle array:")
 		iterate vehicle in vehicles
 			print("- " + vehicle.start())

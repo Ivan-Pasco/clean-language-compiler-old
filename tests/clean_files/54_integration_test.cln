@@ -13,7 +13,7 @@ private:
 
 functions:
     // Public function using method-style and static calls
-    boolean processUserInput()
+    processUserInput()
         // Get user data with input methods
         string name = input("Enter your name: ")
         integer age = input.integer("Enter your age: ")
@@ -38,7 +38,7 @@ functions:
         return confirmed and response.isNotEmpty()
     
     // Function using async keywords with method chaining
-    list<string> fetchAndProcessData()
+    fetchAndProcessData()
         // Start multiple async operations
         later data1 = start http.get("https://api.example.com/data1")
         later data2 = start http.get("https://api.example.com/data2")
@@ -68,17 +68,17 @@ functions:
         return results
     
     // Private helper functions
-    void internalValidation(string data)
+    internalValidation(string data)
         data.mustBeTrue(data.length() > 0)
     
-    string secretKey()
+    secretKey()
         return "secret-api-key-123"
     
-    void logUserAction(string action)
+    logUserAction(string action)
         string timestamp = Math.floor(Math.random() * 1000000.0).toString()
         print("LOG [" + timestamp + "]: " + action)
     
-    void clearCache()
+    clearCache()
         print("Cache cleared in background")
 
 start()

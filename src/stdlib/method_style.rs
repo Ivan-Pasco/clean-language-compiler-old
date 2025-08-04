@@ -29,129 +29,154 @@ impl MethodStyleManager {
 
     /// Register utility functions that work on any value
     fn register_utility_methods(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Length methods for strings and lists
-        register_stdlib_function(
-            codegen,
-            "value.length",
-            &[WasmType::I32], // value pointer
-            Some(WasmType::I32), // length
-            self.generate_value_length()
-        )?;
+        // Register utility methods for all types
+        let types = ["integer", "number", "string", "boolean", "value"];
+        
+        for type_name in &types {
+            // Length methods for strings and lists
+            let length_name = format!("{}.length", type_name);
+            register_stdlib_function(
+                codegen,
+                &length_name,
+                &[WasmType::I32], // value pointer
+                Some(WasmType::I32), // length
+                self.generate_value_length()
+            )?;
 
-        // Check if value is defined (not null/undefined)
-        register_stdlib_function(
-            codegen,
-            "value.isDefined",
-            &[WasmType::I32], // value pointer
-            Some(WasmType::I32), // boolean
-            self.generate_value_is_defined()
-        )?;
+            // Check if value is defined (not null/undefined)
+            register_stdlib_function(
+                codegen,
+                &format!("{}.isDefined", type_name),
+                &[WasmType::I32], // value pointer
+                Some(WasmType::I32), // boolean
+                self.generate_value_is_defined()
+            )?;
 
-        register_stdlib_function(
-            codegen,
-            "value.isNotDefined",
-            &[WasmType::I32], // value pointer
-            Some(WasmType::I32), // boolean
-            self.generate_value_is_not_defined()
-        )?;
+            register_stdlib_function(
+                codegen,
+                &format!("{}.isNotDefined", type_name),
+                &[WasmType::I32], // value pointer
+                Some(WasmType::I32), // boolean
+                self.generate_value_is_not_defined()
+            )?;
 
-        // Check if value is empty
-        register_stdlib_function(
-            codegen,
-            "value.isEmpty",
-            &[WasmType::I32], // value pointer
-            Some(WasmType::I32), // boolean
-            self.generate_value_is_empty()
-        )?;
+            // Check if value is empty
+            register_stdlib_function(
+                codegen,
+                &format!("{}.isEmpty", type_name),
+                &[WasmType::I32], // value pointer
+                Some(WasmType::I32), // boolean
+                self.generate_value_is_empty()
+            )?;
 
-        register_stdlib_function(
-            codegen,
-            "value.isNotEmpty",
-            &[WasmType::I32], // value pointer
-            Some(WasmType::I32), // boolean
-            self.generate_value_is_not_empty()
-        )?;
+            register_stdlib_function(
+                codegen,
+                &format!("{}.isNotEmpty", type_name),
+                &[WasmType::I32], // value pointer
+                Some(WasmType::I32), // boolean
+                self.generate_value_is_not_empty()
+            )?;
+        }
 
         Ok(())
     }
 
     /// Register validation methods for assertions
     fn register_validation_methods(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Assert that condition is true
-        register_stdlib_function(
-            codegen,
-            "value.mustBeTrue",
-            &[WasmType::I32, WasmType::I32], // value pointer, condition
-            None, // void
-            self.generate_must_be_true()
-        )?;
+        // Register validation methods for all types
+        let types = ["integer", "number", "string", "boolean", "value"];
+        
+        for type_name in &types {
+            // Assert that condition is true
+            register_stdlib_function(
+                codegen,
+                &format!("{}.mustBeTrue", type_name),
+                &[WasmType::I32, WasmType::I32], // value pointer, condition
+                None, // void
+                self.generate_must_be_true()
+            )?;
 
-        // Assert that condition is false
-        register_stdlib_function(
-            codegen,
-            "value.mustBeFalse",
-            &[WasmType::I32, WasmType::I32], // value pointer, condition
-            None, // void
-            self.generate_must_be_false()
-        )?;
+            // Assert that condition is false
+            register_stdlib_function(
+                codegen,
+                &format!("{}.mustBeFalse", type_name),
+                &[WasmType::I32, WasmType::I32], // value pointer, condition
+                None, // void
+                self.generate_must_be_false()
+            )?;
 
-        // Assert that two values are equal
-        register_stdlib_function(
-            codegen,
-            "value.mustBeEqual",
-            &[WasmType::I32, WasmType::I32], // value1 pointer, value2 pointer
-            None, // void
-            self.generate_must_be_equal()
-        )?;
+            // Assert that two values are equal
+            register_stdlib_function(
+                codegen,
+                &format!("{}.mustBeEqual", type_name),
+                &[WasmType::I32, WasmType::I32], // value1 pointer, value2 pointer
+                None, // void
+                self.generate_must_be_equal()
+            )?;
 
-        // Assert that two values are not equal
-        register_stdlib_function(
-            codegen,
-            "value.mustNotBeEqual",
-            &[WasmType::I32, WasmType::I32], // value1 pointer, value2 pointer
-            None, // void
-            self.generate_must_not_be_equal()
-        )?;
+            // Assert that two values are not equal
+            register_stdlib_function(
+                codegen,
+                &format!("{}.mustNotBeEqual", type_name),
+                &[WasmType::I32, WasmType::I32], // value1 pointer, value2 pointer
+                None, // void
+                self.generate_must_not_be_equal()
+            )?;
+        }
 
         Ok(())
     }
 
     /// Register type conversion methods
     fn register_conversion_methods(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // String conversion
-        register_stdlib_function(
-            codegen,
-            "value.toString",
-            &[WasmType::I32], // value pointer
-            Some(WasmType::I32), // string pointer
-            self.generate_value_to_string()
-        )?;
+        // Register conversion methods for all types
+        let types = ["integer", "number", "string", "boolean", "value"];
+        
+        for type_name in &types {
+            // String conversion
+            register_stdlib_function(
+                codegen,
+                &format!("{}.toString", type_name),
+                &[WasmType::I32], // value pointer
+                Some(WasmType::I32), // string pointer
+                self.generate_value_to_string()
+            )?;
 
-        // Integer conversion
-        register_stdlib_function(
-            codegen,
-            "value.toInteger",
-            &[WasmType::I32], // value pointer
-            Some(WasmType::I32), // integer value
-            self.generate_value_to_integer()
-        )?;
+            // Integer conversion
+            register_stdlib_function(
+                codegen,
+                &format!("{}.toInteger", type_name),
+                &[WasmType::I32], // value pointer
+                Some(WasmType::I32), // integer value
+                self.generate_value_to_integer()
+            )?;
 
-        // Number conversion
+            // Number conversion - handle both I32 and F64 inputs
+            register_stdlib_function(
+                codegen,
+                &format!("{}.toNumber", type_name),
+                &[WasmType::I32], // value pointer (for most types)
+                Some(WasmType::F64), // number value
+                self.generate_value_to_number_from_ptr()
+            )?;
+
+            // Boolean conversion
+            register_stdlib_function(
+                codegen,
+                &format!("{}.toBoolean", type_name),
+                &[WasmType::I32], // value pointer
+                Some(WasmType::I32), // boolean value
+                self.generate_value_to_boolean()
+            )?;
+        }
+
+        // Special case for number.toNumber that takes F64 directly
         register_stdlib_function(
             codegen,
-            "value.toNumber",
+            "number.toNumber",
             &[WasmType::F64], // value (f64)
             Some(WasmType::F64), // number value
             self.generate_value_to_number()
-        )?;
-
-        // Boolean conversion
-        register_stdlib_function(
-            codegen,
-            "value.toBoolean",
-            &[WasmType::I32], // value pointer
-            Some(WasmType::I32), // boolean value
-            self.generate_value_to_boolean()
         )?;
 
         Ok(())
@@ -371,6 +396,19 @@ impl MethodStyleManager {
             // Parameters: value (f64)
             // Returns: number value (same as input for numbers)
             Instruction::LocalGet(0),
+        ]
+    }
+
+    /// Generate WASM for value.toNumber() method from pointer
+    fn generate_value_to_number_from_ptr(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: value_ptr (0)
+            // Returns: number value (f64)
+            
+            // Load value from pointer and convert to f64
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::F64ConvertI32S, // Convert i32 to f64
         ]
     }
 

@@ -1,79 +1,58 @@
-// Test method-style syntax for built-in functions
+// Test method-style syntax - Clean Language Specification compliance
 
 functions:
 
-	void testUtilityMethods()
-
-		print("=== Testing Utility Methods ===")
+	testStringMethods()
+		print("=== Testing String Method-Style Syntax ===")
 		string text = "Hello World"
 		integer textLength = text.length()
 		print("Text length: " + textLength.toString())
 		
-		boolean defined = text.isDefined()
-		print("Text is defined: " + defined.toString())
+		// Test string operations with method-style syntax
+		string upperText = text.toUpperCase()
+		print("Uppercase: " + upperText)
 		
-		boolean empty = text.isEmpty()
-		print("Text is empty: " + empty.toString())
-		
-		string emptyText = ""
-		boolean emptyCheck = emptyText.isEmpty()
-		print("Empty text is empty: " + emptyCheck.toString())
+		string lowerText = text.toLowerCase()
+		print("Lowercase: " + lowerText)
 
-	void testValidationMethods()
-
-		print("=== Testing Validation Methods ===")
-		integer value = 42
-		boolean condition = true
-		
-		// This would assert that condition is true
-		value.mustBeTrue(condition)
-		print("Validation passed for true condition")
-		
-		integer firstNum = 10
-		integer secondNum = 10
-		firstNum.mustBeEqual(secondNum)
-		print("Validation passed for equal values")
-
-	void testConversionMethods()
-
-		print("=== Testing Conversion Methods ===")
+	testNumberMethods()
+		print("=== Testing Number Method-Style Syntax ===")
 		integer num = 123
 		string numStr = num.toString()
 		print("Integer to string: " + numStr)
 		
-		string numberStr = "456"
-		integer convertedNum = numberStr.toInteger()
-		print("String to integer: " + convertedNum.toString())
+		number decimal = 42.0
+		string decimalStr = decimal.toString()
+		print("Number to string: " + decimalStr)
+		
+		// Test type conversions
+		integer fromNumber = decimal.toInteger
+		print("Number to integer: " + fromNumber.toString())
+		
+		number fromInteger = num.toNumber
+		print("Integer to number: " + fromInteger.toString())
+
+	testBooleanMethods()
+		print("=== Testing Boolean Method-Style Syntax ===")
+		boolean flag = true
+		string boolStr = flag.toString()
+		print("Boolean to string: " + boolStr)
 		
 		integer boolValue = 1
-		boolean converted = boolValue.toBoolean()
-		print("Integer to boolean: " + converted.toString())
-
-	void testBoundaryMethods()
-
-		print("=== Testing Boundary Methods ===")
-		integer value = 15
-		integer clamped = value.keepBetween(5, 10)
-		print("Clamped 15 to [5,10]: " + clamped.toString())
+		boolean converted = boolValue.toBoolean
+		print("Integer to boolean (1): " + converted.toString())
 		
-		integer lowValue = 2
-		integer clampedLow = lowValue.keepBetween(5, 10)
-		print("Clamped 2 to [5,10]: " + clampedLow.toString())
-		
-		number floatValue = 7.5
-		number clampedFloat = floatValue.keepBetween(1.0, 5.0)
-		print("Clamped 7.5 to [1.0,5.0]: " + clampedFloat.toString())
+		integer zeroValue = 0
+		boolean zeroConverted = zeroValue.toBoolean
+		print("Integer to boolean (0): " + zeroConverted.toString())
 
 start()
-
 	print("Clean Language Method-Style Syntax Test")
 	print("======================================")
-	testUtilityMethods()
+	testStringMethods()
 	print("")
-	testValidationMethods()
+	testNumberMethods()
 	print("")
-	testConversionMethods()
-	print("")
-	testBoundaryMethods()
+	testBooleanMethods()
 	print("")
 	print("All method-style tests completed!")

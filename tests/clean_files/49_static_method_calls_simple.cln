@@ -3,7 +3,7 @@
 
 functions:
 
-	void testStaticMethods()
+	testStaticMethods()
 
 		// Test math class static methods (lowercase)
 		number result = math.max(5.0, 3.0)

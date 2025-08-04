@@ -54,8 +54,9 @@ impl FunctionPreprocessor {
         // Parse each function in complete isolation
         for (_index, segment) in function_segments.iter().enumerate() {
             // Create a complete, standalone functions block with just this one function
-            // Ensure proper indentation structure by adding a newline after functions:
-            let isolated_source = format!("functions:\n{}", segment);
+            // Normalize indentation to match functions: block expectations
+            let normalized_segment = self.normalize_function_indentation(segment);
+            let isolated_source = format!("functions:\n{}", normalized_segment);
             
             // Parse this isolated function
             match self.parse_isolated_function(&isolated_source) {
@@ -262,6 +263,48 @@ impl FunctionPreprocessor {
     fn get_function_line_offset(&self, _function_index: usize) -> usize {
         // For now, return 0. In a full implementation, we'd track line numbers
         0
+    }
+    
+    /// Normalize function indentation to match functions: block expectations
+    fn normalize_function_indentation(&self, segment: &str) -> String {
+        let lines: Vec<&str> = segment.lines().collect();
+        if lines.is_empty() {
+            return segment.to_string();
+        }
+        
+        // Find the minimum indentation of non-empty lines (this should be the function declaration)
+        let mut min_indent = usize::MAX;
+        for line in &lines {
+            if !line.trim().is_empty() {
+                let indent = self.count_indentation(line);
+                if indent < min_indent {
+                    min_indent = indent;
+                }
+            }
+        }
+        
+        // If no indentation found, return as-is
+        if min_indent == usize::MAX {
+            return segment.to_string();
+        }
+        
+        // Remove the minimum indentation from all lines and add single tab for functions: block
+        let mut normalized_lines = Vec::new();
+        for line in lines {
+            if line.trim().is_empty() {
+                normalized_lines.push(String::new()); // Empty lines remain empty
+            } else {
+                let current_indent = self.count_indentation(line);
+                let relative_indent = current_indent.saturating_sub(min_indent);
+                let new_line = format!("\t{}{}", 
+                    "\t".repeat(relative_indent), 
+                    line.trim_start()
+                );
+                normalized_lines.push(new_line);
+            }
+        }
+        
+        normalized_lines.join("\n")
     }
 }
 

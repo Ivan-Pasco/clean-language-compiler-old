@@ -499,10 +499,7 @@ async fn handle_simple_test(verbose: bool) -> Result<(), Box<dyn std::error::Err
         println!("Verbose output enabled");
     }
     
-    let test_source = r#"start()
-    integer x = 42
-    print(x)
-"#;
+    let test_source = "start()\n\tinteger x = 42\n\tprint(x)\n";
     
     match compile_with_file(test_source, "simple_test.clean") {
         Ok(wasm_binary) => {
@@ -523,19 +520,9 @@ async fn handle_comprehensive_test(verbose: bool) -> Result<(), Box<dyn std::err
     }
     
     let test_cases = vec![
-        ("Basic", r#"start()
-    integer x = 42
-    print(x)
-"#),
-        ("Arithmetic", r#"start()
-    integer x = 1 + 2 * 3
-    print(x)
-"#),
-        ("Variables", r#"start()
-    integer x = 5
-    integer y = x + 1
-    print(y)
-"#),
+        ("Basic", "start()\n\tinteger x = 42\n\tprint(x)\n"),
+        ("Arithmetic", "start()\n\tinteger x = 1 + 2 * 3\n\tprint(x)\n"),
+        ("Variables", "start()\n\tinteger x = 5\n\tinteger y = x + 1\n\tprint(y)\n"),
     ];
     
     let mut passed = 0;

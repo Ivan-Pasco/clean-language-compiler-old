@@ -106,39 +106,8 @@ impl SemanticAnalyzer {
         // are now ONLY available as method-style calls
 
         // Math functions - module.function() syntax (both lowercase and uppercase)
-        // Basic arithmetic functions
-        self.function_table.insert(
-            "math.add".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Number, 2), (vec![Type::Integer, Type::Integer], Type::Integer, 2)]
-        );
-        self.function_table.insert(
-            "Math.add".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Number, 2), (vec![Type::Integer, Type::Integer], Type::Integer, 2)]
-        );
-        self.function_table.insert(
-            "math.subtract".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Number, 2), (vec![Type::Integer, Type::Integer], Type::Integer, 2)]
-        );
-        self.function_table.insert(
-            "Math.subtract".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Number, 2), (vec![Type::Integer, Type::Integer], Type::Integer, 2)]
-        );
-        self.function_table.insert(
-            "math.multiply".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Number, 2), (vec![Type::Integer, Type::Integer], Type::Integer, 2)]
-        );
-        self.function_table.insert(
-            "Math.multiply".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Number, 2), (vec![Type::Integer, Type::Integer], Type::Integer, 2)]
-        );
-        self.function_table.insert(
-            "math.divide".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Number, 2), (vec![Type::Integer, Type::Integer], Type::Number, 2)]
-        );
-        self.function_table.insert(
-            "Math.divide".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Number, 2), (vec![Type::Integer, Type::Integer], Type::Number, 2)]
-        );
+        // Note: Basic arithmetic (add, subtract, multiply, divide, pow) removed to enforce 'one way to do things'
+        // Use operators instead: a + b, a - b, a * b, a / b, a ^ b
         
         self.function_table.insert(
             "math.abs".to_string(),
@@ -155,14 +124,6 @@ impl SemanticAnalyzer {
         self.function_table.insert(
             "Math.sqrt".to_string(),
             vec![(vec![Type::Number], Type::Number, 1)]
-        );
-        self.function_table.insert(
-            "math.pow".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Number, 2)]
-        );
-        self.function_table.insert(
-            "Math.pow".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Number, 2)]
         );
         self.function_table.insert(
             "math.sin".to_string(),
@@ -868,50 +829,133 @@ impl SemanticAnalyzer {
         );
         
         // List operations - module.function() syntax
+        // List method-style functions (0 arguments - object is implicit)
         self.function_table.insert(
             "list.size".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any))], Type::Integer, 1)]
+            vec![(vec![], Type::Integer, 0)]
         );
         self.function_table.insert(
             "list.isEmpty".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any))], Type::Boolean, 1)]
+            vec![(vec![], Type::Boolean, 0)]
         );
         self.function_table.insert(
             "list.isNotEmpty".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any))], Type::Boolean, 1)]
+            vec![(vec![], Type::Boolean, 0)]
         );
         self.function_table.insert(
             "list.add".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any)), Type::Any], Type::Void, 2)]
+            vec![(vec![Type::Any], Type::Void, 1)]
         );
         self.function_table.insert(
             "list.remove".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any)), Type::Integer], Type::Any, 2)]
+            vec![(vec![Type::Integer], Type::Any, 1)]
         );
         self.function_table.insert(
             "list.get".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any)), Type::Integer], Type::Any, 2)]
+            vec![(vec![Type::Integer], Type::Any, 1)]
         );
         self.function_table.insert(
             "list.set".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any)), Type::Integer, Type::Any], Type::Void, 3)]
+            vec![(vec![Type::Integer, Type::Any], Type::Void, 2)]
         );
         self.function_table.insert(
             "list.contains".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any)), Type::Any], Type::Boolean, 2)]
+            vec![(vec![Type::Any], Type::Boolean, 1)]
         );
         self.function_table.insert(
             "list.indexOf".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any)), Type::Any], Type::Integer, 2)]
+            vec![(vec![Type::Any], Type::Integer, 1)]
         );
         self.function_table.insert(
             "list.clear".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any))], Type::Void, 1)]
+            vec![(vec![], Type::Void, 0)]
         );
         self.function_table.insert(
             "list.reverse".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any))], Type::Void, 1)]
+            vec![(vec![], Type::Void, 0)]
         );
+
+        // Register method-style functions for type-based method calls
+        self.register_method_style_functions();
+    }
+
+    /// Register method-style functions that can be called on typed variables
+    fn register_method_style_functions(&mut self) {
+        let types = ["integer", "number", "string", "boolean", "value"];
+        
+        for type_name in &types {
+            // Type conversion methods (0 arguments - object is implicit)
+            self.function_table.insert(
+                format!("{}.toString", type_name),
+                vec![(vec![], Type::String, 0)]
+            );
+            self.function_table.insert(
+                format!("{}.toInteger", type_name), 
+                vec![(vec![], Type::Integer, 0)]
+            );
+            self.function_table.insert(
+                format!("{}.toNumber", type_name),
+                vec![(vec![], Type::Number, 0)]
+            );
+            self.function_table.insert(
+                format!("{}.toBoolean", type_name),
+                vec![(vec![], Type::Boolean, 0)]
+            );
+            
+            // Utility methods (0 arguments - object is implicit)
+            self.function_table.insert(
+                format!("{}.length", type_name),
+                vec![(vec![], Type::Integer, 0)]
+            );
+            self.function_table.insert(
+                format!("{}.isDefined", type_name),
+                vec![(vec![], Type::Boolean, 0)]
+            );
+            self.function_table.insert(
+                format!("{}.isNotDefined", type_name),
+                vec![(vec![], Type::Boolean, 0)]
+            );
+            self.function_table.insert(
+                format!("{}.isEmpty", type_name),
+                vec![(vec![], Type::Boolean, 0)]
+            );
+            self.function_table.insert(
+                format!("{}.isNotEmpty", type_name),
+                vec![(vec![], Type::Boolean, 0)]
+            );
+            
+            // Validation methods (1 argument + implicit object)
+            self.function_table.insert(
+                format!("{}.mustBeTrue", type_name),
+                vec![(vec![Type::Boolean], Type::Void, 1)]
+            );
+            self.function_table.insert(
+                format!("{}.mustBeFalse", type_name),
+                vec![(vec![Type::Boolean], Type::Void, 1)]
+            );
+            self.function_table.insert(
+                format!("{}.mustBeEqual", type_name),
+                vec![(vec![Type::Any], Type::Void, 1)]
+            );
+            self.function_table.insert(
+                format!("{}.mustNotBeEqual", type_name),
+                vec![(vec![Type::Any], Type::Void, 1)]
+            );
+            
+            // Method-style functions registered for type: {}
+        }
+        
+        // Boundary methods for specific types (2 arguments + implicit object)
+        self.function_table.insert(
+            "integer.keepBetween".to_string(),
+            vec![(vec![Type::Integer, Type::Integer], Type::Integer, 2)]
+        );
+        self.function_table.insert(
+            "number.keepBetween".to_string(),
+            vec![(vec![Type::Number, Type::Number], Type::Number, 2)]
+        );
+        
+        // All method-style function types registered
     }
 
     pub fn analyze(&mut self, program: &Program) -> Result<Program, CompilerError> {
@@ -2404,7 +2448,7 @@ impl SemanticAnalyzer {
                             }
                         }
                     } else {
-                        println!("DEBUG: '{}' is a variable, treating '{}' as instance method call", module_name, method);
+                        // Variable found in scope, will be handled by method call analysis
                     }
                 }
 
@@ -2712,7 +2756,6 @@ impl SemanticAnalyzer {
     }
 
     fn check_method_call(&mut self, object: &Expression, method: &str, args: &[Expression], location: &SourceLocation) -> Result<Type, CompilerError> {
-        println!("DEBUG: check_method_call called with method: {}", method);
         
         // Check for imported modules first before trying to resolve the object
         if let Expression::Variable(module_name) = object {
@@ -2737,12 +2780,29 @@ impl SemanticAnalyzer {
                 return self.check_function_call(&qualified_name, args, Some(location.clone()));
             } else {
                 println!("DEBUG: Function not found: {}", qualified_name);
-                println!("DEBUG: Available functions with 'conditional' prefix:");
-                for func_name in self.function_table.keys() {
-                    if func_name.starts_with("conditional") {
-                        println!("DEBUG:   {}", func_name);
+                
+                // Check if this is a method-style call on a typed variable
+                if let Some(var_type) = self.current_scope.lookup_variable(module_name) {
+                    
+                    // Map the Clean Language type to a type name for method resolution
+                    let type_name = match var_type {
+                        Type::Integer | Type::IntegerSized { .. } => "integer",
+                        Type::Number | Type::NumberSized { .. } => "number",
+                        Type::String => "string", 
+                        Type::Boolean => "boolean",
+                        Type::List(_) => "list",
+                        _ => "value", // fallback for unknown types
+                    };
+                    
+                    // Try to find the type-based method function
+                    let type_method_name = format!("{}.{}", type_name, method);
+                    
+                    if self.function_table.contains_key(&type_method_name) {
+                        return self.check_function_call(&type_method_name, args, Some(location.clone()));
                     }
                 }
+                
+                // Method-style function not found, continue with regular resolution
             }
         }
         
@@ -3264,6 +3324,17 @@ impl SemanticAnalyzer {
                 return Ok(Type::Number);
             },
             
+            (_, "toNumber") => {
+                if !args.is_empty() {
+                    return Err(CompilerError::type_error(
+                        "Method 'toNumber' doesn't take any arguments".to_string(),
+                        Some("Usage: value.toNumber()".to_string()),
+                        Some(location.clone())
+                    ));
+                }
+                return Ok(Type::Number);
+            },
+            
             (_, "toString") => {
                 if !args.is_empty() {
                     return Err(CompilerError::type_error(
@@ -3284,6 +3355,73 @@ impl SemanticAnalyzer {
                     ));
                 }
                 return Ok(Type::Boolean);
+            },
+            
+            // Universal validation methods available on all types
+            (_, "mustBeTrue") => {
+                if args.len() != 1 {
+                    return Err(CompilerError::type_error(
+                        format!("Method 'mustBeTrue' expects 1 argument (condition), but {} were provided", args.len()),
+                        Some("Usage: value.mustBeTrue(condition)".to_string()),
+                        Some(location.clone())
+                    ));
+                }
+                // Check that the argument is a boolean
+                let arg_type = self.check_expression(&args[0])?;
+                if !self.types_compatible(&Type::Boolean, &arg_type) {
+                    return Err(CompilerError::type_error(
+                        "Argument to 'mustBeTrue' must be a boolean".to_string(),
+                        Some("Provide a boolean condition".to_string()),
+                        Some(location.clone())
+                    ));
+                }
+                return Ok(Type::Void);
+            },
+            
+            (_, "mustBeFalse") => {
+                if args.len() != 1 {
+                    return Err(CompilerError::type_error(
+                        format!("Method 'mustBeFalse' expects 1 argument (condition), but {} were provided", args.len()),
+                        Some("Usage: value.mustBeFalse(condition)".to_string()),
+                        Some(location.clone())
+                    ));
+                }
+                // Check that the argument is a boolean
+                let arg_type = self.check_expression(&args[0])?;
+                if !self.types_compatible(&Type::Boolean, &arg_type) {
+                    return Err(CompilerError::type_error(
+                        "Argument to 'mustBeFalse' must be a boolean".to_string(),
+                        Some("Provide a boolean condition".to_string()),
+                        Some(location.clone())
+                    ));
+                }
+                return Ok(Type::Void);
+            },
+            
+            (_, "mustBeEqual") => {
+                if args.len() != 1 {
+                    return Err(CompilerError::type_error(
+                        format!("Method 'mustBeEqual' expects 1 argument (other), but {} were provided", args.len()),
+                        Some("Usage: value.mustBeEqual(other)".to_string()),
+                        Some(location.clone())
+                    ));
+                }
+                // The argument can be any type - just check it's valid
+                self.check_expression(&args[0])?;
+                return Ok(Type::Void);
+            },
+            
+            (_, "mustNotBeEqual") => {
+                if args.len() != 1 {
+                    return Err(CompilerError::type_error(
+                        format!("Method 'mustNotBeEqual' expects 1 argument (other), but {} were provided", args.len()),
+                        Some("Usage: value.mustNotBeEqual(other)".to_string()),
+                        Some(location.clone())
+                    ));
+                }
+                // The argument can be any type - just check it's valid
+                self.check_expression(&args[0])?;
+                return Ok(Type::Void);
             },
             
             _ => {} // Fall through to class method checking

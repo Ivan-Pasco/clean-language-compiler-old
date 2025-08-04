@@ -1,0 +1,48 @@
+// Import/Export comprehensive test - demonstrates module system
+// Note: Full import/export requires module resolution implementation
+
+// Demonstrate import syntax patterns
+import:
+	math                // Import entire math module  
+	string.concat       // Import single function
+	list as listUtils   // Import with alias
+	file.read as readFile  // Import with alias
+
+// Public functions (default visibility)
+functions:
+	string processData(string input)
+		// Use imported functions with proper syntax
+		string cleaned = string.trim(input)
+		string uppercased = string.toUpperCase(cleaned)
+		return "Processed: " + uppercased
+	
+	integer calculateSum(integer a, integer b, integer c)
+		return a + b + c
+	
+	void demonstrateImports()
+		print("=== Import/Export Demonstration ===")
+		
+		// Math operations using imported math module
+		number result = math.sqrt(16.0)
+		print("math.sqrt(16.0) = " + result.toString())
+		
+		// String operations
+		string text = processData("  hello world  ")
+		print("Processed text: " + text)
+		
+		// List operations (would use imported listUtils)
+		list<integer> numbers = [1, 2, 3, 4, 5]
+		integer sum = calculateSum(numbers[0], numbers[1], numbers[2])
+		print("Sum of first three: " + sum.toString())
+
+// Private functions (marked for internal use only)
+private:
+	string internalHelper(string data)
+		return "Internal: " + data
+	
+	integer secretCalculation(integer value)
+		return value * 42
+
+start()
+	demonstrateImports()
+	print("Import/export test completed successfully")

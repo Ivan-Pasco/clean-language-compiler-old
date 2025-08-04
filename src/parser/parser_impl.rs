@@ -742,7 +742,7 @@ fn parse_parameter(pair: Pair<Rule>) -> Result<Parameter, CompilerError> {
             Rule::type_ => {
                 param_type = Some(parse_type(inner)?);
             },
-            Rule::identifier => {
+            Rule::identifier | Rule::parameter_name => {
                 param_name = inner.as_str().to_string();
             },
             Rule::expression => {
@@ -824,7 +824,7 @@ pub fn parse_functions_block_with_context(
     parse_functions_block_traditional(functions_block)
 }
 
-fn parse_functions_block_traditional(functions_block: Pair<Rule>) -> Result<Vec<Function>, CompilerError> {
+pub fn parse_functions_block_traditional(functions_block: Pair<Rule>) -> Result<Vec<Function>, CompilerError> {
     println!("DEBUG: Using traditional functions block parsing (no class context)");
     let mut functions = Vec::new();
     
@@ -1113,7 +1113,7 @@ fn parse_constructor_parameter(param_pair: Pair<Rule>) -> Result<Parameter, Comp
             Rule::type_ => {
                 param_type = Some(parse_type(item)?);
             },
-            Rule::identifier => {
+            Rule::identifier | Rule::parameter_name => {
                 param_name = item.as_str().to_string();
             },
             _ => {}
@@ -1319,6 +1319,9 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
                 }
             },
             Rule::identifier => {
+                func_name = item.as_str().to_string();
+            },
+            Rule::function_name => {
                 func_name = item.as_str().to_string();
             },
             Rule::parameter_list => {
@@ -1645,7 +1648,7 @@ mod tests {
 
     #[test]
     fn test_parse_function_in_block_valid() {
-        let source = "integer add()\n\tinput\n\t\tinteger a\n\t\tinteger b\n\treturn a + b";
+        let source = "integer add()\n\tinput\n\t\tinteger a\n\t\tinteger b\n\n\treturn a + b";
         let mut pairs = <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source).unwrap();
         let pair = pairs.next().unwrap();
         let func = parse_function_in_block(pair).unwrap();

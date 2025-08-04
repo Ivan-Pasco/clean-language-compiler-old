@@ -20,10 +20,8 @@ pub mod method_style;
 pub mod conditional;
 pub mod multiline;
 pub mod error_handling;
-pub mod static_methods;
 pub mod test_framework;
 pub mod string_interpolation;
-pub mod type_precision;
 pub mod default_parameters;
 pub mod numeric_literals;
 pub mod matrix_literals;
@@ -56,10 +54,8 @@ pub use method_style::MethodStyleManager;
 pub use conditional::ConditionalManager;
 pub use multiline::MultilineManager;
 pub use error_handling::ErrorHandlingManager;
-pub use static_methods::StaticMethodManager;
 pub use test_framework::TestFrameworkManager;
 pub use string_interpolation::StringInterpolationManager;
-pub use type_precision::TypePrecisionManager;
 pub use default_parameters::DefaultParameterManager;
 pub use numeric_literals::NumericLiteralsManager;
 pub use matrix_literals::MatrixLiteralsManager;
@@ -107,13 +103,9 @@ pub struct StandardLibrary {
     #[allow(dead_code)]
     error_handling: ErrorHandlingManager,
     #[allow(dead_code)]
-    static_methods: StaticMethodManager,
-    #[allow(dead_code)]
     test_framework: TestFrameworkManager,
     #[allow(dead_code)]
     string_interpolation: StringInterpolationManager,
-    #[allow(dead_code)]
-    type_precision: TypePrecisionManager,
     #[allow(dead_code)]
     default_parameters: DefaultParameterManager,
     #[allow(dead_code)]
@@ -161,10 +153,8 @@ impl StandardLibrary {
             conditional: ConditionalManager::new(memory_manager.clone()),
             multiline: MultilineManager::new(memory_manager.clone()),
             error_handling: ErrorHandlingManager::new(memory_manager.clone()),
-            static_methods: StaticMethodManager::new(memory_manager.clone()),
             test_framework: TestFrameworkManager::new(memory_manager.clone()),
             string_interpolation: StringInterpolationManager::new(memory_manager.clone()),
-            type_precision: TypePrecisionManager::new(memory_manager.clone()),
             default_parameters: DefaultParameterManager::new(memory_manager.clone()),
             numeric_literals: NumericLiteralsManager::new(memory_manager.clone()),
             matrix_literals: MatrixLiteralsManager::new(memory_manager.clone()),
@@ -189,21 +179,19 @@ impl StandardLibrary {
         self.matrix_ops.register_functions(codegen)?;
         self.type_conv.register_functions(codegen)?;
         self.math_class.register_functions(codegen)?;
-        // Temporarily disabling to isolate END opcode issue
-        // self.string_class.register_functions(codegen)?;
-        // Temporarily disabling to isolate END opcode issue
-        // self.list_class.register_functions(codegen)?;
-        // self.file_class.register_functions(codegen)?;
+        self.string_class.register_functions(codegen)?;
+        self.list_class.register_functions(codegen)?;
+        self.file_class.register_functions(codegen)?;
         // self.http_class.register_functions(codegen)?;
         self.list_behavior.register_functions(codegen)?;
+        println!("DEBUG: StandardLibrary - About to register MethodStyleManager functions");
         self.method_style.register_functions(codegen)?;
+        println!("DEBUG: StandardLibrary - MethodStyleManager functions registered");
         self.conditional.register_functions(codegen)?;
         self.multiline.register_functions(codegen)?;
         self.error_handling.register_functions(codegen)?;
-        self.static_methods.register_functions(codegen)?;
         self.test_framework.register_functions(codegen)?;
         self.string_interpolation.register_functions(codegen)?;
-        self.type_precision.register_functions(codegen)?;
         self.default_parameters.register_functions(codegen)?;
         self.numeric_literals.register_functions(codegen)?;
         self.matrix_literals.register_functions(codegen)?;

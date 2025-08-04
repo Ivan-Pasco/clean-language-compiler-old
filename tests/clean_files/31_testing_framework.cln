@@ -56,17 +56,17 @@ tests:
 	"division by zero": divide(5.0, 0.0) = 0.0
 	
 	// Anonymous tests (no description) 
-	String.length("hello") = 5
-	String.toUpperCase("world") = "WORLD"
-	String.toLowerCase("TEST") = "test"
-	String.contains("hello world", "world") = true
-	String.startsWith("prefix_test", "prefix") = true
-	String.endsWith("test_suffix", "suffix") = true
+	string.length("hello") = 5
+	string.toUpperCase("world") = "WORLD"
+	string.toLowerCase("TEST") = "test"
+	string.contains("hello world", "world") = true
+	string.startsWith("prefix_test", "prefix") = true
+	string.endsWith("test_suffix", "suffix") = true
 	
-	Math.abs(-42) = 42
-	Math.max(10, 20) = 20
-	Math.min(5, 3) = 3
-	Math.sqrt(16.0) = 4.0
+	math.abs(-42) = 42
+	math.max(10, 20) = 20
+	math.min(5, 3) = 3
+	math.sqrt(16.0) = 4.0
 	
 	// List operations tests
 	[1, 2, 3].length() = 3

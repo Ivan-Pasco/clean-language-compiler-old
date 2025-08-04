@@ -274,7 +274,7 @@ fn parse_constructor_parameter(pair: Pair<Rule>) -> Result<Parameter, CompilerEr
     if let Some(second_part) = parts.next() {
         // We have both type and identifier
         let type_ = parse_type(first_part)?;
-        if second_part.as_rule() != Rule::identifier {
+        if second_part.as_rule() != Rule::identifier && second_part.as_rule() != Rule::parameter_name {
             return Err(CompilerError::parse_error(
                 "Expected identifier for parameter name".to_string(),
                 None,
@@ -285,7 +285,7 @@ fn parse_constructor_parameter(pair: Pair<Rule>) -> Result<Parameter, CompilerEr
         Ok(Parameter::new(name, type_))
     } else {
         // We have just an identifier, infer type as string for now
-        if first_part.as_rule() != Rule::identifier {
+        if first_part.as_rule() != Rule::identifier && first_part.as_rule() != Rule::parameter_name {
             return Err(CompilerError::parse_error(
                 "Expected identifier for parameter name".to_string(),
                 None,
@@ -313,7 +313,7 @@ fn parse_parameter(pair: Pair<Rule>) -> Result<Parameter, CompilerError> {
         Some("Parameters must have a name".to_string())
     ))?;
     
-    if name_part.as_rule() != Rule::identifier {
+    if name_part.as_rule() != Rule::identifier && name_part.as_rule() != Rule::parameter_name {
         return Err(CompilerError::parse_error(
             "Expected identifier for parameter name".to_string(),
             None,

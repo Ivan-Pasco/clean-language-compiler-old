@@ -1,0 +1,151 @@
+// Default parameters comprehensive test - demonstrates default parameter values
+
+functions:
+	// Basic default parameters
+	greet(string name = "World")
+		return "Hello, " + name
+	
+	power(integer base, integer exponent = 2)
+		// Default exponent of 2 for squaring
+		if exponent == 0
+			return 1
+		integer result = base
+		integer counter = 1
+		while counter < exponent
+			result = result * base
+			counter = counter + 1
+		return result
+	
+	logMessage(string message, string level = "INFO")
+		print("[" + level + "] " + message)
+	
+	// Default parameters with expressions
+	formatCurrency(number amount, string symbol = "$", integer decimals = 2)
+		// For demonstration, simplified formatting
+		return symbol + amount.toString()
+	
+	calculateArea()
+		description "Calculate area with default dimensions"
+		input
+			integer width = 10      // Default width
+			integer height = 5      // Default height
+		return width * height
+	
+	formatMessage()
+		description "Format a message with optional parameters"
+		input
+			string text = "Hello"   // Default message
+			string prefix = ">> "   // Default prefix
+			boolean uppercase = false  // Default formatting
+		if uppercase
+			return prefix + text.toUpperCase()
+		else
+			return prefix + text
+	
+	// Complex default parameters
+	buildUrl(string protocol = "https", string domain = "example.com", integer port = 443)
+		return protocol + "://" + domain + ":" + port.toString()
+	
+	createUser(string name, string email = "", integer age = 18, boolean active = true)
+		print("Creating user:")
+		print("  Name: " + name)
+		if email != ""
+			print("  Email: " + email)
+		else
+			print("  Email: (not provided)")
+		print("  Age: " + age.toString())
+		print("  Active: " + active.toString())
+	
+	testBasicDefaultParameters()
+		print("=== Basic Default Parameters ===")
+		
+		// Using functions with default values
+		string greeting1 = greet()              // Uses default "World"
+		string greeting2 = greet("Alice")       // Overrides default
+		print(greeting1)  // "Hello, World"
+		print(greeting2)  // "Hello, Alice"
+		
+		// Mathematical functions with defaults
+		integer squared = power(5)     // Uses default exponent=2
+		integer cubed = power(5, 3)    // Overrides exponent
+		print("5 squared: " + squared.toString())  // 25
+		print("5 cubed: " + cubed.toString())      // 125
+		
+		// Logging with default levels
+		logMessage("System started")           // Uses default "INFO"
+		logMessage("Error occurred", "ERROR")  // Overrides level
+	
+	testInputBlockDefaults()
+		print("=== Input Block Default Parameters ===")
+		
+		// Functions with input blocks and defaults
+		integer area1 = calculateArea()        // Uses defaults: 10 * 5 = 50
+		print("Default area: " + area1.toString())
+		
+		string message1 = formatMessage()      // Uses all defaults
+		print("Default message: " + message1)
+		
+		// When calling functions with input blocks, defaults are applied automatically
+		// Note: Full input block parameter overriding requires advanced parser support
+	
+	testComplexDefaultParameters()
+		print("=== Complex Default Parameters ===")
+		
+		// URL building with multiple defaults
+		string url1 = buildUrl()                           // All defaults
+		string url2 = buildUrl("http")                     // Override protocol
+		string url3 = buildUrl("https", "mysite.com")     // Override protocol and domain
+		string url4 = buildUrl("https", "api.site.com", 8080)  // Override all
+		
+		print("Default URL: " + url1)      // https://example.com:443
+		print("HTTP URL: " + url2)         // http://example.com:443
+		print("Custom domain: " + url3)    // https://mysite.com:443
+		print("Full custom: " + url4)      // https://api.site.com:8080
+	
+	testUserCreationDefaults()
+		print("=== User Creation with Defaults ===")
+		
+		// User creation with various parameter combinations
+		createUser("John")                              // Uses all defaults
+		print("")
+		createUser("Alice", "alice@example.com")        // Override email
+		print("")
+		createUser("Bob", "bob@site.com", 25)          // Override email and age
+		print("")
+		createUser("Carol", "carol@test.com", 30, false)  // Override all parameters
+	
+	testDefaultParameterEdgeCases()
+		print("=== Default Parameter Edge Cases ===")
+		
+		// Empty string defaults
+		string formatted1 = formatCurrency(19.99)                    // Uses defaults
+		string formatted2 = formatCurrency(29.99, "€")              // Override symbol
+		string formatted3 = formatCurrency(39.99, "£", 2)           // Override symbol and decimals
+		
+		print("Default currency: " + formatted1)  // $19.99
+		print("Euro currency: " + formatted2)     // €29.99
+		print("Pound currency: " + formatted3)    // £39.99
+		
+		// Zero and negative defaults
+		integer result1 = power(3)        // 3^2 = 9
+		integer result2 = power(2, 0)     // 2^0 = 1
+		integer result3 = power(4, 1)     // 4^1 = 4
+		
+		print("3 squared: " + result1.toString())
+		print("2 to power 0: " + result2.toString())
+		print("4 to power 1: " + result3.toString())
+
+start()
+	print("Default Parameters Comprehensive Test")
+	print("====================================")
+	testBasicDefaultParameters()
+	print("")
+	testInputBlockDefaults()
+	print("")
+	testComplexDefaultParameters()
+	print("")
+	testUserCreationDefaults()
+	print("")
+	testDefaultParameterEdgeCases()
+	print("")
+	print("Default parameters test completed successfully")

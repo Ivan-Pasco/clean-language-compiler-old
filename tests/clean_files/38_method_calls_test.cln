@@ -1,7 +1,7 @@
 // Test method-style calls
 
 functions:
-	void testMethodCalls()
+	testMethodCalls()
 		list<integer> items = [1, 2, 3]
 		integer size = items.size()
 		items.add(4)

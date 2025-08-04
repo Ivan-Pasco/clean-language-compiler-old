@@ -1,22 +1,25 @@
 
 start()
-	// Test math functions
-	number sqrt_result = sqrt(16.0)
-	number power_result = pow(2.0, 3.0) 
-	number abs_result = abs(-5.5)
+	// Test math functions - using proper lowercase namespace
+	number sqrt_result = math.sqrt(16.0)
+	// Use operator per specification
+	number power_result = (2.0 ^ 3.0)
+	number abs_result = math.abs(-5.5)
 	
-	print(sqrt_result)
-	print(power_result)
-	print(abs_result)
+	print(sqrt_result.toString())
+	print(power_result.toString())
+	print(abs_result.toString())
 	
-	// Test string operations
+	// Test string operations with method-style syntax
 	string text = "Hello World"
 	print(text)
+	integer textLength = text.length()
+	print(textLength.toString())
 	
 	// Test list operations
 	list<integer> numbers = [3, 1, 4, 1, 5, 9]
 	integer first = numbers[0]
 	integer second = numbers[1]
 	
-	print(first)
-	print(second)
+	print(first.toString())
+	print(second.toString())

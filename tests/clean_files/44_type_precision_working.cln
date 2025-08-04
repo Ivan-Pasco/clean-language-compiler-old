@@ -1,7 +1,7 @@
 // Test type precision modifiers
 
 functions:
-	void testTypePrecision()
+	testTypePrecision()
 		integer:8 small = 42
 		integer large = 1000
 		number singleFloat = 3.14

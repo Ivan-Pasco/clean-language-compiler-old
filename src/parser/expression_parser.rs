@@ -151,6 +151,27 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::base_expression => {
             parse_base_expression(pair)
         }
+        Rule::logical_expression => {
+            parse_logical_expression(pair)
+        }
+        Rule::comparison_expression => {
+            parse_comparison_expression(pair)
+        }
+        Rule::unary_expression => {
+            parse_unary_expression(pair)
+        }
+        Rule::arithmetic_expression => {
+            parse_arithmetic_expression(pair)
+        }
+        Rule::additive_expression => {
+            parse_additive_expression(pair)
+        }
+        Rule::multiplicative_expression => {
+            parse_multiplicative_expression(pair)
+        }
+        Rule::power_expression => {
+            parse_power_expression(pair)
+        }
         Rule::error_variable => {
             // Parse error variable
             let location = convert_to_ast_location(&get_location(&pair));
@@ -304,7 +325,7 @@ pub fn parse_comparison_expression(pair: Pair<Rule>) -> Result<Expression, Compi
 
 pub fn parse_unary_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let mut unary_ops = Vec::new();
-    let mut arithmetic_expr = None;
+    let mut additive_expr = None;
     
     for item in pair.into_inner() {
         match item.as_rule() {
@@ -320,22 +341,22 @@ pub fn parse_unary_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
                 };
                 unary_ops.push(op);
             }
-            Rule::arithmetic_expression => {
-                arithmetic_expr = Some(parse_arithmetic_expression(item)?);
+            Rule::additive_expression => {
+                additive_expr = Some(parse_additive_expression(item)?);
             }
             _ => return Err(CompilerError::parse_error(
                 format!("Unexpected rule in unary expression: {:?}", item.as_rule()),
                 Some(convert_to_ast_location(&get_location(&item))),
-                Some("Expected unary operator or arithmetic expression".to_string())
+                Some("Expected unary operator or additive expression".to_string())
             )),
         }
     }
     
-    let mut result = arithmetic_expr.ok_or_else(|| {
+    let mut result = additive_expr.ok_or_else(|| {
         CompilerError::parse_error(
-            "Missing arithmetic expression in unary expression".to_string(),
+            "Missing additive expression in unary expression".to_string(),
             None,
-            Some("Unary expression must contain an arithmetic expression".to_string())
+            Some("Unary expression must contain an additive expression".to_string())
         )
     })?;
     
@@ -348,44 +369,55 @@ pub fn parse_unary_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
 }
 
 pub fn parse_arithmetic_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    // For backward compatibility, just delegate to additive_expression
+    for item in pair.into_inner() {
+        if item.as_rule() == Rule::additive_expression {
+            return parse_additive_expression(item);
+        }
+    }
+    
+    Err(CompilerError::parse_error(
+        "Empty arithmetic expression".to_string(),
+        None,
+        Some("Arithmetic expression must contain an additive expression".to_string())
+    ))
+}
+
+pub fn parse_additive_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let mut expr_stack = Vec::new();
     let mut op_stack = Vec::new();
 
     for item in pair.into_inner() {
         match item.as_rule() {
-            Rule::primary => {
-                expr_stack.push(parse_primary(item)?);
+            Rule::multiplicative_expression => {
+                expr_stack.push(parse_multiplicative_expression(item)?);
             }
-            Rule::arithmetic_op => {
+            Rule::additive_op => {
                 let op = match item.as_str() {
                     "+" => BinaryOperator::Add,
                     "-" => BinaryOperator::Subtract,
-                    "*" => BinaryOperator::Multiply,
-                    "/" => BinaryOperator::Divide,
-                    "%" => BinaryOperator::Modulo,
-                    "^" => BinaryOperator::Power,
                     _ => return Err(CompilerError::parse_error(
-                        format!("Invalid arithmetic operator: {}", item.as_str()),
+                        format!("Invalid additive operator: {}", item.as_str()),
                         Some(convert_to_ast_location(&get_location(&item))),
-                        Some("Valid arithmetic operators are: +, -, *, /, %, ^".to_string())
+                        Some("Valid additive operators are: +, -".to_string())
                     )),
                 };
                 op_stack.push(op);
             }
             _ => return Err(CompilerError::parse_error(
-                format!("Unexpected rule in arithmetic expression: {:?}", item.as_rule()),
+                format!("Unexpected rule in additive expression: {:?}", item.as_rule()),
                 Some(convert_to_ast_location(&get_location(&item))),
-                Some("Expected primary expression or arithmetic operator".to_string())
+                Some("Expected multiplicative expression or additive operator".to_string())
             )),
         }
     }
 
-    // Build the expression tree from the stacks
+    // Build the expression tree (left-associative)
     if expr_stack.is_empty() {
         return Err(CompilerError::parse_error(
-            "Empty arithmetic expression".to_string(),
+            "Empty additive expression".to_string(),
             None,
-            Some("Arithmetic expression must contain at least one primary expression".to_string())
+            Some("Additive expression must contain at least one multiplicative expression".to_string())
         ));
     }
 
@@ -396,6 +428,104 @@ pub fn parse_arithmetic_expression(pair: Pair<Rule>) -> Result<Expression, Compi
         let right = expr_stack.remove(0);
         result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
         i += 1;
+    }
+
+    Ok(result)
+}
+
+pub fn parse_multiplicative_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut expr_stack = Vec::new();
+    let mut op_stack = Vec::new();
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::power_expression => {
+                expr_stack.push(parse_power_expression(item)?);
+            }
+            Rule::multiplicative_op => {
+                let op = match item.as_str() {
+                    "*" => BinaryOperator::Multiply,
+                    "/" => BinaryOperator::Divide,
+                    "%" => BinaryOperator::Modulo,
+                    _ => return Err(CompilerError::parse_error(
+                        format!("Invalid multiplicative operator: {}", item.as_str()),
+                        Some(convert_to_ast_location(&get_location(&item))),
+                        Some("Valid multiplicative operators are: *, /, %".to_string())
+                    )),
+                };
+                op_stack.push(op);
+            }
+            _ => return Err(CompilerError::parse_error(
+                format!("Unexpected rule in multiplicative expression: {:?}", item.as_rule()),
+                Some(convert_to_ast_location(&get_location(&item))),
+                Some("Expected power expression or multiplicative operator".to_string())
+            )),
+        }
+    }
+
+    // Build the expression tree (left-associative)
+    if expr_stack.is_empty() {
+        return Err(CompilerError::parse_error(
+            "Empty multiplicative expression".to_string(),
+            None,
+            Some("Multiplicative expression must contain at least one power expression".to_string())
+        ));
+    }
+
+    let mut result = expr_stack.remove(0);
+    let mut i = 0;
+
+    while i < op_stack.len() && i < expr_stack.len() {
+        let right = expr_stack.remove(0);
+        result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
+        i += 1;
+    }
+
+    Ok(result)
+}
+
+pub fn parse_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut expr_stack = Vec::new();
+    let mut op_stack = Vec::new();
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::primary => {
+                expr_stack.push(parse_primary(item)?);
+            }
+            Rule::power_op => {
+                let op = match item.as_str() {
+                    "^" => BinaryOperator::Power,
+                    _ => return Err(CompilerError::parse_error(
+                        format!("Invalid power operator: {}", item.as_str()),
+                        Some(convert_to_ast_location(&get_location(&item))),
+                        Some("Valid power operator is: ^".to_string())
+                    )),
+                };
+                op_stack.push(op);
+            }
+            _ => return Err(CompilerError::parse_error(
+                format!("Unexpected rule in power expression: {:?}", item.as_rule()),
+                Some(convert_to_ast_location(&get_location(&item))),
+                Some("Expected primary expression or power operator".to_string())
+            )),
+        }
+    }
+
+    // Build the expression tree (right-associative for power operator)
+    if expr_stack.is_empty() {
+        return Err(CompilerError::parse_error(
+            "Empty power expression".to_string(),
+            None,
+            Some("Power expression must contain at least one primary expression".to_string())
+        ));
+    }
+
+    // For right-associativity of power operator, we build from right to left
+    let mut result = expr_stack.pop().unwrap();
+    
+    while let (Some(left), Some(op)) = (expr_stack.pop(), op_stack.pop()) {
+        result = Expression::Binary(Box::new(left), op, Box::new(result));
     }
 
     Ok(result)
@@ -472,6 +602,10 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::expression => {
             // Handle parenthesized expressions: (expression)
             parse_expression(inner)
+        },
+        Rule::logical_expression => {
+            // Handle parenthesized logical expressions: (logical_expression)
+            parse_logical_expression(inner)
         },
         Rule::multiline_parenthesized_expr => {
             // Handle multi-line parenthesized expressions: (expr + \n expr)
@@ -803,7 +937,7 @@ pub fn parse_multiline_expression(pair: Pair<Rule>) -> Result<Expression, Compil
             Rule::primary => {
                 expr_stack.push(parse_primary(item)?);
             }
-            Rule::arithmetic_op => {
+            Rule::arithmetic_op | Rule::additive_op | Rule::multiplicative_op | Rule::power_op => {
                 let op = match item.as_str() {
                     "+" => BinaryOperator::Add,
                     "-" => BinaryOperator::Subtract,

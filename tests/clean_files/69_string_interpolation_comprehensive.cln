@@ -1,0 +1,125 @@
+// String interpolation comprehensive test - demonstrates {variable} syntax
+
+functions:
+	testBasicInterpolation()
+		print("=== Basic String Interpolation ===")
+		string name = "World"
+		integer count = 42
+		number price = 19.99
+		boolean isActive = true
+		
+		// Basic variable interpolation
+		string greeting = "Hello, {name}!"
+		print(greeting)  // Should output: Hello, World!
+		
+		// Integer interpolation
+		string countMessage = "Count is {count}"
+		print(countMessage)  // Should output: Count is 42
+		
+		// Number interpolation
+		string priceMessage = "Price: ${price}"
+		print(priceMessage)  // Should output: Price: $19.99
+		
+		// Boolean interpolation
+		string statusMessage = "Status: {isActive}"
+		print(statusMessage)  // Should output: Status: true
+	
+	testExpressionInterpolation()
+		print("=== Expression Interpolation ===")
+		integer a = 10
+		integer b = 5
+		number radius = 3.0
+		
+		// Mathematical expressions
+		string mathResult = "Sum: {a + b}"
+		print(mathResult)  // Should output: Sum: 15
+		
+		string calculation = "{a} * {b} = {a * b}"
+		print(calculation)  // Should output: 10 * 5 = 50
+		
+		// Complex expressions
+		string areaCalculation = "Circle area: {3.14159 * radius * radius}"
+		print(areaCalculation)  // Should output: Circle area: 28.27431
+		
+		// Expression with function call
+		string comparison = "Max of {a} and {b} is {math.max(a, b)}"
+		print(comparison)  // Should output: Max of 10 and 5 is 10
+	
+	testObjectInterpolation()
+		print("=== Object Property Interpolation ===")
+		// Note: This requires class support for property access
+		
+		// For now, demonstrate the expected syntax
+		string userName = "Alice"
+		integer userAge = 25
+		
+		// Simple property-style access (when objects are implemented)
+		string userInfo = "User {userName} is {userAge} years old"
+		print(userInfo)  // Should output: User Alice is 25 years old
+		
+		// Multiple properties in complex string
+		string fullMessage = "Hello {userName}! You are {userAge} years old. Welcome!"
+		print(fullMessage)
+	
+	testNestedInterpolation()
+		print("=== Complex Interpolation Patterns ===")
+		string prefix = "Mr."
+		string firstName = "John"
+		string lastName = "Doe"
+		integer items = 3
+		number unitPrice = 12.50
+		
+		// Multiple variables in one string
+		string fullName = "{prefix} {firstName} {lastName}"
+		print(fullName)  // Should output: Mr. John Doe
+		
+		// Calculations with multiple variables
+		string invoice = "Invoice for {fullName}: {items} items at ${unitPrice} each = ${items * unitPrice}"
+		print(invoice)
+		
+		// Conditional-style interpolation (when implemented)
+		boolean isPremium = true
+		string membershipStatus = "Member: {firstName} {lastName} (Premium: {isPremium})"
+		print(membershipStatus)
+	
+	testInterpolationEdgeCases()
+		print("=== Edge Cases and Special Scenarios ===")
+		
+		// Empty variable
+		string emptyString = ""
+		string withEmpty = "Value: '{emptyString}'"
+		print(withEmpty)  // Should output: Value: ''
+		
+		// Numeric edge cases
+		integer zero = 0
+		integer negative = -42
+		string numbers = "Zero: {zero}, Negative: {negative}"
+		print(numbers)  // Should output: Zero: 0, Negative: -42
+		
+		// String with special characters
+		string special = "Hello\nWorld"
+		string withSpecial = "Text: {special}"
+		print(withSpecial)
+		
+		// Multiple same variable
+		string repeated = "{firstName} {firstName} {firstName}"
+		print(repeated)  // Should output: John John John
+	
+	// Helper function for demonstration
+	multiply(integer x, integer y)
+		return x * y
+
+start()
+	print("String Interpolation Comprehensive Test")
+	print("=======================================")
+	testBasicInterpolation()
+	print("")
+	testExpressionInterpolation()
+	print("")
+	testObjectInterpolation()
+	print("")
+	testNestedInterpolation()
+	print("")
+	testInterpolationEdgeCases()
+	print("")
+	print("String interpolation test completed successfully")

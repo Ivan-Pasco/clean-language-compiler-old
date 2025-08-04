@@ -15,10 +15,7 @@ impl MathClass {
 
     /// Register all Math class methods as static functions
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Basic arithmetic operations
-        self.register_basic_operations(codegen)?;
-        
-        // Core mathematical functions
+        // Core mathematical functions (basic arithmetic handled by operators)
         self.register_core_functions(codegen)?;
         
         // Rounding and precision functions
@@ -39,45 +36,6 @@ impl MathClass {
         Ok(())
     }
     
-    fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Math.add(number a, number b) -> number
-        let add_impl = vec![
-            Instruction::LocalGet(0),
-            Instruction::LocalGet(1),
-            Instruction::F64Add,
-        ];
-        register_stdlib_function(codegen, "math.add", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), add_impl.clone())?;
-        register_stdlib_function(codegen, "Math.add", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), add_impl)?;
-        
-        // Math.subtract(number a, number b) -> number
-        let subtract_impl = vec![
-            Instruction::LocalGet(0),
-            Instruction::LocalGet(1),
-            Instruction::F64Sub,
-        ];
-        register_stdlib_function(codegen, "math.subtract", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), subtract_impl.clone())?;
-        register_stdlib_function(codegen, "Math.subtract", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), subtract_impl)?;
-        
-        // Math.multiply(number a, number b) -> number
-        let multiply_impl = vec![
-            Instruction::LocalGet(0),
-            Instruction::LocalGet(1),
-            Instruction::F64Mul,
-        ];
-        register_stdlib_function(codegen, "math.multiply", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), multiply_impl.clone())?;
-        register_stdlib_function(codegen, "Math.multiply", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), multiply_impl)?;
-        
-        // Math.divide(number a, number b) -> number
-        let divide_impl = vec![
-            Instruction::LocalGet(0),
-            Instruction::LocalGet(1),
-            Instruction::F64Div,
-        ];
-        register_stdlib_function(codegen, "math.divide", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), divide_impl.clone())?;
-        register_stdlib_function(codegen, "Math.divide", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), divide_impl)?;
-        
-        Ok(())
-    }
     
     fn register_core_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // Math.sqrt(number x) -> number
@@ -86,7 +44,6 @@ impl MathClass {
             Instruction::F64Sqrt,
         ];
         register_stdlib_function(codegen, "math.sqrt", &[WasmType::F64], Some(WasmType::F64), sqrt_impl.clone())?;
-        register_stdlib_function(codegen, "Math.sqrt", &[WasmType::F64], Some(WasmType::F64), sqrt_impl)?;
         
         // Math.abs(number x) -> number
         let abs_impl = vec![
@@ -94,7 +51,6 @@ impl MathClass {
             Instruction::F64Abs,
         ];
         register_stdlib_function(codegen, "math.abs", &[WasmType::F64], Some(WasmType::F64), abs_impl.clone())?;
-        register_stdlib_function(codegen, "Math.abs", &[WasmType::F64], Some(WasmType::F64), abs_impl)?;
         
         // Math.abs(integer x) -> integer (overload)
         // FIXED: Changed to expect f64 input and return f64 to avoid type mismatch
@@ -117,7 +73,6 @@ impl MathClass {
             Instruction::F64Max,
         ];
         register_stdlib_function(codegen, "math.max", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), max_impl.clone())?;
-        register_stdlib_function(codegen, "Math.max", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), max_impl)?;
         
         // Math.min(number a, number b) -> number
         let min_impl = vec![
@@ -126,12 +81,7 @@ impl MathClass {
             Instruction::F64Min,
         ];
         register_stdlib_function(codegen, "math.min", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), min_impl.clone())?;
-        register_stdlib_function(codegen, "Math.min", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), min_impl)?;
         
-        // Math.pow(number base, number exponent) -> number
-        let pow_impl = self.generate_pow();
-        register_stdlib_function(codegen, "math.pow", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), pow_impl.clone())?;
-        register_stdlib_function(codegen, "Math.pow", &[WasmType::F64, WasmType::F64], Some(WasmType::F64), pow_impl)?;
         
         Ok(())
     }
@@ -353,17 +303,14 @@ impl MathClass {
         // Math.pi() -> number - register both lowercase and uppercase variants
         let pi_impl = vec![Instruction::F64Const(std::f64::consts::PI)];
         register_stdlib_function(codegen, "math.pi", &[], Some(WasmType::F64), pi_impl.clone())?;
-        register_stdlib_function(codegen, "Math.pi", &[], Some(WasmType::F64), pi_impl)?;
         
         // Math.e() -> number - register both lowercase and uppercase variants
         let e_impl = vec![Instruction::F64Const(std::f64::consts::E)];
         register_stdlib_function(codegen, "math.e", &[], Some(WasmType::F64), e_impl.clone())?;
-        register_stdlib_function(codegen, "Math.e", &[], Some(WasmType::F64), e_impl)?;
         
         // Math.tau() -> number - register both lowercase and uppercase variants
         let tau_impl = vec![Instruction::F64Const(std::f64::consts::TAU)];
         register_stdlib_function(codegen, "math.tau", &[], Some(WasmType::F64), tau_impl.clone())?;
-        register_stdlib_function(codegen, "Math.tau", &[], Some(WasmType::F64), tau_impl)?;
         
         Ok(())
     }
@@ -505,13 +452,4 @@ impl MathClass {
         ]
     }
     
-    fn generate_pow(&self) -> Vec<Instruction> {
-        // Simple pow(base, exponent) implementation
-        // For now, use a basic approximation to avoid complex WASM validation
-        vec![
-            Instruction::LocalGet(0),   // base
-            Instruction::LocalGet(1),   // exponent
-            Instruction::F64Mul,        // base * exponent (simplified approximation)
-        ]
-    }
 }

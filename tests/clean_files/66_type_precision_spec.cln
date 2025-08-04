@@ -1,0 +1,88 @@
+// Type precision modifiers specification compliance test
+// Tests integer and number precision modifiers as defined in Clean Language Specification
+
+functions:
+	demonstrateIntegerPrecision()
+		print("=== Integer Precision Modifiers ===")
+		
+		// Standard integer (32-bit)
+		integer standard = 2147483647
+		print("Standard integer (32-bit): " + standard.toString())
+		
+		// 8-bit integer
+		integer:8 small = 127
+		print("8-bit integer: " + small.toString())
+		
+		// 16-bit integer
+		integer:16 medium = 32767
+		print("16-bit integer: " + medium.toString())
+		
+		// 32-bit integer (explicit)
+		integer:32 large = 2147483647
+		print("32-bit integer (explicit): " + large.toString())
+		
+		// 64-bit integer
+		integer:64 huge = 9223372036854775807
+		print("64-bit integer: " + huge.toString())
+		
+		// Unsigned variants
+		integer:8u smallUnsigned = 255
+		print("8-bit unsigned: " + smallUnsigned.toString())
+		
+		integer:16u mediumUnsigned = 65535
+		print("16-bit unsigned: " + mediumUnsigned.toString())
+		
+		integer:32u largeUnsigned = 4294967295
+		print("32-bit unsigned: " + largeUnsigned.toString())
+	
+	demonstrateNumberPrecision()
+		print("=== Number Precision Modifiers ===")
+		
+		// Standard number (64-bit double precision)
+		number standard = 3.141592653589793
+		print("Standard number (64-bit): " + standard.toString())
+		
+		// 32-bit single precision
+		number:32 singlePrecision = 3.14
+		print("32-bit single precision: " + singlePrecision.toString())
+		
+		// 64-bit double precision (explicit)
+		number:64 doublePrecision = 3.141592653589793
+		print("64-bit double precision: " + doublePrecision.toString())
+	
+	demonstratePracticalUsage()
+		print("=== Practical Usage Examples ===")
+		
+		// Large calculations
+		integer:64 population = 8000000000
+		integer:64 timestamp = 1640995200000
+		print("World population: " + population.toString())
+		print("Timestamp: " + timestamp.toString())
+		
+		// High-precision calculations
+		number:64 pi = 3.141592653589793
+		number:64 e = 2.718281828459045
+		print("High precision PI: " + pi.toString())
+		print("High precision E: " + e.toString())
+		
+		// Memory-efficient small numbers
+		integer:8 counter = 100
+		integer:16 portNumber = 8080
+		print("Counter: " + counter.toString())
+		print("Port: " + portNumber.toString())
+		
+		// Graphics calculations (speed over precision)
+		number:32 screenX = 1920.0
+		number:32 screenY = 1080.0
+		print("Screen X: " + screenX.toString())
+		print("Screen Y: " + screenY.toString())
+
+start()
+	print("=== Type Precision Specification Test ===")
+	demonstrateIntegerPrecision()
+	print("")
+	demonstrateNumberPrecision()  
+	print("")
+	demonstratePracticalUsage()
+	print("")
+	print("Type precision modifiers specification compliance test completed")

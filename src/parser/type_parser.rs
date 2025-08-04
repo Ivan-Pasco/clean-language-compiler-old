@@ -20,6 +20,32 @@ pub fn parse_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
     };
     
     match type_rule.as_rule() {
+        Rule::input_type => {
+            // input_type is a wrapper, extract the inner type
+            let inner_type = type_rule.into_inner().next().ok_or_else(|| CompilerError::parse_error(
+                "Empty input type declaration".to_string(),
+                Some(ast_location.clone()),
+                Some("Input type declarations must specify a type".to_string())
+            ))?;
+            parse_type(inner_type)
+        },
+        Rule::core_type => {
+            let type_str = type_rule.as_str();
+            match type_str {
+                "boolean" => Ok(Type::Boolean),
+                "integer" => Ok(Type::Integer),
+                "number" => Ok(Type::Number),
+                "string" => Ok(Type::String),
+                "void" => Ok(Type::Void),
+                "any" => Ok(Type::Any),
+                _ => Err(CompilerError::parse_error(
+                    format!("Unknown core type: {}", type_str),
+                    Some(ast_location),
+                    Some("Valid core types are: boolean, integer, number, string, void, any".to_string())
+                ))
+            }
+        },
+        Rule::sized_type => parse_sized_type(type_rule),
         Rule::generic_type => parse_generic_type(type_rule),
         Rule::type_parameter => {
             let type_name = type_rule.as_str().to_string();
@@ -270,4 +296,44 @@ fn parse_pairs_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
     ))?;
     
     Ok(Type::Pairs(Box::new(key_type), Box::new(value_type)))
+}
+
+fn parse_sized_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
+    let mut inner_parts = pair.into_inner();
+    let core_type_pair = inner_parts.next().unwrap();
+    let size_spec = inner_parts.next().unwrap().as_str();
+    
+    let base_type = match core_type_pair.as_str() {
+        "boolean" => Type::Boolean,
+        "integer" => Type::Integer,
+        "number" => Type::Number,
+        "float" => Type::Number,
+        "string" => Type::String,
+        "void" => Type::Void,
+        "any" => Type::Any,
+        _ => return Err(CompilerError::parse_error(
+            format!("Unknown core type in sized type: {}", core_type_pair.as_str()),
+            None,
+            Some("Valid core types are: boolean, integer, number, float, string, void, any".to_string())
+        ))
+    };
+    
+    // Parse size specifier like ":8" or ":8u"
+    let size_str = &size_spec[1..].trim(); // Remove the ':' and trim whitespace
+    let (bits, unsigned) = if size_str.ends_with('u') {
+        let bits_str = size_str.strip_suffix('u').unwrap();
+        (bits_str.parse::<u8>().unwrap_or(32), true)
+    } else {
+        (size_str.parse::<u8>().unwrap_or(32), false)
+    };
+    
+    match base_type {
+        Type::Integer => Ok(Type::IntegerSized { bits, unsigned }),
+        Type::Number => Ok(Type::NumberSized { bits }),
+        _ => Err(CompilerError::parse_error(
+            "Size specifiers can only be used with integer and number types".to_string(),
+            None,
+            Some("Use size specifiers like :8, :16, :32, :64, or :8u for unsigned".to_string())
+        ))
+    }
 } 

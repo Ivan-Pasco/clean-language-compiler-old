@@ -1629,6 +1629,54 @@ impl CodeGenerator {
                 }
                 
                 // Handle method calls on different types (instance methods)
+                // First, check if this is a method call on a typed variable that should map to MethodStyleManager functions
+                if let Expression::Variable(var_name) = object.as_ref() {
+                    if let Some(var_type) = self.variable_types.get(var_name) {
+                        // Map the Clean Language type to a type name for method resolution
+                        let type_name = match var_type {
+                            crate::ast::Type::Integer | crate::ast::Type::IntegerSized { .. } => "integer",
+                            crate::ast::Type::Number | crate::ast::Type::NumberSized { .. } => "number",
+                            crate::ast::Type::String => "string", 
+                            crate::ast::Type::Boolean => "boolean",
+                            crate::ast::Type::List(_) => "list",
+                            _ => "value", // fallback for unknown types
+                        };
+                        
+                        // Try to find the type-based method function
+                        let type_method_name = format!("{}.{}", type_name, method);
+                        
+                        if let Some(&function_index) = self.function_map.get(&type_method_name) {
+                            
+                            // Generate the object expression (variable value)
+                            self.generate_expression(object, instructions)?;
+                            
+                            // Generate arguments
+                            for arg in arguments {
+                                self.generate_expression(arg, instructions)?;
+                            }
+                            
+                            // Call the method function
+                            instructions.push(Instruction::Call(function_index));
+                            
+                            // Return appropriate type based on method
+                            let return_type = match method.as_str() {
+                                "toString" => WasmType::I32, // String pointer
+                                "toInteger" => WasmType::I32,
+                                "toNumber" => WasmType::F64,
+                                "toBoolean" => WasmType::I32,
+                                "isDefined" | "isNotDefined" | "isEmpty" | "isNotEmpty" => WasmType::I32, // Boolean
+                                "keepBetween" => if type_name == "number" { WasmType::F64 } else { WasmType::I32 },
+                                "mustBeTrue" | "mustBeFalse" | "mustBeEqual" | "mustNotBeEqual" => WasmType::I32, // Void (represented as I32)
+                                "length" => WasmType::I32,
+                                _ => WasmType::I32, // Default
+                            };
+                            
+                            return Ok(return_type);
+                        }
+                    }
+                }
+                
+                // If not a type-based method call, proceed with normal handling
                 self.generate_expression(&*object, instructions)?;
                 
                 // Generate arguments
@@ -3142,6 +3190,23 @@ impl CodeGenerator {
         // 14. Register conditional operations
         self.register_conditional_operations()?;
         
+        // 15. Register method-style operations
+        self.register_method_style_operations()?;
+        
+        Ok(())
+    }
+    
+    /// Register method-style operation functions using WASM instructions from MethodStyleManager
+    fn register_method_style_operations(&mut self) -> Result<(), CompilerError> {
+        use crate::stdlib::method_style::MethodStyleManager;
+        use crate::stdlib::memory::MemoryManager;
+        use std::rc::Rc;
+        use std::cell::RefCell;
+        
+        // Create a MemoryManager and MethodStyleManager instance and register its functions
+        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(10))));
+        let method_style_manager = MethodStyleManager::new(memory_manager);
+        method_style_manager.register_functions(self)?;
         Ok(())
     }
     
@@ -4143,7 +4208,7 @@ impl CodeGenerator {
             // Math functions
             "math.sin" | "math.cos" | "math.tan" | "math.asin" | "math.acos" | "math.atan" | "math.atan2" |
             "math.sinh" | "math.cosh" | "math.tanh" | "math.ln" | "math.log10" | "math.log2" | 
-            "math.exp" | "math.exp2" | "math.sqrt" | "math.pow" | "math.floor" | "math.ceil" | 
+            "math.exp" | "math.exp2" | "math.sqrt" | "math.floor" | "math.ceil" | 
             "math.round" | "math.abs" | "math.min" | "math.max" | "math.mod" | "math.pi" | "math.e" => WasmType::F64, // Number
             
             // List functions
@@ -5031,6 +5096,19 @@ impl CodeGenerator {
                                 ))
                             }
                         },
+                        crate::ast::Type::IntegerSized { .. } => {
+                            // Handle sized integers the same as regular integers for toString()
+                            if let Some(int_to_string_index) = self.get_function_index("int_to_string") {
+                                instructions.push(Instruction::Call(int_to_string_index));
+                                Ok(WasmType::I32) // String is represented as I32 pointer
+                            } else {
+                                Err(CompilerError::codegen_error(
+                                    "Integer to string conversion function not found",
+                                    Some("int_to_string function needs to be implemented".to_string()),
+                                    None
+                                ))
+                            }
+                        },
                         crate::ast::Type::Number => {
                             if let Some(float_to_string_index) = self.get_function_index("float_to_string") {
                                 println!("DEBUG: Found float_to_string at function index {}", float_to_string_index);
@@ -5052,6 +5130,19 @@ impl CodeGenerator {
                             } else {
                                 println!("ERROR: float_to_string function not found in function_map!");
                                 println!("DEBUG: Available functions: {:?}", self.function_map.keys().collect::<Vec<_>>());
+                                Err(CompilerError::codegen_error(
+                                    "Float to string conversion function not found",
+                                    Some("float_to_string function needs to be implemented".to_string()),
+                                    None
+                                ))
+                            }
+                        },
+                        crate::ast::Type::NumberSized { .. } => {
+                            // Handle sized numbers the same as regular numbers for toString()
+                            if let Some(float_to_string_index) = self.get_function_index("float_to_string") {
+                                instructions.push(Instruction::Call(float_to_string_index));
+                                Ok(WasmType::I32) // String is represented as I32 pointer
+                            } else {
                                 Err(CompilerError::codegen_error(
                                     "Float to string conversion function not found",
                                     Some("float_to_string function needs to be implemented".to_string()),

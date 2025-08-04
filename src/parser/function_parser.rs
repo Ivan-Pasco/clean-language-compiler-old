@@ -125,6 +125,9 @@ impl FunctionParser {
                 Rule::identifier => {
                     name = inner_pair.as_str().to_string();
                 }
+                Rule::function_name => {
+                    name = inner_pair.as_str().to_string();
+                }
                 Rule::parameter_list => {
                     parameters = self.parse_parameter_list(inner_pair)?;
                 }

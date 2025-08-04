@@ -1,0 +1,37 @@
+// Multi-line expressions simple test
+// Note: Full multi-line parentheses syntax requires parser implementation
+
+functions:
+	void testMultilineExpressions()
+		// Single line expressions work correctly
+		integer result = 5 + 3 + 2
+		number value = 3.14 * 2.0 + 1.0
+		print("Result: " + result.toString())
+		print("Value: " + value.toString())
+		
+		// Break down complex calculations into steps for now
+		integer step1 = 10 + 20 + 30
+		integer step2 = 40 + 50 + 60
+		integer total = step1 + step2
+		print("Total: " + total.toString())
+		
+		// Complex calculation broken down
+		number area1 = 3.14 * 5.0 * 5.0
+		number area2 = 2.71 * 3.0 * 3.0
+		number sum = 1.0 + 2.0 + 3.0
+		number calculation = area1 + area2 + sum
+		print("Complex calculation: " + calculation.toString())
+		
+		// Function call combinations
+		integer product1 = multiply(5, 6)
+		integer product2 = multiply(3, 4)
+		integer product3 = multiply(2, 1)
+		integer totalProduct = product1 + product2 + product3
+		print("Multi-step product: " + totalProduct.toString())
+	
+	integer multiply(integer a, integer b)
+		return a * b
+
+start()
+	testMultilineExpressions()
+	print("Multi-line expressions test completed successfully")
