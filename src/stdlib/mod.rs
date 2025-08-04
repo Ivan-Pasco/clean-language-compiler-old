@@ -1,81 +1,81 @@
 // Core standard library modules
-pub mod numeric_ops;
-pub mod string_ops;
+pub mod basic_ops;
+pub mod console_ops;
+pub mod error;
 pub mod list_ops;
 pub mod matrix_ops;
-pub mod type_conv;
 pub mod memory;
-pub mod basic_ops;
-pub mod error;
-pub mod console_ops;
+pub mod numeric_ops;
+pub mod string_ops;
+pub mod type_conv;
 
 // Class-based standard library modules
-pub mod math_class;
-pub mod string_class;
-pub mod list_class;
-pub mod file_class;
-pub mod http_class;
-pub mod list_behavior;
-pub mod method_style;
+pub mod async_programming;
 pub mod conditional;
-pub mod multiline;
-pub mod error_handling;
-pub mod test_framework;
-pub mod string_interpolation;
+pub mod console_input;
 pub mod default_parameters;
-pub mod numeric_literals;
+pub mod error_handling;
+pub mod file_advanced;
+pub mod file_class;
+pub mod http_advanced;
+pub mod http_class;
+pub mod import_system;
+pub mod list_advanced;
+pub mod list_behavior;
+pub mod list_class;
+pub mod math_advanced;
+pub mod math_class;
 pub mod matrix_literals;
+pub mod method_style;
+pub mod multiline;
+pub mod numeric_literals;
 pub mod pairs_type;
 pub mod string_advanced;
-pub mod list_advanced;
-pub mod math_advanced;
-pub mod file_advanced;
-pub mod http_advanced;
-pub mod console_input;
-pub mod async_programming;
-pub mod import_system;
+pub mod string_class;
+pub mod string_interpolation;
+pub mod test_framework;
 
 // Re-exports for convenience
-pub use numeric_ops::NumericOperations;
-pub use string_ops::{StringOperations, StringManager};
-pub use list_ops::ListManager;
-pub use matrix_ops::MatrixOperations;
-pub use type_conv::TypeConvOperations;
-pub use memory::MemoryManager;
+pub use async_programming::AsyncProgrammingManager;
 pub use basic_ops::basic_ops::*;
-pub use error::StdlibError;
-pub use math_class::MathClass;
-pub use string_class::StringClass;
-pub use list_class::ListClass;
-pub use file_class::FileClass;
-pub use http_class::HttpClass;
-pub use list_behavior::ListBehaviorManager;
-pub use method_style::MethodStyleManager;
 pub use conditional::ConditionalManager;
-pub use multiline::MultilineManager;
-pub use error_handling::ErrorHandlingManager;
-pub use test_framework::TestFrameworkManager;
-pub use string_interpolation::StringInterpolationManager;
+pub use console_input::ConsoleInputManager;
+pub use console_ops::{ConsoleClass, ConsoleOperations};
 pub use default_parameters::DefaultParameterManager;
-pub use numeric_literals::NumericLiteralsManager;
+pub use error::StdlibError;
+pub use error_handling::ErrorHandlingManager;
+pub use file_advanced::FileAdvancedManager;
+pub use file_class::FileClass;
+pub use http_advanced::HttpAdvancedManager;
+pub use http_class::HttpClass;
+pub use import_system::ImportSystemManager;
+pub use list_advanced::ListAdvancedManager;
+pub use list_behavior::ListBehaviorManager;
+pub use list_class::ListClass;
+pub use list_ops::ListManager;
+pub use math_advanced::MathAdvancedManager;
+pub use math_class::MathClass;
 pub use matrix_literals::MatrixLiteralsManager;
+pub use matrix_ops::MatrixOperations;
+pub use memory::MemoryManager;
+pub use method_style::MethodStyleManager;
+pub use multiline::MultilineManager;
+pub use numeric_literals::NumericLiteralsManager;
+pub use numeric_ops::NumericOperations;
 pub use pairs_type::PairsTypeManager;
 pub use string_advanced::StringAdvancedManager;
-pub use list_advanced::ListAdvancedManager;
-pub use math_advanced::MathAdvancedManager;
-pub use file_advanced::FileAdvancedManager;
-pub use http_advanced::HttpAdvancedManager;
-pub use console_input::ConsoleInputManager;
-pub use async_programming::AsyncProgrammingManager;
-pub use import_system::ImportSystemManager;
-pub use console_ops::{ConsoleOperations, ConsoleClass};
+pub use string_class::StringClass;
+pub use string_interpolation::StringInterpolationManager;
+pub use string_ops::{StringManager, StringOperations};
+pub use test_framework::TestFrameworkManager;
+pub use type_conv::TypeConvOperations;
 
-use crate::error::CompilerError;
 use crate::codegen::{CodeGenerator, HEAP_START};
+use crate::error::CompilerError;
 use crate::types::WasmType;
-use wasm_encoder::Instruction;
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
+use wasm_encoder::Instruction;
 
 /// Standard library implementation for the Clean Language
 pub struct StandardLibrary {
@@ -137,7 +137,10 @@ pub struct StandardLibrary {
 
 impl StandardLibrary {
     pub fn new() -> Self {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(HEAP_START as u32))));
+        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(
+            16,
+            Some(HEAP_START as u32),
+        )));
         Self {
             string_ops: StringOperations::new(HEAP_START),
             numeric_ops: NumericOperations::new(),
@@ -222,14 +225,20 @@ impl Runtime {
         Self {
             memory: MemoryManager::new(16, Some(HEAP_START as u32)),
             strings: StringManager::new(MemoryManager::new(16, Some(HEAP_START as u32))),
-            lists: ListManager::new(Rc::new(RefCell::new(MemoryManager::new(16, Some(HEAP_START as u32))))),
+            lists: ListManager::new(Rc::new(RefCell::new(MemoryManager::new(
+                16,
+                Some(HEAP_START as u32),
+            )))),
         }
     }
 
     pub fn reset(&mut self) {
         self.memory = MemoryManager::new(16, Some(HEAP_START as u32));
         self.strings = StringManager::new(MemoryManager::new(16, Some(HEAP_START as u32)));
-        self.lists = ListManager::new(Rc::new(RefCell::new(MemoryManager::new(16, Some(HEAP_START as u32)))));
+        self.lists = ListManager::new(Rc::new(RefCell::new(MemoryManager::new(
+            16,
+            Some(HEAP_START as u32),
+        ))));
     }
 }
 
@@ -263,8 +272,16 @@ impl StdLib {
 
     pub fn allocate_string(&mut self, data: &[u8]) -> Result<usize, CompilerError> {
         // Simplified string allocation
-        self.runtime.memory.allocate(data.len() + 4, 3)
-            .map_err(|e| CompilerError::runtime_error(&format!("String allocation failed: {}", e), None, None))
+        self.runtime
+            .memory
+            .allocate(data.len() + 4, 3)
+            .map_err(|e| {
+                CompilerError::runtime_error(
+                    &format!("String allocation failed: {}", e),
+                    None,
+                    None,
+                )
+            })
     }
 
     pub fn get_string_from_memory(&self, _ptr: usize) -> Result<String, CompilerError> {
@@ -276,10 +293,10 @@ impl StdLib {
 /// Helper function to register stdlib functions
 pub(crate) fn register_stdlib_function(
     codegen: &mut CodeGenerator,
-    name: &str, 
-    params: &[WasmType], 
-    return_type: Option<WasmType>, 
-    instructions: Vec<Instruction>
+    name: &str,
+    params: &[WasmType],
+    return_type: Option<WasmType>,
+    instructions: Vec<Instruction>,
 ) -> Result<u32, CompilerError> {
     // Function registration completed successfully
     codegen.register_function(name, params, return_type, &instructions)
@@ -288,11 +305,11 @@ pub(crate) fn register_stdlib_function(
 /// Enhanced helper function to register stdlib functions with explicit local variable types
 pub(crate) fn register_stdlib_function_with_locals(
     codegen: &mut CodeGenerator,
-    name: &str, 
-    params: &[WasmType], 
-    return_type: Option<WasmType>, 
+    name: &str,
+    params: &[WasmType],
+    return_type: Option<WasmType>,
     local_types: &[WasmType], // Additional local variable types beyond parameters
-    instructions: Vec<Instruction>
+    instructions: Vec<Instruction>,
 ) -> Result<u32, CompilerError> {
     // Function registration with locals completed successfully
     codegen.register_function_with_locals(name, params, return_type, local_types, &instructions)
@@ -320,4 +337,4 @@ mod tests {
         assert!(memory.allocate(100, 1).is_ok());
         Ok(())
     }
-} 
+}

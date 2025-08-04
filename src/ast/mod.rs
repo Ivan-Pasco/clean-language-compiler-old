@@ -1,9 +1,5 @@
 use std::fmt;
 
-
-
-
-
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SourceLocation {
     pub line: usize,
@@ -13,8 +9,8 @@ pub struct SourceLocation {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
-    Integer(i64),        // Default integer (platform optimal)
-    Number(f64),          // Default number (platform optimal)
+    Integer(i64), // Default integer (platform optimal)
+    Number(f64),  // Default number (platform optimal)
     Boolean(bool),
     String(String),
     Matrix(Vec<Vec<f64>>),
@@ -28,20 +24,20 @@ pub enum Value {
     Integer64(i64),
     Number32(f32),
     Number64(f64),
-    
+
     // List (replaces Array)
     List(Vec<Value>),
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum ListBehavior {
-    Default,    // Standard list behavior
-    Line,       // Queue behavior (FIFO)
-    Pile,       // Stack behavior (LIFO)
-    Unique,     // Set behavior (no duplicates)
-    LinePile,   // Combined line + pile (not typical, but allowed)
-    LineUnique, // Queue with unique elements
-    PileUnique, // Stack with unique elements
+    Default,        // Standard list behavior
+    Line,           // Queue behavior (FIFO)
+    Pile,           // Stack behavior (LIFO)
+    Unique,         // Set behavior (no duplicates)
+    LinePile,       // Combined line + pile (not typical, but allowed)
+    LineUnique,     // Queue with unique elements
+    PileUnique,     // Stack with unique elements
     LineUniquePile, // All three combined
 }
 
@@ -49,32 +45,32 @@ pub enum ListBehavior {
 pub enum Type {
     // Core types from specification
     Boolean,
-    Integer,             // Default integer
-    Number,             // Default number (floating point)
+    Integer, // Default integer
+    Number,  // Default number (floating point)
     String,
     Void,
-    
+
     // Advanced sized types
     IntegerSized { bits: u8, unsigned: bool },
     NumberSized { bits: u8 },
-    
+
     // Composite types
     List(Box<Type>),
     Matrix(Box<Type>),
     Pairs(Box<Type>, Box<Type>),
-    
+
     // Generic types
     Generic(Box<Type>, Vec<Type>),
     TypeParameter(String),
-    
+
     // Object types
     Object(String),
     Class { name: String, type_args: Vec<Type> },
     Function(Vec<Type>, Box<Type>),
-    
+
     // Async types
     Future(Box<Type>),
-    
+
     Any,
 }
 
@@ -86,7 +82,7 @@ pub enum BinaryOperator {
     Divide,
     Modulo,
     Power,
-    
+
     // Comparison
     Equal,
     NotEqual,
@@ -96,7 +92,7 @@ pub enum BinaryOperator {
     GreaterEqual,
     Is,
     Not,
-    
+
     // Logical
     And,
     Or,
@@ -117,11 +113,19 @@ pub struct Parameter {
 
 impl Parameter {
     pub fn new(name: String, type_: Type) -> Self {
-        Self { name, type_, default_value: None }
+        Self {
+            name,
+            type_,
+            default_value: None,
+        }
     }
-    
+
     pub fn new_with_default(name: String, type_: Type, default_value: Expression) -> Self {
-        Self { name, type_, default_value: Some(default_value) }
+        Self {
+            name,
+            type_,
+            default_value: Some(default_value),
+        }
     }
 }
 
@@ -132,14 +136,14 @@ pub enum Expression {
     Binary(Box<Expression>, BinaryOperator, Box<Expression>),
     Unary(UnaryOperator, Box<Expression>),
     Call(String, Vec<Expression>),
-    
+
     // Property and method access
     PropertyAccess {
         object: Box<Expression>,
         property: String,
         location: SourceLocation,
     },
-    
+
     // Property assignment (for list.type = behavior)
     PropertyAssignment {
         object: Box<Expression>,
@@ -153,7 +157,7 @@ pub enum Expression {
         arguments: Vec<Expression>,
         location: SourceLocation,
     },
-    
+
     // Static method call (ClassName.method())
     StaticMethodCall {
         class_name: String,
@@ -161,40 +165,40 @@ pub enum Expression {
         arguments: Vec<Expression>,
         location: SourceLocation,
     },
-    
+
     // List and Matrix access
     ListAccess(Box<Expression>, Box<Expression>),
     MatrixAccess(Box<Expression>, Box<Expression>, Box<Expression>),
-    
+
     // String interpolation
     StringInterpolation(Vec<StringPart>),
-    
+
     // Object creation
     ObjectCreation {
         class_name: String,
         arguments: Vec<Expression>,
         location: SourceLocation,
     },
-    
+
     // Error handling
     OnError {
         expression: Box<Expression>,
         fallback: Box<Expression>,
         location: SourceLocation,
     },
-    
+
     // Error handling with block
     OnErrorBlock {
         expression: Box<Expression>,
         error_handler: Vec<Statement>,
         location: SourceLocation,
     },
-    
+
     // Error variable access (only valid in error handling contexts)
     ErrorVariable {
         location: SourceLocation,
     },
-    
+
     // Conditional expressions: if condition then value else value
     Conditional {
         condition: Box<Expression>,
@@ -202,19 +206,19 @@ pub enum Expression {
         else_expr: Box<Expression>,
         location: SourceLocation,
     },
-    
+
     // Base constructor call: base(args...)
     BaseCall {
         arguments: Vec<Expression>,
         location: SourceLocation,
     },
-    
+
     // Async expressions
     StartExpression {
         expression: Box<Expression>,
         location: SourceLocation,
     },
-    
+
     // Later assignment (for async)
     LaterAssignment {
         variable: String,
@@ -232,7 +236,7 @@ pub enum StringPart {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchCase {
     pub pattern: Pattern,
-    pub guard: Option<Expression>,  // Optional when condition
+    pub guard: Option<Expression>, // Optional when condition
     pub body: Vec<Statement>,
     pub location: SourceLocation,
 }
@@ -241,33 +245,33 @@ pub struct MatchCase {
 pub enum Pattern {
     // Literal patterns: 42, "hello", true
     Literal(Value),
-    
+
     // Variable patterns: x (binds to variable)
     Variable(String),
-    
+
     // Wildcard pattern: _
     Wildcard,
-    
+
     // Constructor patterns: Some(x), Point(x, y)
     Constructor {
         name: String,
         patterns: Vec<Pattern>,
     },
-    
+
     // List patterns: [x, y, z] or [head, ...tail]
     List {
         patterns: Vec<Pattern>,
-        rest: Option<String>,  // For spread patterns like [x, ...rest]
+        rest: Option<String>, // For spread patterns like [x, ...rest]
     },
-    
+
     // Object patterns: { x, y } or { x: pattern }
     Object {
         fields: Vec<FieldPattern>,
     },
-    
+
     // Or patterns: pattern1 | pattern2
     Or(Vec<Pattern>),
-    
+
     // Range patterns: 1..10
     Range {
         start: Box<Expression>,
@@ -279,7 +283,7 @@ pub enum Pattern {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldPattern {
     pub name: String,
-    pub pattern: Option<Pattern>,  // None means shorthand { x } instead of { x: pattern }
+    pub pattern: Option<Pattern>, // None means shorthand { x } instead of { x: pattern }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -291,59 +295,59 @@ pub enum Statement {
         initializer: Option<Expression>,
         location: Option<SourceLocation>,
     },
-    
+
     // Apply blocks - Three types as per specification
     TypeApplyBlock {
         type_: Type,
         assignments: Vec<VariableAssignment>,
         location: Option<SourceLocation>,
     },
-    
+
     FunctionApplyBlock {
         function_name: String,
         expressions: Vec<Expression>,
         location: Option<SourceLocation>,
     },
-    
+
     MethodApplyBlock {
         object_name: String,
         method_chain: Vec<String>,
         expressions: Vec<Expression>,
         location: Option<SourceLocation>,
     },
-    
+
     ConstantApplyBlock {
         constants: Vec<ConstantAssignment>,
         location: Option<SourceLocation>,
     },
-    
+
     // Assignment
     Assignment {
         target: String,
         value: Expression,
         location: Option<SourceLocation>,
     },
-    
+
     // Print statements
     Print {
         expression: Expression,
         newline: bool,
         location: Option<SourceLocation>,
     },
-    
+
     // Print block (multiple expressions)
     PrintBlock {
         expressions: Vec<Expression>,
         newline: bool,
         location: Option<SourceLocation>,
     },
-    
+
     // Return
     Return {
         value: Option<Expression>,
         location: Option<SourceLocation>,
     },
-    
+
     // Control flow
     If {
         condition: Expression,
@@ -351,7 +355,7 @@ pub enum Statement {
         else_branch: Option<Vec<Statement>>,
         location: Option<SourceLocation>,
     },
-    
+
     // Iteration
     Iterate {
         iterator: String,
@@ -359,7 +363,7 @@ pub enum Statement {
         body: Vec<Statement>,
         location: Option<SourceLocation>,
     },
-    
+
     RangeIterate {
         iterator: String,
         start: Expression,
@@ -368,45 +372,45 @@ pub enum Statement {
         body: Vec<Statement>,
         location: Option<SourceLocation>,
     },
-    
+
     // Test
     Test {
         name: String,
         body: Vec<Statement>,
         location: Option<SourceLocation>,
     },
-    
+
     // Tests block
     TestsBlock {
         tests: Vec<TestCase>,
         location: Option<SourceLocation>,
     },
-    
+
     // Expression statement
     Expression {
         expr: Expression,
         location: Option<SourceLocation>,
     },
-    
+
     // Error statement (throw error)
     Error {
         message: Expression,
         location: Option<SourceLocation>,
     },
-    
+
     // Module imports
     Import {
         imports: Vec<ImportItem>,
         location: Option<SourceLocation>,
     },
-    
+
     // Async statements
     LaterAssignment {
         variable: String,
         expression: Expression,
         location: Option<SourceLocation>,
     },
-    
+
     Background {
         expression: Expression,
         location: Option<SourceLocation>,
@@ -434,7 +438,7 @@ pub struct ImportItem {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TestCase {
-    pub description: Option<String>,  // None for anonymous tests
+    pub description: Option<String>, // None for anonymous tests
     pub test_expression: Expression,
     pub expected_value: Expression,
     pub location: Option<SourceLocation>,
@@ -448,9 +452,9 @@ pub enum FunctionModifier {
 
 #[derive(Debug, Clone)]
 pub enum FunctionSyntax {
-    Simple,      // function integer add() ...
-    Detailed,    // function integer add() with description/input blocks
-    Block,       // functions: block
+    Simple,   // function integer add() ...
+    Detailed, // function integer add() with description/input blocks
+    Block,    // functions: block
 }
 
 #[derive(Debug, Clone)]
@@ -521,7 +525,11 @@ pub struct Constructor {
 }
 
 impl Constructor {
-    pub fn new(parameters: Vec<Parameter>, body: Vec<Statement>, location: Option<SourceLocation>) -> Self {
+    pub fn new(
+        parameters: Vec<Parameter>,
+        body: Vec<Statement>,
+        location: Option<SourceLocation>,
+    ) -> Self {
         Self {
             parameters,
             body,
@@ -535,7 +543,7 @@ pub struct Class {
     pub name: String,
     pub type_parameters: Vec<String>,
     pub description: Option<String>,
-    pub base_class: Option<String>,  // Using "is" inheritance
+    pub base_class: Option<String>, // Using "is" inheritance
     pub base_class_type_args: Vec<Type>,
     pub fields: Vec<Field>,
     pub methods: Vec<Function>,
@@ -567,7 +575,7 @@ impl fmt::Display for Type {
                 } else {
                     write!(f, "integer:{bits}")
                 }
-            },
+            }
             Type::NumberSized { bits } => write!(f, "number:{bits}"),
             // Type::Array removed - now using Type::List
             Type::List(inner) => write!(f, "list<{inner}>"),
@@ -582,7 +590,7 @@ impl fmt::Display for Type {
                     write!(f, "{param}")?;
                 }
                 write!(f, ") returns {ret}")
-            },
+            }
             Type::Object(name) => write!(f, "{name}"),
             Type::Class { name, type_args } => {
                 if type_args.is_empty() {
@@ -597,7 +605,7 @@ impl fmt::Display for Type {
                     }
                     write!(f, ">")
                 }
-            },
+            }
             Type::Generic(base, args) => {
                 write!(f, "{base}<")?;
                 for (i, arg) in args.iter().enumerate() {
@@ -607,7 +615,7 @@ impl fmt::Display for Type {
                     write!(f, "{arg}")?;
                 }
                 write!(f, ">")
-            },
+            }
             Type::TypeParameter(name) => write!(f, "{name}"),
             Type::Future(inner) => write!(f, "Future<{inner}>"),
             Type::Any => f.write_str("any"),
@@ -631,7 +639,7 @@ impl fmt::Display for Value {
                     write!(f, "{item}")?;
                 }
                 write!(f, "]")
-            },
+            }
             Value::Matrix(rows) => {
                 write!(f, "[")?;
                 for (i, row) in rows.iter().enumerate() {
@@ -648,7 +656,7 @@ impl fmt::Display for Value {
                     write!(f, "]")?;
                 }
                 write!(f, "]")
-            },
+            }
             Value::Void => write!(f, "()"),
             Value::Integer8(i) => write!(f, "{i}:8"),
             Value::Integer8u(u) => write!(f, "{u}:8u"),
@@ -666,4 +674,4 @@ impl Type {
     pub fn as_type_ref(&self) -> &Type {
         self
     }
-} 
+}

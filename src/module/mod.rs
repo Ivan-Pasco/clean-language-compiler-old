@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::fs;
-use crate::ast::{Program, Function, Class, Type, Visibility};
+use crate::ast::{Class, Function, Program, Type, Visibility};
 use crate::error::CompilerError;
 use crate::parser;
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Module resolver handles loading and linking of external modules
 pub struct ModuleResolver {
@@ -43,10 +43,10 @@ pub struct ImportResolution {
 /// Import type for different import patterns
 #[derive(Debug, Clone)]
 pub enum ImportType {
-    WholeModule,           // import: Math
-    ModuleAlias,          // import: Utils as U  
-    SingleSymbol,         // import: Math.sqrt
-    SingleSymbolAlias,    // import: Json.decode as jd
+    WholeModule,       // import: Math
+    ModuleAlias,       // import: Utils as U
+    SingleSymbol,      // import: Math.sqrt
+    SingleSymbolAlias, // import: Json.decode as jd
 }
 
 impl ModuleResolver {
@@ -55,10 +55,10 @@ impl ModuleResolver {
         Self {
             module_cache: HashMap::new(),
             module_paths: vec![
-                PathBuf::from("./"),           // Current directory
-                PathBuf::from("./modules/"),   // Local modules directory
-                PathBuf::from("./lib/"),       // Library directory
-                PathBuf::from("./stdlib/"),    // Standard library
+                PathBuf::from("./"),         // Current directory
+                PathBuf::from("./modules/"), // Local modules directory
+                PathBuf::from("./lib/"),     // Library directory
+                PathBuf::from("./stdlib/"),  // Standard library
             ],
             current_module: None,
         }
@@ -75,25 +75,28 @@ impl ModuleResolver {
     }
 
     /// Resolve all imports for a program
-    pub fn resolve_imports(&mut self, program: &Program) -> Result<ImportResolution, CompilerError> {
+    pub fn resolve_imports(
+        &mut self,
+        program: &Program,
+    ) -> Result<ImportResolution, CompilerError> {
         let mut resolved_imports = HashMap::new();
         let mut symbol_map = HashMap::new();
         let mut single_symbols = HashMap::new();
 
         for import_item in &program.imports {
             let import_type = self.classify_import(&import_item.name);
-            
+
             match import_type {
                 ImportType::WholeModule => {
                     // import: Math
                     let module = self.load_module(&import_item.name)?;
                     let import_name = import_item.alias.as_ref().unwrap_or(&import_item.name);
                     resolved_imports.insert(import_name.clone(), module.clone());
-                    
+
                     if let Some(alias) = &import_item.alias {
                         symbol_map.insert(alias.clone(), import_item.name.clone());
                     }
-                },
+                }
                 ImportType::ModuleAlias => {
                     // import: Utils as U
                     let module = self.load_module(&import_item.name)?;
@@ -101,48 +104,53 @@ impl ModuleResolver {
                         resolved_imports.insert(alias.clone(), module.clone());
                         symbol_map.insert(alias.clone(), import_item.name.clone());
                     }
-                },
+                }
                 ImportType::SingleSymbol => {
                     // import: Math.sqrt
                     let (module_name, symbol_name) = self.parse_single_symbol(&import_item.name)?;
                     let module = self.load_module(&module_name)?;
-                    
+
                     // Verify the symbol exists in the module
-                    if !module.exports.has_function(&symbol_name) && !module.exports.has_class(&symbol_name) {
+                    if !module.exports.has_function(&symbol_name)
+                        && !module.exports.has_class(&symbol_name)
+                    {
                         return Err(CompilerError::symbol_error(
                             format!("Symbol '{symbol_name}' not found in module '{module_name}'"),
                             &symbol_name,
-                            Some(&module_name)
+                            Some(&module_name),
                         ));
                     }
-                    
+
                     let import_name = import_item.alias.as_ref().unwrap_or(&symbol_name);
                     single_symbols.insert(import_name.clone(), (module_name.clone(), symbol_name));
-                    
+
                     // Also store the module for reference
                     if !resolved_imports.contains_key(&module_name) {
                         resolved_imports.insert(module_name, module);
                     }
-                },
+                }
                 ImportType::SingleSymbolAlias => {
                     // import: Json.decode as jd
                     let (module_name, symbol_name) = self.parse_single_symbol(&import_item.name)?;
                     let module = self.load_module(&module_name)?;
-                    
+
                     // Verify the symbol exists in the module
-                    if !module.exports.has_function(&symbol_name) && !module.exports.has_class(&symbol_name) {
+                    if !module.exports.has_function(&symbol_name)
+                        && !module.exports.has_class(&symbol_name)
+                    {
                         return Err(CompilerError::symbol_error(
                             format!("Symbol '{symbol_name}' not found in module '{module_name}'"),
                             &symbol_name,
-                            Some(&module_name)
+                            Some(&module_name),
                         ));
                     }
-                    
+
                     if let Some(alias) = &import_item.alias {
-                        single_symbols.insert(alias.clone(), (module_name.clone(), symbol_name.clone()));
+                        single_symbols
+                            .insert(alias.clone(), (module_name.clone(), symbol_name.clone()));
                         symbol_map.insert(alias.clone(), format!("{module_name}.{symbol_name}"));
                     }
-                    
+
                     // Also store the module for reference
                     if !resolved_imports.contains_key(&module_name) {
                         resolved_imports.insert(module_name, module);
@@ -174,10 +182,10 @@ impl ModuleResolver {
             return Err(CompilerError::import_error(
                 format!("Invalid single symbol import format: '{import_name}'"),
                 import_name,
-                None
+                None,
             ));
         }
-        
+
         Ok((parts[0].to_string(), parts[1].to_string()))
     }
 
@@ -192,20 +200,26 @@ impl ModuleResolver {
         let module_path = self.find_module_file(module_name)?;
 
         // Read and parse the module
-        let source = fs::read_to_string(&module_path)
-            .map_err(|e| CompilerError::module_error(
+        let source = fs::read_to_string(&module_path).map_err(|e| {
+            CompilerError::module_error(
                 format!("Failed to read module '{module_name}': {e}"),
-                Some(format!("Check if the file exists and is readable: {}", module_path.display())),
-                None
-            ))?;
+                Some(format!(
+                    "Check if the file exists and is readable: {}",
+                    module_path.display()
+                )),
+                None,
+            )
+        })?;
 
         // Parse the module
-        let program = parser::parse_with_file(&source, &module_path.to_string_lossy())
-            .map_err(|e| CompilerError::module_error(
-                format!("Failed to parse module '{module_name}': {e}"),
-                Some("Check the syntax of the module file".to_string()),
-                None
-            ))?;
+        let program =
+            parser::parse_with_file(&source, &module_path.to_string_lossy()).map_err(|e| {
+                CompilerError::module_error(
+                    format!("Failed to parse module '{module_name}': {e}"),
+                    Some("Check the syntax of the module file".to_string()),
+                    None,
+                )
+            })?;
 
         // Extract exports
         let exports = self.extract_exports(&program);
@@ -219,7 +233,8 @@ impl ModuleResolver {
         };
 
         // Cache the module
-        self.module_cache.insert(module_name.to_string(), module.clone());
+        self.module_cache
+            .insert(module_name.to_string(), module.clone());
 
         Ok(module)
     }
@@ -227,7 +242,7 @@ impl ModuleResolver {
     /// Find a module file in the search paths
     fn find_module_file(&self, module_name: &str) -> Result<PathBuf, CompilerError> {
         let possible_extensions = ["clean", "cln"];
-        
+
         for search_path in &self.module_paths {
             for extension in &possible_extensions {
                 let file_path = search_path.join(format!("{module_name}.{extension}"));
@@ -237,7 +252,9 @@ impl ModuleResolver {
             }
         }
 
-        let search_paths_str = self.module_paths.iter()
+        let search_paths_str = self
+            .module_paths
+            .iter()
             .map(|p| p.to_string_lossy())
             .collect::<Vec<_>>()
             .join(", ");
@@ -245,7 +262,7 @@ impl ModuleResolver {
         Err(CompilerError::module_error(
             format!("Module '{module_name}' not found in search paths"),
             Some(format!("Search paths: {search_paths_str}")),
-            None
+            None,
         ))
     }
 
@@ -262,7 +279,9 @@ impl ModuleResolver {
         for function in &program.functions {
             // According to specification: functions are public by default
             if function.visibility != Visibility::Private {
-                exports.functions.insert(function.name.clone(), function.clone());
+                exports
+                    .functions
+                    .insert(function.name.clone(), function.clone());
             }
         }
 
@@ -270,12 +289,11 @@ impl ModuleResolver {
         for class in &program.classes {
             // Classes are public by default in Clean Language
             exports.classes.insert(class.name.clone(), class.clone());
-            
+
             // Also export the class as a type
-            exports.types.insert(
-                class.name.clone(), 
-                Type::Object(class.name.clone())
-            );
+            exports
+                .types
+                .insert(class.name.clone(), Type::Object(class.name.clone()));
         }
 
         exports
@@ -292,31 +310,35 @@ impl ModuleResolver {
     }
 
     /// Resolve a symbol reference in the context of imports
-    pub fn resolve_symbol(&self, symbol_name: &str, imports: &ImportResolution) -> Option<(String, String)> {
+    pub fn resolve_symbol(
+        &self,
+        symbol_name: &str,
+        imports: &ImportResolution,
+    ) -> Option<(String, String)> {
         // Check if it's a direct single symbol import
         if let Some((module_name, actual_symbol)) = imports.single_symbols.get(symbol_name) {
             return Some((module_name.clone(), actual_symbol.clone()));
         }
-        
+
         // Check if it's a module.symbol reference
         if symbol_name.contains('.') {
             let parts: Vec<&str> = symbol_name.split('.').collect();
             if parts.len() == 2 {
                 let module_name = parts[0];
                 let symbol = parts[1];
-                
+
                 // Check if the module is imported
                 if imports.resolved_imports.contains_key(module_name) {
                     return Some((module_name.to_string(), symbol.to_string()));
                 }
-                
+
                 // Check if it's an aliased module
                 if let Some(actual_module) = imports.symbol_map.get(module_name) {
                     return Some((actual_module.clone(), symbol.to_string()));
                 }
             }
         }
-        
+
         None
     }
 }
@@ -370,7 +392,7 @@ mod tests {
     fn test_add_module_path() {
         let mut resolver = ModuleResolver::new();
         let initial_paths = resolver.module_paths.len();
-        
+
         resolver.add_module_path("/custom/path");
         assert_eq!(resolver.module_paths.len(), initial_paths + 1);
     }
@@ -396,4 +418,4 @@ mod tests {
         let result = resolver.find_module_file("NonExistentModule");
         assert!(result.is_err());
     }
-} 
+}

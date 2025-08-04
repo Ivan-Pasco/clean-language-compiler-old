@@ -1,15 +1,15 @@
 //! Module for memory operations during code generation.
 
-use wasm_encoder::{Instruction, ValType, DataSection, ConstExpr};
-use crate::error::{CompilerError};
 use crate::ast::Value;
+use crate::error::CompilerError;
+use crate::stdlib::memory::MemoryManager;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
-use crate::stdlib::memory::MemoryManager;
+use wasm_encoder::{ConstExpr, DataSection, Instruction, ValType};
 
 // Essential constants
-pub const HEADER_SIZE: u32 = 16;  // 16-byte header for memory blocks
+pub const HEADER_SIZE: u32 = 16; // 16-byte header for memory blocks
 pub const ALIGNMENT: usize = 8;
 
 // Memory type IDs (keep only the ones actually used)
@@ -79,20 +79,20 @@ pub(crate) struct MemoryUtils {
     current_address: usize,
     memory_blocks: HashMap<usize, MemoryBlock>,
     free_blocks: Vec<usize>,
-    
+
     // Memory pools for efficient allocation
-    small_pool: MemoryPool,   // <= 64 bytes
-    medium_pool: MemoryPool,  // <= 256 bytes
-    large_pool: MemoryPool,   // <= 1024 bytes
-    
+    small_pool: MemoryPool,  // <= 64 bytes
+    medium_pool: MemoryPool, // <= 256 bytes
+    large_pool: MemoryPool,  // <= 1024 bytes
+
     // ARC tracking
-    root_objects: Vec<usize>,  // Objects that should never be collected
-    gc_threshold: usize,       // Trigger GC when this many objects are allocated
+    root_objects: Vec<usize>, // Objects that should never be collected
+    gc_threshold: usize,      // Trigger GC when this many objects are allocated
     allocated_objects: usize,
-    
+
     // String pool for deduplication
     string_pool: HashMap<String, usize>,
-    
+
     // Shared memory manager for stdlib integration
     #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
@@ -103,7 +103,7 @@ impl MemoryUtils {
     pub(crate) fn new(heap_start: usize) -> Self {
         // Create a shared memory manager for stdlib integration
         let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, None)));
-        
+
         Self {
             data_section: DataSection::new(),
             heap_start,
@@ -132,7 +132,7 @@ impl MemoryUtils {
     #[allow(dead_code)]
     pub(crate) fn add_string_data(&mut self, data: &[u8]) -> u32 {
         let string_content = std::str::from_utf8(data).unwrap_or("");
-        
+
         // Check if string already exists in pool
         if let Some(&existing_ptr) = self.string_pool.get(string_content) {
             // Increment reference count for existing string
@@ -145,7 +145,7 @@ impl MemoryUtils {
         // Allocate new string with proper layout
         let string_len = data.len();
         let total_size = HEADER_SIZE as usize + 4 + string_len; // header + length + content
-        
+
         let address = match self.allocate_from_pool(total_size, STRING_TYPE_ID) {
             Ok(addr) => addr,
             Err(_) => {
@@ -178,7 +178,8 @@ impl MemoryUtils {
             1u32.to_le_bytes(), // ref_count
             STRING_TYPE_ID.to_le_bytes(),
             0u32.to_le_bytes(), // next_free
-        ].concat();
+        ]
+        .concat();
         self.add_data_segment(address as u32, &header_data);
 
         // String length
@@ -206,13 +207,16 @@ impl MemoryUtils {
     /// Allocate from appropriate memory pool
     fn allocate_from_pool(&mut self, size: usize, type_id: u32) -> Result<usize, CompilerError> {
         let aligned_size = Self::align_size(size);
-        
+
         let address = if aligned_size <= SMALL_POOL_SIZE {
-            self.small_pool.allocate(self.heap_start, &mut self.current_address)
+            self.small_pool
+                .allocate(self.heap_start, &mut self.current_address)
         } else if aligned_size <= MEDIUM_POOL_SIZE {
-            self.medium_pool.allocate(self.heap_start, &mut self.current_address)
+            self.medium_pool
+                .allocate(self.heap_start, &mut self.current_address)
         } else if aligned_size <= LARGE_POOL_SIZE {
-            self.large_pool.allocate(self.heap_start, &mut self.current_address)
+            self.large_pool
+                .allocate(self.heap_start, &mut self.current_address)
         } else {
             // Large allocation - allocate directly
             let addr = self.current_address;
@@ -245,8 +249,8 @@ impl MemoryUtils {
                 "Memory pool allocation failed",
                 aligned_size,
                 None,
-                None
-            ))
+                None,
+            )),
         }
     }
 
@@ -282,7 +286,7 @@ impl MemoryUtils {
     /// Allocate memory for a block with ARC
     pub(crate) fn allocate(&mut self, size: usize, type_id: u32) -> Result<usize, CompilerError> {
         let aligned_size = Self::align_size(size + HEADER_SIZE as usize);
-        
+
         // Try pool allocation first
         match self.allocate_from_pool(aligned_size, type_id) {
             Ok(addr) => Ok(addr + HEADER_SIZE as usize),
@@ -294,10 +298,10 @@ impl MemoryUtils {
                         block.type_id = type_id;
                         block.ref_count = 1;
                         block.next_free = None;
-                        
+
                         // Remove from free list
                         self.free_blocks.retain(|&addr| addr != block_addr);
-                        
+
                         return Ok(block_addr + HEADER_SIZE as usize);
                     }
                 }
@@ -309,7 +313,7 @@ impl MemoryUtils {
                         "Memory allocation failed: not enough memory",
                         aligned_size,
                         Some(total_memory - self.current_address),
-                        None
+                        None,
                     ));
                 }
 
@@ -323,7 +327,7 @@ impl MemoryUtils {
     /// Increase reference count for a block (ARC retain)
     pub(crate) fn retain(&mut self, address: usize) -> Result<(), CompilerError> {
         let header_address = address - HEADER_SIZE as usize;
-        
+
         if let Some(block) = self.memory_blocks.get_mut(&header_address) {
             block.ref_count += 1;
             Ok(())
@@ -339,17 +343,17 @@ impl MemoryUtils {
     /// Decrease reference count for a block (ARC release)
     pub(crate) fn release(&mut self, address: usize) -> Result<(), CompilerError> {
         let header_address = address - HEADER_SIZE as usize;
-        
+
         if let Some(block) = self.memory_blocks.get_mut(&header_address) {
             if block.ref_count > 0 {
                 block.ref_count -= 1;
             }
-            
+
             // If reference count is zero, mark as free and return to pool
             if block.ref_count == 0 {
                 self.deallocate_block(header_address);
             }
-            
+
             Ok(())
         } else {
             Err(CompilerError::runtime_error(
@@ -365,7 +369,7 @@ impl MemoryUtils {
         if let Some(mut block) = self.memory_blocks.remove(&address) {
             block.is_free = true;
             block.ref_count = 0;
-            
+
             // Return to appropriate pool
             if block.size <= SMALL_POOL_SIZE {
                 self.small_pool.deallocate(address);
@@ -375,9 +379,9 @@ impl MemoryUtils {
                 self.large_pool.deallocate(address);
             }
             // Large blocks are not pooled
-            
+
             self.allocated_objects -= 1;
-            
+
             // Remove from string pool if it's a string
             if block.type_id == STRING_TYPE_ID {
                 self.string_pool.retain(|_, &mut addr| addr != address);
@@ -403,30 +407,31 @@ impl MemoryUtils {
     pub(crate) fn collect_garbage(&mut self) {
         // Mark phase: mark all reachable objects
         let mut marked = std::collections::HashSet::new();
-        
+
         // Mark all root objects
         for &root_addr in &self.root_objects {
             self.mark_object(root_addr, &mut marked);
         }
-        
+
         // Mark all objects with ref_count > 0
         for (&addr, block) in &self.memory_blocks {
             if block.ref_count > 0 {
                 self.mark_object(addr, &mut marked);
             }
         }
-        
+
         // Sweep phase: deallocate unmarked objects
-        let addresses_to_remove: Vec<usize> = self.memory_blocks
+        let addresses_to_remove: Vec<usize> = self
+            .memory_blocks
             .keys()
             .filter(|&&addr| !marked.contains(&addr))
             .copied()
             .collect();
-            
+
         for addr in addresses_to_remove {
             self.deallocate_block(addr);
         }
-        
+
         // Reset GC threshold
         self.gc_threshold = (self.allocated_objects * 2).max(1000);
     }
@@ -436,9 +441,9 @@ impl MemoryUtils {
         if marked.contains(&address) {
             return;
         }
-        
+
         marked.insert(address);
-        
+
         // For now, we don't traverse object references
         // In a full implementation, we would examine the object's fields
         // and recursively mark any referenced objects
@@ -473,57 +478,62 @@ impl MemoryUtils {
 
         let bytes = s.as_bytes();
         let len = bytes.len();
-        
+
         // Check for very large strings
-        if len > 1024 * 1024 {  // 1MB limit for strings
+        if len > 1024 * 1024 {
+            // 1MB limit for strings
             return Err(CompilerError::memory_allocation_error(
                 "String allocation failed: string is too large",
                 len + 4,
                 None,
-                None
+                None,
             ));
         }
-        
+
         // Allocate memory for the string (length + content)
         let ptr = self.allocate(len + 4, STRING_TYPE_ID)?;
-        
+
         // The string pointer should point to the length field, not after the header
         let string_ptr = ptr - HEADER_SIZE as usize;
-        
+
         // Add to string pool
         self.string_pool.insert(s.to_string(), string_ptr);
-        
+
         // Create data segment for length
         let len_bytes = (len as u32).to_le_bytes();
         self.add_data_segment(string_ptr as u32, &len_bytes);
-        
+
         // Create data segment for the string content
         self.add_data_segment((string_ptr + 4) as u32, bytes);
-        
+
         Ok(string_ptr)
     }
 
     /// Force allocate a string at a specific address for type conversion functions
-    pub(crate) fn force_string_at_address(&mut self, s: &str, target_addr: u32) -> Result<(), CompilerError> {
+    pub(crate) fn force_string_at_address(
+        &mut self,
+        s: &str,
+        target_addr: u32,
+    ) -> Result<(), CompilerError> {
         let bytes = s.as_bytes();
         let len = bytes.len();
-        
+
         // Debug: Log what we're allocating
         eprintln!("DEBUG: Allocating '{s}' (len={len}) at address {target_addr}");
-        
+
         // Create data segment for the string length (4 bytes, little-endian)
         let len_bytes = (len as u32).to_le_bytes().to_vec();
         self.add_data_segment(target_addr, &len_bytes);
-        
-        // Create data segment for the string content 
+
+        // Create data segment for the string content
         self.add_data_segment(target_addr + 4, bytes);
-        
+
         // Debug: Log the bytes being written
         eprintln!("DEBUG: Length bytes: {len_bytes:?}, Content bytes: {bytes:?}");
-        
+
         // Add to string pool for consistency
         self.string_pool.insert(s.to_string(), target_addr as usize);
-        
+
         Ok(())
     }
 
@@ -532,10 +542,14 @@ impl MemoryUtils {
         self.allocate_array_with_target_type(elements, None)
     }
 
-    pub(crate) fn allocate_array_with_target_type(&mut self, elements: &[Value], target_element_type: Option<&crate::ast::Type>) -> Result<usize, CompilerError> {
-        use crate::types::WasmType;
+    pub(crate) fn allocate_array_with_target_type(
+        &mut self,
+        elements: &[Value],
+        target_element_type: Option<&crate::ast::Type>,
+    ) -> Result<usize, CompilerError> {
         use crate::ast::Type;
-        
+        use crate::types::WasmType;
+
         let element_type = if let Some(target_type) = target_element_type {
             // If we have a target type, use it to determine the storage format
             match target_type {
@@ -557,16 +571,16 @@ impl MemoryUtils {
                 _ => WasmType::I32,
             }
         };
-        
+
         let element_size = element_type.size_in_bytes();
         let total_size = 4 + (elements.len() * element_size); // length + elements
-        
+
         let ptr = self.allocate(total_size, ARRAY_TYPE_ID)?;
-        
+
         // Create data segment for array length
         let len_bytes = (elements.len() as u32).to_le_bytes();
         self.add_data_segment((ptr - HEADER_SIZE as usize) as u32, &len_bytes);
-        
+
         // Create data segments for array elements
         let mut offset = 4;
         for element in elements {
@@ -576,11 +590,20 @@ impl MemoryUtils {
                     let f64_value = match element {
                         Value::Integer(i) => *i as f64,
                         Value::Number(f) => *f,
-                        Value::Boolean(b) => if *b { 1.0 } else { 0.0 },
-                        _ => return Err(CompilerError::type_error(
-                            format!("Cannot convert {element:?} to number for array storage"),
-                            None, None
-                        )),
+                        Value::Boolean(b) => {
+                            if *b {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
+                        _ => {
+                            return Err(CompilerError::type_error(
+                                format!("Cannot convert {element:?} to number for array storage"),
+                                None,
+                                None,
+                            ))
+                        }
                     };
                     f64_value.to_le_bytes().to_vec()
                 }
@@ -594,11 +617,14 @@ impl MemoryUtils {
                             // For string elements, allocate string and store pointer
                             let str_ptr = self.allocate_string(s)?;
                             str_ptr as u32
-                        },
-                        _ => return Err(CompilerError::type_error(
-                            format!("Cannot convert {element:?} to I32 for array storage"),
-                            None, None
-                        )),
+                        }
+                        _ => {
+                            return Err(CompilerError::type_error(
+                                format!("Cannot convert {element:?} to I32 for array storage"),
+                                None,
+                                None,
+                            ))
+                        }
                     };
                     i32_value.to_le_bytes().to_vec()
                 }
@@ -612,16 +638,16 @@ impl MemoryUtils {
                             // For string elements, store pointer to string
                             let str_ptr = self.allocate_string(s)?;
                             (str_ptr as u32).to_le_bytes().to_vec()
-                        },
+                        }
                         _ => vec![0; element_size],
                     }
                 }
             };
-            
+
             self.add_data_segment((ptr + offset - HEADER_SIZE as usize) as u32, &element_bytes);
             offset += element_size;
         }
-        
+
         Ok(ptr)
     }
 
@@ -632,13 +658,13 @@ impl MemoryUtils {
                 "Matrix allocation failed: empty matrix",
                 0,
                 None,
-                None
+                None,
             ));
         }
-        
+
         let num_rows = rows.len();
         let num_cols = rows[0].len();
-        
+
         // Validate matrix dimensions
         for row in rows {
             if row.len() != num_cols {
@@ -646,23 +672,24 @@ impl MemoryUtils {
                     "Matrix allocation failed: inconsistent row lengths",
                     0,
                     None,
-                    None
+                    None,
                 ));
             }
         }
-        
+
         let total_elements = num_rows * num_cols;
         let total_size = 8 + (total_elements * 8); // rows + cols + elements (f64)
-        
+
         let ptr = self.allocate(total_size, MATRIX_TYPE_ID)?;
-        
+
         // Create data segment for matrix dimensions
         let dims_bytes = [
             (num_rows as u32).to_le_bytes(),
             (num_cols as u32).to_le_bytes(),
-        ].concat();
+        ]
+        .concat();
         self.add_data_segment((ptr - HEADER_SIZE as usize) as u32, &dims_bytes);
-        
+
         // Create data segment for matrix elements (row-major order)
         let mut element_bytes = Vec::new();
         for row in rows {
@@ -670,15 +697,17 @@ impl MemoryUtils {
                 element_bytes.extend_from_slice(&element.to_le_bytes());
             }
         }
-        
+
         self.add_data_segment((ptr + 8 - HEADER_SIZE as usize) as u32, &element_bytes);
-        
+
         Ok(ptr)
     }
 
     /// Generate memory management functions for WASM
     #[allow(dead_code)]
-    pub(crate) fn generate_memory_functions(&self) -> Vec<(Vec<ValType>, Option<ValType>, Vec<Instruction<'static>>)> {
+    pub(crate) fn generate_memory_functions(
+        &self,
+    ) -> Vec<(Vec<ValType>, Option<ValType>, Vec<Instruction<'static>>)> {
         vec![
             // malloc(size: i32, type_id: i32) -> i32
             (
@@ -687,8 +716,8 @@ impl MemoryUtils {
                 vec![
                     Instruction::LocalGet(0), // size
                     Instruction::LocalGet(1), // type_id
-                    Instruction::Call(0), // Call internal allocate function
-                ]
+                    Instruction::Call(0),     // Call internal allocate function
+                ],
             ),
             // retain(ptr: i32) -> void
             (
@@ -696,8 +725,8 @@ impl MemoryUtils {
                 None,
                 vec![
                     Instruction::LocalGet(0), // ptr
-                    Instruction::Call(1), // Call internal retain function
-                ]
+                    Instruction::Call(1),     // Call internal retain function
+                ],
             ),
             // release(ptr: i32) -> void
             (
@@ -705,8 +734,8 @@ impl MemoryUtils {
                 None,
                 vec![
                     Instruction::LocalGet(0), // ptr
-                    Instruction::Call(2), // Call internal release function
-                ]
+                    Instruction::Call(2),     // Call internal release function
+                ],
             ),
         ]
     }
@@ -717,7 +746,7 @@ impl MemoryUtils {
         (
             self.allocated_objects,
             self.memory_blocks.len(),
-            self.current_address - self.heap_start
+            self.current_address - self.heap_start,
         )
     }
 
@@ -727,6 +756,3 @@ impl MemoryUtils {
         self.memory_manager.clone()
     }
 }
-
-
- 

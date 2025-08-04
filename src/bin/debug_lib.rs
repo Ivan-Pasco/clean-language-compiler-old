@@ -1,6 +1,6 @@
 use clean_language_compiler::compile;
-use wasmtime::{Engine, Module, Store, Instance};
 use std::fs;
+use wasmtime::{Engine, Instance, Module, Store};
 
 fn main() {
     let source = r#"functions:
@@ -15,13 +15,13 @@ start()
     let wasm_binary = match compile(source) {
         Ok(binary) => {
             println!("✓ Compilation successful! Generated {} bytes", binary.len());
-            
+
             // Write to file for debugging
             fs::write("debug_lib_output.wasm", &binary).expect("Failed to write WASM file");
             println!("✓ WASM written to debug_lib_output.wasm");
-            
+
             binary
-        },
+        }
         Err(e) => {
             println!("✗ Compilation failed: {}", e);
             return;
@@ -34,7 +34,7 @@ start()
         Ok(module) => {
             println!("✓ Module creation successful!");
             module
-        },
+        }
         Err(e) => {
             println!("✗ Module creation failed: {}", e);
             return;
@@ -47,7 +47,7 @@ start()
         Ok(instance) => {
             println!("✓ Instance creation successful!");
             instance
-        },
+        }
         Err(e) => {
             println!("✗ Instance creation failed: {}", e);
             return;

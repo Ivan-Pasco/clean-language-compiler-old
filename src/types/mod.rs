@@ -1,5 +1,5 @@
-use wasm_encoder::ValType;
 use crate::ast::Type as AstType;
+use wasm_encoder::ValType;
 
 /// WebAssembly value types
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -15,7 +15,9 @@ pub enum WasmType {
 // Define the ValTypeConverter trait that was referenced in the codebase
 pub trait ValTypeConverter {
     fn to_val_type(&self) -> ValType;
-    fn from_val_type(val_type: ValType) -> Result<Self, String> where Self: Sized;
+    fn from_val_type(val_type: ValType) -> Result<Self, String>
+    where
+        Self: Sized;
 }
 
 impl ValTypeConverter for WasmType {
@@ -77,7 +79,7 @@ impl WasmType {
             _ => Err(format!("Invalid type tuple: ({}, {:?})", tuple.0, tuple.1)),
         }
     }
-    
+
     /// Get the size in bytes for this type
     pub fn size_in_bytes(&self) -> usize {
         match self {
@@ -89,7 +91,7 @@ impl WasmType {
             WasmType::Unit => 0,
         }
     }
-    
+
     /// Get the type ID
     pub fn to_id(&self) -> u32 {
         match self {
@@ -101,7 +103,7 @@ impl WasmType {
             WasmType::Unit => 0, // No specific type ID
         }
     }
-    
+
     /// Convert to wasmparser ValType
     pub fn to_parser_val_type(&self) -> wasmparser::ValType {
         match self {
@@ -113,7 +115,7 @@ impl WasmType {
             WasmType::Unit => wasmparser::ValType::I32, // Map Unit to I32 for WebAssembly compatibility
         }
     }
-    
+
     /// Convert from wasmparser ValType
     pub fn from_parser_val_type(val_type: wasmparser::ValType) -> Result<Self, String> {
         match val_type {
@@ -151,12 +153,12 @@ impl From<&AstType> for WasmType {
         match ast_type {
             AstType::Integer | AstType::Boolean => WasmType::I32,
             AstType::Number => WasmType::F64,
-            AstType::String => WasmType::I32, // String pointers
-            AstType::Void => WasmType::I32,   // Void represented as I32
-            AstType::List(_) => WasmType::I32, // List pointers
+            AstType::String => WasmType::I32,    // String pointers
+            AstType::Void => WasmType::I32,      // Void represented as I32
+            AstType::List(_) => WasmType::I32,   // List pointers
             AstType::Matrix(_) => WasmType::I32, // Matrix pointers
             AstType::Pairs(_, _) => WasmType::I32, // Pairs are represented as pointers to heap-allocated structures
-            AstType::Object(_) => WasmType::I32, // Object pointers
+            AstType::Object(_) => WasmType::I32,   // Object pointers
             AstType::Generic(_, _) => WasmType::I32, // Generic type pointers
             AstType::TypeParameter(_) => WasmType::I32, // Type parameter pointers
             // Sized types
@@ -213,4 +215,4 @@ pub fn to_tuple_wrapper(wasm_type: WasmType) -> WasmType {
 pub fn from_tuple_wrapper(tuple: (u8, ValType)) -> (u8, ValType) {
     // Just pass through the original tuple
     tuple
-} 
+}

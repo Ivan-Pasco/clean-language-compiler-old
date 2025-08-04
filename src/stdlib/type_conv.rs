@@ -1,7 +1,7 @@
 use crate::codegen::CodeGenerator;
-use crate::types::WasmType;
 use crate::error::CompilerError;
 use crate::stdlib::register_stdlib_function;
+use crate::types::WasmType;
 
 use wasm_encoder::{Instruction, MemArg};
 
@@ -29,7 +29,7 @@ impl TypeConvOperations {
             "i32_to_i64",
             &params_to_types(&[(WasmType::I32, "value".to_string())]),
             Some(WasmType::I64),
-            self.generate_i32_to_i64_function()
+            self.generate_i32_to_i64_function(),
         )?;
 
         register_stdlib_function(
@@ -37,7 +37,7 @@ impl TypeConvOperations {
             "i64_to_i32",
             &params_to_types(&[(WasmType::I64, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_i64_to_i32_function()
+            self.generate_i64_to_i32_function(),
         )?;
 
         register_stdlib_function(
@@ -45,7 +45,7 @@ impl TypeConvOperations {
             "i32_to_f64",
             &params_to_types(&[(WasmType::I32, "value".to_string())]),
             Some(WasmType::F64),
-            self.generate_i32_to_f64_function()
+            self.generate_i32_to_f64_function(),
         )?;
 
         register_stdlib_function(
@@ -53,7 +53,7 @@ impl TypeConvOperations {
             "f64_to_i32",
             &params_to_types(&[(WasmType::F64, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_f64_to_i32_function()
+            self.generate_f64_to_i32_function(),
         )?;
 
         // Numeric conversions
@@ -62,7 +62,7 @@ impl TypeConvOperations {
             "to_number",
             &params_to_types(&[(WasmType::I32, "str_ptr".to_string())]),
             Some(WasmType::F64),
-            self.generate_to_number_function()
+            self.generate_to_number_function(),
         )?;
 
         register_stdlib_function(
@@ -70,7 +70,7 @@ impl TypeConvOperations {
             "to_integer",
             &params_to_types(&[(WasmType::F64, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_to_integer_function()
+            self.generate_to_integer_function(),
         )?;
 
         register_stdlib_function(
@@ -78,7 +78,7 @@ impl TypeConvOperations {
             "to_unsigned",
             &params_to_types(&[(WasmType::I32, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_to_unsigned_function()
+            self.generate_to_unsigned_function(),
         )?;
 
         register_stdlib_function(
@@ -86,7 +86,7 @@ impl TypeConvOperations {
             "to_long",
             &params_to_types(&[(WasmType::F64, "value".to_string())]),
             Some(WasmType::I64),
-            self.generate_to_long_function()
+            self.generate_to_long_function(),
         )?;
 
         register_stdlib_function(
@@ -94,7 +94,7 @@ impl TypeConvOperations {
             "to_ulong",
             &params_to_types(&[(WasmType::I64, "value".to_string())]),
             Some(WasmType::I64),
-            self.generate_to_ulong_function()
+            self.generate_to_ulong_function(),
         )?;
 
         register_stdlib_function(
@@ -102,7 +102,7 @@ impl TypeConvOperations {
             "to_byte",
             &params_to_types(&[(WasmType::I32, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_to_byte_function()
+            self.generate_to_byte_function(),
         )?;
 
         // String conversions - Changed to accept I32 instead of F64 to fix type mismatch
@@ -112,7 +112,7 @@ impl TypeConvOperations {
             "to_string",
             &params_to_types(&[(WasmType::I32, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_to_string_function()
+            self.generate_to_string_function(),
         )?;
 
         // Boolean conversions
@@ -121,7 +121,7 @@ impl TypeConvOperations {
             "parse_bool",
             &params_to_types(&[(WasmType::I32, "str_ptr".to_string())]),
             Some(WasmType::I32),
-            self.generate_parse_bool_function()
+            self.generate_parse_bool_function(),
         )?;
 
         // Boolean to string conversion - required for .toString() method calls
@@ -130,7 +130,7 @@ impl TypeConvOperations {
             "bool_to_string",
             &params_to_types(&[(WasmType::I32, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_bool_to_string_function()
+            self.generate_bool_to_string_function(),
         )?;
 
         // Integer to string conversion - required for .toString() method calls
@@ -139,7 +139,7 @@ impl TypeConvOperations {
             "int_to_string",
             &params_to_types(&[(WasmType::I32, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_int_to_string_function()
+            self.generate_int_to_string_function(),
         )?;
 
         // Float to string conversion - required for .toString() method calls
@@ -148,16 +148,16 @@ impl TypeConvOperations {
             "float_to_string",
             &params_to_types(&[(WasmType::F64, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_float_to_string_function()
+            self.generate_float_to_string_function(),
         )?;
-        
+
         // Add a separate number_to_string for explicit F64 conversion
         register_stdlib_function(
             codegen,
             "number_to_string",
             &params_to_types(&[(WasmType::F64, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_float_to_string_function()
+            self.generate_float_to_string_function(),
         )?;
 
         register_stdlib_function(
@@ -165,7 +165,7 @@ impl TypeConvOperations {
             "string_to_int",
             &params_to_types(&[(WasmType::I32, "str_ptr".to_string())]),
             Some(WasmType::I32),
-            self.generate_string_to_int_function()
+            self.generate_string_to_int_function(),
         )?;
 
         register_stdlib_function(
@@ -173,7 +173,7 @@ impl TypeConvOperations {
             "string_to_float",
             &params_to_types(&[(WasmType::I32, "str_ptr".to_string())]),
             Some(WasmType::F64),
-            self.generate_string_to_float_function()
+            self.generate_string_to_float_function(),
         )?;
 
         // Register float_to_int function
@@ -182,7 +182,7 @@ impl TypeConvOperations {
             "float_to_int",
             &params_to_types(&[(WasmType::F64, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_float_to_int_function()
+            self.generate_float_to_int_function(),
         )?;
 
         // Register int_to_float function
@@ -191,7 +191,7 @@ impl TypeConvOperations {
             "int_to_float",
             &params_to_types(&[(WasmType::I32, "value".to_string())]),
             Some(WasmType::F64),
-            self.generate_int_to_float_function()
+            self.generate_int_to_float_function(),
         )?;
 
         // Register byte_to_int function
@@ -200,16 +200,19 @@ impl TypeConvOperations {
             "byte_to_int",
             &params_to_types(&[(WasmType::I32, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_byte_to_int_function()
+            self.generate_byte_to_int_function(),
         )?;
 
         // Register int_to_byte function
         register_stdlib_function(
             codegen,
             "int_to_byte",
-            &params_to_types(&[(WasmType::I32, "ptr".to_string()), (WasmType::I32, "value".to_string())]),
+            &params_to_types(&[
+                (WasmType::I32, "ptr".to_string()),
+                (WasmType::I32, "value".to_string()),
+            ]),
             None, // Store operation returns void
-            self.generate_int_to_byte_function()
+            self.generate_int_to_byte_function(),
         )?;
 
         // Boolean conversion functions
@@ -218,7 +221,7 @@ impl TypeConvOperations {
             "bool_to_i32",
             &params_to_types(&[(WasmType::I32, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_bool_to_i32_function()
+            self.generate_bool_to_i32_function(),
         )?;
 
         register_stdlib_function(
@@ -226,7 +229,7 @@ impl TypeConvOperations {
             "i32_to_bool",
             &params_to_types(&[(WasmType::I32, "value".to_string())]),
             Some(WasmType::I32),
-            self.generate_i32_to_bool_function()
+            self.generate_i32_to_bool_function(),
         )?;
 
         Ok(())
@@ -254,7 +257,6 @@ impl TypeConvOperations {
         vec![
             // Get i32 value
             Instruction::LocalGet(0),
-            
             // Convert to f64
             Instruction::F64ConvertI32S,
         ]
@@ -264,7 +266,6 @@ impl TypeConvOperations {
         vec![
             // Get f64 value
             Instruction::LocalGet(0),
-            
             // Convert to i32 (truncate)
             Instruction::I32TruncF64S,
         ]
@@ -283,7 +284,6 @@ impl TypeConvOperations {
         vec![
             // Get float value
             Instruction::LocalGet(0),
-            
             // Convert to integer (truncate)
             Instruction::I32TruncF64S,
         ]
@@ -293,7 +293,6 @@ impl TypeConvOperations {
         vec![
             // Get signed integer
             Instruction::LocalGet(0),
-            
             // Convert to unsigned by masking
             Instruction::I32Const(-1), // All bits set (0xFFFFFFFF as i32)
             Instruction::I32And,
@@ -304,7 +303,6 @@ impl TypeConvOperations {
         vec![
             // Get float value
             Instruction::LocalGet(0),
-            
             // Convert to long integer (truncate)
             Instruction::I64TruncF64S,
         ]
@@ -314,7 +312,6 @@ impl TypeConvOperations {
         vec![
             // Get signed long
             Instruction::LocalGet(0),
-            
             // Convert to unsigned by masking
             Instruction::I64Const(-1), // All bits set
             Instruction::I64And,
@@ -325,7 +322,6 @@ impl TypeConvOperations {
         vec![
             // Get integer value
             Instruction::LocalGet(0),
-            
             // Mask to byte range (0-255)
             Instruction::I32Const(0xFF),
             Instruction::I32And,
@@ -347,18 +343,15 @@ impl TypeConvOperations {
         vec![
             // Get string pointer
             Instruction::LocalGet(0),
-            
             // Load first character
             Instruction::I32Load8U(MemArg {
                 offset: 0,
                 align: 0,
                 memory_index: 0,
             }),
-            
             // Compare with 't' or 'T'
             Instruction::I32Const(116), // ASCII 't'
             Instruction::I32Eq,
-            
             Instruction::LocalGet(0),
             Instruction::I32Load8U(MemArg {
                 offset: 0,
@@ -367,34 +360,27 @@ impl TypeConvOperations {
             }),
             Instruction::I32Const(84), // ASCII 'T'
             Instruction::I32Eq,
-            
             // Combine conditions with OR
             Instruction::I32Or,
-            
             // Result is already a boolean (0 or 1)
         ]
     }
 
     fn generate_bool_to_string_function(&self) -> Vec<Instruction> {
         // Convert boolean to string - return proper string pointers
-        // Parameters: boolean_value (i32) 
+        // Parameters: boolean_value (i32)
         // Returns: string pointer (i32)
-        
+
         vec![
             // Load the boolean value
             Instruction::LocalGet(0),
-            
             // Check if true (non-zero) or false (zero)
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            
             // True case: return pointer to "true" string
             Instruction::I32Const(300), // Pointer to pre-allocated "true" string
-            
             Instruction::Else,
-            
             // False case: return pointer to "false" string
             Instruction::I32Const(320), // Pointer to pre-allocated "false" string
-            
             Instruction::End,
         ]
     }
@@ -403,17 +389,16 @@ impl TypeConvOperations {
         // Convert integer to string - simplified implementation
         // Parameters: integer_value (i32)
         // Returns: string pointer (i32)
-        
+
         vec![
             // Store the integer at a fixed memory location for string conversion
             Instruction::I32Const(1000), // Working memory address
-            Instruction::LocalGet(0),     // Integer value
+            Instruction::LocalGet(0),    // Integer value
             Instruction::I32Store(wasm_encoder::MemArg {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
             }),
-            
             // Return pointer to converted string (simplified)
             Instruction::I32Const(1000), // Return working memory address as string pointer
         ]
@@ -423,7 +408,7 @@ impl TypeConvOperations {
         // SIMPLIFIED: Convert float to string - return fixed pointer
         // Parameters: float_value (f64)
         // Returns: string pointer (i32)
-        
+
         vec![
             // Return the actual address where "3.14" was allocated
             Instruction::I32Const(340), // Return pointer to "3.14" (non-overlapping)
@@ -434,7 +419,6 @@ impl TypeConvOperations {
         vec![
             // Load the float argument
             Instruction::LocalGet(0),
-
             // Convert to int using trunc instruction
             Instruction::I32TruncF64S,
         ]
@@ -444,7 +428,6 @@ impl TypeConvOperations {
         vec![
             // Load the int argument
             Instruction::LocalGet(0),
-
             // Convert to float using convert instruction
             Instruction::F64ConvertI32S,
         ]
@@ -489,7 +472,7 @@ impl TypeConvOperations {
             Instruction::I32Store8(MemArg {
                 offset: 0,
                 align: 0,
-                memory_index: 0
+                memory_index: 0,
             }),
         ]
     }
@@ -535,18 +518,18 @@ mod tests {
     fn test_i32_to_f64() {
         // Use direct type conversion testing instead of complex WASM setup
         let value = 42i32;
-        
+
         // Test direct conversion logic
         let result = value as f64;
         assert!((result - 42.0).abs() < f64::EPSILON);
-        
+
         // Test edge cases
         let zero_result = 0i32 as f64;
         assert_eq!(zero_result, 0.0);
-        
+
         let negative_result = (-42i32) as f64;
         assert_eq!(negative_result, -42.0);
-        
+
         // Test successful - i32 to f64 conversion infrastructure works
     }
 
@@ -554,18 +537,18 @@ mod tests {
     fn test_f64_to_i32() {
         // Use direct type conversion testing instead of complex WASM setup
         let value = 42.0f64;
-        
+
         // Test direct conversion logic
         let result = value as i32;
         assert_eq!(result, 42);
-        
+
         // Test edge cases
         let zero_result = 0.0f64 as i32;
         assert_eq!(zero_result, 0);
-        
+
         let negative_result = (-42.0f64) as i32;
         assert_eq!(negative_result, -42);
-        
+
         // Test successful - f64 to i32 conversion infrastructure works
     }
 
@@ -574,14 +557,14 @@ mod tests {
         // Use direct type conversion testing instead of complex WASM setup
         let true_value = true;
         let false_value = false;
-        
+
         // Test direct conversion logic
         let true_result = true_value as i32;
         let false_result = false_value as i32;
-        
+
         assert_eq!(true_result, 1);
         assert_eq!(false_result, 0);
-        
+
         // Test successful - bool to i32 conversion infrastructure works
     }
 
@@ -591,16 +574,16 @@ mod tests {
         let non_zero_value = 42i32;
         let zero_value = 0i32;
         let negative_value = -1i32;
-        
+
         // Test direct conversion logic (non-zero becomes true, zero becomes false)
         let non_zero_result = non_zero_value != 0;
         let zero_result = zero_value != 0;
         let negative_result = negative_value != 0;
-        
+
         assert_eq!(non_zero_result, true);
         assert_eq!(zero_result, false);
         assert_eq!(negative_result, true);
-        
+
         // Test successful - i32 to bool conversion infrastructure works
     }
-} 
+}

@@ -1,9 +1,9 @@
 // Real File I/O Implementation for Clean Language
 // Replaces mock/placeholder file operations with actual filesystem interactions
 
+use crate::error::CompilerError;
 use std::fs;
 use std::path::Path;
-use crate::error::CompilerError;
 
 /// File I/O operations manager
 pub struct FileIO;
@@ -12,10 +12,13 @@ impl FileIO {
     /// Read file contents as string
     pub fn read_file(path: &str) -> Result<String, CompilerError> {
         println!("📁 [FILE READ] Reading file: {path}");
-        
+
         match fs::read_to_string(path) {
             Ok(content) => {
-                println!("✅ [FILE READ] Successfully read {} bytes from {path}", content.len());
+                println!(
+                    "✅ [FILE READ] Successfully read {} bytes from {path}",
+                    content.len()
+                );
                 Ok(content)
             }
             Err(e) => {
@@ -25,11 +28,11 @@ impl FileIO {
             }
         }
     }
-    
+
     /// Write content to file
     pub fn write_file(path: &str, content: &str) -> Result<(), CompilerError> {
         println!("📁 [FILE WRITE] Writing {} bytes to: {path}", content.len());
-        
+
         match fs::write(path, content) {
             Ok(()) => {
                 println!("✅ [FILE WRITE] Successfully wrote to {path}");
@@ -42,14 +45,17 @@ impl FileIO {
             }
         }
     }
-    
+
     /// Append content to file
     pub fn append_file(path: &str, content: &str) -> Result<(), CompilerError> {
-        println!("📁 [FILE APPEND] Appending {} bytes to: {path}", content.len());
-        
+        println!(
+            "📁 [FILE APPEND] Appending {} bytes to: {path}",
+            content.len()
+        );
+
         use std::fs::OpenOptions;
         use std::io::Write;
-        
+
         match OpenOptions::new()
             .create(true)
             .append(true)
@@ -67,18 +73,18 @@ impl FileIO {
             }
         }
     }
-    
+
     /// Check if file exists
     pub fn file_exists(path: &str) -> bool {
         let exists = Path::new(path).exists();
         println!("📁 [FILE EXISTS] File '{path}' exists: {exists}");
         exists
     }
-    
+
     /// Delete file
     pub fn delete_file(path: &str) -> Result<(), CompilerError> {
         println!("📁 [FILE DELETE] Deleting file: {path}");
-        
+
         match fs::remove_file(path) {
             Ok(()) => {
                 println!("✅ [FILE DELETE] Successfully deleted {path}");
@@ -91,11 +97,11 @@ impl FileIO {
             }
         }
     }
-    
+
     /// Get file size in bytes
     pub fn file_size(path: &str) -> Result<u64, CompilerError> {
         println!("📁 [FILE SIZE] Getting size of: {path}");
-        
+
         match fs::metadata(path) {
             Ok(metadata) => {
                 let size = metadata.len();
@@ -109,11 +115,11 @@ impl FileIO {
             }
         }
     }
-    
+
     /// List directory contents
     pub fn list_directory(path: &str) -> Result<Vec<String>, CompilerError> {
         println!("📁 [DIR LIST] Listing directory: {path}");
-        
+
         match fs::read_dir(path) {
             Ok(entries) => {
                 let mut files = Vec::new();
@@ -129,7 +135,7 @@ impl FileIO {
                         }
                     }
                 }
-                
+
                 println!("✅ [DIR LIST] Found {} entries in {path}", files.len());
                 Ok(files)
             }
@@ -140,11 +146,11 @@ impl FileIO {
             }
         }
     }
-    
+
     /// Create directory
     pub fn create_directory(path: &str) -> Result<(), CompilerError> {
         println!("📁 [DIR CREATE] Creating directory: {path}");
-        
+
         match fs::create_dir_all(path) {
             Ok(()) => {
                 println!("✅ [DIR CREATE] Successfully created directory {path}");
@@ -157,4 +163,4 @@ impl FileIO {
             }
         }
     }
-} 
+}

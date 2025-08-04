@@ -1,5 +1,5 @@
-use crate::error::{CompilerError};
-use wasm_encoder::{Instruction};
+use crate::error::CompilerError;
+use wasm_encoder::Instruction;
 
 pub mod basic_ops {
     use super::*;
@@ -20,9 +20,9 @@ pub mod basic_ops {
     pub fn div_i32(a: i32, b: i32) -> Result<i32, CompilerError> {
         if b == 0 {
             return Err(CompilerError::type_error(
-                "Division by zero", 
+                "Division by zero",
                 Some("Ensure the divisor is not zero".to_string()),
-                None
+                None,
             ));
         }
         Ok(a.wrapping_div(b))
@@ -44,9 +44,9 @@ pub mod basic_ops {
     pub fn div_f64(a: f64, b: f64) -> Result<f64, CompilerError> {
         if b == 0.0 {
             return Err(CompilerError::type_error(
-                "Division by zero", 
+                "Division by zero",
                 Some("Ensure the divisor is not zero".to_string()),
-                None
+                None,
             ));
         }
         Ok(a / b)
@@ -121,9 +121,9 @@ mod tests {
         assert!(eq_i32(5, 5));
         assert!(lt_i32(3, 5));
         assert!(gt_i32(5, 3));
-        
+
         assert!(eq_f64(5.0, 5.0));
         assert!(lt_f64(3.0, 5.0));
         assert!(gt_f64(5.0, 3.0));
     }
-} 
+}

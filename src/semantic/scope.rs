@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::ast::Type;
+use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct Scope {
@@ -38,12 +38,12 @@ impl Scope {
                 return Some(type_.clone());
             }
         }
-        
+
         // Then check the base variables
         if let Some(type_) = self.variables.get(name) {
             return Some(type_.clone());
         }
-        
+
         // Finally check parent scope
         self.parent.as_ref().and_then(|p| p.lookup_variable(name))
     }
@@ -59,20 +59,20 @@ impl Scope {
     /// Get all variable names in the current scope for error suggestions
     pub fn get_all_variable_names(&self) -> Vec<String> {
         let mut names = Vec::new();
-        
+
         // Add variables from scope stack (most recent first)
         for scope in self.scope_stack.iter().rev() {
             names.extend(scope.keys().cloned());
         }
-        
+
         // Add base variables
         names.extend(self.variables.keys().cloned());
-        
+
         // Add parent scope variables
         if let Some(parent) = &self.parent {
             names.extend(parent.get_all_variable_names());
         }
-        
+
         // Remove duplicates while preserving order (most recent first)
         let mut unique_names = Vec::new();
         for name in names {
@@ -80,7 +80,7 @@ impl Scope {
                 unique_names.push(name);
             }
         }
-        
+
         unique_names
     }
-} 
+}

@@ -1,8 +1,8 @@
 use crate::codegen::CodeGenerator;
-use crate::types::WasmType;
 use crate::error::CompilerError;
-use wasm_encoder::{Instruction, MemArg};
 use crate::stdlib::register_stdlib_function;
+use crate::types::WasmType;
+use wasm_encoder::{Instruction, MemArg};
 
 /// String class implementation for Clean Language
 /// Provides comprehensive text manipulation capabilities as static methods
@@ -17,31 +17,31 @@ impl StringClass {
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // Basic operations
         self.register_basic_operations(codegen)?;
-        
+
         // Case operations
         self.register_case_operations(codegen)?;
-        
+
         // Search and validation operations
         self.register_search_operations(codegen)?;
-        
+
         // Text cleaning and formatting
         self.register_formatting_operations(codegen)?;
-        
+
         // Advanced text manipulation
         self.register_advanced_operations(codegen)?;
-        
+
         // Character operations
         self.register_character_operations(codegen)?;
-        
+
         // Validation helpers
         self.register_validation_operations(codegen)?;
-        
+
         // Padding operations
         self.register_padding_operations(codegen)?;
-        
+
         Ok(())
     }
-    
+
     fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // String.length(string text) -> integer
         register_stdlib_function(
@@ -58,30 +58,30 @@ impl StringClass {
                     align: 2,
                     memory_index: 0,
                 }),
-            ]
+            ],
         )?;
-        
+
         // String.concat(string a, string b) -> string
         register_stdlib_function(
             codegen,
             "string.concat",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_concat()
+            self.generate_concat(),
         )?;
-        
+
         // String.substring(string text, integer start, integer end) -> string
         register_stdlib_function(
             codegen,
             "string.substring",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_substring()
+            self.generate_substring(),
         )?;
-        
+
         Ok(())
     }
-    
+
     fn register_case_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // String.toUpperCase(string text) -> string
         register_stdlib_function(
@@ -89,21 +89,21 @@ impl StringClass {
             "string.toUpperCase",
             &[WasmType::I32],
             Some(WasmType::I32),
-            self.generate_to_upper()
+            self.generate_to_upper(),
         )?;
-        
+
         // String.toLowerCase(string text) -> string
         register_stdlib_function(
             codegen,
             "string.toLowerCase",
             &[WasmType::I32],
             Some(WasmType::I32),
-            self.generate_to_lower()
+            self.generate_to_lower(),
         )?;
-        
+
         Ok(())
     }
-    
+
     fn register_search_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // String.contains(string text, string search) -> boolean
         register_stdlib_function(
@@ -111,142 +111,154 @@ impl StringClass {
             "string.contains",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_contains()
+            self.generate_contains(),
         )?;
-        
+
         // String.indexOf(string text, string search) -> integer
         register_stdlib_function(
             codegen,
             "string.indexOf",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_index_of()
+            self.generate_index_of(),
         )?;
-        
+
         // String.lastIndexOf(string text, string search) -> integer
         register_stdlib_function(
             codegen,
             "string.lastIndexOf",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_last_index_of()
+            self.generate_last_index_of(),
         )?;
-        
+
         // String.startsWith(string text, string prefix) -> boolean
         register_stdlib_function(
             codegen,
             "string.startsWith",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_starts_with()
+            self.generate_starts_with(),
         )?;
-        
+
         // String.endsWith(string text, string suffix) -> boolean
         register_stdlib_function(
             codegen,
             "string.endsWith",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_ends_with()
+            self.generate_ends_with(),
         )?;
-        
+
         Ok(())
     }
-    
-    fn register_formatting_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+
+    fn register_formatting_operations(
+        &self,
+        codegen: &mut CodeGenerator,
+    ) -> Result<(), CompilerError> {
         // String.trim(string text) -> string
         register_stdlib_function(
             codegen,
             "string.trim",
             &[WasmType::I32],
             Some(WasmType::I32),
-            self.generate_trim()
+            self.generate_trim(),
         )?;
-        
+
         // String.trimStart(string text) -> string
         register_stdlib_function(
             codegen,
             "string.trimStart",
             &[WasmType::I32],
             Some(WasmType::I32),
-            self.generate_trim_start()
+            self.generate_trim_start(),
         )?;
-        
+
         // String.trimEnd(string text) -> string
         register_stdlib_function(
             codegen,
             "string.trimEnd",
             &[WasmType::I32],
             Some(WasmType::I32),
-            self.generate_trim_end()
+            self.generate_trim_end(),
         )?;
-        
+
         Ok(())
     }
-    
-    fn register_advanced_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+
+    fn register_advanced_operations(
+        &self,
+        codegen: &mut CodeGenerator,
+    ) -> Result<(), CompilerError> {
         // String.replace(string text, string oldValue, string newValue) -> string
         register_stdlib_function(
             codegen,
             "string.replace",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_replace()
+            self.generate_replace(),
         )?;
-        
+
         // String.replaceAll(string text, string oldValue, string newValue) -> string
         register_stdlib_function(
             codegen,
             "string.replaceAll",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_replace_all()
+            self.generate_replace_all(),
         )?;
-        
+
         // String.split(string text, string delimiter) -> array<string>
         register_stdlib_function(
             codegen,
             "string.split",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_split()
+            self.generate_split(),
         )?;
-        
+
         // String.join(array<string> parts, string separator) -> string
         register_stdlib_function(
             codegen,
             "string.join",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_join()
+            self.generate_join(),
         )?;
-        
+
         Ok(())
     }
-    
-    fn register_character_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+
+    fn register_character_operations(
+        &self,
+        codegen: &mut CodeGenerator,
+    ) -> Result<(), CompilerError> {
         // String.charAt(string text, integer index) -> string
         register_stdlib_function(
             codegen,
             "string.charAt",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_char_at()
+            self.generate_char_at(),
         )?;
-        
+
         // String.charCodeAt(string text, integer index) -> integer
         register_stdlib_function(
             codegen,
             "string.charCodeAt",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_char_code_at()
+            self.generate_char_code_at(),
         )?;
-        
+
         Ok(())
     }
-    
-    fn register_validation_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+
+    fn register_validation_operations(
+        &self,
+        codegen: &mut CodeGenerator,
+    ) -> Result<(), CompilerError> {
         // String.isEmpty(string text) -> boolean
         register_stdlib_function(
             codegen,
@@ -265,40 +277,43 @@ impl StringClass {
                 // Check if length == 0
                 Instruction::I32Const(0),
                 Instruction::I32Eq,
-            ]
+            ],
         )?;
-        
+
         // String.isBlank(string text) -> boolean
         register_stdlib_function(
             codegen,
             "string.isBlank",
             &[WasmType::I32],
             Some(WasmType::I32),
-            self.generate_is_blank()
+            self.generate_is_blank(),
         )?;
-        
+
         Ok(())
     }
-    
-    fn register_padding_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+
+    fn register_padding_operations(
+        &self,
+        codegen: &mut CodeGenerator,
+    ) -> Result<(), CompilerError> {
         // String.padStart(string text, integer length, string padString) -> string
         register_stdlib_function(
             codegen,
             "string.padStart",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_pad_start()
+            self.generate_pad_start(),
         )?;
-        
+
         // String.padEnd(string text, integer length, string padString) -> string
         register_stdlib_function(
             codegen,
             "string.padEnd",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_pad_end()
+            self.generate_pad_end(),
         )?;
-        
+
         Ok(())
     }
 
@@ -340,7 +355,7 @@ impl StringClass {
 
     fn generate_to_lower(&self) -> Vec<Instruction> {
         // Simplified toLowerCase implementation - returns original string to maintain spec compliance
-        // According to spec: Converts a string to lowercase  
+        // According to spec: Converts a string to lowercase
         // Parameters: string ptr
         // Returns: string (simplified to return original string)
         vec![
@@ -485,7 +500,7 @@ impl StringClass {
     fn generate_split(&self) -> Vec<Instruction> {
         // Simplified string.split implementation to maintain spec compliance
         // According to spec: Splits string by delimiter and returns array of strings
-        // Parameters: string_ptr, delimiter_ptr  
+        // Parameters: string_ptr, delimiter_ptr
         // Returns: array pointer (simplified to return first string to maintain valid stack)
         // In a full implementation, this would properly parse and split the string
         vec![
@@ -537,12 +552,14 @@ impl StringClass {
             Instruction::LocalSet(2), // save text_ptr
             Instruction::LocalGet(1), // index
             Instruction::LocalSet(3), // save index
-            
             // Get text length
             Instruction::LocalGet(2), // text_ptr
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
             Instruction::LocalSet(4), // save text_length
-            
             // Check if index is out of bounds (index < 0 OR index >= length)
             Instruction::LocalGet(3), // index
             Instruction::I32Const(0),
@@ -552,16 +569,20 @@ impl StringClass {
             Instruction::I32GeU,      // index >= text_length
             Instruction::I32Or,       // out_of_bounds = (index < 0) OR (index >= length)
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-                // Index is out of bounds, return 0
-                Instruction::I32Const(0),
+            // Index is out of bounds, return 0
+            Instruction::I32Const(0),
             Instruction::Else,
-                // Index is valid, load and return character code
-                Instruction::LocalGet(2), // text_ptr
-                Instruction::I32Const(4), // offset past length field
-                Instruction::I32Add,
-                Instruction::LocalGet(3), // index
-                Instruction::I32Add,      // character address = text_ptr + 4 + index
-                Instruction::I32Load8U(MemArg { offset: 0, align: 0, memory_index: 0 }), // load character as unsigned byte
+            // Index is valid, load and return character code
+            Instruction::LocalGet(2), // text_ptr
+            Instruction::I32Const(4), // offset past length field
+            Instruction::I32Add,
+            Instruction::LocalGet(3), // index
+            Instruction::I32Add,      // character address = text_ptr + 4 + index
+            Instruction::I32Load8U(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }), // load character as unsigned byte
             Instruction::End,
         ]
     }

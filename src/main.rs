@@ -1,17 +1,17 @@
 /*!
  * Clean Language Compiler - Main Application
- * 
+ *
  * Author: Ivan Pasco Lizarraga
  * Date: 17-07-2025
  * Website: https://www.cleanlanguage.dev
- * 
+ *
  * A modern, type-safe programming language that compiles to WebAssembly
  */
 
 use clap::{Parser, Subcommand};
+use clean_language_compiler::compile_with_file;
 use std::fs;
 use std::path::Path;
-use clean_language_compiler::compile_with_file;
 
 /// Clean Language Compiler and Test Runner
 #[derive(Parser, Debug)]
@@ -25,25 +25,25 @@ struct Args {
 enum Commands {
     /// Compile a Clean Language file to WebAssembly
     Compile {
-    /// Input file to compile
-    #[arg(short, long)]
-    input: String,
+        /// Input file to compile
+        #[arg(short, long)]
+        input: String,
 
-    /// Output file for the WebAssembly binary
-    #[arg(short, long)]
-    output: String,
+        /// Output file for the WebAssembly binary
+        #[arg(short, long)]
+        output: String,
 
-    /// Optimization level (0-3)
-    #[arg(short = 'l', long, default_value_t = 2)]
-    opt_level: u8,
+        /// Optimization level (0-3)
+        #[arg(short = 'l', long, default_value_t = 2)]
+        opt_level: u8,
 
-    /// Run tests during compilation
-    #[arg(long)]
-    test: bool,
+        /// Run tests during compilation
+        #[arg(long)]
+        test: bool,
 
-    /// Include tests in the compiled binary
-    #[arg(long)]
-    include_tests: bool,
+        /// Include tests in the compiled binary
+        #[arg(long)]
+        include_tests: bool,
     },
     /// Package management commands
     #[command(subcommand)]
@@ -206,54 +206,72 @@ enum PackageCommands {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    
+
     match args.command {
-        Commands::Compile { input, output, opt_level, test, include_tests } => {
-            handle_compile(input, output, opt_level, test, include_tests).await?
-        }
-        Commands::Package(package_cmd) => {
-            handle_package(package_cmd).await?
-        }
-        Commands::Test { verbose, dirs } => {
-            handle_test(verbose, dirs).await?
-        }
-        Commands::SimpleTest { verbose } => {
-            handle_simple_test(verbose).await?
-        }
-        Commands::ComprehensiveTest { verbose } => {
-            handle_comprehensive_test(verbose).await?
-        }
-        Commands::Debug { input, show_ast, check_style, analyze_errors } => {
-            handle_debug(input, show_ast, check_style, analyze_errors).await?
-        }
-        Commands::Lint { input, fix, errors_only } => {
-            handle_lint(input, fix, errors_only).await?
-        }
-        Commands::Parse { input, show_tree, recover_errors } => {
-            handle_parse(input, show_tree, recover_errors).await?
-        }
+        Commands::Compile {
+            input,
+            output,
+            opt_level,
+            test,
+            include_tests,
+        } => handle_compile(input, output, opt_level, test, include_tests).await?,
+        Commands::Package(package_cmd) => handle_package(package_cmd).await?,
+        Commands::Test { verbose, dirs } => handle_test(verbose, dirs).await?,
+        Commands::SimpleTest { verbose } => handle_simple_test(verbose).await?,
+        Commands::ComprehensiveTest { verbose } => handle_comprehensive_test(verbose).await?,
+        Commands::Debug {
+            input,
+            show_ast,
+            check_style,
+            analyze_errors,
+        } => handle_debug(input, show_ast, check_style, analyze_errors).await?,
+        Commands::Lint {
+            input,
+            fix,
+            errors_only,
+        } => handle_lint(input, fix, errors_only).await?,
+        Commands::Parse {
+            input,
+            show_tree,
+            recover_errors,
+        } => handle_parse(input, show_tree, recover_errors).await?,
     }
-    
+
     Ok(())
 }
 
-async fn handle_compile(input: String, output: String, _opt_level: u8, test: bool, include_tests: bool) -> Result<(), Box<dyn std::error::Error>> {
+async fn handle_compile(
+    input: String,
+    output: String,
+    _opt_level: u8,
+    test: bool,
+    include_tests: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("Compiling {input} to {output}");
-    
+
     let source = fs::read_to_string(&input)?;
-    
+
     // Try to parse the program to check for tests, with fallback to recovery parsing
-    use clean_language_compiler::parser::CleanParser;
     use clean_language_compiler::compile_with_recovery;
-    
+    use clean_language_compiler::parser::CleanParser;
+
     let (program, use_recovery) = match CleanParser::parse_program_with_file(&source, &input) {
         Ok(program) => {
-            println!("DEBUG: Parsed program with {} functions, {} classes", program.functions.len(), program.classes.len());
+            println!(
+                "DEBUG: Parsed program with {} functions, {} classes",
+                program.functions.len(),
+                program.classes.len()
+            );
             for (i, class) in program.classes.iter().enumerate() {
-                println!("DEBUG: Class {}: {} with {} methods", i, class.name, class.methods.len());
+                println!(
+                    "DEBUG: Class {}: {} with {} methods",
+                    i,
+                    class.name,
+                    class.methods.len()
+                );
             }
             (program, false)
-        },
+        }
         Err(_parse_error) => {
             // If regular parsing fails, try recovery parsing
             println!("🔄 Regular parsing failed, trying recovery compilation...");
@@ -267,7 +285,7 @@ async fn handle_compile(input: String, output: String, _opt_level: u8, test: boo
             }
         }
     };
-    
+
     // Run tests if requested
     if test && !program.tests.is_empty() {
         println!("\n🧪 Running tests...");
@@ -275,14 +293,17 @@ async fn handle_compile(input: String, output: String, _opt_level: u8, test: boo
     } else if test && program.tests.is_empty() {
         println!("⚠️  No tests found to run");
     }
-    
+
     // Use appropriate compilation method
     let wasm_binary = if use_recovery {
         println!("🔧 Using recovery compilation...");
         match compile_with_recovery(&source, &input) {
             Ok(binary) => binary,
             Err(errors) => {
-                eprintln!("❌ Recovery compilation failed with {} errors:", errors.len());
+                eprintln!(
+                    "❌ Recovery compilation failed with {} errors:",
+                    errors.len()
+                );
                 for (i, error) in errors.iter().enumerate() {
                     eprintln!("Error {}: {}", i + 1, error);
                 }
@@ -292,64 +313,75 @@ async fn handle_compile(input: String, output: String, _opt_level: u8, test: boo
     } else {
         compile_with_file(&source, &input)?
     };
-    
+
     if let Some(parent) = Path::new(&output).parent() {
         fs::create_dir_all(parent)?;
     }
-    
+
     fs::write(&output, wasm_binary)?;
-    
+
     println!("Successfully compiled to {output}");
-    
+
     if include_tests && !program.tests.is_empty() {
         println!("📝 Tests included in binary (accessible via --run-tests flag)");
     }
-    
+
     Ok(())
 }
 
 async fn handle_package(package_cmd: PackageCommands) -> Result<(), Box<dyn std::error::Error>> {
     use clean_language_compiler::package::PackageManager;
     use std::env;
-    
+
     let cache_dir = dirs::home_dir()
         .unwrap_or_else(|| env::current_dir().unwrap())
         .join(".clean")
         .join("packages");
-    
+
     let package_manager = PackageManager::new(cache_dir);
-    
+
     match package_cmd {
-        PackageCommands::Init { name, version, description } => {
+        PackageCommands::Init {
+            name,
+            version,
+            description,
+        } => {
             let current_dir = env::current_dir()?;
             let package_name = name.unwrap_or_else(|| {
-                current_dir.file_name()
+                current_dir
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("my-package")
                     .to_string()
             });
-            
+
             println!("📦 Initializing Clean Language package: {package_name}");
-            
+
             match package_manager.init_package(&current_dir, package_name, version, description) {
                 Ok(_) => println!("✅ Package initialized successfully!"),
                 Err(e) => eprintln!("❌ Failed to initialize package: {e}"),
             }
         }
-        PackageCommands::Add { package, version, dev, .. } => {
+        PackageCommands::Add {
+            package,
+            version,
+            dev,
+            ..
+        } => {
             let manifest_path = env::current_dir()?.join("package.clean.toml");
-            
+
             if !manifest_path.exists() {
                 eprintln!("❌ No package.clean.toml found. Run 'clean package init' first.");
                 return Ok(());
             }
-            
+
             let version_spec = version.unwrap_or_else(|| "latest".to_string());
-            
-            println!("📦 Adding {} dependency: {package} {version_spec}", 
+
+            println!(
+                "📦 Adding {} dependency: {package} {version_spec}",
                 if dev { "development" } else { "runtime" }
             );
-            
+
             match package_manager.add_dependency(&manifest_path, package, version_spec, dev) {
                 Ok(_) => println!("✅ Dependency added successfully!"),
                 Err(e) => eprintln!("❌ Failed to add dependency: {e}"),
@@ -357,14 +389,14 @@ async fn handle_package(package_cmd: PackageCommands) -> Result<(), Box<dyn std:
         }
         PackageCommands::Remove { package } => {
             let manifest_path = env::current_dir()?.join("package.clean.toml");
-            
+
             if !manifest_path.exists() {
                 eprintln!("❌ No package.clean.toml found.");
                 return Ok(());
             }
-            
+
             println!("📦 Removing dependency: {package}");
-            
+
             match package_manager.remove_dependency(&manifest_path, &package) {
                 Ok(_) => println!("✅ Dependency removed successfully!"),
                 Err(e) => eprintln!("❌ Failed to remove dependency: {e}"),
@@ -372,14 +404,14 @@ async fn handle_package(package_cmd: PackageCommands) -> Result<(), Box<dyn std:
         }
         PackageCommands::Install => {
             let manifest_path = env::current_dir()?.join("package.clean.toml");
-            
+
             if !manifest_path.exists() {
                 eprintln!("❌ No package.clean.toml found. Run 'clean package init' first.");
                 return Ok(());
             }
-            
+
             println!("📦 Installing dependencies...");
-            
+
             match PackageManager::load_manifest(&manifest_path) {
                 Ok(manifest) => {
                     if let Some(deps) = &manifest.dependencies {
@@ -401,23 +433,26 @@ async fn handle_package(package_cmd: PackageCommands) -> Result<(), Box<dyn std:
         }
         PackageCommands::List { .. } => {
             let manifest_path = env::current_dir()?.join("package.clean.toml");
-            
+
             if !manifest_path.exists() {
                 eprintln!("❌ No package.clean.toml found.");
                 return Ok(());
             }
-            
+
             match PackageManager::load_manifest(&manifest_path) {
                 Ok(manifest) => {
-                    println!("📦 Package: {}", format!("{} {}", manifest.package.name, manifest.package.version));
-                    
+                    println!(
+                        "📦 Package: {}",
+                        format!("{} {}", manifest.package.name, manifest.package.version)
+                    );
+
                     if let Some(deps) = &manifest.dependencies {
                         println!("\n📋 Runtime Dependencies:");
                         for (name, spec) in deps {
                             println!("  {name} {spec:?}");
                         }
                     }
-                    
+
                     if let Some(dev_deps) = &manifest.dev_dependencies {
                         println!("\n🔧 Development Dependencies:");
                         for (name, spec) in dev_deps {
@@ -450,15 +485,18 @@ async fn handle_package(package_cmd: PackageCommands) -> Result<(), Box<dyn std:
         }
         PackageCommands::Publish { .. } => {
             let manifest_path = env::current_dir()?.join("package.clean.toml");
-            
+
             if !manifest_path.exists() {
                 eprintln!("❌ No package.clean.toml found.");
                 return Ok(());
             }
-            
+
             match PackageManager::load_manifest(&manifest_path) {
                 Ok(manifest) => {
-                    println!("📤 Publishing {}...", format!("{} {}", manifest.package.name, manifest.package.version));
+                    println!(
+                        "📤 Publishing {}...",
+                        format!("{} {}", manifest.package.name, manifest.package.version)
+                    );
                     println!("📡 Package publishing not yet implemented");
                 }
                 Err(e) => eprintln!("❌ Failed to load manifest: {e}"),
@@ -476,13 +514,13 @@ async fn handle_test(verbose: bool, dirs: Vec<String>) -> Result<(), Box<dyn std
     if !dirs.is_empty() {
         println!("Additional test directories: {dirs:?}");
     }
-    
+
     let mut cmd = std::process::Command::new("cargo");
     cmd.arg("test");
     if verbose {
         cmd.arg("--verbose");
     }
-    
+
     let status = cmd.status()?;
     if !status.success() {
         eprintln!("✗ Some tests failed");
@@ -499,14 +537,17 @@ async fn handle_simple_test(verbose: bool) -> Result<(), Box<dyn std::error::Err
     if verbose {
         println!("Verbose output enabled");
     }
-    
+
     let test_source = "start()\n\tinteger x = 42\n\tprint(x)\n";
-    
+
     match compile_with_file(test_source, "simple_test.clean") {
         Ok(wasm_binary) => {
-            println!("✓ Simple test passed: {} bytes of WASM generated", wasm_binary.len());
+            println!(
+                "✓ Simple test passed: {} bytes of WASM generated",
+                wasm_binary.len()
+            );
             Ok(())
-        },
+        }
         Err(error) => {
             eprintln!("✗ Simple test failed: {error}");
             Err(error.into())
@@ -519,29 +560,35 @@ async fn handle_comprehensive_test(verbose: bool) -> Result<(), Box<dyn std::err
     if verbose {
         println!("Verbose output enabled");
     }
-    
+
     let test_cases = vec![
         ("Basic", "start()\n\tinteger x = 42\n\tprint(x)\n"),
-        ("Arithmetic", "start()\n\tinteger x = 1 + 2 * 3\n\tprint(x)\n"),
-        ("Variables", "start()\n\tinteger x = 5\n\tinteger y = x + 1\n\tprint(y)\n"),
+        (
+            "Arithmetic",
+            "start()\n\tinteger x = 1 + 2 * 3\n\tprint(x)\n",
+        ),
+        (
+            "Variables",
+            "start()\n\tinteger x = 5\n\tinteger y = x + 1\n\tprint(y)\n",
+        ),
     ];
-    
+
     let mut passed = 0;
     let total = test_cases.len();
-    
+
     for (name, source) in test_cases {
         print!("Testing {name}: ");
         match compile_with_file(source, &format!("{}_test.clean", name.to_lowercase())) {
             Ok(wasm_binary) => {
                 println!("✓ {} bytes", wasm_binary.len());
                 passed += 1;
-            },
+            }
             Err(error) => {
                 println!("✗ {error}");
             }
         }
     }
-    
+
     println!("Results: {passed}/{total} tests passed");
     if passed == total {
         println!("🎉 All comprehensive tests passed!");
@@ -552,9 +599,14 @@ async fn handle_comprehensive_test(verbose: bool) -> Result<(), Box<dyn std::err
     }
 }
 
-async fn handle_debug(input: String, show_ast: bool, check_style: bool, analyze_errors: bool) -> Result<(), Box<dyn std::error::Error>> {
+async fn handle_debug(
+    input: String,
+    show_ast: bool,
+    check_style: bool,
+    analyze_errors: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("🔍 Debugging Clean Language file: {input}\n");
-    
+
     let source = match fs::read_to_string(&input) {
         Ok(content) => content,
         Err(e) => {
@@ -562,16 +614,16 @@ async fn handle_debug(input: String, show_ast: bool, check_style: bool, analyze_
             return Ok(());
         }
     };
-    
+
     use clean_language_compiler::debug::DebugUtils;
     use clean_language_compiler::parser::CleanParser;
-    
+
     let parse_result = CleanParser::parse_program_with_file(&source, &input);
-    let warnings = Vec::new(); 
-    
+    let warnings = Vec::new();
+
     let debug_report = DebugUtils::create_debug_report(&source, &input, &parse_result, &warnings);
     println!("{debug_report}");
-    
+
     match &parse_result {
         Ok(program) => {
             if show_ast {
@@ -589,7 +641,7 @@ async fn handle_debug(input: String, show_ast: bool, check_style: bool, analyze_
             }
         }
     }
-    
+
     if check_style {
         println!("\n=== Style Validation ===");
         let style_issues = DebugUtils::validate_style(&source);
@@ -605,9 +657,13 @@ async fn handle_debug(input: String, show_ast: bool, check_style: bool, analyze_
     Ok(())
 }
 
-async fn handle_lint(input: String, fix: bool, errors_only: bool) -> Result<(), Box<dyn std::error::Error>> {
+async fn handle_lint(
+    input: String,
+    fix: bool,
+    errors_only: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("🧹 Linting: {input}");
-    
+
     let path = Path::new(&input);
     let files_to_lint = if path.is_file() {
         vec![input.clone()]
@@ -629,21 +685,21 @@ async fn handle_lint(input: String, fix: bool, errors_only: bool) -> Result<(), 
         eprintln!("❌ Error: '{input}' is not a valid file or directory");
         return Ok(());
     };
-    
+
     if files_to_lint.is_empty() {
         println!("No Clean Language files found to lint");
         return Ok(());
     }
-    
+
     use clean_language_compiler::debug::DebugUtils;
     use clean_language_compiler::parser::CleanParser;
-    
+
     let mut total_issues = 0;
     let mut total_errors = 0;
-    
+
     for file_path in &files_to_lint {
         println!("\n📄 Linting: {file_path}");
-        
+
         let source = match fs::read_to_string(file_path) {
             Ok(content) => content,
             Err(e) => {
@@ -651,7 +707,7 @@ async fn handle_lint(input: String, fix: bool, errors_only: bool) -> Result<(), 
                 continue;
             }
         };
-        
+
         let parse_result = CleanParser::parse_program_with_file(&source, file_path);
         if let Err(error) = &parse_result {
             total_errors += 1;
@@ -660,7 +716,7 @@ async fn handle_lint(input: String, fix: bool, errors_only: bool) -> Result<(), 
                 println!("     {error}");
             }
         }
-        
+
         let style_issues = DebugUtils::validate_style(&source);
         if !style_issues.is_empty() {
             total_issues += style_issues.len();
@@ -671,26 +727,30 @@ async fn handle_lint(input: String, fix: bool, errors_only: bool) -> Result<(), 
                 }
             }
         }
-        
+
         if parse_result.is_ok() && style_issues.is_empty() {
             println!("  ✅ No issues found");
         }
     }
-    
+
     println!("\n=== Lint Summary ===");
     println!("Files checked: {}", files_to_lint.len());
     println!("Compilation errors: {total_errors}");
     println!("Style issues: {total_issues}");
-    
+
     if fix {
         println!("Note: Automatic fixing is not yet implemented");
     }
     Ok(())
 }
 
-async fn handle_parse(input: String, show_tree: bool, recover_errors: bool) -> Result<(), Box<dyn std::error::Error>> {
+async fn handle_parse(
+    input: String,
+    show_tree: bool,
+    recover_errors: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("📝 Parsing file: {input}");
-    
+
     let source = match fs::read_to_string(&input) {
         Ok(content) => content,
         Err(e) => {
@@ -698,27 +758,28 @@ async fn handle_parse(input: String, show_tree: bool, recover_errors: bool) -> R
             return Ok(());
         }
     };
-    
-    use clean_language_compiler::parser::CleanParser;
+
     use clean_language_compiler::debug::DebugUtils;
-    
+    use clean_language_compiler::parser::CleanParser;
+
     if recover_errors {
         println!("🔄 Using enhanced error recovery mode...\n");
-        
+
         // Use the enhanced error recovery parser
-        let mut recovery_parser = clean_language_compiler::parser::ErrorRecoveringParser::new(&source, &input);
+        let mut recovery_parser =
+            clean_language_compiler::parser::ErrorRecoveringParser::new(&source, &input);
         recovery_parser = recovery_parser.with_max_errors(50); // Allow up to 50 errors
-        
+
         match recovery_parser.parse_with_recovery(&source) {
             Ok(program) => {
                 println!("✅ Parsing succeeded with error recovery!");
-                
+
                 if show_tree {
                     println!("\n🌳 AST Structure:");
                     println!("{}", "═".repeat(50));
                     DebugUtils::print_ast(&program);
                 }
-                
+
                 // Check if we collected any warnings during recovery
                 if !recovery_parser.warnings.is_empty() {
                     println!("\n⚠️  Warnings collected during parsing:");
@@ -726,9 +787,12 @@ async fn handle_parse(input: String, show_tree: bool, recover_errors: bool) -> R
                         println!("  • {warning}");
                     }
                 }
-                
+
                 println!("\n📊 Recovery Statistics:");
-                println!("  • Recovery points identified: {}", recovery_parser.recovery_points.len());
+                println!(
+                    "  • Recovery points identified: {}",
+                    recovery_parser.recovery_points.len()
+                );
                 println!("  • Warnings: {}", recovery_parser.warnings.len());
                 println!("  • Functions parsed: {}", program.functions.len());
                 if program.start_function.is_some() {
@@ -738,15 +802,15 @@ async fn handle_parse(input: String, show_tree: bool, recover_errors: bool) -> R
             }
             Err(errors) => {
                 println!("❌ Parsing failed with {} error(s):\n", errors.len());
-                
+
                 // Generate comprehensive error report
                 let error_report = DebugUtils::create_error_report(&source, &errors);
                 println!("{error_report}");
-                
+
                 // If partial parsing was successful, show what we recovered
                 if !recovery_parser.errors.is_empty() && errors.len() < 20 {
                     println!("\n🔧 Attempting to show recovered partial AST...");
-                    
+
                     // Try to create a minimal program from whatever we could parse
                     let partial_program = clean_language_compiler::ast::Program {
                         imports: Vec::new(),
@@ -755,7 +819,7 @@ async fn handle_parse(input: String, show_tree: bool, recover_errors: bool) -> R
                         start_function: None,
                         tests: Vec::new(),
                     };
-                    
+
                     if show_tree {
                         DebugUtils::print_ast(&partial_program);
                     }
@@ -764,7 +828,7 @@ async fn handle_parse(input: String, show_tree: bool, recover_errors: bool) -> R
         }
     } else {
         println!("🔄 Using standard parsing mode...\n");
-        
+
         match CleanParser::parse_program_with_file(&source, &input) {
             Ok(program) => {
                 println!("✅ Parsing succeeded!");
@@ -776,12 +840,12 @@ async fn handle_parse(input: String, show_tree: bool, recover_errors: bool) -> R
             Err(error) => {
                 eprintln!("❌ Parsing failed:");
                 println!("{error}");
-                
+
                 // Provide basic suggestions even in standard mode
                 println!("\n💡 Suggestions:");
                 println!("  • Try using --recover-errors for detailed error analysis");
                 println!("  • Check the Clean Language syntax documentation");
-                
+
                 // Basic error analysis
                 let suggestions = DebugUtils::suggest_error_fixes(&source, &[error]);
                 for suggestion in suggestions {
@@ -790,26 +854,30 @@ async fn handle_parse(input: String, show_tree: bool, recover_errors: bool) -> R
             }
         }
     }
-    
+
     Ok(())
 }
 
-fn run_tests(program: &clean_language_compiler::ast::Program, file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    
+fn run_tests(
+    program: &clean_language_compiler::ast::Program,
+    file_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut passed = 0;
     let mut failed = 0;
-    
+
     println!("Running tests for {file_path}...\n");
-    
+
     for (i, test) in program.tests.iter().enumerate() {
-        let test_name = test.description.as_ref()
+        let test_name = test
+            .description
+            .as_ref()
             .map(|d| d.clone())
             .unwrap_or_else(|| format!("Test #{}", i + 1));
-        
+
         // For now, we'll implement a basic test runner
         // In a full implementation, this would compile and run the test expression
         let test_result = evaluate_test_expression(&test.test_expression, &test.expected_value);
-        
+
         match test_result {
             Ok(true) => {
                 println!("✅ {test_name}: PASS");
@@ -827,22 +895,31 @@ fn run_tests(program: &clean_language_compiler::ast::Program, file_path: &str) -
             }
         }
     }
-    
-    println!("\nTest Results: {passed} passed, {failed} failed, {total} total", total = passed + failed);
-    
+
+    println!(
+        "\nTest Results: {passed} passed, {failed} failed, {total} total",
+        total = passed + failed
+    );
+
     if failed > 0 {
-        println!("Note: {} test(s) failed but not treating as critical error", failed);
+        println!(
+            "Note: {} test(s) failed but not treating as critical error",
+            failed
+        );
         // Don't return error for test failures - just report them
     }
-    
+
     Ok(())
 }
 
-fn evaluate_test_expression(test_expr: &clean_language_compiler::ast::Expression, expected: &clean_language_compiler::ast::Expression) -> Result<bool, String> {
+fn evaluate_test_expression(
+    test_expr: &clean_language_compiler::ast::Expression,
+    expected: &clean_language_compiler::ast::Expression,
+) -> Result<bool, String> {
     use clean_language_compiler::ast::{Expression, Value};
     // This is a simplified test evaluator
     // In a full implementation, this would compile the expressions to WASM and execute them
-    
+
     match (test_expr, expected) {
         (Expression::Literal(Value::Integer(a)), Expression::Literal(Value::Integer(b))) => {
             Ok(a == b)
@@ -862,4 +939,4 @@ fn evaluate_test_expression(test_expr: &clean_language_compiler::ast::Expression
             Ok(format!("{test_expr:?}") == format!("{expected:?}"))
         }
     }
-} 
+}

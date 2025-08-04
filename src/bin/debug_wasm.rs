@@ -40,7 +40,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("📤 Export Section:");
                 for export in reader.into_iter() {
                     let exp = export?;
-                    println!("  Export '{}': {:?} index {}", exp.name, exp.kind, exp.index);
+                    println!(
+                        "  Export '{}': {:?} index {}",
+                        exp.name, exp.kind, exp.index
+                    );
                     if exp.name == "start" {
                         start_function_index = Some(exp.index);
                     }
@@ -51,12 +54,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Payload::CodeSectionEntry(body) => {
                 println!("  Function body: {} bytes", body.range().len());
-                
+
                 // Get function locals
                 let locals_reader = body.get_locals_reader()?;
                 let locals: Vec<_> = locals_reader.into_iter().collect::<Result<Vec<_>, _>>()?;
                 println!("    Locals: {:?}", locals);
-                
+
                 // Get operators
                 let ops_reader = body.get_operators_reader()?;
                 let mut ops = Vec::new();
@@ -108,4 +111,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-} 
+}

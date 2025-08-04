@@ -1,11 +1,11 @@
 use crate::codegen::CodeGenerator;
-use crate::types::WasmType;
 use crate::error::CompilerError;
-use wasm_encoder::{Instruction, BlockType, ValType};
-use crate::stdlib::register_stdlib_function;
-use std::rc::Rc;
-use std::cell::RefCell;
 use crate::stdlib::memory::MemoryManager;
+use crate::stdlib::register_stdlib_function;
+use crate::types::WasmType;
+use std::cell::RefCell;
+use std::rc::Rc;
+use wasm_encoder::{BlockType, Instruction, ValType};
 
 /// Conditional expressions implementation for Clean Language
 /// Enables if-then-else ternary-style conditionals in expressions
@@ -27,14 +27,17 @@ impl ConditionalManager {
     }
 
     /// Register core conditional expression functions
-    fn register_conditional_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+    fn register_conditional_functions(
+        &self,
+        codegen: &mut CodeGenerator,
+    ) -> Result<(), CompilerError> {
         // Integer conditional: if condition then value1 else value2
         register_stdlib_function(
             codegen,
             "conditional.integer",
             &[WasmType::I32, WasmType::I32, WasmType::I32], // condition, then_value, else_value
-            Some(WasmType::I32), // result
-            self.generate_integer_conditional()
+            Some(WasmType::I32),                            // result
+            self.generate_integer_conditional(),
         )?;
 
         // Number conditional: if condition then value1 else value2
@@ -42,8 +45,8 @@ impl ConditionalManager {
             codegen,
             "conditional.number",
             &[WasmType::I32, WasmType::F64, WasmType::F64], // condition, then_value, else_value
-            Some(WasmType::F64), // result
-            self.generate_number_conditional()
+            Some(WasmType::F64),                            // result
+            self.generate_number_conditional(),
         )?;
 
         // String conditional: if condition then string1 else string2
@@ -51,8 +54,8 @@ impl ConditionalManager {
             codegen,
             "conditional.string",
             &[WasmType::I32, WasmType::I32, WasmType::I32], // condition, then_ptr, else_ptr
-            Some(WasmType::I32), // result_ptr
-            self.generate_string_conditional()
+            Some(WasmType::I32),                            // result_ptr
+            self.generate_string_conditional(),
         )?;
 
         // Boolean conditional: if condition then bool1 else bool2
@@ -60,62 +63,65 @@ impl ConditionalManager {
             codegen,
             "conditional.boolean",
             &[WasmType::I32, WasmType::I32, WasmType::I32], // condition, then_bool, else_bool
-            Some(WasmType::I32), // result
-            self.generate_boolean_conditional()
+            Some(WasmType::I32),                            // result
+            self.generate_boolean_conditional(),
         )?;
 
         Ok(())
     }
 
     /// Register comparison functions that return boolean conditions
-    fn register_comparison_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+    fn register_comparison_functions(
+        &self,
+        codegen: &mut CodeGenerator,
+    ) -> Result<(), CompilerError> {
         // Integer comparisons
         register_stdlib_function(
             codegen,
             "compare.integer.equal",
             &[WasmType::I32, WasmType::I32], // value1, value2
-            Some(WasmType::I32), // boolean result
-            self.generate_integer_equal()
+            Some(WasmType::I32),             // boolean result
+            self.generate_integer_equal(),
         )?;
 
         register_stdlib_function(
             codegen,
             "compare.integer.notEqual",
             &[WasmType::I32, WasmType::I32], // value1, value2
-            Some(WasmType::I32), // boolean result
-            self.generate_integer_not_equal()
+            Some(WasmType::I32),             // boolean result
+            self.generate_integer_not_equal(),
         )?;
 
         register_stdlib_function(
             codegen,
             "compare.integer.lessThan",
             &[WasmType::I32, WasmType::I32], // value1, value2
-            Some(WasmType::I32), // boolean result
-            self.generate_integer_less_than()
+            Some(WasmType::I32),             // boolean result
+            self.generate_integer_less_than(),
         )?;
 
         register_stdlib_function(
             codegen,
             "compare.integer.greaterThan",
             &[WasmType::I32, WasmType::I32], // value1, value2
-            Some(WasmType::I32), // boolean result
-            self.generate_integer_greater_than()
+            Some(WasmType::I32),             // boolean result
+            self.generate_integer_greater_than(),
         )?;
 
         register_stdlib_function(
             codegen,
             "compare.integer.lessEqual",
             &[WasmType::I32, WasmType::I32], // value1, value2
-            Some(WasmType::I32), // boolean result
-            self.generate_integer_less_equal()
+            Some(WasmType::I32),             // boolean result
+            self.generate_integer_less_equal(),
         )?;
 
         register_stdlib_function(
             codegen,
             "compare.integer.greaterEqual",
             &[WasmType::I32, WasmType::I32], // value1, value2
-            Some(WasmType::I32), // boolean result
-            self.generate_integer_greater_equal()
+            Some(WasmType::I32),             // boolean result
+            self.generate_integer_greater_equal(),
         )?;
 
         // Number comparisons
@@ -123,24 +129,24 @@ impl ConditionalManager {
             codegen,
             "compare.number.equal",
             &[WasmType::F64, WasmType::F64], // value1, value2
-            Some(WasmType::I32), // boolean result
-            self.generate_number_equal()
+            Some(WasmType::I32),             // boolean result
+            self.generate_number_equal(),
         )?;
 
         register_stdlib_function(
             codegen,
             "compare.number.lessThan",
             &[WasmType::F64, WasmType::F64], // value1, value2
-            Some(WasmType::I32), // boolean result
-            self.generate_number_less_than()
+            Some(WasmType::I32),             // boolean result
+            self.generate_number_less_than(),
         )?;
 
         register_stdlib_function(
             codegen,
             "compare.number.greaterThan",
             &[WasmType::F64, WasmType::F64], // value1, value2
-            Some(WasmType::I32), // boolean result
-            self.generate_number_greater_than()
+            Some(WasmType::I32),             // boolean result
+            self.generate_number_greater_than(),
         )?;
 
         Ok(())
@@ -153,8 +159,8 @@ impl ConditionalManager {
             codegen,
             "logical.and",
             &[WasmType::I32, WasmType::I32], // condition1, condition2
-            Some(WasmType::I32), // boolean result
-            self.generate_logical_and()
+            Some(WasmType::I32),             // boolean result
+            self.generate_logical_and(),
         )?;
 
         // Logical OR
@@ -162,17 +168,17 @@ impl ConditionalManager {
             codegen,
             "logical.or",
             &[WasmType::I32, WasmType::I32], // condition1, condition2
-            Some(WasmType::I32), // boolean result
-            self.generate_logical_or()
+            Some(WasmType::I32),             // boolean result
+            self.generate_logical_or(),
         )?;
 
         // Logical NOT
         register_stdlib_function(
             codegen,
             "logical.not",
-            &[WasmType::I32], // condition
+            &[WasmType::I32],    // condition
             Some(WasmType::I32), // boolean result
-            self.generate_logical_not()
+            self.generate_logical_not(),
         )?;
 
         Ok(())
@@ -184,11 +190,11 @@ impl ConditionalManager {
             // Parameters: condition (0), then_value (1), else_value (2)
             Instruction::LocalGet(0), // condition
             Instruction::If(BlockType::Result(ValType::I32)),
-                // If condition is true, return then_value
-                Instruction::LocalGet(1),
+            // If condition is true, return then_value
+            Instruction::LocalGet(1),
             Instruction::Else,
-                // If condition is false, return else_value
-                Instruction::LocalGet(2),
+            // If condition is false, return else_value
+            Instruction::LocalGet(2),
             Instruction::End,
         ]
     }
@@ -199,11 +205,11 @@ impl ConditionalManager {
             // Parameters: condition (0), then_value (1), else_value (2)
             Instruction::LocalGet(0), // condition
             Instruction::If(BlockType::Result(ValType::F64)),
-                // If condition is true, return then_value
-                Instruction::LocalGet(1),
+            // If condition is true, return then_value
+            Instruction::LocalGet(1),
             Instruction::Else,
-                // If condition is false, return else_value
-                Instruction::LocalGet(2),
+            // If condition is false, return else_value
+            Instruction::LocalGet(2),
             Instruction::End,
         ]
     }
@@ -214,11 +220,11 @@ impl ConditionalManager {
             // Parameters: condition (0), then_ptr (1), else_ptr (2)
             Instruction::LocalGet(0), // condition
             Instruction::If(BlockType::Result(ValType::I32)),
-                // If condition is true, return then_ptr
-                Instruction::LocalGet(1),
+            // If condition is true, return then_ptr
+            Instruction::LocalGet(1),
             Instruction::Else,
-                // If condition is false, return else_ptr
-                Instruction::LocalGet(2),
+            // If condition is false, return else_ptr
+            Instruction::LocalGet(2),
             Instruction::End,
         ]
     }
@@ -229,11 +235,11 @@ impl ConditionalManager {
             // Parameters: condition (0), then_bool (1), else_bool (2)
             Instruction::LocalGet(0), // condition
             Instruction::If(BlockType::Result(ValType::I32)),
-                // If condition is true, return then_bool
-                Instruction::LocalGet(1),
+            // If condition is true, return then_bool
+            Instruction::LocalGet(1),
             Instruction::Else,
-                // If condition is false, return else_bool
-                Instruction::LocalGet(2),
+            // If condition is false, return else_bool
+            Instruction::LocalGet(2),
             Instruction::End,
         ]
     }
@@ -369,7 +375,7 @@ mod tests {
     fn test_conditional_manager_creation() {
         let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(10))));
         let conditional_manager = ConditionalManager::new(memory_manager.clone());
-        
+
         // Test that manager is created successfully
         assert!(conditional_manager.memory_manager.borrow().data.len() > 0);
     }
@@ -378,10 +384,10 @@ mod tests {
     fn test_integer_conditional_generation() {
         let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(10))));
         let conditional_manager = ConditionalManager::new(memory_manager);
-        
+
         let instructions = conditional_manager.generate_integer_conditional();
         assert!(!instructions.is_empty());
-        
+
         // Check that it contains the expected if-else structure
         assert!(matches!(instructions[1], Instruction::If(_)));
         assert!(matches!(instructions[3], Instruction::Else));
@@ -392,11 +398,11 @@ mod tests {
     fn test_comparison_generation() {
         let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(10))));
         let conditional_manager = ConditionalManager::new(memory_manager);
-        
+
         let eq_instructions = conditional_manager.generate_integer_equal();
         assert!(!eq_instructions.is_empty());
         assert!(matches!(eq_instructions[2], Instruction::I32Eq));
-        
+
         let lt_instructions = conditional_manager.generate_integer_less_than();
         assert!(!lt_instructions.is_empty());
         assert!(matches!(lt_instructions[2], Instruction::I32LtS));
@@ -406,11 +412,11 @@ mod tests {
     fn test_logical_operations() {
         let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(10))));
         let conditional_manager = ConditionalManager::new(memory_manager);
-        
+
         let and_instructions = conditional_manager.generate_logical_and();
         assert!(!and_instructions.is_empty());
         assert!(matches!(and_instructions[2], Instruction::I32And));
-        
+
         let not_instructions = conditional_manager.generate_logical_not();
         assert!(!not_instructions.is_empty());
         assert!(matches!(not_instructions[1], Instruction::I32Eqz));

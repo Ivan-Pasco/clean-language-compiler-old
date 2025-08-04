@@ -67,4 +67,4 @@ impl TypeConstraint for InheritanceConstraint {
         }
         false
     }
-} 
+}

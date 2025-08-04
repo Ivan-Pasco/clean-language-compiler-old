@@ -1,11 +1,9 @@
-use wasm_encoder::{
-    Instruction, MemArg, MemorySection, MemoryType,
-};
-use crate::error::{CompilerError};
 use crate::codegen::CodeGenerator;
+use crate::error::CompilerError;
+use crate::stdlib::register_stdlib_function;
 use crate::types::WasmType;
 use std::collections::HashMap;
-use crate::stdlib::register_stdlib_function;
+use wasm_encoder::{Instruction, MemArg, MemorySection, MemoryType};
 
 // Type ID constants for memory management
 pub const TYPE_ID_UNKNOWN: u32 = 0;
@@ -28,7 +26,7 @@ struct MemoryBlock {
     size: usize,
     ref_count: usize,
     is_root: bool,
-    type_id: u32, // Type identifier for runtime type checking
+    type_id: u32,        // Type identifier for runtime type checking
     next: Option<usize>, // For free list
     is_free: bool,
 }
@@ -43,7 +41,6 @@ pub struct MemoryManager {
     free_list: Option<usize>,
     pub data: Vec<u8>,
     total_allocated: usize,
-
 }
 
 impl MemoryManager {
@@ -63,7 +60,6 @@ impl MemoryManager {
             free_list: None,
             data: vec![0; initial_size],
             total_allocated: 0,
-
         }
     }
 
@@ -94,73 +90,85 @@ impl MemoryManager {
 
     pub fn allocate(&mut self, size: usize, type_id: u32) -> Result<usize, CompilerError> {
         let aligned_size = Self::align_size(size + HEADER_SIZE);
-        
+
         // Try to find a free block first
         if let Some(ptr) = self.find_free_block(aligned_size) {
             let block = self.allocations.remove(&ptr).unwrap();
             let remaining_size = block.size - aligned_size;
-            
+
             if remaining_size >= MIN_ALLOCATION {
                 // Split the block
                 let new_ptr = ptr + aligned_size;
-                self.allocations.insert(new_ptr, MemoryBlock {
-                    size: remaining_size,
-                    ref_count: 0,
-                    is_root: false,
-                    type_id: 0,
-                    next: block.next,
-                    is_free: false,
-                });
+                self.allocations.insert(
+                    new_ptr,
+                    MemoryBlock {
+                        size: remaining_size,
+                        ref_count: 0,
+                        is_root: false,
+                        type_id: 0,
+                        next: block.next,
+                        is_free: false,
+                    },
+                );
                 self.free_list = Some(new_ptr);
             } else {
                 self.free_list = block.next;
             }
-            
+
             // Initialize the allocated block
-            self.allocations.insert(ptr, MemoryBlock {
+            self.allocations.insert(
+                ptr,
+                MemoryBlock {
+                    size: aligned_size,
+                    ref_count: 1,
+                    is_root: false,
+                    type_id,
+                    next: None,
+                    is_free: false,
+                },
+            );
+
+            self.total_allocated += aligned_size;
+            return Ok(ptr + HEADER_SIZE);
+        }
+
+        // Need to grow memory
+        let ptr = self.heap_start;
+        if ptr + aligned_size > self.data.len() {
+            let pages_needed = ((ptr + aligned_size - self.data.len()) + PAGE_SIZE - 1) / PAGE_SIZE;
+
+            if let Some(max) = self.max_pages {
+                if self.current_pages + pages_needed as u32 > max {
+                    return Err(CompilerError::memory_error(
+                        format!(
+                            "Cannot allocate {} bytes: would exceed maximum memory pages ({} > {})",
+                            size,
+                            self.current_pages + pages_needed as u32,
+                            max
+                        ),
+                        Some("Try allocating a smaller amount of memory".to_string()),
+                        None,
+                    ));
+                }
+            }
+
+            self.current_pages += pages_needed as u32;
+            self.data
+                .resize(self.data.len() + pages_needed * PAGE_SIZE, 0);
+        }
+
+        // Initialize the new block
+        self.allocations.insert(
+            ptr,
+            MemoryBlock {
                 size: aligned_size,
                 ref_count: 1,
                 is_root: false,
                 type_id,
                 next: None,
                 is_free: false,
-            });
-            
-            self.total_allocated += aligned_size;
-            return Ok(ptr + HEADER_SIZE);
-        }
-        
-        // Need to grow memory
-        let ptr = self.heap_start;
-        if ptr + aligned_size > self.data.len() {
-            let pages_needed = ((ptr + aligned_size - self.data.len()) + PAGE_SIZE - 1) / PAGE_SIZE;
-            
-            if let Some(max) = self.max_pages {
-                if self.current_pages + pages_needed as u32 > max {
-                    return Err(CompilerError::memory_error(
-                        format!(
-                            "Cannot allocate {} bytes: would exceed maximum memory pages ({} > {})",
-                            size, self.current_pages + pages_needed as u32, max
-                        ), 
-                        Some("Try allocating a smaller amount of memory".to_string()), 
-                        None
-                    ));
-                }
-            }
-
-            self.current_pages += pages_needed as u32;
-            self.data.resize(self.data.len() + pages_needed * PAGE_SIZE, 0);
-        }
-
-        // Initialize the new block
-        self.allocations.insert(ptr, MemoryBlock {
-            size: aligned_size,
-            ref_count: 1,
-            is_root: false,
-            type_id,
-            next: None,
-            is_free: false,
-        });
+            },
+        );
 
         self.heap_start = ptr + aligned_size;
         self.total_allocated += aligned_size;
@@ -169,7 +177,7 @@ impl MemoryManager {
 
     pub fn deallocate(&mut self, ptr: usize) -> Result<(), CompilerError> {
         let header_ptr = ptr - HEADER_SIZE;
-        
+
         // Get the block's reference count without holding a mutable borrow
         let ref_count = match self.allocations.get(&header_ptr) {
             Some(block) => block.ref_count,
@@ -177,34 +185,34 @@ impl MemoryManager {
                 return Err(CompilerError::memory_error(
                     format!("Invalid pointer: {}", ptr),
                     Some("Ensure pointer is within valid memory range".to_string()),
-                    None
+                    None,
                 ));
             }
         };
-        
+
         // Check if there are active references
         if ref_count > 0 {
             return Err(CompilerError::memory_error(
                 "Cannot deallocate block with active references".to_string(),
                 Some("Wait until all references are released".to_string()),
-                None
+                None,
             ));
         }
-        
+
         // Remove block, update it, and reinsert
         if let Some(mut block) = self.allocations.remove(&header_ptr) {
             // Add to free list
             block.next = self.free_list;
             self.free_list = Some(header_ptr);
             self.total_allocated -= block.size;
-            
+
             // Mark as free
             block.is_free = true;
             self.allocations.insert(header_ptr, block);
-            
+
             // Try to coalesce adjacent free blocks
             self.coalesce_free_blocks();
-            
+
             Ok(())
         } else {
             // Already checked above, this shouldn't happen
@@ -221,7 +229,7 @@ impl MemoryManager {
             Err(CompilerError::memory_error(
                 format!("Invalid pointer: {}", ptr),
                 Some("Ensure pointer is within valid memory range".to_string()),
-                None
+                None,
             ))
         }
     }
@@ -237,14 +245,14 @@ impl MemoryManager {
             Err(CompilerError::memory_error(
                 format!("Invalid pointer: {}", ptr),
                 Some("Ensure pointer is within valid memory range".to_string()),
-                None
+                None,
             ))
         }
     }
 
     pub fn release(&mut self, ptr: usize) -> Result<(), CompilerError> {
         let header_ptr = ptr - HEADER_SIZE;
-        
+
         // Get the block's reference count and is_root status without holding a mutable borrow
         let (ref_count, is_root) = match self.allocations.get(&header_ptr) {
             Some(block) => (block.ref_count, block.is_root),
@@ -252,17 +260,17 @@ impl MemoryManager {
                 return Err(CompilerError::memory_error(
                     format!("Invalid pointer for release: {}", ptr),
                     Some("Ensure pointer is within valid memory range".to_string()),
-                    None
+                    None,
                 ));
             }
         };
-        
+
         // Now perform the operation
         if ref_count > 0 {
             // Remove the block, modify it, and reinsert
             if let Some(mut block) = self.allocations.remove(&header_ptr) {
                 block.ref_count -= 1;
-                
+
                 // If reference count reaches 0 and not a root object, free it
                 if block.ref_count == 0 && !is_root {
                     // Mark as free and add to free list
@@ -270,10 +278,10 @@ impl MemoryManager {
                     block.next = self.free_list;
                     self.free_list = Some(header_ptr);
                     self.total_allocated -= block.size;
-                    
+
                     // Add block back to allocations
                     self.allocations.insert(header_ptr, block);
-                    
+
                     // Try to coalesce adjacent free blocks
                     self.coalesce_free_blocks();
                 } else {
@@ -296,7 +304,7 @@ impl MemoryManager {
             Err(CompilerError::memory_error(
                 format!("Invalid pointer: {}", ptr),
                 Some("Ensure pointer is within valid memory range".to_string()),
-                None
+                None,
             ))
         }
     }
@@ -306,14 +314,14 @@ impl MemoryManager {
             return Err(CompilerError::memory_error(
                 format!("Invalid pointer: {}", ptr),
                 Some("Ensure pointer is within valid memory range".to_string()),
-                None
+                None,
             ));
         }
         if ptr + 4 > self.data.len() {
             return Err(CompilerError::memory_error(
                 "Memory access out of bounds".to_string(),
                 Some("Ensure memory access is within allocated range".to_string()),
-                None
+                None,
             ));
         }
         self.data[ptr..ptr + 4].copy_from_slice(&value.to_le_bytes());
@@ -325,14 +333,14 @@ impl MemoryManager {
             return Err(CompilerError::memory_error(
                 format!("Invalid pointer: {}", ptr),
                 Some("Ensure pointer is within valid memory range".to_string()),
-                None
+                None,
             ));
         }
         if ptr + 1 > self.data.len() {
             return Err(CompilerError::memory_error(
                 "Memory access out of bounds".to_string(),
                 Some("Ensure memory access is within allocated range".to_string()),
-                None
+                None,
             ));
         }
         self.data[ptr] = value;
@@ -344,14 +352,14 @@ impl MemoryManager {
             return Err(CompilerError::memory_error(
                 format!("Invalid pointer: {}", ptr),
                 Some("Ensure pointer is within valid memory range".to_string()),
-                None
+                None,
             ));
         }
         if ptr + 8 > self.data.len() {
             return Err(CompilerError::memory_error(
                 "Memory access out of bounds".to_string(),
                 Some("Ensure memory access is within allocated range".to_string()),
-                None
+                None,
             ));
         }
         self.data[ptr..ptr + 8].copy_from_slice(&value.to_le_bytes());
@@ -385,8 +393,8 @@ impl MemoryManager {
             codegen,
             "memory.allocate",
             &[WasmType::I32, WasmType::I32], // Size and type_id
-            Some(WasmType::I32), // Pointer
-            self.generate_allocate_function()
+            Some(WasmType::I32),             // Pointer
+            self.generate_allocate_function(),
         )?;
 
         // Register retain function
@@ -394,8 +402,8 @@ impl MemoryManager {
             codegen,
             "memory.retain",
             &[WasmType::I32], // Pointer
-            None, // No return value
-            self.generate_retain_function()
+            None,             // No return value
+            self.generate_retain_function(),
         )?;
 
         // Register release function
@@ -403,8 +411,8 @@ impl MemoryManager {
             codegen,
             "memory.release",
             &[WasmType::I32], // Pointer
-            None, // No return value
-            self.generate_release_function()
+            None,             // No return value
+            self.generate_release_function(),
         )?;
 
         Ok(())
@@ -414,23 +422,18 @@ impl MemoryManager {
         vec![
             // Get size parameter
             Instruction::LocalGet(0),
-            
             // Get type_id parameter
             Instruction::LocalGet(1),
-            
             // Add header size
             Instruction::I32Const(HEADER_SIZE as i32),
             Instruction::I32Add,
-            
             // Align to 8 bytes
             Instruction::I32Const(7),
             Instruction::I32Add,
             Instruction::I32Const(-8),
             Instruction::I32And,
-            
             // Call memory.grow if needed
             Instruction::Call(0),
-            
             // Return pointer
             Instruction::Return,
         ]
@@ -440,21 +443,17 @@ impl MemoryManager {
         vec![
             // Get pointer parameter and keep on stack for store
             Instruction::LocalGet(0),
-            
             // Duplicate pointer for load operation
             Instruction::LocalGet(0),
-            
             // Load reference count
             Instruction::I32Load(MemArg {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
             }),
-            
             // Increment reference count
             Instruction::I32Const(1),
             Instruction::I32Add,
-            
             // Store updated reference count (stack now has [pointer, new_ref_count])
             Instruction::I32Store(MemArg {
                 offset: 0,
@@ -468,28 +467,23 @@ impl MemoryManager {
         vec![
             // Get pointer parameter and keep on stack for store
             Instruction::LocalGet(0),
-            
             // Duplicate pointer for load operation
             Instruction::LocalGet(0),
-            
             // Load reference count
             Instruction::I32Load(MemArg {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
             }),
-            
             // Decrement reference count
             Instruction::I32Const(1),
             Instruction::I32Sub,
-            
             // Store updated reference count (stack has [pointer, new_ref_count])
             Instruction::I32Store(MemArg {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
             }),
-            
             // Simplified - avoid control flow that could cause stack issues
             // In production, would implement proper memory freeing
         ]
@@ -498,29 +492,32 @@ impl MemoryManager {
     fn coalesce_free_blocks(&mut self) {
         let mut current_ptr_opt = self.free_list;
         let mut prev_ptr_opt = None;
-        
+
         while let Some(current_ptr) = current_ptr_opt {
             let current_next;
             let current_size;
             let next_is_adjacent;
             let next_is_free;
-            
+
             // Get information about current block without holding a borrow
             {
                 let current_block = match self.allocations.get(&current_ptr) {
                     Some(block) => block,
                     None => break, // Invalid pointer in free list
                 };
-                
+
                 current_next = current_block.next;
                 current_size = current_block.size;
-                
-                next_is_adjacent = current_next.map_or(false, |next_ptr| next_ptr == current_ptr + current_size);
+
+                next_is_adjacent =
+                    current_next.map_or(false, |next_ptr| next_ptr == current_ptr + current_size);
                 next_is_free = current_next.map_or(false, |next_ptr| {
-                    self.allocations.get(&next_ptr).map_or(false, |block| block.is_free)
+                    self.allocations
+                        .get(&next_ptr)
+                        .map_or(false, |block| block.is_free)
                 });
             }
-            
+
             if next_is_adjacent && next_is_free && current_next.is_some() {
                 // Get the next block's size and next pointer
                 let next_ptr = current_next.unwrap();
@@ -528,11 +525,11 @@ impl MemoryManager {
                     let next_block = self.allocations.get(&next_ptr).unwrap();
                     (next_block.size, next_block.next)
                 };
-                
+
                 // Remove both blocks
                 self.allocations.remove(&current_ptr);
                 self.allocations.remove(&next_ptr);
-                
+
                 // Create a new coalesced block
                 let coalesced_block = MemoryBlock {
                     size: current_size + next_size,
@@ -542,10 +539,10 @@ impl MemoryManager {
                     next: next_next,
                     is_free: true,
                 };
-                
+
                 // Insert the new coalesced block
                 self.allocations.insert(current_ptr, coalesced_block);
-                
+
                 // Update the free list
                 if let Some(prev_ptr) = prev_ptr_opt {
                     if let Some(prev_block) = self.allocations.get_mut(&prev_ptr) {
@@ -554,7 +551,7 @@ impl MemoryManager {
                 } else {
                     self.free_list = Some(current_ptr);
                 }
-                
+
                 // Stay at the same position to check if we can coalesce more
                 current_ptr_opt = Some(current_ptr);
             } else {
@@ -573,17 +570,17 @@ mod tests {
     #[test]
     fn test_memory_allocation() {
         let mut memory = MemoryManager::new(1, Some(10));
-        
+
         // Test basic allocation
         let ptr = memory.allocate(100, 1).unwrap();
         assert!(ptr >= HEADER_SIZE);
         assert_eq!(memory.get_type_id(ptr).unwrap(), 1);
-        
+
         // Test retain/release
         memory.retain(ptr).unwrap();
         memory.release(ptr).unwrap();
         memory.release(ptr).unwrap(); // Should deallocate
-        
+
         // Test allocation after deallocation
         let ptr2 = memory.allocate(100, 1).unwrap();
         assert!(ptr2 >= HEADER_SIZE);
@@ -592,11 +589,11 @@ mod tests {
     #[test]
     fn test_memory_bounds() {
         let mut memory = MemoryManager::new(1, Some(1));
-        
+
         // Test allocation within bounds
         let ptr = memory.allocate(100, 1).unwrap();
         assert!(memory.store_i32(ptr, 42).is_ok());
-        
+
         // Test allocation beyond bounds
         let result = memory.allocate(PAGE_SIZE + 1, 1);
         assert!(result.is_err());
@@ -605,18 +602,18 @@ mod tests {
     #[test]
     fn test_memory_coalescing() {
         let mut memory = MemoryManager::new(1, Some(10));
-        
+
         // Allocate and free blocks
         let ptr1 = memory.allocate(100, 1).unwrap();
         let ptr2 = memory.allocate(100, 1).unwrap();
         let ptr3 = memory.allocate(100, 1).unwrap();
-        
+
         memory.release(ptr1).unwrap();
         memory.release(ptr2).unwrap();
         memory.release(ptr3).unwrap();
-        
+
         // Allocate a larger block that should fit in the coalesced space
         let ptr4 = memory.allocate(200, 1).unwrap();
         assert!(ptr4 >= HEADER_SIZE);
     }
-} 
+}

@@ -1,29 +1,29 @@
 /*!
  * Clean Language Compiler Library
- * 
+ *
  * Author: Ivan Pasco Lizarraga
  * Date: 17-07-2025
  * Website: https://www.cleanlanguage.dev
- * 
+ *
  * A modern, type-safe programming language that compiles to WebAssembly
  */
 
 pub mod ast;
-pub mod parser;
-pub mod semantic;
 pub mod codegen;
+pub mod debug;
 pub mod error;
-pub mod stdlib;
-pub mod types;
 pub mod module;
 pub mod package;
+pub mod parser;
 pub mod runtime;
-pub mod debug;
+pub mod semantic;
+pub mod stdlib;
+pub mod types;
 
-use crate::parser::CleanParser;
-use crate::semantic::SemanticAnalyzer;
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
+use crate::parser::CleanParser;
+use crate::semantic::SemanticAnalyzer;
 
 /// Compiles Clean Language source code to WebAssembly
 pub fn compile(source: &str) -> Result<Vec<u8>, CompilerError> {
@@ -92,13 +92,16 @@ mod integration_tests {
 	integer x = 42
 	print(x)
 "#;
-        
+
         let result = compile_with_file(source, "test.clean");
         match result {
             Ok(wasm_binary) => {
-                println!("✓ Basic integration test passed, generated {} bytes of WASM", wasm_binary.len());
+                println!(
+                    "✓ Basic integration test passed, generated {} bytes of WASM",
+                    wasm_binary.len()
+                );
                 assert!(!wasm_binary.is_empty());
-            },
+            }
             Err(error) => {
                 println!("✗ Basic integration test failed: {}", error);
                 panic!("Integration test failed: {}", error);
@@ -116,13 +119,16 @@ start()
 	integer result = add(5, 3)
 	print(result)
 "#;
-        
+
         let result = compile_with_file(source, "function_test.clean");
         match result {
             Ok(wasm_binary) => {
-                println!("✓ Function integration test passed, generated {} bytes of WASM", wasm_binary.len());
+                println!(
+                    "✓ Function integration test passed, generated {} bytes of WASM",
+                    wasm_binary.len()
+                );
                 assert!(!wasm_binary.is_empty());
-            },
+            }
             Err(error) => {
                 println!("✗ Function integration test failed: {}", error);
                 // Don't panic here as this might reveal integration issues we need to fix
@@ -138,13 +144,16 @@ start()
 	print(x)
 	print(y)
 "#;
-        
+
         let result = compile_with_file(source, "type_test.clean");
         match result {
             Ok(wasm_binary) => {
-                println!("✓ Type checking integration test passed, generated {} bytes of WASM", wasm_binary.len());
+                println!(
+                    "✓ Type checking integration test passed, generated {} bytes of WASM",
+                    wasm_binary.len()
+                );
                 assert!(!wasm_binary.is_empty());
-            },
+            }
             Err(error) => {
                 println!("✗ Type checking integration test failed: {}", error);
                 // This might reveal type system integration issues
@@ -158,14 +167,17 @@ start()
 	integer x = undefined_function() onError 0
 	print(x)
 "#;
-        
+
         let result = compile_with_file(source, "error_test.clean");
         match result {
             Ok(_) => {
                 println!("⚠ Error propagation test: Expected error but compilation succeeded");
-            },
+            }
             Err(error) => {
-                println!("✓ Error propagation test: Correctly caught error: {}", error);
+                println!(
+                    "✓ Error propagation test: Correctly caught error: {}",
+                    error
+                );
                 // Check that the error contains useful information about the undefined function
                 assert!(error.to_string().contains("undefined_function"));
                 assert!(error.to_string().contains("not found"));
@@ -176,23 +188,32 @@ start()
     #[test]
     fn test_stdlib_integration() {
         println!("\n=== Standard Library Integration Test ===");
-        
+
         let test_cases = vec![
-            ("Math Functions", r#"start()
+            (
+                "Math Functions",
+                r#"start()
 	integer x = -5
 	integer result = abs(x)
 	print(result)
-"#),
-            ("String Functions", r#"start()
+"#,
+            ),
+            (
+                "String Functions",
+                r#"start()
 	string text = "hello"
 	integer length = text.length()
 	print(length)
-"#),
-            ("List Functions", r#"start()
+"#,
+            ),
+            (
+                "List Functions",
+                r#"start()
 	List<integer> lst = [1, 2, 3, 4, 5]
 	integer length = lst.length()
 	print(length)
-"#),
+"#,
+            ),
         ];
 
         let mut passed = 0;
@@ -201,13 +222,13 @@ start()
         for (name, source) in test_cases {
             println!("\n--- Testing {} ---", name);
             println!("Source: {}", source);
-            
+
             match compile_with_file(source, "stdlib_test.clean") {
                 Ok(wasm_binary) => {
                     println!("✓ {}: {} bytes", name, wasm_binary.len());
                     assert!(!wasm_binary.is_empty());
                     passed += 1;
-                },
+                }
                 Err(error) => {
                     println!("✗ {} failed: {}", name, error);
                     // Don't panic here as some stdlib functions might not be fully implemented yet
@@ -217,8 +238,8 @@ start()
 
         println!("\n=== Summary ===");
         println!("Passed: {}/{}", passed, total);
-        
+
         // At least basic functionality should work
         assert!(passed > 0, "No stdlib integration tests passed");
     }
-} 
+}

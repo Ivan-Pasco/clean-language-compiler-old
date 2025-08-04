@@ -1,8 +1,8 @@
 use crate::codegen::CodeGenerator;
-use crate::types::WasmType;
 use crate::error::CompilerError;
-use wasm_encoder::{Instruction, MemArg};
 use crate::stdlib::register_stdlib_function;
+use crate::types::WasmType;
+use wasm_encoder::{Instruction, MemArg};
 
 /// List class implementation for Clean Language
 /// Provides comprehensive list manipulation capabilities as static methods
@@ -17,22 +17,22 @@ impl ListClass {
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // Basic list operations
         self.register_basic_operations(codegen)?;
-        
+
         // Search operations
         self.register_search_operations(codegen)?;
-        
+
         // Modification operations
         self.register_modification_operations(codegen)?;
-        
+
         // Transformation operations
         self.register_transformation_operations(codegen)?;
-        
+
         // Utility operations
         self.register_utility_operations(codegen)?;
-        
+
         Ok(())
     }
-    
+
     fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // List.length(list lst) -> integer
         register_stdlib_function(
@@ -49,9 +49,9 @@ impl ListClass {
                     align: 2,
                     memory_index: 0,
                 }),
-            ]
+            ],
         )?;
-        
+
         // List.isEmpty(list lst) -> boolean
         register_stdlib_function(
             codegen,
@@ -70,30 +70,30 @@ impl ListClass {
                 // Check if length == 0
                 Instruction::I32Const(0),
                 Instruction::I32Eq,
-            ]
+            ],
         )?;
-        
+
         // List.get(list lst, integer index) -> any
         register_stdlib_function(
             codegen,
             "list.get",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_list_get()
+            self.generate_list_get(),
         )?;
-        
+
         // List.set(list lst, integer index, any value) -> void
         register_stdlib_function(
             codegen,
             "list.set",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             None,
-            self.generate_list_set()
+            self.generate_list_set(),
         )?;
-        
+
         Ok(())
     }
-    
+
     fn register_search_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // List.indexOf(list lst, any value) -> integer
         register_stdlib_function(
@@ -101,192 +101,201 @@ impl ListClass {
             "list.indexOf",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_index_of()
+            self.generate_index_of(),
         )?;
-        
+
         // List.lastIndexOf(list lst, any value) -> integer
         register_stdlib_function(
             codegen,
             "list.lastIndexOf",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_last_index_of()
+            self.generate_last_index_of(),
         )?;
-        
+
         // List.contains(list lst, any value) -> boolean
         register_stdlib_function(
             codegen,
             "list.contains",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_contains()
+            self.generate_contains(),
         )?;
-        
+
         // List.find(list lst, any value) -> any
         register_stdlib_function(
             codegen,
             "list.find",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_find()
+            self.generate_find(),
         )?;
-        
+
         Ok(())
     }
-    
-    fn register_modification_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+
+    fn register_modification_operations(
+        &self,
+        codegen: &mut CodeGenerator,
+    ) -> Result<(), CompilerError> {
         // List.push(list lst, any value) -> list
         register_stdlib_function(
             codegen,
             "list.push",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_push()
+            self.generate_push(),
         )?;
-        
+
         // List.pop(list lst) -> any
         register_stdlib_function(
             codegen,
             "list.pop",
             &[WasmType::I32],
             Some(WasmType::I32),
-            self.generate_pop()
+            self.generate_pop(),
         )?;
-        
+
         // List.shift(list lst) -> any
         register_stdlib_function(
             codegen,
             "list.shift",
             &[WasmType::I32],
             Some(WasmType::I32),
-            self.generate_shift()
+            self.generate_shift(),
         )?;
-        
+
         // List.unshift(list lst, any value) -> void
         register_stdlib_function(
             codegen,
             "list.unshift",
             &[WasmType::I32, WasmType::I32],
             None,
-            self.generate_unshift()
+            self.generate_unshift(),
         )?;
-        
+
         // List.insert(list lst, integer index, any value) -> integer (success/failure)
         register_stdlib_function(
             codegen,
             "list.insert",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_insert()
+            self.generate_insert(),
         )?;
-        
+
         // List.remove(list lst, integer index) -> any
         register_stdlib_function(
             codegen,
             "list.remove",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_remove()
+            self.generate_remove(),
         )?;
-        
+
         // List.clear(list lst) -> void
         register_stdlib_function(
             codegen,
             "list.clear",
             &[WasmType::I32],
             None,
-            self.generate_clear()
+            self.generate_clear(),
         )?;
-        
+
         Ok(())
     }
-    
-    fn register_transformation_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+
+    fn register_transformation_operations(
+        &self,
+        codegen: &mut CodeGenerator,
+    ) -> Result<(), CompilerError> {
         // List.slice(list lst, integer start, integer end) -> list
         register_stdlib_function(
             codegen,
             "list.slice",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_slice()
+            self.generate_slice(),
         )?;
-        
+
         // List.concat(list lst1, list lst2) -> list
         register_stdlib_function(
             codegen,
             "list.concat",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_concat()
+            self.generate_concat(),
         )?;
-        
+
         // List.reverse(list lst) -> list
         register_stdlib_function(
             codegen,
             "list.reverse",
             &[WasmType::I32],
             Some(WasmType::I32),
-            self.generate_reverse()
+            self.generate_reverse(),
         )?;
-        
+
         // List.sort(list lst) -> list
         register_stdlib_function(
             codegen,
             "list.sort",
             &[WasmType::I32],
             Some(WasmType::I32),
-            self.generate_sort()
+            self.generate_sort(),
         )?;
-        
+
         // List.join(list lst, string separator) -> string
         register_stdlib_function(
             codegen,
             "list.join",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_join()
+            self.generate_join(),
         )?;
-        
+
         Ok(())
     }
-    
-    fn register_utility_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+
+    fn register_utility_operations(
+        &self,
+        codegen: &mut CodeGenerator,
+    ) -> Result<(), CompilerError> {
         // List.copy(list lst) -> list
         register_stdlib_function(
             codegen,
             "list.copy",
             &[WasmType::I32],
             Some(WasmType::I32),
-            self.generate_copy()
+            self.generate_copy(),
         )?;
-        
+
         // List.equals(list lst1, list lst2) -> boolean
         register_stdlib_function(
             codegen,
             "list.equals",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_equals()
+            self.generate_equals(),
         )?;
-        
+
         // List.fill(list lst, any value) -> void
         register_stdlib_function(
             codegen,
             "list.fill",
             &[WasmType::I32, WasmType::I32],
             None,
-            self.generate_fill()
+            self.generate_fill(),
         )?;
-        
+
         // List.toString(list lst) -> string
         register_stdlib_function(
             codegen,
             "list.toString",
             &[WasmType::I32],
             Some(WasmType::I32),
-            self.generate_to_string()
+            self.generate_to_string(),
         )?;
-        
+
         Ok(())
     }
 
@@ -308,7 +317,7 @@ impl ListClass {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
-            }),                       // load element (stack: [element_value])
+            }), // load element (stack: [element_value])
         ]
     }
 
@@ -330,7 +339,7 @@ impl ListClass {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
-            }),                       // store element (stack: [])
+            }), // store element (stack: [])
         ]
     }
 
@@ -401,7 +410,11 @@ impl ListClass {
         vec![
             // Get current size
             Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
             // Calculate position for new element (size * 4 + 8)
             Instruction::I32Const(4),
             Instruction::I32Mul,
@@ -412,14 +425,26 @@ impl ListClass {
             Instruction::I32Add,
             // Store the new value
             Instruction::LocalGet(1),
-            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
             // Increment list size
             Instruction::LocalGet(0),
             Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
             Instruction::I32Const(1),
             Instruction::I32Add,
-            Instruction::I32Store(MemArg { offset: 0, align: 2, memory_index: 0 }),
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
             // Return list pointer
             Instruction::LocalGet(0),
         ]
@@ -459,7 +484,7 @@ impl ListClass {
             Instruction::Drop,        // drop it
             Instruction::LocalGet(1), // item
             Instruction::Drop,        // drop it
-            // No return value needed (void function)
+                                      // No return value needed (void function)
         ]
     }
 
@@ -493,7 +518,7 @@ impl ListClass {
         vec![
             // Full clear implementation - reset list length to 0
             // Parameters: list
-            
+
             // Set list length to 0
             Instruction::LocalGet(0), // list ptr
             Instruction::I32Const(0), // new length = 0
@@ -501,8 +526,8 @@ impl ListClass {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
-            }),                       // store new length
-            // Note: This doesn't deallocate memory, just sets length to 0
+            }), // store new length
+                                      // Note: This doesn't deallocate memory, just sets length to 0
         ]
     }
 
@@ -604,7 +629,7 @@ impl ListClass {
             Instruction::Drop,        // drop it
             Instruction::LocalGet(1), // value
             Instruction::Drop,        // drop it
-            // This function has no return value, so we're done
+                                      // This function has no return value, so we're done
         ]
     }
 

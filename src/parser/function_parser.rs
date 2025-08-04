@@ -17,19 +17,19 @@ impl FunctionParser {
             lexical_analyzer: LexicalAnalyzer::new(source),
         }
     }
-    
+
     /// Parse functions block using lexical analysis for boundary detection
     pub fn parse_functions_block(&self, pair: Pair<Rule>) -> Result<Vec<Function>, CompilerError> {
         let mut functions = Vec::new();
-        
+
         // Get function segments from lexical analysis
         let segments = self.lexical_analyzer.split_into_function_segments();
-        
+
         if segments.is_empty() {
             // Fall back to traditional parsing if no segments found
             return self.parse_functions_traditional(pair);
         }
-        
+
         // Parse each function segment individually
         for segment in segments {
             match self.parse_function_segment(&segment) {
@@ -40,15 +40,15 @@ impl FunctionParser {
                 }
             }
         }
-        
+
         Ok(functions)
     }
-    
+
     /// Parse a single function segment
     fn parse_function_segment(&self, segment: &FunctionSegment) -> Result<Function, CompilerError> {
         // Create a minimal functions block wrapper for parsing
         let wrapped_source = format!("functions:\n{}", segment.source);
-        
+
         // Parse with pest
         let parse_result = <CleanParser as Parser<Rule>>::parse(Rule::functions_block, &wrapped_source);
         let pairs = parse_result.map_err(|e| {
@@ -62,7 +62,7 @@ impl FunctionParser {
                 })
             )
         })?;
-        
+
         // Extract the function from the parsed result
         for pair in pairs {
             if pair.as_rule() == Rule::functions_block {
@@ -74,7 +74,7 @@ impl FunctionParser {
                 }
             }
         }
-        
+
         Err(CompilerError::syntax_error(
             &format!("No function found in segment for {}", segment.boundary.function_name),
             None,
@@ -85,7 +85,7 @@ impl FunctionParser {
             })
         ))
     }
-    
+
     /// Parse a single function from an indented functions block
     fn parse_single_function_from_block(&self, pair: Pair<Rule>) -> Result<Function, CompilerError> {
         for inner_pair in pair.into_inner() {
@@ -96,7 +96,7 @@ impl FunctionParser {
                 _ => continue,
             }
         }
-        
+
         Err(CompilerError::syntax_error(
             "No function declaration found",
             None,
@@ -107,7 +107,7 @@ impl FunctionParser {
             })
         ))
     }
-    
+
     /// Parse a function declaration pair
     fn parse_function_declaration(&self, pair: Pair<Rule>) -> Result<Function, CompilerError> {
         let mut return_type = Type::Void;
@@ -116,7 +116,7 @@ impl FunctionParser {
         let mut statements = Vec::new();
         let mut syntax = FunctionSyntax::Simple;
         let span = pair.as_span();
-        
+
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
                 Rule::function_type => {
@@ -139,7 +139,7 @@ impl FunctionParser {
                 _ => {}
             }
         }
-        
+
         Ok(Function {
             name,
             type_parameters: Vec::new(),
@@ -158,26 +158,26 @@ impl FunctionParser {
             }),
         })
     }
-    
+
     /// Parse parameter list
     fn parse_parameter_list(&self, pair: Pair<Rule>) -> Result<Vec<Parameter>, CompilerError> {
         let mut parameters = Vec::new();
-        
+
         for param_pair in pair.into_inner() {
             if param_pair.as_rule() == Rule::parameter {
                 parameters.push(self.parse_parameter(param_pair)?);
             }
         }
-        
+
         Ok(parameters)
     }
-    
+
     /// Parse a single parameter
     fn parse_parameter(&self, pair: Pair<Rule>) -> Result<Parameter, CompilerError> {
         let mut param_type = Type::Any;
         let mut name = String::new();
         let mut default_value = None;
-        
+
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
                 Rule::type_ => {
@@ -192,19 +192,19 @@ impl FunctionParser {
                 _ => {}
             }
         }
-        
+
         Ok(Parameter {
             name,
             type_: param_type,
             default_value,
         })
     }
-    
+
     /// Parse function body
     fn parse_function_body(&self, pair: Pair<Rule>) -> Result<FunctionBodyResult, CompilerError> {
         let mut statements = Vec::new();
         let mut syntax = FunctionSyntax::Simple;
-        
+
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
                 Rule::setup_block => {
@@ -222,14 +222,14 @@ impl FunctionParser {
                 _ => {}
             }
         }
-        
+
         Ok(FunctionBodyResult { statements, syntax })
     }
-    
+
     /// Parse function content (statements)
     fn parse_function_content(&self, pair: Pair<Rule>) -> Result<Vec<Statement>, CompilerError> {
         let mut statements = Vec::new();
-        
+
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
                 Rule::limited_statement | Rule::statement => {
@@ -242,23 +242,23 @@ impl FunctionParser {
                 _ => {}
             }
         }
-        
+
         Ok(statements)
     }
-    
+
     /// Parse limited statements
     fn parse_limited_statements(&self, pair: Pair<Rule>) -> Result<Vec<Statement>, CompilerError> {
         let mut statements = Vec::new();
-        
+
         for inner_pair in pair.into_inner() {
             if inner_pair.as_rule() == Rule::limited_statement {
                 statements.push(parse_statement(inner_pair)?);
             }
         }
-        
+
         Ok(statements)
     }
-    
+
     /// Fallback to traditional parsing if lexical analysis fails
     fn parse_functions_traditional(&self, pair: Pair<Rule>) -> Result<Vec<Function>, CompilerError> {
         // Use the existing parser implementation as fallback
@@ -275,7 +275,7 @@ struct FunctionBodyResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_function_segment_parsing() {
         let source = r#"functions:
@@ -283,13 +283,13 @@ mod tests {
 		if n <= 1
 			return 1
 		return n * factorial(n - 1)
-	
+
 	number divide(number a, number b)
 		return a / b"#;
-        
+
         let parser = FunctionParser::new(source);
         let segments = parser.lexical_analyzer.split_into_function_segments();
-        
+
         assert_eq!(segments.len(), 2);
         assert_eq!(segments[0].boundary.function_name, "factorial");
         assert_eq!(segments[1].boundary.function_name, "divide");

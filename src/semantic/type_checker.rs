@@ -377,4 +377,4 @@ mod tests {
         };
         assert!(checker.infer_type(&expr).is_err());
     }
-} 
+}
