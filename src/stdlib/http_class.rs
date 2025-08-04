@@ -8,6 +8,12 @@ use wasm_encoder::Instruction;
 /// Provides HTTP client operations as static methods
 pub struct HttpClass;
 
+impl Default for HttpClass {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HttpClass {
     pub fn new() -> Self {
         Self
@@ -270,7 +276,7 @@ impl HttpClass {
             .get_http_import_index(host_func_name)
             .ok_or_else(|| {
                 CompilerError::codegen_error(
-                    &format!("HTTP import function '{host_func_name}' not found"),
+                    format!("HTTP import function '{host_func_name}' not found"),
                     Some("Make sure HTTP imports are properly registered".to_string()),
                     None,
                 )
@@ -304,7 +310,7 @@ impl HttpClass {
             .get_http_import_index(host_func_name)
             .ok_or_else(|| {
                 CompilerError::codegen_error(
-                    &format!("HTTP import function '{host_func_name}' not found"),
+                    format!("HTTP import function '{host_func_name}' not found"),
                     Some("Make sure HTTP imports are properly registered".to_string()),
                     None,
                 )
@@ -349,7 +355,7 @@ impl HttpClass {
             .get_http_import_index(host_func_name)
             .ok_or_else(|| {
                 CompilerError::codegen_error(
-                    &format!("HTTP import function '{host_func_name}' not found"),
+                    format!("HTTP import function '{host_func_name}' not found"),
                     Some("Make sure HTTP imports are properly registered".to_string()),
                     None,
                 )
@@ -401,7 +407,7 @@ impl HttpClass {
             .get_http_import_index(host_func_name)
             .ok_or_else(|| {
                 CompilerError::codegen_error(
-                    &format!("HTTP import function '{host_func_name}' not found"),
+                    format!("HTTP import function '{host_func_name}' not found"),
                     Some("Make sure HTTP imports are properly registered".to_string()),
                     None,
                 )
@@ -425,7 +431,7 @@ impl HttpClass {
             .get_http_import_index(host_func_name)
             .ok_or_else(|| {
                 CompilerError::codegen_error(
-                    &format!("HTTP import function '{host_func_name}' not found"),
+                    format!("HTTP import function '{host_func_name}' not found"),
                     Some("Make sure HTTP imports are properly registered".to_string()),
                     None,
                 )
@@ -447,7 +453,7 @@ impl HttpClass {
             .get_http_import_index(host_func_name)
             .ok_or_else(|| {
                 CompilerError::codegen_error(
-                    &format!("HTTP import function '{host_func_name}' not found"),
+                    format!("HTTP import function '{host_func_name}' not found"),
                     Some("Make sure HTTP imports are properly registered".to_string()),
                     None,
                 )

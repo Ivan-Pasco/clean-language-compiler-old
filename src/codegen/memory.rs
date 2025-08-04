@@ -124,7 +124,7 @@ impl MemoryUtils {
     /// Add a data segment
     pub(crate) fn add_data_segment(&mut self, offset: u32, data: &[u8]) {
         let offset_expr = ConstExpr::i32_const(offset as i32);
-        let data_vec: Vec<u8> = data.iter().copied().collect();
+        let data_vec: Vec<u8> = data.to_vec();
         self.data_section.active(0, &offset_expr, data_vec);
     }
 
@@ -452,11 +452,11 @@ impl MemoryUtils {
     /// Generate memory initialization instructions
     #[allow(dead_code)]
     pub(crate) fn generate_init_memory(&self) -> Vec<Instruction> {
-        let mut instructions = Vec::new();
-
         // Initialize memory manager's heap pointer
-        instructions.push(Instruction::I32Const(self.heap_start as i32));
-        instructions.push(Instruction::GlobalSet(0)); // Assuming global 0 is the heap pointer
+        let instructions = vec![
+            Instruction::I32Const(self.heap_start as i32),
+            Instruction::GlobalSet(0), // Assuming global 0 is the heap pointer
+        ];
 
         instructions
     }
@@ -510,6 +510,7 @@ impl MemoryUtils {
     }
 
     /// Force allocate a string at a specific address for type conversion functions
+    #[allow(dead_code)]
     pub(crate) fn force_string_at_address(
         &mut self,
         s: &str,

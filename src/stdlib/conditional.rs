@@ -10,6 +10,7 @@ use wasm_encoder::{BlockType, Instruction, ValType};
 /// Conditional expressions implementation for Clean Language
 /// Enables if-then-else ternary-style conditionals in expressions
 pub struct ConditionalManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

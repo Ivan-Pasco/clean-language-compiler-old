@@ -9,6 +9,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 /// Advanced String Operations Manager - Implements missing string functions
 /// Provides split(), join(), charAt(), charCodeAt(), padStart(), padEnd(), isBlank()
 pub struct StringAdvancedManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

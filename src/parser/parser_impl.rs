@@ -997,6 +997,7 @@ pub fn parse_test_case(test_pair: Pair<Rule>) -> Result<TestCase, CompilerError>
 }
 
 #[allow(non_snake_case)]
+#[allow(dead_code)]
 pub fn parse_class_decl_OLD_UNUSED(class_pair: Pair<Rule>) -> Result<Class, CompilerError> {
     let mut class_name = String::new();
     let mut type_parameters = Vec::new();
@@ -1095,6 +1096,7 @@ pub fn parse_class_decl_OLD_UNUSED(class_pair: Pair<Rule>) -> Result<Class, Comp
 }
 
 /// Parse a field declaration within a class
+#[allow(dead_code)]
 fn parse_class_field(field_pair: Pair<Rule>) -> Result<Field, CompilerError> {
     let mut field_name = String::new();
     let mut field_type = None;
@@ -1137,6 +1139,7 @@ fn parse_class_field(field_pair: Pair<Rule>) -> Result<Field, CompilerError> {
 }
 
 /// Parse a constructor within a class
+#[allow(dead_code)]
 fn parse_constructor(constructor_pair: Pair<Rule>) -> Result<Constructor, CompilerError> {
     let mut parameters = Vec::new();
     let mut body = Vec::new();
@@ -1167,6 +1170,7 @@ fn parse_constructor(constructor_pair: Pair<Rule>) -> Result<Constructor, Compil
 }
 
 /// Parse a constructor parameter
+#[allow(dead_code)]
 fn parse_constructor_parameter(param_pair: Pair<Rule>) -> Result<Parameter, CompilerError> {
     let mut param_name = String::new();
     let mut param_type = None;

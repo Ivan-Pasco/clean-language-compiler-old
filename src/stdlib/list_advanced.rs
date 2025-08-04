@@ -9,6 +9,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 /// Advanced List class implementation for Clean Language
 /// Implements missing functional methods: map(), filter(), reduce(), forEach(), first(), last(), fill(), range()
 pub struct ListAdvancedManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

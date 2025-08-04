@@ -10,6 +10,7 @@ use wasm_encoder::{Instruction, MemArg};
 /// Asynchronous programming implementation for Clean Language
 /// Provides comprehensive async functionality with start/later/background keywords
 pub struct AsyncProgrammingManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

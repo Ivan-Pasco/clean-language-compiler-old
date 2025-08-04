@@ -10,6 +10,7 @@ use wasm_encoder::{Instruction, MemArg};
 /// Console input implementation for Clean Language
 /// Provides comprehensive user input functionality with type conversion and validation
 pub struct ConsoleInputManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

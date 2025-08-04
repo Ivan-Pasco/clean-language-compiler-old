@@ -10,6 +10,7 @@ use wasm_encoder::{Instruction, MemArg};
 /// Import system and module management for Clean Language
 /// Provides comprehensive module import, export, and visibility functionality
 pub struct ImportSystemManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

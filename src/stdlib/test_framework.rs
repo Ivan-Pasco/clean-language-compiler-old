@@ -10,6 +10,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 /// Test framework implementation for Clean Language
 /// Enables tests: blocks with test execution and reporting
 pub struct TestFrameworkManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

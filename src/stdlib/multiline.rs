@@ -10,6 +10,7 @@ use wasm_encoder::{BlockType, Instruction, ValType};
 /// Multi-line expression support for Clean Language
 /// Enables expressions to span multiple lines when wrapped in parentheses
 pub struct MultilineManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut ops = Vec::new();
                 for op_result in ops_reader {
                     let op = op_result?;
-                    ops.push(format!("{:?}", op));
+                    ops.push(format!("{op:?}"));
                     if ops.len() > 10 {
                         ops.push("...".to_string());
                         break;

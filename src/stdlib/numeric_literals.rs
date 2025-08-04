@@ -10,6 +10,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 /// Extended numeric literals implementation for Clean Language
 /// Enables 0xff (hex), 0b1010 (binary), 0o777 (octal) literals
 pub struct NumericLiteralsManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

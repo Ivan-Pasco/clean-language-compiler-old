@@ -8,6 +8,12 @@ use wasm_encoder::Instruction;
 /// Provides comprehensive mathematical operations as static methods
 pub struct MathClass;
 
+impl Default for MathClass {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MathClass {
     pub fn new() -> Self {
         Self

@@ -580,9 +580,9 @@ mod tests {
         let zero_result = zero_value != 0;
         let negative_result = negative_value != 0;
 
-        assert_eq!(non_zero_result, true);
-        assert_eq!(zero_result, false);
-        assert_eq!(negative_result, true);
+        assert!(non_zero_result);
+        assert!(!zero_result);
+        assert!(negative_result);
 
         // Test successful - i32 to bool conversion infrastructure works
     }

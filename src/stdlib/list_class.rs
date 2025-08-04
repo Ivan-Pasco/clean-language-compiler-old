@@ -8,6 +8,12 @@ use wasm_encoder::{Instruction, MemArg};
 /// Provides comprehensive list manipulation capabilities as static methods
 pub struct ListClass;
 
+impl Default for ListClass {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ListClass {
     pub fn new() -> Self {
         Self

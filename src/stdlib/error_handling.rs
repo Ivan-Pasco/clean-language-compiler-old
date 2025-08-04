@@ -10,6 +10,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 /// Error handling implementation for Clean Language
 /// Enables onError expression and block forms for comprehensive error management
 pub struct ErrorHandlingManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

@@ -16,8 +16,9 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 /// - Offset 4: Capacity (i32) - allocated capacity
 /// - Offset 8: Type ID (i32) - LIST_TYPE_ID
 /// - Offset 12: Behavior (i32) - behavior flags
-/// Elements start at offset 16
+///   Elements start at offset 16
 pub struct ListBehaviorManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

@@ -10,6 +10,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 /// Default parameter implementation for Clean Language
 /// Enables default values in function parameters and input blocks
 pub struct DefaultParameterManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

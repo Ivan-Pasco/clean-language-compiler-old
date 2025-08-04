@@ -9,6 +9,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg};
 /// Advanced File class implementation for Clean Language
 /// Implements comprehensive file I/O operations with proper functionality
 pub struct FileAdvancedManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

@@ -8,6 +8,12 @@ use wasm_encoder::Instruction;
 /// Provides file I/O operations as static methods
 pub struct FileClass;
 
+impl Default for FileClass {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FileClass {
     pub fn new() -> Self {
         Self

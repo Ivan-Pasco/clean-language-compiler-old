@@ -10,6 +10,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 /// String interpolation implementation for Clean Language
 /// Enables "Hello {name}!" syntax for embedded expressions
 pub struct StringInterpolationManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

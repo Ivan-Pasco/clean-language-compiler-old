@@ -130,9 +130,16 @@ pub struct StandardLibrary {
     async_programming: AsyncProgrammingManager,
     #[allow(dead_code)]
     import_system: ImportSystemManager,
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
     console_ops: ConsoleOperations,
     console_class: ConsoleClass,
+}
+
+impl Default for StandardLibrary {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StandardLibrary {
@@ -220,6 +227,12 @@ pub struct Runtime {
     pub lists: ListManager,
 }
 
+impl Default for Runtime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Runtime {
     pub fn new() -> Self {
         Self {
@@ -249,6 +262,12 @@ pub struct StdLib {
     pub type_conv: TypeConvOperations,
 }
 
+impl Default for StdLib {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StdLib {
     pub fn new() -> Self {
         Self {
@@ -276,7 +295,7 @@ impl StdLib {
             .memory
             .allocate(data.len() + 4, 3)
             .map_err(|e| {
-                CompilerError::runtime_error(&format!("String allocation failed: {e}"), None, None)
+                CompilerError::runtime_error(format!("String allocation failed: {e}"), None, None)
             })
     }
 

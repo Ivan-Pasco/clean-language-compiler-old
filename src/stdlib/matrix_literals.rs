@@ -9,6 +9,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 /// Matrix Literals Manager - Implements matrix literal syntax and operations
 /// Supports [[1,2],[3,4]] syntax for matrix<T> types
 pub struct MatrixLiteralsManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

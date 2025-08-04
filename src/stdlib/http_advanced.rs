@@ -10,6 +10,7 @@ use wasm_encoder::{Instruction, MemArg};
 /// Advanced HTTP class implementation for Clean Language
 /// Provides comprehensive HTTP client functionality with headers, JSON support, and all standard methods
 pub struct HttpAdvancedManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

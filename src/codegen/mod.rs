@@ -91,6 +91,12 @@ pub struct CodeGenerator {
     imported_functions: HashSet<String>,
 }
 
+impl Default for CodeGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CodeGenerator {
     /// Create a new code generator with full runtime imports
     pub fn new() -> Self {
@@ -376,7 +382,7 @@ impl CodeGenerator {
                     constructor_function_name,
                     vec![], // No parameters for default constructor
                     Type::Object(class.name.clone()),
-                    self.generate_constructor_body(&class)?, // Generate proper constructor body
+                    self.generate_constructor_body(class)?, // Generate proper constructor body
                     None,
                 );
                 self.generate_function(&constructor_function)?;
@@ -834,7 +840,7 @@ impl CodeGenerator {
         // Find the function index from the function map (set by prepare_function_type)
         let function_index = self.function_map.get(&function.name).ok_or_else(|| {
             CompilerError::codegen_error(
-                &format!(
+                format!(
                     "Function '{function_name}' not found in function map",
                     function_name = function.name
                 ),
@@ -1006,7 +1012,7 @@ impl CodeGenerator {
                     iterator,
                     start,
                     end,
-                    step.as_ref().map(|e| e),
+                    step.as_ref(),
                     body,
                     instructions,
                 )?;
@@ -1140,20 +1146,18 @@ impl CodeGenerator {
                 );
 
                 instructions.push(Instruction::LocalSet(local_index));
+            } else if self.class_field_map.contains_key(class_context) {
+                return Err(CompilerError::codegen_error(
+                    format!("Field '{target}' not found in class '{class_context}'"),
+                    None,
+                    location.clone(),
+                ));
             } else {
-                if self.class_field_map.contains_key(class_context) {
-                    return Err(CompilerError::codegen_error(
-                        format!("Field '{target}' not found in class '{class_context}'"),
-                        None,
-                        location.clone(),
-                    ));
-                } else {
-                    return Err(CompilerError::codegen_error(
-                        format!("Class '{class_context}' not found"),
-                        None,
-                        location.clone(),
-                    ));
-                }
+                return Err(CompilerError::codegen_error(
+                    format!("Class '{class_context}' not found"),
+                    None,
+                    location.clone(),
+                ));
             }
         } else {
             return Err(CompilerError::codegen_error(
@@ -1343,7 +1347,7 @@ impl CodeGenerator {
                 if func_name == "print" || func_name == "printl" || func_name == "println" {
                     if args.len() != 1 {
                         return Err(CompilerError::detailed_type_error(
-                            &format!("Print function '{func_name}' called with wrong number of arguments"),
+                            format!("Print function '{func_name}' called with wrong number of arguments"),
                             1,
                             args.len(),
                             None,
@@ -1360,7 +1364,7 @@ impl CodeGenerator {
                 if func_name == "http_get" || func_name == "http_delete" {
                     if args.len() != 1 {
                         return Err(CompilerError::detailed_type_error(
-                            &format!("HTTP function '{func_name}' called with wrong number of arguments"),
+                            format!("HTTP function '{func_name}' called with wrong number of arguments"),
                             1,
                             args.len(),
                             None,
@@ -1376,7 +1380,7 @@ impl CodeGenerator {
                 {
                     if args.len() != 2 {
                         return Err(CompilerError::detailed_type_error(
-                            &format!("HTTP function '{func_name}' called with wrong number of arguments"),
+                            format!("HTTP function '{func_name}' called with wrong number of arguments"),
                             2,
                             args.len(),
                             None,
@@ -1392,7 +1396,7 @@ impl CodeGenerator {
                 if func_name == "file_read" {
                     if args.len() != 1 {
                         return Err(CompilerError::detailed_type_error(
-                            &format!(
+                            format!(
                                 "File function '{func_name}' called with wrong number of arguments"
                             ),
                             1,
@@ -1411,7 +1415,7 @@ impl CodeGenerator {
                 if func_name == "file_write" || func_name == "file_append" {
                     if args.len() != 2 {
                         return Err(CompilerError::detailed_type_error(
-                            &format!("File function '{func_name}' called with wrong number of arguments"),
+                            format!("File function '{func_name}' called with wrong number of arguments"),
                             2,
                             args.len(),
                             None,
@@ -1425,7 +1429,7 @@ impl CodeGenerator {
                 if func_name == "file_exists" || func_name == "file_delete" {
                     if args.len() != 1 {
                         return Err(CompilerError::detailed_type_error(
-                            &format!(
+                            format!(
                                 "File function '{func_name}' called with wrong number of arguments"
                             ),
                             1,
@@ -1457,7 +1461,7 @@ impl CodeGenerator {
                         return Ok(WasmType::I32);
                     } else {
                         return Err(CompilerError::codegen_error(
-                            &format!("Constructor for class '{func_name}' not found"),
+                            format!("Constructor for class '{func_name}' not found"),
                             Some("Make sure the class has a constructor defined".to_string()),
                             None,
                         ));
@@ -1475,16 +1479,10 @@ impl CodeGenerator {
                 }
 
                 // Try name-based function resolution first (gives precedence to user-defined functions)
-                let func_index = if let Some(index) = self.get_function_index(func_name) {
-                    Some(index)
-                } else if let Some(index) = self
-                    .instruction_generator
-                    .get_function_index_by_signature(func_name, &arg_types)
-                {
-                    Some(index)
-                } else {
-                    None
-                };
+                let func_index = self.get_function_index(func_name).or_else(|| {
+                    self.instruction_generator
+                        .get_function_index_by_signature(func_name, &arg_types)
+                });
 
                 // Check if function exists to provide better error messages
                 if let Some(func_index) = func_index {
@@ -1495,7 +1493,7 @@ impl CodeGenerator {
                         let expected_arg_count = func_type.params().len();
                         if args.len() != expected_arg_count {
                             return Err(CompilerError::detailed_type_error(
-                                &format!(
+                                format!(
                                     "Function '{func_name}' called with wrong number of arguments"
                                 ),
                                 expected_arg_count,
@@ -1581,7 +1579,7 @@ impl CodeGenerator {
             Expression::ListAccess(array, index) => {
                 // Generate list access with type-safe value loading
                 // First, generate the list expression (should be a pointer)
-                let list_type = self.generate_expression(&*array, instructions)?;
+                let list_type = self.generate_expression(array, instructions)?;
                 if list_type != WasmType::I32 {
                     return Err(CompilerError::codegen_error(
                         "List access requires list pointer (I32)",
@@ -1591,7 +1589,7 @@ impl CodeGenerator {
                 }
 
                 // Then, generate the index expression
-                let index_type = self.generate_expression(&*index, instructions)?;
+                let index_type = self.generate_expression(index, instructions)?;
                 if index_type != WasmType::I32 {
                     return Err(CompilerError::codegen_error(
                         "List index must be I32",
@@ -1803,7 +1801,7 @@ impl CodeGenerator {
                                 }
                             }
                             _ => Err(CompilerError::codegen_error(
-                                &format!("Unknown input method: {method}"),
+                                format!("Unknown input method: {method}"),
                                 None,
                                 None,
                             )),
@@ -1830,7 +1828,7 @@ impl CodeGenerator {
                                 return Ok(self.get_function_return_type_by_name(&function_name));
                             } else {
                                 return Err(CompilerError::codegen_error(
-                                    &format!("Function '{function_name}' not found"),
+                                    format!("Function '{function_name}' not found"),
                                     None,
                                     None,
                                 ));
@@ -1869,7 +1867,7 @@ impl CodeGenerator {
                             );
                         } else {
                             return Err(CompilerError::codegen_error(
-                                &format!("Function '{qualified_function_name}' not found"),
+                                format!("Function '{qualified_function_name}' not found"),
                                 None,
                                 None,
                             ));
@@ -1952,7 +1950,7 @@ impl CodeGenerator {
                 }
 
                 // If not a type-based method call, proceed with normal handling
-                self.generate_expression(&*object, instructions)?;
+                self.generate_expression(object, instructions)?;
 
                 // Generate arguments
                 for arg in arguments {
@@ -2565,7 +2563,7 @@ impl CodeGenerator {
                             Ok(WasmType::I32) // Default return type
                         } else {
                             Err(CompilerError::codegen_error(
-                                &format!("Method '{method}' not found"),
+                                format!("Method '{method}' not found"),
                                 None,
                                 None,
                             ))
@@ -2574,9 +2572,9 @@ impl CodeGenerator {
                 }
             }
             Expression::MatrixAccess(matrix, row, col) => {
-                self.generate_expression(&*matrix, instructions)?;
-                self.generate_expression(&*row, instructions)?;
-                self.generate_expression(&*col, instructions)?;
+                self.generate_expression(matrix, instructions)?;
+                self.generate_expression(row, instructions)?;
+                self.generate_expression(col, instructions)?;
                 instructions.push(Instruction::Call(self.get_matrix_get()));
                 Ok(WasmType::F64)
             }
@@ -2697,7 +2695,7 @@ impl CodeGenerator {
                     Ok(WasmType::I32)
                 } else {
                     Err(CompilerError::codegen_error(
-                        &format!("Constructor for class '{class_name}' not found"),
+                        format!("Constructor for class '{class_name}' not found"),
                         Some("Make sure the class has a constructor defined".to_string()),
                         None,
                     ))
@@ -2736,7 +2734,7 @@ impl CodeGenerator {
                     self.get_function_return_type(method_index)
                 } else {
                     Err(CompilerError::codegen_error(
-                        &format!("Static method '{method}' in class '{class_name}' not found"),
+                        format!("Static method '{method}' in class '{class_name}' not found"),
                         Some("Make sure the method is defined in the class".to_string()),
                         None,
                     ))
@@ -2855,7 +2853,7 @@ impl CodeGenerator {
                 // Generate proper async execution with future creation
 
                 // Step 1: Create a unique future ID
-                let future_id = format!("future_{count}", count = self.function_count);
+                let future_id = format!("future_{}", self.function_count);
                 let future_id_ptr = self.add_string_to_pool(&future_id);
                 let future_id_len = future_id.len() as i32;
 
@@ -2870,7 +2868,7 @@ impl CodeGenerator {
                 instructions.push(Instruction::LocalSet(future_handle_local));
 
                 // Step 4: Start background task to execute the expression
-                let task_name = format!("start_expr_{count}", count = self.function_count);
+                let task_name = format!("start_expr_{}", self.function_count);
                 let task_name_ptr = self.add_string_to_pool(&task_name);
                 let task_name_len = task_name.len() as i32;
 
@@ -2985,7 +2983,7 @@ impl CodeGenerator {
                                 ))
                             }
                             _ => Err(CompilerError::codegen_error(
-                                &format!("Property access on type {object_type:?} not supported"),
+                                format!("Property access on type {object_type:?} not supported"),
                                 Some(
                                     "Property access is only supported on objects and lists"
                                         .to_string(),
@@ -3015,16 +3013,11 @@ impl CodeGenerator {
                             }
                             name if name.starts_with("conditional.") => {
                                 // For conditional functions, return default based on the final type
-                                if name.contains(".integer") {
-                                    instructions.push(Instruction::I32Const(0));
-                                    Ok(WasmType::I32)
-                                } else if name.contains(".number") {
+                                if name.contains(".number") {
                                     instructions.push(Instruction::F64Const(0.0));
                                     Ok(WasmType::F64)
-                                } else if name.contains(".string") {
-                                    instructions.push(Instruction::I32Const(0));
-                                    Ok(WasmType::I32)
                                 } else {
+                                    // Default for .integer, .string, and other types
                                     instructions.push(Instruction::I32Const(0));
                                     Ok(WasmType::I32)
                                 }
@@ -3340,7 +3333,7 @@ impl CodeGenerator {
 
             _ => {
                 Err(CompilerError::detailed_type_error(
-                    &format!("Type mismatch: Cannot apply {op:?} to incompatible types"),
+                    format!("Type mismatch: Cannot apply {op:?} to incompatible types"),
                     left_type,
                     right_type,
                     None,
@@ -3552,7 +3545,7 @@ impl CodeGenerator {
                 Ok(WasmType::I32)
             }
             _ => Err(CompilerError::type_error(
-                &format!("Unsupported literal value: {value:?}"),
+                format!("Unsupported literal value: {value:?}"),
                 Some("Use supported literal types".to_string()),
                 None,
             )),
@@ -3587,11 +3580,11 @@ impl CodeGenerator {
                 Instruction::LocalSet(i) => Instruction::LocalSet(*i),
                 Instruction::LocalTee(i) => Instruction::LocalTee(*i),
                 Instruction::Call(i) => Instruction::Call(*i),
-                Instruction::If(bt) => Instruction::If(bt.clone()),
+                Instruction::If(bt) => Instruction::If(*bt),
                 Instruction::Else => Instruction::Else,
                 Instruction::End => Instruction::End,
-                Instruction::Block(bt) => Instruction::Block(bt.clone()),
-                Instruction::Loop(bt) => Instruction::Loop(bt.clone()),
+                Instruction::Block(bt) => Instruction::Block(*bt),
+                Instruction::Loop(bt) => Instruction::Loop(*bt),
                 Instruction::Br(depth) => Instruction::Br(*depth),
                 Instruction::BrIf(depth) => Instruction::BrIf(*depth),
                 Instruction::Return => Instruction::Return,
@@ -3608,10 +3601,10 @@ impl CodeGenerator {
                 Instruction::I32LeU => Instruction::I32LeU,
                 Instruction::I32GeS => Instruction::I32GeS,
                 Instruction::I32GeU => Instruction::I32GeU,
-                Instruction::I32Load(memarg) => Instruction::I32Load(memarg.clone()),
-                Instruction::I32Store(memarg) => Instruction::I32Store(memarg.clone()),
-                Instruction::I32Load8U(memarg) => Instruction::I32Load8U(memarg.clone()),
-                Instruction::I32Store8(memarg) => Instruction::I32Store8(memarg.clone()),
+                Instruction::I32Load(memarg) => Instruction::I32Load(*memarg),
+                Instruction::I32Store(memarg) => Instruction::I32Store(*memarg),
+                Instruction::I32Load8U(memarg) => Instruction::I32Load8U(*memarg),
+                Instruction::I32Store8(memarg) => Instruction::I32Store8(*memarg),
                 // Default case for other instructions - add more specific cases as needed
                 _ => Instruction::Nop,
             };
@@ -3625,6 +3618,7 @@ impl CodeGenerator {
     }
 
     // Helper to register stdlib functions
+    #[allow(dead_code)]
     fn register_stdlib_functions(&mut self) -> Result<(), CompilerError> {
         // Re-enable stdlib functions using the same approach as user-defined functions
         // This avoids the validation issues we had with the register_function approach
@@ -3696,6 +3690,7 @@ impl CodeGenerator {
     }
 
     /// Register method-style operation functions using WASM instructions from MethodStyleManager
+    #[allow(dead_code)]
     fn register_method_style_operations(&mut self) -> Result<(), CompilerError> {
         // DUPLICATE REGISTRATION DISABLED: MethodStyleManager already registered via StandardLibrary
         // Create a MemoryManager and MethodStyleManager instance and register its functions
@@ -3719,6 +3714,7 @@ impl CodeGenerator {
 
     /// Register file operation functions using WASM instructions from FileClass
     /// Only registers specification-compliant functions: file.read, file.write, file.append, file.exists, file.delete
+    #[allow(dead_code)]
     fn register_file_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::file_class::FileClass;
 
@@ -3730,6 +3726,7 @@ impl CodeGenerator {
     }
 
     /// Register numeric operation functions using WASM instructions from NumericOperations
+    #[allow(dead_code)]
     fn register_numeric_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::numeric_ops::NumericOperations;
 
@@ -3741,6 +3738,7 @@ impl CodeGenerator {
     }
 
     /// Register list operation functions using WASM instructions from ListManager
+    #[allow(dead_code)]
     fn register_list_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::list_ops::ListManager;
         use crate::stdlib::memory::MemoryManager;
@@ -3756,6 +3754,7 @@ impl CodeGenerator {
     }
 
     /// Register type conversion functions using WASM instructions from TypeConvOperations
+    #[allow(dead_code)]
     fn register_type_conversion_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::type_conv::TypeConvOperations;
 
@@ -3767,6 +3766,7 @@ impl CodeGenerator {
     }
 
     /// Pre-allocate common strings used by type conversion functions
+    #[allow(dead_code)]
     fn pre_allocate_conversion_strings(&mut self) -> Result<(), CompilerError> {
         // Allocate strings at specific memory addresses that the conversion functions expect
         // Use non-overlapping addresses with proper spacing (address + 4 bytes length + content + padding)
@@ -3795,6 +3795,7 @@ impl CodeGenerator {
     }
 
     /// Allocate a string at a specific memory address
+    #[allow(dead_code)]
     fn allocate_string_at_address(
         &mut self,
         s: &str,
@@ -3806,6 +3807,7 @@ impl CodeGenerator {
     }
 
     /// Register string operation functions using WASM instructions from StringOperations
+    #[allow(dead_code)]
     fn register_string_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::string_ops::StringOperations;
 
@@ -4115,6 +4117,7 @@ impl CodeGenerator {
     }
 
     /// Register console operation functions using ConsoleOperations class
+    #[allow(dead_code)]
     fn register_console_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::console_ops::ConsoleOperations;
 
@@ -4126,6 +4129,7 @@ impl CodeGenerator {
     }
 
     /// Register HTTP operation functions using HttpClass
+    #[allow(dead_code)]
     fn register_http_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::http_class::HttpClass;
 
@@ -4137,6 +4141,7 @@ impl CodeGenerator {
     }
 
     /// Register math operation functions using MathClass
+    #[allow(dead_code)]
     fn register_math_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::math_class::MathClass;
 
@@ -4148,6 +4153,7 @@ impl CodeGenerator {
     }
 
     /// Register string class operation functions using StringClass
+    #[allow(dead_code)]
     fn register_string_class_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::string_class::StringClass;
 
@@ -4159,6 +4165,7 @@ impl CodeGenerator {
     }
 
     /// Register list class operation functions using ListClass
+    #[allow(dead_code)]
     fn register_list_class_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::list_class::ListClass;
 
@@ -4169,6 +4176,7 @@ impl CodeGenerator {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn register_conditional_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::conditional::ConditionalManager;
         use crate::stdlib::memory::MemoryManager;
@@ -4193,6 +4201,7 @@ impl CodeGenerator {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn register_basic_array_get_fallback(&mut self) -> Result<(), CompilerError> {
         // Register a basic array_get fallback function
         // This follows WebAssembly best practices for memory layout
@@ -4275,6 +4284,7 @@ impl CodeGenerator {
     fn create_stdlib_ast_functions(&self) -> Result<Vec<ast::Function>, CompilerError> {
         use crate::ast::{FunctionModifier, FunctionSyntax, Parameter, Visibility};
 
+        #[allow(clippy::vec_init_then_push)]
         let mut functions = Vec::new();
 
         // Removed hardcoded abs function - let stdlib registration handle it to avoid conflicts
@@ -5597,7 +5607,7 @@ impl CodeGenerator {
                         // For other types (like strings), we'd need more complex conversion
                         // For now, just return an error
                         Err(CompilerError::codegen_error(
-                            &format!(
+                            format!(
                                 "Conversion from {object_type:?} to integer not yet implemented"
                             ),
                             None,
@@ -5618,7 +5628,7 @@ impl CodeGenerator {
                         Ok(WasmType::F64)
                     }
                     _ => Err(CompilerError::codegen_error(
-                        &format!("Conversion from {object_type:?} to float not yet implemented"),
+                        format!("Conversion from {object_type:?} to float not yet implemented"),
                         None,
                         None,
                     )),
@@ -5677,13 +5687,11 @@ impl CodeGenerator {
                                     .map(|(name, _)| name)
                                 {
                                     println!(
-                                        "DEBUG: Function index {} actually maps to: '{}'",
-                                        float_to_string_index, actual_name
+                                        "DEBUG: Function index {float_to_string_index} actually maps to: '{actual_name}'"
                                     );
                                 } else {
                                     println!(
-                                        "ERROR: Function index {} not found in function_map!",
-                                        float_to_string_index
+                                        "ERROR: Function index {float_to_string_index} not found in function_map!"
                                     );
                                 }
 
@@ -5771,13 +5779,9 @@ impl CodeGenerator {
                                 Ok(WasmType::I32) // String is represented as I32 pointer
                             } else {
                                 Err(CompilerError::codegen_error(
-                                    &format!(
-                                        "toString() method not found for class '{}'",
-                                        class_name
-                                    ),
+                                    format!("toString() method not found for class '{class_name}'"),
                                     Some(format!(
-                                        "Class '{}' should define a toString() method",
-                                        class_name
+                                        "Class '{class_name}' should define a toString() method"
                                     )),
                                     None,
                                 ))
@@ -5792,22 +5796,17 @@ impl CodeGenerator {
                                 Ok(WasmType::I32) // String is represented as I32 pointer
                             } else {
                                 Err(CompilerError::codegen_error(
-                                    &format!(
-                                        "toString() method not found for class '{}'",
-                                        class_name
-                                    ),
+                                    format!("toString() method not found for class '{class_name}'"),
                                     Some(format!(
-                                        "Class '{}' should define a toString() method",
-                                        class_name
+                                        "Class '{class_name}' should define a toString() method"
                                     )),
                                     None,
                                 ))
                             }
                         }
                         _ => Err(CompilerError::codegen_error(
-                            &format!(
-                                "toString() not supported for Clean Language type {:?}",
-                                clean_type
+                            format!(
+                                "toString() not supported for Clean Language type {clean_type:?}"
                             ),
                             None,
                             None,
@@ -5881,7 +5880,7 @@ impl CodeGenerator {
                 }
             }
             _ => Err(CompilerError::codegen_error(
-                &format!("Unknown type conversion method: {method}"),
+                format!("Unknown type conversion method: {method}"),
                 None,
                 None,
             )),
@@ -5891,10 +5890,7 @@ impl CodeGenerator {
     /// Add a string to the string pool and return its pointer
     pub fn add_string_to_pool(&mut self, string: &str) -> u32 {
         // Use the existing string allocation system
-        match self.allocate_string(string) {
-            Ok(ptr) => ptr,
-            Err(_) => 0, // Return null pointer on allocation failure
-        }
+        self.allocate_string(string).unwrap_or_default() // Return null pointer on allocation failure
     }
 
     /// Get a string from memory at the given pointer
@@ -6039,8 +6035,7 @@ impl CodeGenerator {
                 if expr_type != fallback_type {
                     return Err(CompilerError::type_error(
                         format!(
-                            "onError fallback type {:?} doesn't match expression type {:?}",
-                            fallback_type, expr_type
+                            "onError fallback type {fallback_type:?} doesn't match expression type {expr_type:?}"
                         ),
                         Some(
                             "Ensure the fallback value has the same type as the main expression"
@@ -6433,7 +6428,7 @@ impl CodeGenerator {
             Some(&index) => index,
             None => {
                 return Err(CompilerError::codegen_error(
-                    &format!("HTTP import function '{func_name}' not found"),
+                    format!("HTTP import function '{func_name}' not found"),
                     Some("Make sure HTTP imports are properly registered".to_string()),
                     None,
                 ));
@@ -6445,7 +6440,7 @@ impl CodeGenerator {
                 // Single parameter: URL
                 if args.len() != 1 {
                     return Err(CompilerError::codegen_error(
-                        &format!("HTTP function '{func_name}' expects 1 argument"),
+                        format!("HTTP function '{func_name}' expects 1 argument"),
                         None,
                         None,
                     ));
@@ -6461,7 +6456,7 @@ impl CodeGenerator {
                 // Two parameters: URL and data
                 if args.len() != 2 {
                     return Err(CompilerError::codegen_error(
-                        &format!("HTTP function '{func_name}' expects 2 arguments"),
+                        format!("HTTP function '{func_name}' expects 2 arguments"),
                         None,
                         None,
                     ));
@@ -6478,7 +6473,7 @@ impl CodeGenerator {
             }
             _ => {
                 return Err(CompilerError::codegen_error(
-                    &format!("Unknown HTTP function: {func_name}"),
+                    format!("Unknown HTTP function: {func_name}"),
                     None,
                     None,
                 ));
@@ -6499,7 +6494,7 @@ impl CodeGenerator {
             Some(&index) => index,
             None => {
                 return Err(CompilerError::codegen_error(
-                    &format!("File import function '{func_name}' not found"),
+                    format!("File import function '{func_name}' not found"),
                     Some("Make sure file imports are properly registered".to_string()),
                     None,
                 ));
@@ -6511,7 +6506,7 @@ impl CodeGenerator {
                 // Single parameter: file path
                 if args.len() != 1 {
                     return Err(CompilerError::codegen_error(
-                        &format!("File function '{func_name}' expects 1 argument"),
+                        format!("File function '{func_name}' expects 1 argument"),
                         None,
                         None,
                     ));
@@ -6530,7 +6525,7 @@ impl CodeGenerator {
                 // Single parameter: file path
                 if args.len() != 1 {
                     return Err(CompilerError::codegen_error(
-                        &format!("File function '{func_name}' expects 1 argument"),
+                        format!("File function '{func_name}' expects 1 argument"),
                         None,
                         None,
                     ));
@@ -6546,7 +6541,7 @@ impl CodeGenerator {
                 // Two parameters: file path and content
                 if args.len() != 2 {
                     return Err(CompilerError::codegen_error(
-                        &format!("File function '{func_name}' expects 2 arguments"),
+                        format!("File function '{func_name}' expects 2 arguments"),
                         None,
                         None,
                     ));
@@ -6563,7 +6558,7 @@ impl CodeGenerator {
             }
             _ => {
                 return Err(CompilerError::codegen_error(
-                    &format!("Unknown file function: {func_name}"),
+                    format!("Unknown file function: {func_name}"),
                     None,
                     None,
                 ));
@@ -6641,7 +6636,7 @@ impl CodeGenerator {
                 // Stack now has [content_ptr, length] which is correct for import functions
             } else {
                 return Err(CompilerError::codegen_error(
-                    &format!("Method call '{method}' must evaluate to a string pointer"),
+                    format!("Method call '{method}' must evaluate to a string pointer"),
                     None,
                     None,
                 ));
@@ -6736,10 +6731,7 @@ impl CodeGenerator {
                 }
                 _ => {
                     return Err(CompilerError::codegen_error(
-                        &format!(
-                            "Cannot convert {:?} to string for import function",
-                            expr_type
-                        ),
+                        format!("Cannot convert {expr_type:?} to string for import function"),
                         None,
                         None,
                     ));
@@ -7406,7 +7398,7 @@ impl CodeGenerator {
             iterator.clone(),
             LocalVarInfo {
                 index: iterator_index,
-                type_: element_val_type.into(),
+                type_: element_val_type,
             },
         );
 
@@ -7495,6 +7487,7 @@ impl CodeGenerator {
         Ok(())
     }
 
+    #[allow(clippy::ptr_arg)]
     fn generate_test_statement(
         &mut self,
         _body: &[Statement],
@@ -7699,7 +7692,7 @@ impl CodeGenerator {
             iterator.clone(),
             LocalVarInfo {
                 index: counter_index,
-                type_: ValType::I32.into(),
+                type_: ValType::I32,
             },
         );
 
@@ -7773,7 +7766,7 @@ impl CodeGenerator {
 
     fn generate_later_assignment_statement(
         &mut self,
-        variable: &String,
+        variable: &str,
         expression: &Expression,
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
@@ -7796,7 +7789,7 @@ impl CodeGenerator {
 
         // Register the variable so it can be accessed later
         self.variable_map.insert(
-            variable.clone(),
+            variable.to_owned(),
             LocalVarInfo {
                 index: local_index,
                 type_: future_type.into(),
@@ -7820,8 +7813,7 @@ impl CodeGenerator {
         // Create task metadata for the runtime scheduler
         // This will be used by the host-side async runtime to execute the task
         let task_metadata = format!(
-            "{{\"id\":{},\"name\":\"{}\",\"type\":\"background\",\"priority\":\"normal\"}}",
-            task_id, task_name
+            "{{\"id\":{task_id},\"name\":\"{task_name}\",\"type\":\"background\",\"priority\":\"normal\"}}"
         );
         let metadata_ptr = self.add_string_to_pool(&task_metadata);
         let metadata_len = task_metadata.len() as i32;
@@ -7844,10 +7836,7 @@ impl CodeGenerator {
 
         // Store task information for the host-side runtime to execute later
         // This represents the deferred execution model where tasks are queued, not executed immediately
-        let task_info = format!(
-            "{{\"expression_type\":\"deferred\",\"task_id\":{}}}",
-            task_id
-        );
+        let task_info = format!("{{\"expression_type\":\"deferred\",\"task_id\":{task_id}}}");
         let task_info_ptr = self.add_string_to_pool(&task_info);
         let task_info_len = task_info.len() as i32;
 
@@ -7913,6 +7902,7 @@ impl CodeGenerator {
 
     /// Extract constant values only from truly simple literal expressions
     /// This should NOT evaluate expressions involving variables or complex operations
+    #[allow(clippy::only_used_in_recursion)]
     fn extract_simple_constant_value(&self, expr: &Expression) -> Option<i32> {
         match expr {
             Expression::Literal(value) => match value {

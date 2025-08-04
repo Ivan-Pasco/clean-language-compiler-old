@@ -8,6 +8,12 @@ use wasm_encoder::{Instruction, MemArg};
 /// Provides comprehensive text manipulation capabilities as static methods
 pub struct StringClass;
 
+impl Default for StringClass {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StringClass {
     pub fn new() -> Self {
         Self

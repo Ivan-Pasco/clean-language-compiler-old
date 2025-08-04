@@ -9,6 +9,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 /// Pairs Type Manager - Implements pairs<any,any> associative container
 /// Supports key-value dictionary/map functionality
 pub struct PairsTypeManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

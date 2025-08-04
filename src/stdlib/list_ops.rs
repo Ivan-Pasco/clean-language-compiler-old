@@ -9,6 +9,7 @@ use std::rc::Rc;
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
 pub struct ListManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

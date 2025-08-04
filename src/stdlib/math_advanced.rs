@@ -9,6 +9,7 @@ use wasm_encoder::{BlockType, Instruction, ValType};
 /// Advanced Math class implementation for Clean Language
 /// Implements precise mathematical functions with proper algorithms
 pub struct MathAdvancedManager {
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 
