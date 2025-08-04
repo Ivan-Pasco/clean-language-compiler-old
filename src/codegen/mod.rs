@@ -248,7 +248,10 @@ impl CodeGenerator {
         // ------------------------------------------------------------------
         // 3. Store class information and setup field maps
         // ------------------------------------------------------------------
-        println!("DEBUG: PARSE Program has {count} classes", count = program.classes.len());
+        println!(
+            "DEBUG: PARSE Program has {count} classes",
+            count = program.classes.len()
+        );
         for class in &program.classes {
             println!(
                 "DEBUG: PARSE Class '{}' has constructor: {}",
@@ -299,7 +302,8 @@ impl CodeGenerator {
         for class in &program.classes {
             // Prepare constructor if it exists
             if let Some(constructor) = &class.constructor {
-                let constructor_function_name = format!("{class_name}_constructor", class_name = class.name);
+                let constructor_function_name =
+                    format!("{class_name}_constructor", class_name = class.name);
                 println!(
                     "DEBUG: PREPARE Preparing constructor function '{constructor_function_name}'"
                 );
@@ -319,7 +323,11 @@ impl CodeGenerator {
 
             // Prepare class methods as static functions
             for method in &class.methods {
-                let static_function_name = format!("{class_name}_{method_name}", class_name = class.name, method_name = method.name);
+                let static_function_name = format!(
+                    "{class_name}_{method_name}",
+                    class_name = class.name,
+                    method_name = method.name
+                );
                 let mut static_function = method.clone();
                 static_function.name = static_function_name;
                 self.prepare_function_type(&static_function)?;
@@ -345,7 +353,8 @@ impl CodeGenerator {
                 // Set class context for constructor generation
                 self.current_class_context = Some(class.name.clone());
 
-                let constructor_function_name = format!("{class_name}_constructor", class_name = class.name);
+                let constructor_function_name =
+                    format!("{class_name}_constructor", class_name = class.name);
                 let constructor_function = ast::Function::new(
                     constructor_function_name,
                     constructor.parameters.clone(),
@@ -361,7 +370,8 @@ impl CodeGenerator {
                 // Generate a default constructor (no parameters, initializes fields to default values)
                 self.current_class_context = Some(class.name.clone());
 
-                let constructor_function_name = format!("{class_name}_constructor", class_name = class.name);
+                let constructor_function_name =
+                    format!("{class_name}_constructor", class_name = class.name);
                 let constructor_function = ast::Function::new(
                     constructor_function_name,
                     vec![], // No parameters for default constructor
@@ -380,7 +390,11 @@ impl CodeGenerator {
                 // Set class context for method generation
                 self.current_class_context = Some(class.name.clone());
 
-                let static_function_name = format!("{class_name}_{method_name}", class_name = class.name, method_name = method.name);
+                let static_function_name = format!(
+                    "{class_name}_{method_name}",
+                    class_name = class.name,
+                    method_name = method.name
+                );
                 let mut static_function = method.clone();
                 static_function.name = static_function_name;
                 self.generate_function(&static_function)?;
@@ -820,7 +834,10 @@ impl CodeGenerator {
         // Find the function index from the function map (set by prepare_function_type)
         let function_index = self.function_map.get(&function.name).ok_or_else(|| {
             CompilerError::codegen_error(
-                &format!("Function '{function_name}' not found in function map", function_name = function.name),
+                &format!(
+                    "Function '{function_name}' not found in function map",
+                    function_name = function.name
+                ),
                 None,
                 None,
             )
@@ -2986,8 +3003,7 @@ impl CodeGenerator {
                     // Handle nested property access like compare.integer.greaterThan
                     if let Expression::Variable(base_name) = nested_object.as_ref() {
                         // Build the qualified name: base.nested_property.property
-                        let qualified_name =
-                            format!("{base_name}.{nested_property}.{property}");
+                        let qualified_name = format!("{base_name}.{nested_property}.{property}");
 
                         // This is likely a function reference that should be called with arguments
                         // For now, return a placeholder that represents this function reference
@@ -5581,7 +5597,9 @@ impl CodeGenerator {
                         // For other types (like strings), we'd need more complex conversion
                         // For now, just return an error
                         Err(CompilerError::codegen_error(
-                            &format!("Conversion from {object_type:?} to integer not yet implemented"),
+                            &format!(
+                                "Conversion from {object_type:?} to integer not yet implemented"
+                            ),
                             None,
                             None,
                         ))
@@ -6094,7 +6112,11 @@ impl CodeGenerator {
             self.generate_statements(&method.body, &mut instructions)?;
 
             // Add method to function table
-            let method_name = format!("{class_name}_{method_name}", class_name = class.name, method_name = method.name);
+            let method_name = format!(
+                "{class_name}_{method_name}",
+                class_name = class.name,
+                method_name = method.name
+            );
             self.function_map
                 .insert(method_name.clone(), self.function_count);
             self.function_count += 1;
@@ -7937,11 +7959,7 @@ impl CodeGenerator {
     fn generate_getter_functions(&mut self) -> Result<(), CompilerError> {
         // Generate individual getter functions for each variable
         for (var_name, (var_type, var_value)) in &self.start_function_variables.clone() {
-            self.generate_single_getter_function(
-                &format!("get_{var_name}"),
-                var_type,
-                *var_value,
-            )?;
+            self.generate_single_getter_function(&format!("get_{var_name}"), var_type, *var_value)?;
         }
 
         // Generate get_result function for backward compatibility

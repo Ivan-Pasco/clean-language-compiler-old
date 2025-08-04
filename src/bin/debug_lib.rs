@@ -14,7 +14,10 @@ start()
     println!("Compiling source...");
     let wasm_binary = match compile(source) {
         Ok(binary) => {
-            println!("✓ Compilation successful! Generated {len} bytes", len = binary.len());
+            println!(
+                "✓ Compilation successful! Generated {len} bytes",
+                len = binary.len()
+            );
 
             // Write to file for debugging
             fs::write("debug_lib_output.wasm", &binary).expect("Failed to write WASM file");

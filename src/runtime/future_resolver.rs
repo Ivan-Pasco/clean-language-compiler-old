@@ -361,7 +361,10 @@ impl FutureHandle {
         if let Some(receiver) = self.receiver.take() {
             match receiver.await {
                 Ok(value) => {
-                    println!("🎯 Future '{id}' awaited successfully: {value:?}", id = self.id);
+                    println!(
+                        "🎯 Future '{id}' awaited successfully: {value:?}",
+                        id = self.id
+                    );
                     Ok(value)
                 }
                 Err(_) => Err(CompilerError::runtime_error(

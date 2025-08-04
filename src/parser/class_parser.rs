@@ -11,7 +11,10 @@ use pest::iterators::Pair;
 pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
     println!("DEBUG: parse_class called from class_parser.rs");
     println!("DEBUG: parse_class pair rule: {:?}", pair.as_rule());
-    println!("DEBUG: parse_class pair content: {content}", content = pair.as_str());
+    println!(
+        "DEBUG: parse_class pair content: {content}",
+        content = pair.as_str()
+    );
     let mut name = String::new();
     let mut type_parameters = Vec::new();
     let mut description = None;

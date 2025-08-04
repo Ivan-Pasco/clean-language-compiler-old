@@ -31,7 +31,10 @@ impl FileIO {
 
     /// Write content to file
     pub fn write_file(path: &str, content: &str) -> Result<(), CompilerError> {
-        println!("📁 [FILE WRITE] Writing {len} bytes to: {path}", len = content.len());
+        println!(
+            "📁 [FILE WRITE] Writing {len} bytes to: {path}",
+            len = content.len()
+        );
 
         match fs::write(path, content) {
             Ok(()) => {
@@ -136,7 +139,10 @@ impl FileIO {
                     }
                 }
 
-                println!("✅ [DIR LIST] Found {count} entries in {path}", count = files.len());
+                println!(
+                    "✅ [DIR LIST] Found {count} entries in {path}",
+                    count = files.len()
+                );
                 Ok(files)
             }
             Err(e) => {

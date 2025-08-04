@@ -6,7 +6,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 3 {
-        eprintln!("Usage: {program} <input.wasm> <output.wat>", program = args[0]);
+        eprintln!(
+            "Usage: {program} <input.wasm> <output.wat>",
+            program = args[0]
+        );
         std::process::exit(1);
     }
 

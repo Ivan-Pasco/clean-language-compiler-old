@@ -124,7 +124,10 @@ fn execute_file(input_file: &str) -> Result<(), CompilerError> {
     if !Path::new(input_file).exists() {
         // If the input is a .cln file, compile it first
         if input_file.ends_with(".cln") {
-            let wasm_file = format!("{file_stem}.wasm", file_stem = input_file.trim_end_matches(".cln"));
+            let wasm_file = format!(
+                "{file_stem}.wasm",
+                file_stem = input_file.trim_end_matches(".cln")
+            );
             compile_file(input_file, &wasm_file)?;
             return execute_file(&wasm_file);
         } else {
@@ -1538,11 +1541,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             |_caller: Caller<'_, ()>, base: f64, exponent: f64| -> f64 { base.powf(exponent) },
         )
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create pow function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create pow function: {e}"), None, None)
         })?;
 
     linker
@@ -1550,11 +1549,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.sin()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create sin function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create sin function: {e}"), None, None)
         })?;
 
     linker
@@ -1562,11 +1557,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.cos()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create cos function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create cos function: {e}"), None, None)
         })?;
 
     linker
@@ -1574,11 +1565,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.tan()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create tan function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create tan function: {e}"), None, None)
         })?;
 
     linker
@@ -1606,11 +1593,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.log2()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create log2 function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create log2 function: {e}"), None, None)
         })?;
 
     linker
@@ -1618,11 +1601,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.exp()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create exp function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create exp function: {e}"), None, None)
         })?;
 
     linker
@@ -1630,11 +1609,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.exp2()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create exp2 function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create exp2 function: {e}"), None, None)
         })?;
 
     linker
@@ -1642,11 +1617,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.sqrt()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create sqrt function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create sqrt function: {e}"), None, None)
         })?;
 
     linker
@@ -1654,11 +1625,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.sinh()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create sinh function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create sinh function: {e}"), None, None)
         })?;
 
     linker
@@ -1666,11 +1633,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.cosh()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create cosh function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create cosh function: {e}"), None, None)
         })?;
 
     linker
@@ -1678,11 +1641,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.tanh()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create tanh function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create tanh function: {e}"), None, None)
         })?;
 
     linker
@@ -1690,11 +1649,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.asin()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create asin function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create asin function: {e}"), None, None)
         })?;
 
     linker
@@ -1702,11 +1657,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.acos()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create acos function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create acos function: {e}"), None, None)
         })?;
 
     linker
@@ -1714,11 +1665,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.atan()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create atan function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create atan function: {e}"), None, None)
         })?;
 
     linker
@@ -1742,11 +1689,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             x.abs()
         })
         .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create abs function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create abs function: {e}"), None, None)
         })?;
 
     // Console input functions
@@ -2033,11 +1976,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
 
         // Call the start function
         start.call(&mut store, &[], &mut results).map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to call start function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to call start function: {e}"), None, None)
         })?;
 
         println!("Program executed successfully!");
@@ -2061,11 +2000,7 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
 
         // Call the start function
         start.call(&mut store, &[], &mut results).map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to call _start function: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to call _start function: {e}"), None, None)
         })?;
 
         println!("Program executed successfully!");

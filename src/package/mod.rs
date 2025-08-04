@@ -322,11 +322,19 @@ impl PackageManager {
 
         // Skip if already installed
         if install_path.exists() {
-            println!("⏭️  {name} {version} already installed", name = package.name, version = package.version);
+            println!(
+                "⏭️  {name} {version} already installed",
+                name = package.name,
+                version = package.version
+            );
             return Ok(());
         }
 
-        println!("📥 Installing {name} {version}...", name = package.name, version = package.version);
+        println!(
+            "📥 Installing {name} {version}...",
+            name = package.name,
+            version = package.version
+        );
 
         match &package.source {
             PackageSource::Registry { url } => {
@@ -347,7 +355,11 @@ impl PackageManager {
             }
         }
 
-        println!("✅ Installed {name} {version}", name = package.name, version = package.version);
+        println!(
+            "✅ Installed {name} {version}",
+            name = package.name,
+            version = package.version
+        );
         Ok(())
     }
 
@@ -417,7 +429,10 @@ impl PackageManager {
             )
         })?;
 
-        println!("📁 Copying from local path: {path}", path = source_path.display());
+        println!(
+            "📁 Copying from local path: {path}",
+            path = source_path.display()
+        );
 
         // Copy package files to install location
         self.copy_dir_recursive(source_path, install_path)?;
@@ -437,11 +452,7 @@ impl PackageManager {
             CompilerError::io_error(&format!("Failed to read directory: {e}"), None, None)
         })? {
             let entry = entry.map_err(|e| {
-                CompilerError::io_error(
-                    &format!("Failed to read directory entry: {e}"),
-                    None,
-                    None,
-                )
+                CompilerError::io_error(&format!("Failed to read directory entry: {e}"), None, None)
             })?;
             let src_path = entry.path();
             let dst_path = dst.join(entry.file_name());

@@ -388,13 +388,22 @@ impl DebugUtils {
         let mut report = String::new();
 
         report.push_str(&format!("=== Debug Report for {file_path} ===\n"));
-        report.push_str(&format!("Source length: {len} characters\n", len = source.len()));
-        report.push_str(&format!("Source lines: {count}\n", count = source.lines().count()));
+        report.push_str(&format!(
+            "Source length: {len} characters\n",
+            len = source.len()
+        ));
+        report.push_str(&format!(
+            "Source lines: {count}\n",
+            count = source.lines().count()
+        ));
 
         match parse_result {
             Ok(program) => {
                 report.push_str("✅ Parsing: SUCCESS\n");
-                report.push_str(&format!("Functions: {len}\n", len = program.functions.len()));
+                report.push_str(&format!(
+                    "Functions: {len}\n",
+                    len = program.functions.len()
+                ));
                 report.push_str(&format!("Classes: {len}\n", len = program.classes.len()));
                 report.push_str(&format!(
                     "Has start function: {}\n",
@@ -417,7 +426,10 @@ impl DebugUtils {
         // Add style analysis
         let style_issues = Self::validate_style(source);
         if !style_issues.is_empty() {
-            report.push_str(&format!("🎨 Style Issues: {len}\n", len = style_issues.len()));
+            report.push_str(&format!(
+                "🎨 Style Issues: {len}\n",
+                len = style_issues.len()
+            ));
             for issue in style_issues {
                 report.push_str(&format!("  - {issue}\n"));
             }
