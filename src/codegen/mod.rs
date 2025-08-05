@@ -4281,10 +4281,10 @@ impl CodeGenerator {
 
     /// Create AST function definitions for stdlib functions
     #[allow(dead_code)]
+    #[allow(clippy::vec_init_then_push)]
     fn create_stdlib_ast_functions(&self) -> Result<Vec<ast::Function>, CompilerError> {
         use crate::ast::{FunctionModifier, FunctionSyntax, Parameter, Visibility};
 
-        #[allow(clippy::vec_init_then_push)]
         let mut functions = Vec::new();
 
         // Removed hardcoded abs function - let stdlib registration handle it to avoid conflicts
@@ -8176,8 +8176,7 @@ impl CodeGenerator {
             let class_name = function_name.strip_suffix("_constructor").unwrap();
             if self.class_table.contains_key(class_name) {
                 println!(
-                    "DEBUG: CODEGEN Inferred class context '{}' for constructor '{}'",
-                    class_name, function_name
+                    "DEBUG: CODEGEN Inferred class context '{class_name}' for constructor '{function_name}'"
                 );
                 return Some(class_name.to_string());
             }
@@ -8204,8 +8203,7 @@ impl CodeGenerator {
                     if self.class_table.contains_key(*cname) {
                         if function_name == "getName" {
                             println!(
-                                "DEBUG: CODEGEN Found matching class '{}' for function '{}'",
-                                cname, function_name
+                                "DEBUG: CODEGEN Found matching class '{cname}' for function '{function_name}'"
                             );
                         }
                         return Some(cname.to_string());
@@ -8217,14 +8215,13 @@ impl CodeGenerator {
         // Fallback to general pattern matching
         for (class_name, class_def) in &self.class_table {
             // Check if this class has fields that would make sense for this function to access
-            if !class_def.fields.is_empty() {
-                if function_name.starts_with("get")
+            if !class_def.fields.is_empty()
+                && (function_name.starts_with("get")
                     || function_name.starts_with("set")
                     || function_name.starts_with("is")
-                    || function_name.contains("toString")
-                {
-                    return Some(class_name.clone());
-                }
+                    || function_name.contains("toString"))
+            {
+                return Some(class_name.clone());
             }
         }
         None

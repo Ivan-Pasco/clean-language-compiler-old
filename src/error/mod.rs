@@ -885,8 +885,8 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
 
     let mut matrix = vec![vec![0; s2_len + 1]; s1_len + 1];
 
-    for i in 0..=s1_len {
-        matrix[i][0] = i;
+    for (i, row) in matrix.iter_mut().enumerate().take(s1_len + 1) {
+        row[0] = i;
     }
 
     for j in 0..=s2_len {
@@ -1208,13 +1208,9 @@ impl ErrorUtils {
             }
         };
 
-        let source_snippet = if let Some(loc) = &location {
-            Some(ErrorUtils::extract_enhanced_source_snippet(
-                source, error_span, loc,
-            ))
-        } else {
-            None
-        };
+        let source_snippet = location
+            .as_ref()
+            .map(|loc| ErrorUtils::extract_enhanced_source_snippet(source, error_span, loc));
 
         let (enhanced_message, suggestions, help) =
             ErrorUtils::enhance_pest_error_message(&pest_error, source, error_span);
@@ -1266,7 +1262,7 @@ impl ErrorUtils {
 
         let mut snippet = String::new();
 
-        for (_i, line_idx) in (start_line..end_line).enumerate() {
+        for line_idx in start_line..end_line {
             let line_num = line_idx + 1;
             let line_content = lines[line_idx];
 
