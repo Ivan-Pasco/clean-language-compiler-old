@@ -46,7 +46,7 @@ jobs:
     - name: Test cln binary
       run: |
         cargo build --bin cln
-        ./build/debug/cln version
+        ./target/debug/cln version
 
   build-test:
     name: Build Test ${{ matrix.os }}
