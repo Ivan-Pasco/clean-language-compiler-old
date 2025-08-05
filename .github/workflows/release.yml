@@ -83,12 +83,13 @@ jobs:
 
     - name: Create archive (Windows)
       if: matrix.os == 'windows-latest'
+      shell: pwsh
       run: |
-        cd target/${{ matrix.target }}/release
-        7z a ../../../${{ matrix.name }}.zip cln.exe
+        Set-Location "target/${{ matrix.target }}/release"
+        7z a "../../../${{ matrix.name }}.zip" cln.exe
         # Also copy direct binary for cleanmanager compatibility
-        cp cln.exe ../../../${{ matrix.name }}.exe
-        cd -
+        Copy-Item cln.exe "../../../${{ matrix.name }}.exe"
+        Set-Location "../../../"
 
     - name: Upload binary artifact
       uses: actions/upload-artifact@v4
@@ -115,14 +116,22 @@ jobs:
 
     - name: Move artifacts to root
       run: |
+        # Move archives
         find artifacts -name "*.tar.gz" -o -name "*.zip" | while read file; do
           mv "$file" .
         done
-        # Also move direct binaries for cleanmanager compatibility
-        find artifacts -name "cln-*" -not -name "*.tar.gz" -not -name "*.zip" | while read file; do
+        # Move direct binaries for cleanmanager compatibility
+        find artifacts -name "cln-linux-*" -type f | while read file; do
           mv "$file" .
         done
-        ls -la *.tar.gz *.zip cln-* || true
+        find artifacts -name "cln-macos-*" -type f | while read file; do
+          mv "$file" .
+        done  
+        find artifacts -name "cln-windows-*.exe" -type f | while read file; do
+          mv "$file" .
+        done
+        # List what we have
+        ls -la *.tar.gz *.zip cln-* 2>/dev/null || echo "Some files may be missing"
 
     - name: Create Release
       uses: softprops/action-gh-release@v2
