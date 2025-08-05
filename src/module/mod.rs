@@ -49,6 +49,12 @@ pub enum ImportType {
     SingleSymbolAlias, // import: Json.decode as jd
 }
 
+impl Default for ModuleResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModuleResolver {
     /// Create a new module resolver
     pub fn new() -> Self {

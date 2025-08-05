@@ -1262,9 +1262,8 @@ impl ErrorUtils {
 
         let mut snippet = String::new();
 
-        for line_idx in start_line..end_line {
+        for (line_idx, line_content) in lines.iter().enumerate().take(end_line).skip(start_line) {
             let line_num = line_idx + 1;
-            let line_content = lines[line_idx];
 
             if line_idx == error_line_idx {
                 // This is the error line - add highlighting
@@ -1357,7 +1356,7 @@ impl ErrorUtils {
                 (message, suggestions, help)
             }
             ErrorVariant::CustomError { message } => {
-                let suggestions = ErrorUtils::suggest_syntax_fixes(&message);
+                let suggestions = ErrorUtils::suggest_syntax_fixes(message);
                 let help = Some("Check the Clean Language syntax documentation".to_string());
                 (message.clone(), suggestions, help)
             }
