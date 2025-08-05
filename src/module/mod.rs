@@ -131,9 +131,7 @@ impl ModuleResolver {
                     single_symbols.insert(import_name.clone(), (module_name.clone(), symbol_name));
 
                     // Also store the module for reference
-                    if !resolved_imports.contains_key(&module_name) {
-                        resolved_imports.insert(module_name, module);
-                    }
+                    resolved_imports.entry(module_name).or_insert(module);
                 }
                 ImportType::SingleSymbolAlias => {
                     // import: Json.decode as jd
@@ -158,9 +156,7 @@ impl ModuleResolver {
                     }
 
                     // Also store the module for reference
-                    if !resolved_imports.contains_key(&module_name) {
-                        resolved_imports.insert(module_name, module);
-                    }
+                    resolved_imports.entry(module_name).or_insert(module);
                 }
             }
         }

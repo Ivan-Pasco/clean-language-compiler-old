@@ -169,7 +169,7 @@ impl PackageManager {
     pub fn load_manifest<P: AsRef<Path>>(path: P) -> Result<PackageManifest, CompilerError> {
         let content = fs::read_to_string(&path).map_err(|e| {
             CompilerError::io_error(
-                &format!("Failed to read package manifest: {e}"),
+                format!("Failed to read package manifest: {e}"),
                 Some(path.as_ref().to_string_lossy().to_string()),
                 None,
             )
@@ -196,11 +196,11 @@ impl PackageManager {
     ) -> Result<(), CompilerError> {
         let content = if path.as_ref().extension().and_then(|s| s.to_str()) == Some("json") {
             serde_json::to_string_pretty(manifest).map_err(|e| {
-                CompilerError::io_error(&format!("Failed to serialize manifest: {e}"), None, None)
+                CompilerError::io_error(format!("Failed to serialize manifest: {e}"), None, None)
             })?
         } else {
             toml::to_string_pretty(manifest).map_err(|e| {
-                CompilerError::io_error(&format!("Failed to serialize manifest: {e}"), None, None)
+                CompilerError::io_error(format!("Failed to serialize manifest: {e}"), None, None)
             })?
         };
 
