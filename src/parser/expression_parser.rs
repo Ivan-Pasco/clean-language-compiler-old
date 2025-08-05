@@ -231,7 +231,7 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
 }
 
 pub fn parse_base_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
-    for item in pair.into_inner() {
+    if let Some(item) = pair.into_inner().next() {
         match item.as_rule() {
             Rule::logical_expression => {
                 return parse_logical_expression(item);

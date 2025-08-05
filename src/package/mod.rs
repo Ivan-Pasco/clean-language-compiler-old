@@ -206,7 +206,7 @@ impl PackageManager {
 
         fs::write(&path, content).map_err(|e| {
             CompilerError::io_error(
-                &format!("Failed to write package manifest: {e}"),
+                format!("Failed to write package manifest: {e}"),
                 Some(path.as_ref().to_string_lossy().to_string()),
                 None,
             )
@@ -252,7 +252,7 @@ impl PackageManager {
         // Create basic project structure
         let src_dir = project_dir.as_ref().join("src");
         fs::create_dir_all(&src_dir).map_err(|e| {
-            CompilerError::io_error(&format!("Failed to create src directory: {e}"), None, None)
+            CompilerError::io_error(format!("Failed to create src directory: {e}"), None, None)
         })?;
 
         // Create main.clean file
@@ -262,7 +262,7 @@ impl PackageManager {
                 "// {name} - Clean Language Package\n\nfunction start()\n\tprint(\"Hello from {name}!\")\n"
             );
             fs::write(&main_file, main_content).map_err(|e| {
-                CompilerError::io_error(&format!("Failed to create main.clean: {e}"), None, None)
+                CompilerError::io_error(format!("Failed to create main.clean: {e}"), None, None)
             })?;
         }
 
@@ -375,7 +375,7 @@ impl PackageManager {
         // For now, we'll simulate the process
         fs::create_dir_all(install_path).map_err(|e| {
             CompilerError::io_error(
-                &format!("Failed to create install directory: {e}"),
+                format!("Failed to create install directory: {e}"),
                 None,
                 None,
             )
@@ -401,7 +401,7 @@ impl PackageManager {
     ) -> Result<(), CompilerError> {
         fs::create_dir_all(install_path).map_err(|e| {
             CompilerError::io_error(
-                &format!("Failed to create install directory: {e}"),
+                format!("Failed to create install directory: {e}"),
                 None,
                 None,
             )
@@ -423,7 +423,7 @@ impl PackageManager {
     ) -> Result<(), CompilerError> {
         fs::create_dir_all(install_path).map_err(|e| {
             CompilerError::io_error(
-                &format!("Failed to create install directory: {e}"),
+                format!("Failed to create install directory: {e}"),
                 None,
                 None,
             )
@@ -435,33 +435,33 @@ impl PackageManager {
         );
 
         // Copy package files to install location
-        self.copy_dir_recursive(source_path, install_path)?;
+        Self::copy_dir_recursive(source_path, install_path)?;
 
         Ok(())
     }
 
     /// Recursively copy directory
-    fn copy_dir_recursive(&self, src: &Path, dst: &Path) -> Result<(), CompilerError> {
+    fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), CompilerError> {
         if !dst.exists() {
             fs::create_dir_all(dst).map_err(|e| {
-                CompilerError::io_error(&format!("Failed to create directory: {e}"), None, None)
+                CompilerError::io_error(format!("Failed to create directory: {e}"), None, None)
             })?;
         }
 
         for entry in fs::read_dir(src).map_err(|e| {
-            CompilerError::io_error(&format!("Failed to read directory: {e}"), None, None)
+            CompilerError::io_error(format!("Failed to read directory: {e}"), None, None)
         })? {
             let entry = entry.map_err(|e| {
-                CompilerError::io_error(&format!("Failed to read directory entry: {e}"), None, None)
+                CompilerError::io_error(format!("Failed to read directory entry: {e}"), None, None)
             })?;
             let src_path = entry.path();
             let dst_path = dst.join(entry.file_name());
 
             if src_path.is_dir() {
-                self.copy_dir_recursive(&src_path, &dst_path)?;
+                Self::copy_dir_recursive(&src_path, &dst_path)?;
             } else {
                 fs::copy(&src_path, &dst_path).map_err(|e| {
-                    CompilerError::io_error(&format!("Failed to copy file: {e}"), None, None)
+                    CompilerError::io_error(format!("Failed to copy file: {e}"), None, None)
                 })?;
             }
         }
@@ -606,7 +606,7 @@ impl Version {
         let parts: Vec<&str> = version_str.split('.').collect();
         if parts.len() < 3 {
             return Err(CompilerError::parse_error(
-                &format!("Invalid version format: {version_str}"),
+                format!("Invalid version format: {version_str}"),
                 None,
                 Some("Version must be in format 'major.minor.patch'".to_string()),
             ));
@@ -648,7 +648,7 @@ impl Version {
             VersionReq::LessEqual(v) => self <= v,
             VersionReq::Range(min, max) => self >= min && self < max,
             VersionReq::Wildcard(major, minor) => {
-                self.major == *major && minor.map_or(true, |m| self.minor == m)
+                self.major == *major && minor.is_none_or(|m| self.minor == m)
             }
         }
     }
@@ -672,23 +672,23 @@ impl VersionReq {
     pub fn parse(req_str: &str) -> Result<VersionReq, CompilerError> {
         let req_str = req_str.trim();
 
-        if req_str.starts_with('^') {
-            let version = Version::parse(&req_str[1..])?;
+        if let Some(stripped) = req_str.strip_prefix('^') {
+            let version = Version::parse(stripped)?;
             Ok(VersionReq::Caret(version))
-        } else if req_str.starts_with('~') {
-            let version = Version::parse(&req_str[1..])?;
+        } else if let Some(stripped) = req_str.strip_prefix('~') {
+            let version = Version::parse(stripped)?;
             Ok(VersionReq::Tilde(version))
-        } else if req_str.starts_with(">=") {
-            let version = Version::parse(&req_str[2..])?;
+        } else if let Some(stripped) = req_str.strip_prefix(">=") {
+            let version = Version::parse(stripped)?;
             Ok(VersionReq::GreaterEqual(version))
-        } else if req_str.starts_with('>') {
-            let version = Version::parse(&req_str[1..])?;
+        } else if let Some(stripped) = req_str.strip_prefix('>') {
+            let version = Version::parse(stripped)?;
             Ok(VersionReq::GreaterThan(version))
-        } else if req_str.starts_with("<=") {
-            let version = Version::parse(&req_str[2..])?;
+        } else if let Some(stripped) = req_str.strip_prefix("<=") {
+            let version = Version::parse(stripped)?;
             Ok(VersionReq::LessEqual(version))
-        } else if req_str.starts_with('<') {
-            let version = Version::parse(&req_str[1..])?;
+        } else if let Some(stripped) = req_str.strip_prefix('<') {
+            let version = Version::parse(stripped)?;
             Ok(VersionReq::LessThan(version))
         } else if req_str.contains('*') {
             // Handle wildcard versions like "1.*" or "1.2.*"

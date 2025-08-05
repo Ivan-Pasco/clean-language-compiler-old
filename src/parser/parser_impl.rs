@@ -877,8 +877,7 @@ pub fn parse_functions_block_with_context(
         }
         Err(e) => {
             println!(
-                "DEBUG: Preprocessor failed: {}, falling back to traditional",
-                e
+                "DEBUG: Preprocessor failed: {e}, falling back to traditional"
             );
         }
     }
