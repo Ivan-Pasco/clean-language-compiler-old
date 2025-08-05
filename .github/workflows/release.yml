@@ -77,6 +77,8 @@ jobs:
       run: |
         cd target/${{ matrix.target }}/release
         tar -czf ../../../${{ matrix.name }}.tar.gz cln
+        # Also copy direct binary for cleanmanager compatibility
+        cp cln ../../../${{ matrix.name }}
         cd -
 
     - name: Create archive (Windows)
@@ -84,13 +86,17 @@ jobs:
       run: |
         cd target/${{ matrix.target }}/release
         7z a ../../../${{ matrix.name }}.zip cln.exe
+        # Also copy direct binary for cleanmanager compatibility
+        cp cln.exe ../../../${{ matrix.name }}.exe
         cd -
 
     - name: Upload binary artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.name }}
-        path: ${{ matrix.name }}.${{ matrix.archive }}
+        path: |
+          ${{ matrix.name }}.${{ matrix.archive }}
+          ${{ matrix.name }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
 
   release:
     name: Create Release
@@ -112,7 +118,11 @@ jobs:
         find artifacts -name "*.tar.gz" -o -name "*.zip" | while read file; do
           mv "$file" .
         done
-        ls -la *.tar.gz *.zip
+        # Also move direct binaries for cleanmanager compatibility
+        find artifacts -name "cln-*" -not -name "*.tar.gz" -not -name "*.zip" | while read file; do
+          mv "$file" .
+        done
+        ls -la *.tar.gz *.zip cln-* || true
 
     - name: Create Release
       uses: softprops/action-gh-release@v2
@@ -120,6 +130,11 @@ jobs:
         files: |
           *.tar.gz
           *.zip
+          cln-linux-x86_64
+          cln-linux-aarch64
+          cln-macos-x86_64
+          cln-macos-aarch64
+          cln-windows-x86_64.exe
         body: |
           ## Clean Language Compiler ${{ github.ref_name }}
           
@@ -134,11 +149,13 @@ jobs:
           
           ### Platforms
           
-          - **Linux x86_64**: `cln-linux-x86_64.tar.gz`
-          - **Linux ARM64**: `cln-linux-aarch64.tar.gz`
-          - **macOS x86_64**: `cln-macos-x86_64.tar.gz`
-          - **macOS ARM64**: `cln-macos-aarch64.tar.gz`
-          - **Windows x86_64**: `cln-windows-x86_64.zip`
+          Choose between direct binaries (for cleanmanager) or archives:
+          
+          - **Linux x86_64**: `cln-linux-x86_64` or `cln-linux-x86_64.tar.gz`
+          - **Linux ARM64**: `cln-linux-aarch64` or `cln-linux-aarch64.tar.gz`
+          - **macOS x86_64**: `cln-macos-x86_64` or `cln-macos-x86_64.tar.gz`
+          - **macOS ARM64**: `cln-macos-aarch64` or `cln-macos-aarch64.tar.gz`
+          - **Windows x86_64**: `cln-windows-x86_64.exe` or `cln-windows-x86_64.zip`
           
           ### Usage
           
