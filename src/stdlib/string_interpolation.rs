@@ -670,10 +670,13 @@ mod tests {
         let interpolation_manager = StringInterpolationManager::new(memory_manager.clone());
 
         // Test that manager is created successfully
-        assert_eq!(interpolation_manager
-            .memory_manager
-            .borrow()
-            .get_total_allocated(), 0);
+        assert_eq!(
+            interpolation_manager
+                .memory_manager
+                .borrow()
+                .get_total_allocated(),
+            0
+        );
     }
 
     #[test]
