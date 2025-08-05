@@ -862,7 +862,7 @@ mod tests {
         let default_manager = DefaultParameterManager::new(memory_manager.clone());
 
         // Test that manager is created successfully
-        assert!(default_manager.memory_manager.borrow().data.is_empty());
+        assert_eq!(default_manager.memory_manager.borrow().get_total_allocated(), 0);
     }
 
     #[test]

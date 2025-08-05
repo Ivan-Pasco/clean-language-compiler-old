@@ -525,6 +525,6 @@ mod tests {
         let method_manager = MethodStyleManager::new(memory_manager.clone());
 
         // Test that manager is created successfully
-        assert!(method_manager.memory_manager.borrow().data.is_empty());
+        assert_eq!(method_manager.memory_manager.borrow().get_total_allocated(), 0);
     }
 }
