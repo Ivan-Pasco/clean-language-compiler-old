@@ -520,7 +520,7 @@ impl ConsoleInputManager {
             Instruction::I32Const(0),
             Instruction::I32GtU, // str_len > 0
             Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::F64Const(3.14), // Mock parsed value
+            Instruction::F64Const(std::f64::consts::PI), // Mock parsed value
             Instruction::LocalSet(1),    // result
             Instruction::Else,
             // Return NaN for empty/invalid input

@@ -49,6 +49,7 @@ impl StringManager {
         Ok(())
     }
 
+    #[allow(clippy::vec_init_then_push)]
     fn generate_string_allocate(&self) -> Vec<Instruction> {
         let mut instructions = Vec::new();
         // memory.allocate typically expects (size, type_id) as parameters
@@ -58,6 +59,7 @@ impl StringManager {
         instructions
     }
 
+    #[allow(clippy::vec_init_then_push)]
     fn generate_string_get(&self) -> Vec<Instruction> {
         let mut instructions = Vec::new();
         instructions.push(Instruction::LocalGet(0)); // string pointer
@@ -71,6 +73,7 @@ impl StringManager {
         instructions
     }
 
+    #[allow(clippy::vec_init_then_push)]
     fn generate_string_set(&self) -> Vec<Instruction> {
         let mut instructions = Vec::new();
         instructions.push(Instruction::LocalGet(0)); // string pointer
@@ -181,7 +184,7 @@ impl StringManager {
         // Check bounds
         if index >= length {
             return Err(CompilerError::type_error(
-                format!("String index out of bounds: {} >= {}", index, length),
+                format!("String index out of bounds: {index} >= {length}"),
                 Some("Ensure index is within string bounds".to_string()),
                 None,
             ));
@@ -216,7 +219,7 @@ impl StringManager {
         // Check bounds
         if index >= length {
             return Err(CompilerError::type_error(
-                format!("String index out of bounds: {} >= {}", index, length),
+                format!("String index out of bounds: {index} >= {length}"),
                 Some("Ensure index is within string bounds".to_string()),
                 None,
             ));
@@ -616,6 +619,7 @@ impl StringOperations {
         ]
     }
 
+    #[allow(clippy::vec_init_then_push)]
     fn generate_string_length(&self) -> Vec<Instruction> {
         let mut instructions = Vec::new();
 
