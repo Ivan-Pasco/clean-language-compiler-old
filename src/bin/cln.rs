@@ -8,6 +8,8 @@
  * A modern, type-safe programming language that compiles to WebAssembly
  */
 
+#![allow(clippy::manual_inspect)]
+
 use clean_language_compiler::codegen::CodeGenerator;
 use clean_language_compiler::error::CompilerError;
 use clean_language_compiler::parser::CleanParser;

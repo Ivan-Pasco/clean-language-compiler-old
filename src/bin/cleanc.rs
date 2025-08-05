@@ -1,8 +1,11 @@
+#![allow(clippy::single_component_path_imports)]
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::needless_borrow)]
+
 use clean_language_compiler::codegen::CodeGenerator;
 use clean_language_compiler::error::CompilerError;
 use clean_language_compiler::parser::CleanParser;
 use clean_language_compiler::semantic::SemanticAnalyzer;
-use rand;
 use std::env;
 use std::fs;
 use std::io::Read;

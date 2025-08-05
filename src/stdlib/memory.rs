@@ -135,7 +135,7 @@ impl MemoryManager {
         // Need to grow memory
         let ptr = self.heap_start;
         if ptr + aligned_size > self.data.len() {
-            let pages_needed = ((ptr + aligned_size - self.data.len()) + PAGE_SIZE - 1) / PAGE_SIZE;
+            let pages_needed = (ptr + aligned_size - self.data.len()).div_ceil(PAGE_SIZE);
 
             if let Some(max) = self.max_pages {
                 if self.current_pages + pages_needed as u32 > max {
@@ -510,11 +510,11 @@ impl MemoryManager {
                 current_size = current_block.size;
 
                 next_is_adjacent =
-                    current_next.map_or(false, |next_ptr| next_ptr == current_ptr + current_size);
-                next_is_free = current_next.map_or(false, |next_ptr| {
+                    current_next.is_some_and(|next_ptr| next_ptr == current_ptr + current_size);
+                next_is_free = current_next.is_some_and(|next_ptr| {
                     self.allocations
                         .get(&next_ptr)
-                        .map_or(false, |block| block.is_free)
+                        .is_some_and(|block| block.is_free)
                 });
             }
 

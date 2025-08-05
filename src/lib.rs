@@ -8,6 +8,20 @@
  * A modern, type-safe programming language that compiles to WebAssembly
  */
 
+#![allow(clippy::single_match)]
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::needless_borrows_for_generic_args)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::needless_return)]
+#![allow(clippy::explicit_auto_deref)]
+#![allow(clippy::get_first)]
+#![allow(clippy::unused_enumerate_index)]
+#![allow(clippy::only_used_in_recursion)]
+#![allow(clippy::for_kv_map)]
+#![allow(clippy::module_inception)]
+#![allow(clippy::new_without_default)]
+#![allow(clippy::clone_on_copy)]
+
 pub mod ast;
 pub mod codegen;
 pub mod debug;

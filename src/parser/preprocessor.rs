@@ -55,7 +55,7 @@ impl FunctionPreprocessor {
         let mut functions = Vec::new();
 
         // Parse each function in complete isolation
-        for (_index, segment) in function_segments.iter().enumerate() {
+        for segment in function_segments.iter() {
             // Create a complete, standalone functions block with just this one function
             // Normalize indentation to match functions: block expectations
             let normalized_segment = self.normalize_function_indentation(segment);

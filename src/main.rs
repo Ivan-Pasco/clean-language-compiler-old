@@ -8,6 +8,11 @@
  * A modern, type-safe programming language that compiles to WebAssembly
  */
 
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::manual_inspect)]
+#![allow(clippy::format_in_format_args)]
+#![allow(clippy::useless_asref)]
+
 use clap::{Parser, Subcommand};
 use clean_language_compiler::compile_with_file;
 use std::fs;

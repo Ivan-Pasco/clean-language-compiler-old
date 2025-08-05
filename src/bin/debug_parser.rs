@@ -1,3 +1,5 @@
+#![allow(clippy::uninlined_format_args)]
+
 use clean_language_compiler::parser::{CleanParser, Rule};
 use pest::Parser;
 use std::env;

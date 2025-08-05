@@ -89,10 +89,10 @@ impl HttpClient {
         // Simple URL parsing for http://host/path or https://host/path
         let url = url.trim();
 
-        let without_protocol = if url.starts_with("https://") {
-            &url[8..]
-        } else if url.starts_with("http://") {
-            &url[7..]
+        let without_protocol = if let Some(stripped) = url.strip_prefix("https://") {
+            stripped
+        } else if let Some(stripped) = url.strip_prefix("http://") {
+            stripped
         } else {
             return Err(CompilerError::runtime_error(
                 format!("Unsupported URL scheme: {url}"),
