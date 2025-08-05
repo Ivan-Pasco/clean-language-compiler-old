@@ -236,7 +236,7 @@ parameter = { type_ ~ parameter_name ~ ("=" ~ expression)? }
 functions_block = { "functions" ~ ":" ~ indented_functions_block }
 indented_functions_block = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ function_in_block ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ function_in_block)* }
 
-// Function declaration inside functions block - Clean Language spec compliant
+// Function declaration inside functions block - Clean Language spec compliant  
 function_in_block = { function_type? ~ function_name ~ "(" ~ parameter_list? ~ ")" ~ function_body }
 
 // Function name - allows identifiers and certain contextual keywords that might be used as method names
@@ -245,7 +245,7 @@ function_name = { identifier | "start" | "stop" | "toString" | "input" | "error"
 // Function body can have setup blocks (description and input) or just statements
 // Also supports single-line function bodies
 function_body = { 
-    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block ~ (empty_line)* ~ NEWLINE ~ (empty_line)* ~ INDENT+ ~ function_statements) | 
+    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block ~ (NEWLINE ~ (empty_line)*)* ~ INDENT+ ~ function_statements) | 
     (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block) |
     (NEWLINE ~ (empty_line)* ~ INDENT+ ~ function_statements) |
     (NEWLINE ~ (empty_line)* ~ INDENT+ ~ statement) | // Single indented statement
@@ -255,15 +255,14 @@ function_body = {
 // Function statements - statements inside function body
 function_statements = { statement ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ statement)* }
 
-// Function return type (excludes generic identifiers)
+// Function return type (excludes generic identifiers to avoid ambiguity with function names)
 function_type = { 
     matrix_type |
     list_type |
     pairs_type |
     generic_type |
     sized_type |
-    core_type |
-    type_parameter
+    core_type
 }
 
 // Private blocks (removed duplicate - defined later in async/import section)

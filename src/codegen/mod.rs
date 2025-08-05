@@ -248,8 +248,8 @@ impl CodeGenerator {
         // ------------------------------------------------------------------
         // 2. Register standard library functions AFTER imports (they get indices 14+)
         // ------------------------------------------------------------------
-        // DUPLICATE REGISTRATION DISABLED: StandardLibrary approach used instead
-        // self.register_stdlib_functions()?;
+        // Re-enable stdlib function registration for basic functions like abs()
+        self.register_stdlib_functions()?;
 
         // ------------------------------------------------------------------
         // 3. Store class information and setup field maps

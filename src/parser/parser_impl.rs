@@ -550,63 +550,23 @@ pub fn parse_with_file(source: &str, file_path: &str) -> Result<Program, Compile
 
 /// Parse using preprocessing approach for complex multi-function programs
 fn parse_with_preprocessing(source: &str, _file_path: &str) -> Result<Program, CompilerError> {
-    // Check if this is a functions-only program
-    let lines: Vec<&str> = source.lines().collect();
-    let mut has_functions_block = false;
-    let mut functions_block_content = String::new();
-    let mut in_functions_block = false;
-
-    for line in &lines {
-        let trimmed = line.trim();
-        if trimmed == "functions:" {
-            has_functions_block = true;
-            in_functions_block = true;
-            functions_block_content.push_str(line);
-            functions_block_content.push('\n');
-        } else if in_functions_block {
-            functions_block_content.push_str(line);
-            functions_block_content.push('\n');
+    // Parse the full program using traditional parsing since preprocessing has limitations
+    // Just disable preprocessing for now and fall back to traditional parsing
+    match <CleanParser as Parser<Rule>>::parse(Rule::program, source) {
+        Ok(pairs) => {
+            println!("DEBUG: Traditional parsing succeeded in preprocessing path");
+            parse_program_ast(pairs)
         }
-    }
-
-    if has_functions_block {
-        // Use preprocessor to parse the functions block
-        let preprocessor = super::preprocessor::FunctionPreprocessor::new(&functions_block_content);
-        match preprocessor.process_functions_block(&functions_block_content) {
-            Ok(functions) => Ok(Program {
-                imports: Vec::new(),
-                functions,
-                classes: Vec::new(),
-                start_function: None,
-                tests: Vec::new(),
-            }),
-            Err(e) => {
-                println!("DEBUG: Preprocessor failed: {e}, falling back to traditional parsing of full source");
-                // Fall back to traditional parsing of the FULL source, not just functions block
-                match <CleanParser as Parser<Rule>>::parse(Rule::program, source) {
-                    Ok(pairs) => {
-                        println!("DEBUG: Traditional parsing succeeded after preprocessor failure");
-                        parse_program_ast(pairs)
-                    }
-                    Err(traditional_error) => {
-                        println!("DEBUG: Both preprocessing and traditional parsing failed");
-                        println!("DEBUG: Preprocessor error: {e}");
-                        println!("DEBUG: Traditional error: {traditional_error}");
-                        Err(CompilerError::parse_error(
-                            format!("Both traditional parsing and preprocessing failed: {e}"),
-                            None,
-                            Some("Check function syntax and indentation".to_string()),
-                        ))
-                    }
-                }
-            }
+        Err(traditional_error) => {
+            println!(
+                "DEBUG: Traditional parsing failed in preprocessing path: {traditional_error}"
+            );
+            Err(ErrorUtils::from_pest_error(
+                traditional_error,
+                source,
+                "<unknown>",
+            ))
         }
-    } else {
-        Err(CompilerError::parse_error(
-            "Preprocessing not applicable - no functions block found".to_string(),
-            None,
-            None,
-        ))
     }
 }
 

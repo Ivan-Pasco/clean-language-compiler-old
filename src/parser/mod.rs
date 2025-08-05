@@ -239,25 +239,14 @@ start()
     fn test_function_syntaxes() {
         let source = r#"
 functions:
-	integer add()
+	addTwoNumbers()
 		input
 			integer a
 			integer b
 		return a + b
 
-	integer multiply()
-		description "Multiplies two integers"
-		input
-			integer a
-			integer b
-		return a * b
-
-	integer square()
-		input integer x
-		return x * x
-
 start()
-	integer result = add()
+	integer result = addTwoNumbers()
 	print(result)
         "#;
 

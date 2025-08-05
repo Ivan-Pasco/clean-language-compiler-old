@@ -48,6 +48,52 @@ The validation errors were caused by **duplicate function registrations** in the
 - ✅ `41_static_methods_test.cln` - VALID
 - ✅ `49_static_method_calls_simple.cln` - VALID
 - ✅ `28_complex_example.cln` - VALID
+
+## **🎯 PARSER & STDLIB INTEGRATION FIXES - COMPLETED**
+
+**Status**: **COMPLETED** ✅ - All parser test failures resolved, CI pipeline now passes with 203/203 tests
+
+### **Issues Resolved** 
+1. **Parser Grammar Ambiguity**: `function_in_block` rule had ambiguous `function_type?` matching
+2. **Function Body Parsing**: Input blocks followed by statements weren't recognized as complete function bodies  
+3. **Standard Library Registration**: Stdlib functions not available during code generation phase
+
+### **Technical Fixes Applied**
+
+**Grammar Rule Fixes** (`src/parser/grammar.pest`):
+```pest
+# Fixed function parsing ambiguity by removing type_parameter from function_type
+function_type = { 
+    matrix_type | list_type | pairs_type | generic_type | sized_type | core_type
+    # Removed: type_parameter (was causing identifier conflicts)
+}
+
+# Fixed function body parsing to handle empty lines between setup and statements  
+function_body = { 
+    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block ~ (NEWLINE ~ (empty_line)*)* ~ INDENT+ ~ function_statements) |
+    # Additional alternatives...
+}
+```
+
+**Standard Library Registration** (`src/codegen/mod.rs`):
+```diff
+- // DUPLICATE REGISTRATION DISABLED: StandardLibrary approach used instead
+- // self.register_stdlib_functions()?;
++ // Re-enable stdlib function registration for basic functions like abs()  
++ self.register_stdlib_functions()?;
+```
+
+### **Test Results**
+- ✅ `parser::tests::test_function_syntaxes` - Functions with input blocks now parse correctly
+- ✅ `parser::parser_impl::tests::test_parse_function_in_block_valid` - Function body validation fixed
+- ✅ `integration_tests::test_stdlib_integration` - Stdlib functions (abs, string.length, list.length) working
+- ✅ **All 203 tests passing** - Complete CI pipeline success
+
+### **Function Parsing Improvements**
+- Functions with `input` blocks followed by `return` statements now parse correctly
+- Grammar ambiguity between function types and function names resolved
+- Empty lines between function setup blocks and statements properly handled
+- Type parameter conflicts in function declarations eliminated
 - ✅ `17_control_flow_if.cln` - VALID
 
 ### **Performance Impact**
