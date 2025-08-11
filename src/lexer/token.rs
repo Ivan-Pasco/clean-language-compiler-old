@@ -11,7 +11,7 @@ pub enum TokenKind {
     Number(f64),
     String(String),
     Boolean(bool),
-    
+
     // Identifiers and Keywords
     Identifier(String),
     Let,
@@ -56,7 +56,7 @@ pub enum TokenKind {
     And,
     Or,
     Not,
-    
+
     // Types
     IntegerType,
     NumberType,
@@ -67,7 +67,7 @@ pub enum TokenKind {
     Matrix,
     Any,
     Pairs,
-    
+
     // Operators
     Plus,
     Minus,
@@ -80,7 +80,7 @@ pub enum TokenKind {
     MinusAssign,
     MultiplyAssign,
     DivideAssign,
-    
+
     // Comparison
     Equal,
     NotEqual,
@@ -88,7 +88,7 @@ pub enum TokenKind {
     Greater,
     LessEqual,
     GreaterEqual,
-    
+
     // Punctuation
     LeftParen,
     RightParen,
@@ -100,32 +100,32 @@ pub enum TokenKind {
     RightAngle,
     Comma,
     Dot,
-    DotDot,         // ..
-    DotDotEqual,    // ..=
+    DotDot,      // ..
+    DotDotEqual, // ..=
     Colon,
     Semicolon,
     Question,
-    Arrow,          // ->
-    FatArrow,       // =>
-    
+    Arrow,    // ->
+    FatArrow, // =>
+
     // Special
     Tab,
     Newline,
     Eof,
-    
+
     // Comments
     Comment(String),
-    
+
     // Method-style operators
     DoubleColon, // ::
-    
+
     // String interpolation
-    StringStart,    // String with interpolation start
-    StringMiddle,   // String interpolation middle
-    StringEnd,      // String interpolation end
+    StringStart,        // String with interpolation start
+    StringMiddle,       // String interpolation middle
+    StringEnd,          // String interpolation end
     InterpolationStart, // {
     InterpolationEnd,   // }
-    
+
     // Error recovery
     Invalid(String),
 }

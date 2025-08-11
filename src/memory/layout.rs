@@ -20,9 +20,21 @@ pub struct MemoryPermissions {
 }
 
 impl MemoryPermissions {
-    pub const READ_WRITE: Self = Self { read: true, write: true, execute: false };
-    pub const READ_ONLY: Self = Self { read: true, write: false, execute: false };
-    pub const EXECUTE: Self = Self { read: true, write: false, execute: true };
+    pub const READ_WRITE: Self = Self {
+        read: true,
+        write: true,
+        execute: false,
+    };
+    pub const READ_ONLY: Self = Self {
+        read: true,
+        write: false,
+        execute: false,
+    };
+    pub const EXECUTE: Self = Self {
+        read: true,
+        write: false,
+        execute: true,
+    };
 }
 
 /// Memory layout manager
@@ -75,22 +87,34 @@ impl MemoryLayoutManager {
     }
 
     pub fn get_region(&self, address: MemoryAddress) -> Option<&MemoryRegion> {
-        self.regions.iter().find(|region| {
-            address >= region.start && address < region.start + region.size
-        })
+        self.regions
+            .iter()
+            .find(|region| address >= region.start && address < region.start + region.size)
     }
 
     pub fn validate_access(&self, address: MemoryAddress, is_write: bool) -> MemoryResult<()> {
         if let Some(region) = self.get_region(address) {
             if !region.permissions.read {
-                return Err(CompilerError::memory_error("Read access denied", None, None));
+                return Err(CompilerError::memory_error(
+                    "Read access denied",
+                    None,
+                    None,
+                ));
             }
             if is_write && !region.permissions.write {
-                return Err(CompilerError::memory_error("Write access denied", None, None));
+                return Err(CompilerError::memory_error(
+                    "Write access denied",
+                    None,
+                    None,
+                ));
             }
             Ok(())
         } else {
-            Err(CompilerError::memory_error("Invalid memory address", None, None))
+            Err(CompilerError::memory_error(
+                "Invalid memory address",
+                None,
+                None,
+            ))
         }
     }
 

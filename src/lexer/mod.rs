@@ -1,8 +1,8 @@
 //! Clean Language Lexer Module
-//! 
+//!
 //! This module provides lexical analysis functionality for Clean Language,
 //! including tokenization, indentation tracking, and error recovery.
-//! 
+//!
 //! # Features
 //! - Tab-based indentation handling
 //! - String literal processing with escape sequences
@@ -14,13 +14,13 @@
 use crate::error::CompilerError;
 use std::fmt;
 
-pub mod token;
-pub mod lexer_impl;
 pub mod indentation;
+pub mod lexer_impl;
+pub mod token;
 
-pub use token::*;
-pub use lexer_impl::*;
 pub use indentation::*;
+pub use lexer_impl::*;
+pub use token::*;
 
 /// Position in source code
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +32,11 @@ pub struct Position {
 
 impl Position {
     pub fn new(line: usize, column: usize, offset: usize) -> Self {
-        Self { line, column, offset }
+        Self {
+            line,
+            column,
+            offset,
+        }
     }
 }
 
@@ -55,14 +59,21 @@ impl Span {
     }
 
     pub fn single(pos: Position) -> Self {
-        Self { start: pos, end: pos }
+        Self {
+            start: pos,
+            end: pos,
+        }
     }
 }
 
 impl fmt::Display for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.start.line == self.end.line {
-            write!(f, "{}:{}-{}", self.start.line, self.start.column, self.end.column)
+            write!(
+                f,
+                "{}:{}-{}",
+                self.start.line, self.start.column, self.end.column
+            )
         } else {
             write!(f, "{}-{}", self.start, self.end)
         }
@@ -76,16 +87,16 @@ pub type LexResult<T> = Result<T, CompilerError>;
 pub trait Lexer {
     /// Get the next token from the input
     fn next_token(&mut self) -> LexResult<Token>;
-    
+
     /// Peek at the next token without consuming it
     fn peek_token(&mut self) -> LexResult<&Token>;
-    
+
     /// Get current position in source
     fn position(&self) -> Position;
-    
+
     /// Check if at end of input
     fn is_at_end(&self) -> bool;
-    
+
     /// Get error recovery suggestions
     fn get_error_suggestions(&self) -> Vec<String>;
 }

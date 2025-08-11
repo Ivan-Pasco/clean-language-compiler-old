@@ -1,5 +1,5 @@
 //! Low-level Intermediate Representation (LIR)
-//! 
+//!
 //! LIR represents WebAssembly-ready instruction sequences
 
 use crate::ir::*;
@@ -75,13 +75,13 @@ pub enum LIRInstruction {
     Br(u32),
     BrIf(u32),
     Return,
-    
+
     // Constants
     I32Const(i32),
     I64Const(i64),
     F32Const(f32),
     F64Const(f64),
-    
+
     // Arithmetic (i32)
     I32Add,
     I32Sub,
@@ -90,7 +90,7 @@ pub enum LIRInstruction {
     I32DivU,
     I32RemS,
     I32RemU,
-    
+
     // Arithmetic (i64)
     I64Add,
     I64Sub,
@@ -99,19 +99,19 @@ pub enum LIRInstruction {
     I64DivU,
     I64RemS,
     I64RemU,
-    
+
     // Arithmetic (f32)
     F32Add,
     F32Sub,
     F32Mul,
     F32Div,
-    
+
     // Arithmetic (f64)
     F64Add,
     F64Sub,
     F64Mul,
     F64Div,
-    
+
     // Comparison (i32)
     I32Eq,
     I32Ne,
@@ -123,7 +123,7 @@ pub enum LIRInstruction {
     I32LeU,
     I32GeS,
     I32GeU,
-    
+
     // Comparison (f32)
     F32Eq,
     F32Ne,
@@ -131,7 +131,7 @@ pub enum LIRInstruction {
     F32Gt,
     F32Le,
     F32Ge,
-    
+
     // Comparison (f64)
     F64Eq,
     F64Ne,
@@ -139,34 +139,34 @@ pub enum LIRInstruction {
     F64Gt,
     F64Le,
     F64Ge,
-    
+
     // Memory
-    I32Load(u32, u32),    // align, offset
+    I32Load(u32, u32), // align, offset
     I64Load(u32, u32),
     F32Load(u32, u32),
     F64Load(u32, u32),
-    I32Store(u32, u32),   // align, offset
+    I32Store(u32, u32), // align, offset
     I64Store(u32, u32),
     F32Store(u32, u32),
     F64Store(u32, u32),
     MemorySize,
     MemoryGrow,
-    
+
     // Variables
     LocalGet(u32),
     LocalSet(u32),
     LocalTee(u32),
     GlobalGet(u32),
     GlobalSet(u32),
-    
+
     // Function calls
-    Call(u32),          // function index
-    CallIndirect(u32),  // type index
-    
+    Call(u32),         // function index
+    CallIndirect(u32), // type index
+
     // Stack manipulation
     Drop,
     Select,
-    
+
     // Type conversions
     I32WrapI64,
     I64ExtendI32S,
@@ -189,7 +189,7 @@ pub enum LIRInstruction {
     F64ConvertI64S,
     F64ConvertI64U,
     F64PromoteF32,
-    
+
     // Memory management instructions
     /// Allocate memory: (type_id: i32, size: i32) -> address: i32
     MemAlloc,

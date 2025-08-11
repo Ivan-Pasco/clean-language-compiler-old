@@ -35,17 +35,17 @@ impl Allocator {
     pub fn allocate(&mut self, type_id: TypeId, size: u32) -> MemoryResult<MemoryAddress> {
         let total_size = size + std::mem::size_of::<ObjectHeader>() as u32;
         let address = self.allocate_raw(total_size)?;
-        
+
         let header = ObjectHeader::new(type_id, size);
         let info = AllocationInfo {
             size: total_size,
             type_id,
             header,
         };
-        
+
         self.allocated_blocks.insert(address, info);
         self.total_allocated += total_size;
-        
+
         // Return address after header
         Ok(address + std::mem::size_of::<ObjectHeader>() as u32)
     }
@@ -54,13 +54,17 @@ impl Allocator {
     pub fn deallocate(&mut self, address: MemoryAddress) -> MemoryResult<()> {
         // Adjust address to point to header
         let header_address = address - std::mem::size_of::<ObjectHeader>() as u32;
-        
+
         if let Some(info) = self.allocated_blocks.remove(&header_address) {
             self.free_raw(header_address, info.size);
             self.total_allocated -= info.size;
             Ok(())
         } else {
-            Err(CompilerError::memory_error("Invalid deallocation address", None, None))
+            Err(CompilerError::memory_error(
+                "Invalid deallocation address",
+                None,
+                None,
+            ))
         }
     }
 

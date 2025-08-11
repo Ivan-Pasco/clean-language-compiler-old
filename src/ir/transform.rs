@@ -1,7 +1,7 @@
 //! IR transformation passes
 
-use crate::ir::*;
 use crate::ast;
+use crate::ir::*;
 use std::collections::HashMap;
 
 /// IR ID generator for unique node identification
@@ -178,7 +178,9 @@ impl ASTToHIRTransformer {
                     else_branch: else_stmts,
                 }))
             }
-            ast::Statement::While { condition, body, .. } => {
+            ast::Statement::While {
+                condition, body, ..
+            } => {
                 let mut body_stmts = Vec::new();
                 for stmt in body {
                     body_stmts.push(self.transform_statement(stmt)?);
@@ -253,13 +255,11 @@ impl ASTToHIRTransformer {
                 Ok(HIRExpression::Literal(self.transform_literal(value)?))
             }
             ast::Expression::Variable(name) => Ok(HIRExpression::Variable(name)),
-            ast::Expression::Binary(left, op, right) => {
-                Ok(HIRExpression::Binary(HIRBinary {
-                    left: Box::new(self.transform_expression(*left)?),
-                    operator: self.transform_binary_op(op),
-                    right: Box::new(self.transform_expression(*right)?),
-                }))
-            }
+            ast::Expression::Binary(left, op, right) => Ok(HIRExpression::Binary(HIRBinary {
+                left: Box::new(self.transform_expression(*left)?),
+                operator: self.transform_binary_op(op),
+                right: Box::new(self.transform_expression(*right)?),
+            })),
             ast::Expression::Unary(op, operand) => Ok(HIRExpression::Unary(HIRUnary {
                 operator: self.transform_unary_op(op),
                 operand: Box::new(self.transform_expression(*operand)?),
@@ -274,12 +274,12 @@ impl ASTToHIRTransformer {
                     arguments: hir_args,
                 }))
             }
-            ast::Expression::PropertyAccess { object, property, .. } => {
-                Ok(HIRExpression::Member(HIRMember {
-                    object: Box::new(self.transform_expression(*object)?),
-                    member: property,
-                }))
-            }
+            ast::Expression::PropertyAccess {
+                object, property, ..
+            } => Ok(HIRExpression::Member(HIRMember {
+                object: Box::new(self.transform_expression(*object)?),
+                member: property,
+            })),
             ast::Expression::MethodCall {
                 object,
                 method,
@@ -296,12 +296,10 @@ impl ASTToHIRTransformer {
                     arguments: hir_args,
                 }))
             }
-            ast::Expression::ListAccess(list, index) => {
-                Ok(HIRExpression::Index(HIRIndex {
-                    object: Box::new(self.transform_expression(*list)?),
-                    index: Box::new(self.transform_expression(*index)?),
-                }))
-            }
+            ast::Expression::ListAccess(list, index) => Ok(HIRExpression::Index(HIRIndex {
+                object: Box::new(self.transform_expression(*list)?),
+                index: Box::new(self.transform_expression(*index)?),
+            })),
             // Handle other expression types
             _ => {
                 // For now, return a placeholder for unsupported expressions
@@ -489,7 +487,8 @@ impl HIRToMIRTransformer {
         let entry_block = self.next_block();
 
         // Transform function body to basic blocks
-        let (basic_blocks, mut locals) = self.transform_statements_to_blocks(function.body, entry_block)?;
+        let (basic_blocks, mut locals) =
+            self.transform_statements_to_blocks(function.body, entry_block)?;
 
         // Add parameters to locals
         for param in &parameters {
@@ -656,7 +655,9 @@ impl HIRToMIRTransformer {
                     }
 
                     // Add then block if it wasn't terminated by return
-                    if !basic_blocks.iter().any(|bb| bb.id == then_block) && !then_instructions.is_empty() {
+                    if !basic_blocks.iter().any(|bb| bb.id == then_block)
+                        && !then_instructions.is_empty()
+                    {
                         let then_bb = MIRBasicBlock {
                             id: then_block,
                             instructions: then_instructions,
@@ -721,7 +722,8 @@ impl HIRToMIRTransformer {
             HIRStatement::Return(return_value) => {
                 let return_operand = match return_value {
                     Some(expr) => {
-                        let local = self.transform_expression_to_instructions(expr, instructions, locals)?;
+                        let local =
+                            self.transform_expression_to_instructions(expr, instructions, locals)?;
                         Some(MIROperand::Local(local))
                     }
                     None => None,
@@ -729,7 +731,8 @@ impl HIRToMIRTransformer {
                 Ok(Some(MIRTerminator::Return(return_operand)))
             }
             HIRStatement::Expression(expr) => {
-                let _result = self.transform_expression_to_instructions(expr, instructions, locals)?;
+                let _result =
+                    self.transform_expression_to_instructions(expr, instructions, locals)?;
                 Ok(None)
             }
             HIRStatement::Assignment(assignment) => {
@@ -789,8 +792,10 @@ impl HIRToMIRTransformer {
                 Ok(local_id)
             }
             HIRExpression::Binary(binary) => {
-                let left_local = self.transform_expression_to_instructions(*binary.left, instructions, locals)?;
-                let right_local = self.transform_expression_to_instructions(*binary.right, instructions, locals)?;
+                let left_local =
+                    self.transform_expression_to_instructions(*binary.left, instructions, locals)?;
+                let right_local =
+                    self.transform_expression_to_instructions(*binary.right, instructions, locals)?;
                 let result_local = self.next_local();
 
                 // Add result local (assume i32 for now)
@@ -838,7 +843,8 @@ impl HIRToMIRTransformer {
                 // Transform function arguments
                 let mut arg_locals = Vec::new();
                 for arg in call.arguments {
-                    let arg_local = self.transform_expression_to_instructions(arg, instructions, locals)?;
+                    let arg_local =
+                        self.transform_expression_to_instructions(arg, instructions, locals)?;
                     arg_locals.push(MIROperand::Local(arg_local));
                 }
 
@@ -855,7 +861,11 @@ impl HIRToMIRTransformer {
                     _ => "unknown".to_string(),
                 };
 
-                instructions.push(MIRInstruction::Call(result_local, function_name, arg_locals));
+                instructions.push(MIRInstruction::Call(
+                    result_local,
+                    function_name,
+                    arg_locals,
+                ));
                 Ok(result_local)
             }
             _ => {
@@ -913,7 +923,7 @@ impl HIRToMIRTransformer {
                 ))
             }
             HIRType::Any => Ok(MIRType::I32), // Default for Any type
-            _ => Ok(MIRType::I32), // Default for other types
+            _ => Ok(MIRType::I32),            // Default for other types
         }
     }
 
@@ -932,10 +942,10 @@ impl HIRToMIRTransformer {
             MIRType::I16 => 2,
             MIRType::I32 | MIRType::F32 | MIRType::Bool => 4,
             MIRType::I64 | MIRType::F64 => 8,
-            MIRType::Ptr(_) => 4, // Assume 32-bit pointers
+            MIRType::Ptr(_) => 4,                  // Assume 32-bit pointers
             MIRType::Array(_, count) => count * 4, // Assume element size of 4
-            MIRType::Struct(_) => 8, // Default struct size
-            MIRType::Function(_, _) => 4, // Function pointer
+            MIRType::Struct(_) => 8,               // Default struct size
+            MIRType::Function(_, _) => 4,          // Function pointer
             MIRType::Void => 0,
         }
     }
@@ -981,7 +991,7 @@ impl MIRToLIRTransformer {
         // Transform functions
         for (_name, mir_func) in program.functions {
             let lir_func = self.transform_function(mir_func)?;
-            
+
             // Export the start function if it exists
             if lir_func.name == "start" {
                 exports.push(LIRExport {
@@ -1002,8 +1012,8 @@ impl MIRToLIRTransformer {
         let memory_layout = LIRMemoryLayout {
             initial_pages: 1,
             max_pages: Some(16),
-            heap_start: 1024,      // Start heap after reserved space
-            stack_start: 65536,    // Start stack at 64KB
+            heap_start: 1024,   // Start heap after reserved space
+            stack_start: 65536, // Start stack at 64KB
         };
 
         Ok(LIRProgram {
@@ -1053,7 +1063,11 @@ impl MIRToLIRTransformer {
             }
 
             // Transform terminator
-            self.transform_mir_terminator_to_lir(&basic_block.terminator, &mut instructions, &function.basic_blocks)?;
+            self.transform_mir_terminator_to_lir(
+                &basic_block.terminator,
+                &mut instructions,
+                &function.basic_blocks,
+            )?;
         }
 
         Ok(LIRFunction {
@@ -1075,10 +1089,10 @@ impl MIRToLIRTransformer {
                 // Load operands onto stack
                 self.transform_operand_to_lir(left, instructions)?;
                 self.transform_operand_to_lir(right, instructions)?;
-                
+
                 // Perform addition
                 instructions.push(LIRInstruction::I32Add);
-                
+
                 // Store result
                 instructions.push(LIRInstruction::LocalSet(*result as u32));
             }
@@ -1120,21 +1134,21 @@ impl MIRToLIRTransformer {
                 // Call function (using index 0 for now - should be resolved properly)
                 let function_index = self.get_function_index(function_name);
                 instructions.push(LIRInstruction::Call(function_index));
-                
+
                 // Store result if needed
                 instructions.push(LIRInstruction::LocalSet(*result as u32));
             }
             MIRInstruction::Cast(result, operand, target_type) => {
                 self.transform_operand_to_lir(operand, instructions)?;
-                
+
                 // Add type conversion instructions based on target type
                 match target_type {
                     MIRType::F32 => instructions.push(LIRInstruction::F32ConvertI32S),
                     MIRType::F64 => instructions.push(LIRInstruction::F64ConvertI32S),
                     MIRType::I64 => instructions.push(LIRInstruction::I64ExtendI32S),
-                    _ => {}, // No conversion needed or not supported
+                    _ => {} // No conversion needed or not supported
                 }
-                
+
                 instructions.push(LIRInstruction::LocalSet(*result as u32));
             }
             MIRInstruction::Const(result, constant) => {
@@ -1209,23 +1223,21 @@ impl MIRToLIRTransformer {
             MIROperand::Local(local_id) => {
                 instructions.push(LIRInstruction::LocalGet(*local_id as u32));
             }
-            MIROperand::Constant(constant) => {
-                match constant {
-                    MIRConstant::Integer(i) => {
-                        instructions.push(LIRInstruction::I32Const(*i as i32));
-                    }
-                    MIRConstant::Number(f) => {
-                        instructions.push(LIRInstruction::F64Const(*f));
-                    }
-                    MIRConstant::String(s) => {
-                        let string_id = self.get_string_constant_id(s.clone());
-                        instructions.push(LIRInstruction::I32Const(string_id as i32));
-                    }
-                    MIRConstant::Boolean(b) => {
-                        instructions.push(LIRInstruction::I32Const(if *b { 1 } else { 0 }));
-                    }
+            MIROperand::Constant(constant) => match constant {
+                MIRConstant::Integer(i) => {
+                    instructions.push(LIRInstruction::I32Const(*i as i32));
                 }
-            }
+                MIRConstant::Number(f) => {
+                    instructions.push(LIRInstruction::F64Const(*f));
+                }
+                MIRConstant::String(s) => {
+                    let string_id = self.get_string_constant_id(s.clone());
+                    instructions.push(LIRInstruction::I32Const(string_id as i32));
+                }
+                MIRConstant::Boolean(b) => {
+                    instructions.push(LIRInstruction::I32Const(if *b { 1 } else { 0 }));
+                }
+            },
             MIROperand::Global(name) => {
                 // For now, treat globals as local variables
                 // This should be improved to use proper global indices

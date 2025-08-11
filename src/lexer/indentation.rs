@@ -18,7 +18,7 @@ impl IndentationTracker {
     /// Process a line's indentation and return indent/dedent tokens needed
     pub fn process_indentation(&mut self, tab_count: usize) -> Vec<IndentationChange> {
         let mut changes = Vec::new();
-        
+
         if tab_count > self.current_level {
             // Increase indentation
             self.levels.push(tab_count);
@@ -33,16 +33,16 @@ impl IndentationTracker {
                 self.levels.pop();
                 changes.push(IndentationChange::Dedent);
             }
-            
+
             if self.levels.last() != Some(&tab_count) {
                 // Indentation doesn't match any previous level
                 changes.push(IndentationChange::IndentationError);
             }
-            
+
             self.current_level = tab_count;
         }
         // If tab_count == current_level, no change needed
-        
+
         changes
     }
 

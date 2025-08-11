@@ -1,15 +1,15 @@
 //! WebAssembly Module Generator for LIR
-//! 
+//!
 //! Generates WebAssembly modules from Low-level Intermediate Representation (LIR)
 
-use crate::ir::*;
 use crate::error::CompilerError;
+use crate::ir::*;
+use std::collections::HashMap;
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
-    ImportSection, Instruction, MemArg, MemorySection, MemoryType, Module, ValType, TypeSection,
-    GlobalType,
+    GlobalType, ImportSection, Instruction, MemArg, MemorySection, MemoryType, Module, TypeSection,
+    ValType,
 };
-use std::collections::HashMap;
 
 /// WebAssembly module generator from LIR
 pub struct WasmGenerator {
@@ -67,7 +67,10 @@ impl WasmGenerator {
         Ok(module.finish())
     }
 
-    fn generate_type_section(&mut self, program: &LIRProgram) -> Result<TypeSection, CompilerError> {
+    fn generate_type_section(
+        &mut self,
+        program: &LIRProgram,
+    ) -> Result<TypeSection, CompilerError> {
         let mut type_section = TypeSection::new();
 
         // Pre-populate runtime function types
@@ -75,7 +78,8 @@ impl WasmGenerator {
 
         // Generate function types for all functions
         for function in &program.functions {
-            let param_types: Vec<ValType> = function.parameters
+            let param_types: Vec<ValType> = function
+                .parameters
                 .iter()
                 .map(|t| self.lir_type_to_wasm_val_type(t))
                 .collect();
@@ -132,21 +136,25 @@ impl WasmGenerator {
     fn emit_function_types_to_section(&self, type_section: &mut TypeSection) {
         // Collect all unique type indices and their signatures
         let mut all_types: Vec<(u32, Vec<ValType>, Vec<ValType>)> = Vec::new();
-        
+
         // Add runtime function types
         for ((param_types, return_types), &type_idx) in &self.runtime_function_type_map {
             all_types.push((type_idx, param_types.clone(), return_types.clone()));
         }
-        
+
         // Add regular function types
         for (param_types, &type_idx) in &self.function_types {
             // Skip if already added as runtime function
-            if !self.runtime_function_type_map.values().any(|&idx| idx == type_idx) {
+            if !self
+                .runtime_function_type_map
+                .values()
+                .any(|&idx| idx == type_idx)
+            {
                 let return_types = self.get_return_types_for_function_type(param_types.clone());
                 all_types.push((type_idx, param_types.clone(), return_types));
             }
         }
-        
+
         // Sort by type index and emit
         all_types.sort_by_key(|(type_idx, _, _)| *type_idx);
         for (_, param_types, return_types) in all_types {
@@ -163,13 +171,16 @@ impl WasmGenerator {
                 // Could be mem_retain/release (no return) or mem_get_ref_count (returns i32)
                 // Default to no return for single i32 param
                 vec![]
-            },
+            }
             [] => vec![ValType::I32], // mem_collect
-            _ => vec![], // Default: no return
+            _ => vec![],              // Default: no return
         }
     }
 
-    fn generate_import_section(&mut self, program: &LIRProgram) -> Result<ImportSection, CompilerError> {
+    fn generate_import_section(
+        &mut self,
+        program: &LIRProgram,
+    ) -> Result<ImportSection, CompilerError> {
         let mut import_section = ImportSection::new();
 
         // Add memory management runtime function imports
@@ -183,12 +194,14 @@ impl WasmGenerator {
                         .map(|t| self.lir_type_to_wasm_val_type(t))
                         .collect();
 
-                    let type_idx = *self.function_types.get(&wasm_param_types)
-                        .ok_or_else(|| CompilerError::codegen_error(
-                            format!("Function type not found for import: {}", import.name),
-                            None,
-                            None
-                        ))?;
+                    let type_idx =
+                        *self.function_types.get(&wasm_param_types).ok_or_else(|| {
+                            CompilerError::codegen_error(
+                                format!("Function type not found for import: {}", import.name),
+                                None,
+                                None,
+                            )
+                        })?;
 
                     import_section.import(
                         &import.module,
@@ -196,7 +209,8 @@ impl WasmGenerator {
                         EntityType::Function(type_idx),
                     );
 
-                    self.function_indices.insert(import.name.clone(), self.import_count);
+                    self.function_indices
+                        .insert(import.name.clone(), self.import_count);
                     self.import_count += 1;
                 }
                 LIRImportType::Memory(initial, max) => {
@@ -230,31 +244,40 @@ impl WasmGenerator {
         Ok(import_section)
     }
 
-    fn generate_function_section(&mut self, program: &LIRProgram) -> Result<FunctionSection, CompilerError> {
+    fn generate_function_section(
+        &mut self,
+        program: &LIRProgram,
+    ) -> Result<FunctionSection, CompilerError> {
         let mut function_section = FunctionSection::new();
 
         for function in &program.functions {
-            let param_types: Vec<ValType> = function.parameters
+            let param_types: Vec<ValType> = function
+                .parameters
                 .iter()
                 .map(|t| self.lir_type_to_wasm_val_type(t))
                 .collect();
 
-            let type_idx = *self.function_types.get(&param_types)
-                .ok_or_else(|| CompilerError::codegen_error(
+            let type_idx = *self.function_types.get(&param_types).ok_or_else(|| {
+                CompilerError::codegen_error(
                     format!("Function type not found for function: {}", function.name),
                     None,
-                    None
-                ))?;
+                    None,
+                )
+            })?;
 
             function_section.function(type_idx);
-            self.function_indices.insert(function.name.clone(), self.import_count);
+            self.function_indices
+                .insert(function.name.clone(), self.import_count);
             self.import_count += 1;
         }
 
         Ok(function_section)
     }
 
-    fn generate_memory_section(&self, program: &LIRProgram) -> Result<MemorySection, CompilerError> {
+    fn generate_memory_section(
+        &self,
+        program: &LIRProgram,
+    ) -> Result<MemorySection, CompilerError> {
         let mut memory_section = MemorySection::new();
 
         let memory_type = MemoryType {
@@ -268,7 +291,10 @@ impl WasmGenerator {
         Ok(memory_section)
     }
 
-    fn generate_export_section(&self, program: &LIRProgram) -> Result<ExportSection, CompilerError> {
+    fn generate_export_section(
+        &self,
+        program: &LIRProgram,
+    ) -> Result<ExportSection, CompilerError> {
         let mut export_section = ExportSection::new();
 
         for export in &program.exports {
@@ -292,13 +318,14 @@ impl WasmGenerator {
         let mut code_section = CodeSection::new();
 
         for function in &program.functions {
-            let locals: Vec<(u32, ValType)> = function.locals
+            let locals: Vec<(u32, ValType)> = function
+                .locals
                 .iter()
                 .map(|t| (1, self.lir_type_to_wasm_val_type(t)))
                 .collect();
 
             let mut func = Function::new(locals);
-            
+
             // Convert LIR instructions to WebAssembly instructions
             for instruction in &function.instructions {
                 self.emit_wasm_instruction(&mut func, instruction)?;
@@ -310,7 +337,11 @@ impl WasmGenerator {
         Ok(code_section)
     }
 
-    fn emit_wasm_instruction(&self, func: &mut Function, instruction: &LIRInstruction) -> Result<(), CompilerError> {
+    fn emit_wasm_instruction(
+        &self,
+        func: &mut Function,
+        instruction: &LIRInstruction,
+    ) -> Result<(), CompilerError> {
         match instruction {
             // Control flow
             LIRInstruction::Block(block_type) => {
@@ -355,7 +386,7 @@ impl WasmGenerator {
             LIRInstruction::Return => {
                 func.instruction(&Instruction::Return);
             }
-            
+
             // Constants
             LIRInstruction::I32Const(value) => {
                 func.instruction(&Instruction::I32Const(*value));
@@ -369,7 +400,7 @@ impl WasmGenerator {
             LIRInstruction::F64Const(value) => {
                 func.instruction(&Instruction::F64Const(*value));
             }
-            
+
             // Arithmetic (i32)
             LIRInstruction::I32Add => {
                 func.instruction(&Instruction::I32Add);
@@ -392,7 +423,7 @@ impl WasmGenerator {
             LIRInstruction::I32RemU => {
                 func.instruction(&Instruction::I32RemU);
             }
-            
+
             // Arithmetic (i64)
             LIRInstruction::I64Add => {
                 func.instruction(&Instruction::I64Add);
@@ -415,7 +446,7 @@ impl WasmGenerator {
             LIRInstruction::I64RemU => {
                 func.instruction(&Instruction::I64RemU);
             }
-            
+
             // Arithmetic (f32)
             LIRInstruction::F32Add => {
                 func.instruction(&Instruction::F32Add);
@@ -429,7 +460,7 @@ impl WasmGenerator {
             LIRInstruction::F32Div => {
                 func.instruction(&Instruction::F32Div);
             }
-            
+
             // Arithmetic (f64)
             LIRInstruction::F64Add => {
                 func.instruction(&Instruction::F64Add);
@@ -443,7 +474,7 @@ impl WasmGenerator {
             LIRInstruction::F64Div => {
                 func.instruction(&Instruction::F64Div);
             }
-            
+
             // Comparison (i32)
             LIRInstruction::I32Eq => {
                 func.instruction(&Instruction::I32Eq);
@@ -475,7 +506,7 @@ impl WasmGenerator {
             LIRInstruction::I32GeU => {
                 func.instruction(&Instruction::I32GeU);
             }
-            
+
             // Comparison (f32)
             LIRInstruction::F32Eq => {
                 func.instruction(&Instruction::F32Eq);
@@ -495,7 +526,7 @@ impl WasmGenerator {
             LIRInstruction::F32Ge => {
                 func.instruction(&Instruction::F32Ge);
             }
-            
+
             // Comparison (f64)
             LIRInstruction::F64Eq => {
                 func.instruction(&Instruction::F64Eq);
@@ -515,31 +546,63 @@ impl WasmGenerator {
             LIRInstruction::F64Ge => {
                 func.instruction(&Instruction::F64Ge);
             }
-            
+
             // Memory
             LIRInstruction::I32Load(align, offset) => {
-                func.instruction(&Instruction::I32Load(MemArg { offset: *offset as u64, align: *align, memory_index: 0 }));
+                func.instruction(&Instruction::I32Load(MemArg {
+                    offset: *offset as u64,
+                    align: *align,
+                    memory_index: 0,
+                }));
             }
             LIRInstruction::I64Load(align, offset) => {
-                func.instruction(&Instruction::I64Load(MemArg { offset: *offset as u64, align: *align, memory_index: 0 }));
+                func.instruction(&Instruction::I64Load(MemArg {
+                    offset: *offset as u64,
+                    align: *align,
+                    memory_index: 0,
+                }));
             }
             LIRInstruction::F32Load(align, offset) => {
-                func.instruction(&Instruction::F32Load(MemArg { offset: *offset as u64, align: *align, memory_index: 0 }));
+                func.instruction(&Instruction::F32Load(MemArg {
+                    offset: *offset as u64,
+                    align: *align,
+                    memory_index: 0,
+                }));
             }
             LIRInstruction::F64Load(align, offset) => {
-                func.instruction(&Instruction::F64Load(MemArg { offset: *offset as u64, align: *align, memory_index: 0 }));
+                func.instruction(&Instruction::F64Load(MemArg {
+                    offset: *offset as u64,
+                    align: *align,
+                    memory_index: 0,
+                }));
             }
             LIRInstruction::I32Store(align, offset) => {
-                func.instruction(&Instruction::I32Store(MemArg { offset: *offset as u64, align: *align, memory_index: 0 }));
+                func.instruction(&Instruction::I32Store(MemArg {
+                    offset: *offset as u64,
+                    align: *align,
+                    memory_index: 0,
+                }));
             }
             LIRInstruction::I64Store(align, offset) => {
-                func.instruction(&Instruction::I64Store(MemArg { offset: *offset as u64, align: *align, memory_index: 0 }));
+                func.instruction(&Instruction::I64Store(MemArg {
+                    offset: *offset as u64,
+                    align: *align,
+                    memory_index: 0,
+                }));
             }
             LIRInstruction::F32Store(align, offset) => {
-                func.instruction(&Instruction::F32Store(MemArg { offset: *offset as u64, align: *align, memory_index: 0 }));
+                func.instruction(&Instruction::F32Store(MemArg {
+                    offset: *offset as u64,
+                    align: *align,
+                    memory_index: 0,
+                }));
             }
             LIRInstruction::F64Store(align, offset) => {
-                func.instruction(&Instruction::F64Store(MemArg { offset: *offset as u64, align: *align, memory_index: 0 }));
+                func.instruction(&Instruction::F64Store(MemArg {
+                    offset: *offset as u64,
+                    align: *align,
+                    memory_index: 0,
+                }));
             }
             LIRInstruction::MemorySize => {
                 func.instruction(&Instruction::MemorySize(0));
@@ -547,7 +610,7 @@ impl WasmGenerator {
             LIRInstruction::MemoryGrow => {
                 func.instruction(&Instruction::MemoryGrow(0));
             }
-            
+
             // Variables
             LIRInstruction::LocalGet(idx) => {
                 func.instruction(&Instruction::LocalGet(*idx));
@@ -564,7 +627,7 @@ impl WasmGenerator {
             LIRInstruction::GlobalSet(idx) => {
                 func.instruction(&Instruction::GlobalSet(*idx));
             }
-            
+
             // Function calls
             LIRInstruction::Call(idx) => {
                 func.instruction(&Instruction::Call(*idx));
@@ -575,7 +638,7 @@ impl WasmGenerator {
                     table: 0,
                 });
             }
-            
+
             // Stack manipulation
             LIRInstruction::Drop => {
                 func.instruction(&Instruction::Drop);
@@ -583,7 +646,7 @@ impl WasmGenerator {
             LIRInstruction::Select => {
                 func.instruction(&Instruction::Select);
             }
-            
+
             // Type conversions
             LIRInstruction::I32WrapI64 => {
                 func.instruction(&Instruction::I32WrapI64);
@@ -648,28 +711,38 @@ impl WasmGenerator {
             LIRInstruction::F64PromoteF32 => {
                 func.instruction(&Instruction::F64PromoteF32);
             }
-            
+
             // Memory management instructions (implemented as runtime function calls)
             LIRInstruction::MemAlloc => {
                 // Call imported memory allocator function
                 // Assumes function index for mem_alloc is known
-                func.instruction(&Instruction::Call(self.get_runtime_function_index("mem_alloc")?));
+                func.instruction(&Instruction::Call(
+                    self.get_runtime_function_index("mem_alloc")?,
+                ));
             }
             LIRInstruction::MemRetain => {
                 // Call imported retain function
-                func.instruction(&Instruction::Call(self.get_runtime_function_index("mem_retain")?));
+                func.instruction(&Instruction::Call(
+                    self.get_runtime_function_index("mem_retain")?,
+                ));
             }
             LIRInstruction::MemRelease => {
                 // Call imported release function
-                func.instruction(&Instruction::Call(self.get_runtime_function_index("mem_release")?));
+                func.instruction(&Instruction::Call(
+                    self.get_runtime_function_index("mem_release")?,
+                ));
             }
             LIRInstruction::MemCollect => {
                 // Call imported garbage collection function
-                func.instruction(&Instruction::Call(self.get_runtime_function_index("mem_collect")?));
+                func.instruction(&Instruction::Call(
+                    self.get_runtime_function_index("mem_collect")?,
+                ));
             }
             LIRInstruction::MemGetRefCount => {
                 // Call imported get reference count function
-                func.instruction(&Instruction::Call(self.get_runtime_function_index("mem_get_ref_count")?));
+                func.instruction(&Instruction::Call(
+                    self.get_runtime_function_index("mem_get_ref_count")?,
+                ));
             }
         }
         Ok(())
@@ -677,12 +750,16 @@ impl WasmGenerator {
 
     /// Get the function index for a runtime memory management function
     fn get_runtime_function_index(&self, function_name: &str) -> Result<u32, CompilerError> {
-        self.function_indices.get(function_name).copied()
-            .ok_or_else(|| CompilerError::codegen_error(
-                format!("Runtime function not found: {}", function_name),
-                None,
-                None
-            ))
+        self.function_indices
+            .get(function_name)
+            .copied()
+            .ok_or_else(|| {
+                CompilerError::codegen_error(
+                    format!("Runtime function not found: {}", function_name),
+                    None,
+                    None,
+                )
+            })
     }
 
     fn lir_type_to_wasm_val_type(&self, lir_type: &LIRType) -> ValType {
@@ -695,43 +772,47 @@ impl WasmGenerator {
     }
 
     /// Add memory management runtime imports
-    fn add_memory_runtime_imports(&mut self, import_section: &mut ImportSection) -> Result<(), CompilerError> {
+    fn add_memory_runtime_imports(
+        &mut self,
+        import_section: &mut ImportSection,
+    ) -> Result<(), CompilerError> {
         // Define memory management runtime function signatures with unique signatures
         let runtime_functions = vec![
-            ("mem_alloc", vec![ValType::I32, ValType::I32], vec![ValType::I32]), // (type_id, size) -> address
+            (
+                "mem_alloc",
+                vec![ValType::I32, ValType::I32],
+                vec![ValType::I32],
+            ), // (type_id, size) -> address
             ("mem_retain", vec![ValType::I32], vec![]), // (address) -> ()
             ("mem_release", vec![ValType::I32], vec![]), // (address) -> ()
-            ("mem_collect", vec![], vec![ValType::I32]), // () -> freed_count  
+            ("mem_collect", vec![], vec![ValType::I32]), // () -> freed_count
             ("mem_get_ref_count", vec![ValType::I32], vec![ValType::I32]), // (address) -> ref_count
         ];
 
         for (name, param_types, return_types) in runtime_functions {
             // Create unique key that includes both params and returns
             let unique_key = (param_types.clone(), return_types.clone());
-            
+
             // Get or create function type
             let type_idx = if let Some(&idx) = self.runtime_function_type_map.get(&unique_key) {
                 idx
             } else {
                 let idx = self.next_type_idx;
                 self.runtime_function_type_map.insert(unique_key, idx);
-                
+
                 // Also add to function_types for compatibility
                 self.function_types.insert(param_types.clone(), idx);
-                
+
                 self.next_type_idx += 1;
                 idx
             };
 
             // Add import
-            import_section.import(
-                "memory_runtime",
-                name,
-                EntityType::Function(type_idx),
-            );
+            import_section.import("memory_runtime", name, EntityType::Function(type_idx));
 
             // Track function index
-            self.function_indices.insert(name.to_string(), self.import_count);
+            self.function_indices
+                .insert(name.to_string(), self.import_count);
             self.import_count += 1;
         }
 

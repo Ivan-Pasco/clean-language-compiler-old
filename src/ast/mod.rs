@@ -266,10 +266,10 @@ pub enum StringPart {
 /// Input types for console input expressions
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputType {
-    String,        // input("prompt")
-    Integer,       // input.integer("prompt")
-    Number,        // input.number("prompt")
-    Boolean,       // input.yesNo("prompt")
+    String,  // input("prompt")
+    Integer, // input.integer("prompt")
+    Number,  // input.number("prompt")
+    Boolean, // input.yesNo("prompt")
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -523,11 +523,11 @@ pub enum FunctionModifier {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FunctionSyntax {
-    Simple,      // function integer add() ...
-    Detailed,    // function integer add() with description/input blocks
-    Block,       // functions: block
-    Standalone,  // start() function (can be outside functions block)
-    Background,  // background function modifier
+    Simple,     // function integer add() ...
+    Detailed,   // function integer add() with description/input blocks
+    Block,      // functions: block
+    Standalone, // start() function (can be outside functions block)
+    Background, // background function modifier
 }
 
 #[derive(Debug, Clone, PartialEq)]

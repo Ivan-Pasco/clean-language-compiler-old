@@ -58,10 +58,10 @@ impl StringPool {
         let bytes = s.as_bytes();
         let size = bytes.len() as u32;
         let address = self.next_address;
-        
+
         // TODO: Actually write string to memory
         self.next_address += size + 4; // +4 for length prefix
-        
+
         Ok(address)
     }
 }

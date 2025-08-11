@@ -36,12 +36,14 @@ impl InheritanceValidator {
     pub fn register_class(&mut self, class: Class) -> Result<(), CompilerError> {
         // Basic validation before registration
         self.validate_class_name(&class.name, &class.location)?;
-        
+
         // Check for duplicate class names
         if self.class_registry.contains_key(&class.name) {
             return Err(CompilerError::type_error(
                 format!("Class '{}' is already defined", class.name),
-                Some("Choose a different class name or remove the duplicate definition".to_string()),
+                Some(
+                    "Choose a different class name or remove the duplicate definition".to_string(),
+                ),
                 class.location.clone(),
             ));
         }
@@ -63,19 +65,19 @@ impl InheritanceValidator {
     pub fn validate_inheritance(&mut self) -> Result<(), CompilerError> {
         // 1. Check for inheritance cycles
         self.detect_inheritance_cycles()?;
-        
+
         // 2. Validate base class existence
         self.validate_base_class_existence()?;
-        
+
         // 3. Validate constructor inheritance
         self.validate_constructor_inheritance()?;
-        
+
         // 4. Validate method overriding rules
         self.validate_method_overriding()?;
-        
+
         // 5. Validate field inheritance rules
         self.validate_field_inheritance()?;
-        
+
         // 6. Validate access control rules
         self.validate_access_control()?;
 
@@ -83,7 +85,10 @@ impl InheritanceValidator {
     }
 
     /// Get the complete inheritance hierarchy for a class (including the class itself)
-    pub fn get_inheritance_hierarchy(&mut self, class_name: &str) -> Result<Vec<String>, CompilerError> {
+    pub fn get_inheritance_hierarchy(
+        &mut self,
+        class_name: &str,
+    ) -> Result<Vec<String>, CompilerError> {
         if let Some(cached) = self.hierarchy_cache.get(class_name) {
             return Ok(cached.clone());
         }
@@ -96,7 +101,10 @@ impl InheritanceValidator {
             // Prevent infinite loops
             if visited.contains(&current_class) {
                 return Err(CompilerError::type_error(
-                    format!("Inheritance cycle detected involving class '{}'", current_class),
+                    format!(
+                        "Inheritance cycle detected involving class '{}'",
+                        current_class
+                    ),
                     Some("Remove circular inheritance relationships".to_string()),
                     None,
                 ));
@@ -106,24 +114,33 @@ impl InheritanceValidator {
             hierarchy.push(current_class.clone());
 
             // Get parent class
-            current = self.class_registry
+            current = self
+                .class_registry
                 .get(&current_class)
                 .and_then(|class| class.base_class.clone());
         }
 
         // Cache the result
-        self.hierarchy_cache.insert(class_name.to_string(), hierarchy.clone());
+        self.hierarchy_cache
+            .insert(class_name.to_string(), hierarchy.clone());
         Ok(hierarchy)
     }
 
     /// Check if a class is a subclass of another class
-    pub fn is_subclass_of(&mut self, child_class: &str, parent_class: &str) -> Result<bool, CompilerError> {
+    pub fn is_subclass_of(
+        &mut self,
+        child_class: &str,
+        parent_class: &str,
+    ) -> Result<bool, CompilerError> {
         let hierarchy = self.get_inheritance_hierarchy(child_class)?;
         Ok(hierarchy.contains(&parent_class.to_string()))
     }
 
     /// Get all methods available to a class (including inherited methods)
-    pub fn get_available_methods(&mut self, class_name: &str) -> Result<HashMap<String, Function>, CompilerError> {
+    pub fn get_available_methods(
+        &mut self,
+        class_name: &str,
+    ) -> Result<HashMap<String, Function>, CompilerError> {
         if let Some(cached) = self.method_cache.get(class_name) {
             return Ok(cached.clone());
         }
@@ -142,7 +159,8 @@ impl InheritanceValidator {
         }
 
         // Cache the result
-        self.method_cache.insert(class_name.to_string(), methods.clone());
+        self.method_cache
+            .insert(class_name.to_string(), methods.clone());
         Ok(methods)
     }
 
@@ -204,7 +222,10 @@ impl InheritanceValidator {
                 if degree > 0 {
                     let class = self.class_registry.get(class_name).unwrap();
                     return Err(CompilerError::type_error(
-                        format!("Inheritance cycle detected involving class '{}'", class_name),
+                        format!(
+                            "Inheritance cycle detected involving class '{}'",
+                            class_name
+                        ),
                         Some("Remove circular inheritance relationships".to_string()),
                         class.location.clone(),
                     ));
@@ -221,8 +242,14 @@ impl InheritanceValidator {
             if let Some(ref base_class) = class.base_class {
                 if !self.class_registry.contains_key(base_class) {
                     return Err(CompilerError::type_error(
-                        format!("Base class '{}' for class '{}' does not exist", base_class, class_name),
-                        Some(format!("Define class '{}' before using it as a base class", base_class)),
+                        format!(
+                            "Base class '{}' for class '{}' does not exist",
+                            base_class, class_name
+                        ),
+                        Some(format!(
+                            "Define class '{}' before using it as a base class",
+                            base_class
+                        )),
                         class.location.clone(),
                     ));
                 }
@@ -263,7 +290,10 @@ impl InheritanceValidator {
             let has_base_call = self.has_base_constructor_call(&constructor.body);
             if !has_base_call {
                 return Err(CompilerError::type_error(
-                    format!("Constructor in class '{}' must call base constructor", class_name),
+                    format!(
+                        "Constructor in class '{}' must call base constructor",
+                        class_name
+                    ),
                     Some("Add 'base(args...)' call to constructor".to_string()),
                     constructor.location.clone(),
                 ));
@@ -283,7 +313,11 @@ impl InheritanceValidator {
                     }
                 }
                 // Recursively check nested statements
-                crate::ast::Statement::If { then_branch, else_branch, .. } => {
+                crate::ast::Statement::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
                     if self.has_base_constructor_call(then_branch) {
                         return true;
                     }
@@ -418,10 +452,14 @@ impl InheritanceValidator {
     }
 
     /// Check if visibility change is compatible (cannot reduce visibility)
-    fn is_visibility_compatible(&self, derived_visibility: &Visibility, base_visibility: &Visibility) -> bool {
+    fn is_visibility_compatible(
+        &self,
+        derived_visibility: &Visibility,
+        base_visibility: &Visibility,
+    ) -> bool {
         match (base_visibility, derived_visibility) {
             (Visibility::Public, Visibility::Private) => false, // Cannot reduce from public to private
-            _ => true, // All other combinations are valid
+            _ => true,                                          // All other combinations are valid
         }
     }
 
@@ -460,7 +498,9 @@ impl InheritanceValidator {
                         "Field '{}' in class '{}' shadows field from base class '{}'",
                         field.name, class_name, base_class_name
                     ),
-                    Some("Choose a different field name or remove the conflicting field".to_string()),
+                    Some(
+                        "Choose a different field name or remove the conflicting field".to_string(),
+                    ),
                     class.location.clone(),
                 ));
             }
@@ -485,7 +525,11 @@ impl InheritanceValidator {
     }
 
     /// Validate access control for a specific class
-    fn validate_class_access_control(&self, _class_name: &str, _class: &Class) -> Result<(), CompilerError> {
+    fn validate_class_access_control(
+        &self,
+        _class_name: &str,
+        _class: &Class,
+    ) -> Result<(), CompilerError> {
         // TODO: Implement comprehensive access control validation
         // This would involve analyzing method bodies to ensure private fields/methods
         // are not accessed from inappropriate contexts
@@ -493,7 +537,11 @@ impl InheritanceValidator {
     }
 
     /// Validate class name
-    fn validate_class_name(&self, name: &str, location: &Option<SourceLocation>) -> Result<(), CompilerError> {
+    fn validate_class_name(
+        &self,
+        name: &str,
+        location: &Option<SourceLocation>,
+    ) -> Result<(), CompilerError> {
         if name.is_empty() {
             return Err(CompilerError::type_error(
                 "Class name cannot be empty".to_string(),
@@ -505,7 +553,10 @@ impl InheritanceValidator {
         // Check for reserved names
         if self.is_reserved_name(name) {
             return Err(CompilerError::type_error(
-                format!("'{}' is a reserved name and cannot be used as a class name", name),
+                format!(
+                    "'{}' is a reserved name and cannot be used as a class name",
+                    name
+                ),
                 Some("Choose a different class name".to_string()),
                 location.clone(),
             ));
@@ -518,8 +569,19 @@ impl InheritanceValidator {
     fn is_reserved_name(&self, name: &str) -> bool {
         matches!(
             name,
-            "string" | "integer" | "number" | "boolean" | "void" | "any" | "list" | "matrix"
-                | "Object" | "String" | "Integer" | "Number" | "Boolean"
+            "string"
+                | "integer"
+                | "number"
+                | "boolean"
+                | "void"
+                | "any"
+                | "list"
+                | "matrix"
+                | "Object"
+                | "String"
+                | "Integer"
+                | "Number"
+                | "Boolean"
         )
     }
 
@@ -594,10 +656,10 @@ mod tests {
     #[test]
     fn test_simple_inheritance() {
         let mut validator = InheritanceValidator::new();
-        
+
         let parent_class = create_test_class("Parent", None);
         let child_class = create_test_class("Child", Some("Parent".to_string()));
-        
+
         assert!(validator.register_class(parent_class).is_ok());
         assert!(validator.register_class(child_class).is_ok());
         assert!(validator.validate_inheritance().is_ok());
@@ -606,10 +668,10 @@ mod tests {
     #[test]
     fn test_inheritance_cycle_detection() {
         let mut validator = InheritanceValidator::new();
-        
+
         let class_a = create_test_class("A", Some("B".to_string()));
         let class_b = create_test_class("B", Some("A".to_string()));
-        
+
         assert!(validator.register_class(class_a).is_ok());
         assert!(validator.register_class(class_b).is_ok());
         assert!(validator.validate_inheritance().is_err());
@@ -618,9 +680,9 @@ mod tests {
     #[test]
     fn test_missing_base_class() {
         let mut validator = InheritanceValidator::new();
-        
+
         let child_class = create_test_class("Child", Some("NonExistent".to_string()));
-        
+
         assert!(validator.register_class(child_class).is_ok());
         assert!(validator.validate_inheritance().is_err());
     }
@@ -628,34 +690,35 @@ mod tests {
     #[test]
     fn test_self_inheritance() {
         let mut validator = InheritanceValidator::new();
-        
-        let self_inheriting_class = create_test_class("SelfInheriting", Some("SelfInheriting".to_string()));
-        
+
+        let self_inheriting_class =
+            create_test_class("SelfInheriting", Some("SelfInheriting".to_string()));
+
         assert!(validator.register_class(self_inheriting_class).is_err());
     }
 
     #[test]
     fn test_reserved_class_name() {
         let mut validator = InheritanceValidator::new();
-        
+
         let reserved_class = create_test_class("string", None);
-        
+
         assert!(validator.register_class(reserved_class).is_err());
     }
 
     #[test]
     fn test_inheritance_hierarchy() {
         let mut validator = InheritanceValidator::new();
-        
+
         let grandparent_class = create_test_class("GrandParent", None);
         let parent_class = create_test_class("Parent", Some("GrandParent".to_string()));
         let child_class = create_test_class("Child", Some("Parent".to_string()));
-        
+
         assert!(validator.register_class(grandparent_class).is_ok());
         assert!(validator.register_class(parent_class).is_ok());
         assert!(validator.register_class(child_class).is_ok());
         assert!(validator.validate_inheritance().is_ok());
-        
+
         let hierarchy = validator.get_inheritance_hierarchy("Child").unwrap();
         assert_eq!(hierarchy, vec!["Child", "Parent", "GrandParent"]);
     }

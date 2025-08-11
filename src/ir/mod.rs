@@ -1,8 +1,8 @@
 //! Clean Language Intermediate Representation Module
-//! 
+//!
 //! This module implements the multi-layer IR architecture:
 //! AST → HIR → MIR → LIR → WebAssembly
-//! 
+//!
 //! # IR Levels
 //! - **HIR** (High-level IR): Desugared AST with name resolution
 //! - **MIR** (Mid-level IR): Control flow graphs with basic blocks  
@@ -12,17 +12,17 @@ use crate::ast::*;
 use crate::error::CompilerError;
 
 pub mod hir;
-pub mod mir;
 pub mod lir;
-pub mod transform;
+pub mod mir;
 pub mod optimization;
+pub mod transform;
 pub mod validation;
 
 pub use hir::*;
-pub use mir::*;
 pub use lir::*;
-pub use transform::*;
+pub use mir::*;
 pub use optimization::*;
+pub use transform::*;
 pub use validation::*;
 
 /// IR transformation result
@@ -73,20 +73,20 @@ impl IRPipeline {
     pub fn transform_program(&self, program: Program) -> IRResult<LIRProgram> {
         // AST → HIR
         let hir = self.ast_to_hir(program)?;
-        
+
         // HIR → MIR
         let mut mir = self.hir_to_mir(hir)?;
-        
+
         // Run optimizations on MIR
         let _optimization_stats = optimize_mir_program(&mut mir, self.optimization_level)?;
-        
+
         if self.debug_mode {
             println!("Optimization stats: {:?}", _optimization_stats);
         }
-        
+
         // MIR → LIR
         let lir = self.mir_to_lir(mir)?;
-        
+
         Ok(lir)
     }
 
@@ -106,10 +106,10 @@ impl IRPipeline {
 /// Optimization level configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptimizationLevel {
-    None,        // O0 - No optimizations
-    Speed,       // O1/O2 - Optimize for speed
-    Size,        // Os - Optimize for size
-    Aggressive,  // O3 - Aggressive optimizations
+    None,       // O0 - No optimizations
+    Speed,      // O1/O2 - Optimize for speed
+    Size,       // Os - Optimize for size
+    Aggressive, // O3 - Aggressive optimizations
 }
 
 impl Default for OptimizationLevel {

@@ -1,6 +1,6 @@
 //! Comprehensive symbol table and scope management for Clean Language
 
-use crate::ast::{Type, SourceLocation, Visibility, FunctionModifier};
+use crate::ast::{FunctionModifier, SourceLocation, Type, Visibility};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -47,7 +47,12 @@ pub struct Symbol {
 }
 
 impl Symbol {
-    pub fn new(name: String, kind: SymbolKind, location: Option<SourceLocation>, scope_level: usize) -> Self {
+    pub fn new(
+        name: String,
+        kind: SymbolKind,
+        location: Option<SourceLocation>,
+        scope_level: usize,
+    ) -> Self {
         Self {
             name,
             kind,
@@ -189,7 +194,7 @@ impl SymbolTable {
     /// Define a symbol in the current scope
     pub fn define_symbol(&mut self, symbol: Symbol) -> Result<(), String> {
         let current_scope = &mut self.scopes[self.current_scope];
-        
+
         // Check for redefinition in current scope
         if current_scope.symbols.contains_key(&symbol.name) {
             return Err(format!(
@@ -203,7 +208,13 @@ impl SymbolTable {
     }
 
     /// Define a variable in the current scope
-    pub fn define_variable(&mut self, name: String, type_: Type, location: Option<SourceLocation>, is_mutable: bool) -> Result<(), String> {
+    pub fn define_variable(
+        &mut self,
+        name: String,
+        type_: Type,
+        location: Option<SourceLocation>,
+        is_mutable: bool,
+    ) -> Result<(), String> {
         let symbol = Symbol::new(
             name,
             SymbolKind::Variable {
@@ -270,10 +281,10 @@ impl SymbolTable {
     /// Lookup a symbol starting from current scope and traversing up
     pub fn lookup_symbol(&self, name: &str) -> Option<&Symbol> {
         let mut current_scope_id = self.current_scope;
-        
+
         loop {
             let scope = &self.scopes[current_scope_id];
-            
+
             if let Some(symbol) = scope.symbols.get(name) {
                 return Some(symbol);
             }
@@ -293,22 +304,22 @@ impl SymbolTable {
         // First find the symbol
         let symbol_info = self.lookup_symbol_with_scope(name)?;
         let (scope_id, symbol_type) = symbol_info;
-        
+
         // Mark it as used
         if let Some(symbol) = self.scopes[scope_id].symbols.get_mut(name) {
             symbol.mark_used();
         }
-        
+
         Some(symbol_type)
     }
 
     /// Lookup a symbol with scope information
     fn lookup_symbol_with_scope(&self, name: &str) -> Option<(usize, Type)> {
         let mut current_scope_id = self.current_scope;
-        
+
         loop {
             let scope = &self.scopes[current_scope_id];
-            
+
             if let Some(symbol) = scope.symbols.get(name) {
                 return Some((current_scope_id, symbol.get_type()));
             }
@@ -332,7 +343,7 @@ impl SymbolTable {
     pub fn get_all_symbol_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         let mut current_scope_id = self.current_scope;
-        
+
         loop {
             let scope = &self.scopes[current_scope_id];
             names.extend(scope.symbols.keys().cloned());
@@ -368,10 +379,10 @@ impl SymbolTable {
     /// Check if we're currently in a function scope
     pub fn in_function_scope(&self) -> bool {
         let mut current_scope_id = self.current_scope;
-        
+
         loop {
             let scope = &self.scopes[current_scope_id];
-            
+
             if matches!(scope.scope_type, ScopeType::Function(_)) {
                 return true;
             }
@@ -389,10 +400,10 @@ impl SymbolTable {
     /// Check if we're currently in a class scope
     pub fn in_class_scope(&self) -> bool {
         let mut current_scope_id = self.current_scope;
-        
+
         loop {
             let scope = &self.scopes[current_scope_id];
-            
+
             if matches!(scope.scope_type, ScopeType::Class(_)) {
                 return true;
             }
@@ -410,10 +421,10 @@ impl SymbolTable {
     /// Check if we're currently in a loop scope
     pub fn in_loop_scope(&self) -> bool {
         let mut current_scope_id = self.current_scope;
-        
+
         loop {
             let scope = &self.scopes[current_scope_id];
-            
+
             if matches!(scope.scope_type, ScopeType::Loop) {
                 return true;
             }
@@ -431,10 +442,10 @@ impl SymbolTable {
     /// Get current function name if in function scope
     pub fn current_function_name(&self) -> Option<&str> {
         let mut current_scope_id = self.current_scope;
-        
+
         loop {
             let scope = &self.scopes[current_scope_id];
-            
+
             if let ScopeType::Function(name) = &scope.scope_type {
                 return Some(name);
             }
@@ -452,10 +463,10 @@ impl SymbolTable {
     /// Get current class name if in class scope
     pub fn current_class_name(&self) -> Option<&str> {
         let mut current_scope_id = self.current_scope;
-        
+
         loop {
             let scope = &self.scopes[current_scope_id];
-            
+
             if let ScopeType::Class(name) = &scope.scope_type {
                 return Some(name);
             }
@@ -473,15 +484,16 @@ impl SymbolTable {
     /// Get all unused symbols for warnings
     pub fn get_unused_symbols(&self) -> Vec<&Symbol> {
         let mut unused = Vec::new();
-        
+
         for scope in &self.scopes {
             for symbol in scope.symbols.values() {
-                if !symbol.is_used && symbol.is_variable() && scope.scope_type != ScopeType::Global {
+                if !symbol.is_used && symbol.is_variable() && scope.scope_type != ScopeType::Global
+                {
                     unused.push(symbol);
                 }
             }
         }
-        
+
         unused
     }
 
@@ -489,9 +501,16 @@ impl SymbolTable {
     pub fn debug_print(&self) {
         println!("Symbol Table Debug:");
         for (i, scope) in self.scopes.iter().enumerate() {
-            let current_marker = if i == self.current_scope { " <- CURRENT" } else { "" };
-            println!("  Scope {}: {} (level: {}){}", i, scope.scope_type, scope.level, current_marker);
-            
+            let current_marker = if i == self.current_scope {
+                " <- CURRENT"
+            } else {
+                ""
+            };
+            println!(
+                "  Scope {}: {} (level: {}){}",
+                i, scope.scope_type, scope.level, current_marker
+            );
+
             for (name, symbol) in &scope.symbols {
                 let used_marker = if symbol.is_used { "✓" } else { "✗" };
                 println!("    {} {}: {:?}", used_marker, name, symbol.kind);

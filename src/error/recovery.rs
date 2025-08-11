@@ -31,18 +31,14 @@ impl ErrorRecovery {
     /// Attempt to recover from a compiler error
     pub fn recover_from_error(&mut self, error: &CompilerError) -> RecoveryResult {
         match error {
-            CompilerError::Syntax { context } => {
-                match context.error_type {
-                    ErrorType::Syntax => self.lexer_recovery.recover(error),
-                    _ => self.parser_recovery.recover(error),
-                }
-            }
+            CompilerError::Syntax { context } => match context.error_type {
+                ErrorType::Syntax => self.lexer_recovery.recover(error),
+                _ => self.parser_recovery.recover(error),
+            },
             CompilerError::Type { .. } | CompilerError::Validation { .. } => {
                 self.semantic_recovery.recover(error)
             }
-            CompilerError::Codegen { .. } => {
-                self.codegen_recovery.recover(error)
-            }
+            CompilerError::Codegen { .. } => self.codegen_recovery.recover(error),
             _ => RecoveryResult::no_recovery(),
         }
     }
@@ -71,7 +67,11 @@ impl RecoveryResult {
         }
     }
 
-    pub fn partial(actions: Vec<RecoveryAction>, errors: Vec<CompilerError>, confidence: f64) -> Self {
+    pub fn partial(
+        actions: Vec<RecoveryAction>,
+        errors: Vec<CompilerError>,
+        confidence: f64,
+    ) -> Self {
         Self {
             recovered: true,
             actions,
@@ -127,20 +127,20 @@ pub struct LexerRecovery {
 impl LexerRecovery {
     pub fn new() -> Self {
         let mut char_substitutions = HashMap::new();
-        
+
         // Common typos and their corrections
         char_substitutions.insert('0', vec!['O', 'o']);
         char_substitutions.insert('1', vec!['l', 'I']);
         char_substitutions.insert('5', vec!['S']);
         char_substitutions.insert('8', vec!['B']);
-        
+
         Self { char_substitutions }
     }
 
     pub fn recover(&mut self, error: &CompilerError) -> RecoveryResult {
         // Extract error message to understand the issue
         let error_msg = error.to_string();
-        
+
         if error_msg.contains("Invalid character") {
             self.recover_invalid_character(error)
         } else if error_msg.contains("Unterminated string") {
@@ -176,7 +176,9 @@ impl LexerRecovery {
         RecoveryResult::success(
             vec![
                 RecoveryAction::AssumeDefault("0".to_string()),
-                RecoveryAction::SuggestFix("Check number format (integers or decimals only)".to_string()),
+                RecoveryAction::SuggestFix(
+                    "Check number format (integers or decimals only)".to_string(),
+                ),
             ],
             0.6,
         )
@@ -206,7 +208,7 @@ impl ParserRecovery {
 
     pub fn recover(&mut self, error: &CompilerError) -> RecoveryResult {
         let error_msg = error.to_string();
-        
+
         if error_msg.contains("Expected") {
             self.recover_expected_token(error)
         } else if error_msg.contains("Unexpected") {
@@ -263,13 +265,13 @@ impl SemanticRecovery {
         default_types.insert("number".to_string(), "0.0".to_string());
         default_types.insert("string".to_string(), "\"\"".to_string());
         default_types.insert("boolean".to_string(), "false".to_string());
-        
+
         Self { default_types }
     }
 
     pub fn recover(&mut self, error: &CompilerError) -> RecoveryResult {
         let error_msg = error.to_string();
-        
+
         if error_msg.contains("Type mismatch") {
             self.recover_type_mismatch(error)
         } else if error_msg.contains("Undefined") {
@@ -284,7 +286,9 @@ impl SemanticRecovery {
     fn recover_type_mismatch(&self, _error: &CompilerError) -> RecoveryResult {
         RecoveryResult::success(
             vec![
-                RecoveryAction::SuggestFix("Check type compatibility or add type conversion".to_string()),
+                RecoveryAction::SuggestFix(
+                    "Check type compatibility or add type conversion".to_string(),
+                ),
                 RecoveryAction::ContinueReduced,
             ],
             0.6,
@@ -304,7 +308,9 @@ impl SemanticRecovery {
     fn recover_incompatible_types(&self, _error: &CompilerError) -> RecoveryResult {
         RecoveryResult::success(
             vec![
-                RecoveryAction::SuggestFix("Use compatible types or add explicit conversion".to_string()),
+                RecoveryAction::SuggestFix(
+                    "Use compatible types or add explicit conversion".to_string(),
+                ),
                 RecoveryAction::ContinueReduced,
             ],
             0.5,
@@ -323,7 +329,7 @@ impl CodegenRecovery {
 
     pub fn recover(&mut self, error: &CompilerError) -> RecoveryResult {
         let error_msg = error.to_string();
-        
+
         if error_msg.contains("WebAssembly") {
             self.recover_wasm_error(error)
         } else if error_msg.contains("Instruction") {

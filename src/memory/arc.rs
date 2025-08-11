@@ -32,7 +32,11 @@ impl ARCManager {
                 Ok(false) // Keep alive
             }
         } else {
-            Err(CompilerError::memory_error("Invalid memory address for release", None, None))
+            Err(CompilerError::memory_error(
+                "Invalid memory address for release",
+                None,
+                None,
+            ))
         }
     }
 

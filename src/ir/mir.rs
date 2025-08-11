@@ -1,5 +1,5 @@
 //! Mid-level Intermediate Representation (MIR)
-//! 
+//!
 //! MIR represents control flow graphs with basic blocks
 
 use crate::ir::*;
@@ -78,17 +78,17 @@ pub enum MIRInstruction {
     Sub(LocalId, MIROperand, MIROperand),
     Mul(LocalId, MIROperand, MIROperand),
     Div(LocalId, MIROperand, MIROperand),
-    
+
     // Memory
     Load(LocalId, MIROperand),
     Store(MIROperand, MIROperand),
-    
+
     // Function calls
     Call(LocalId, String, Vec<MIROperand>),
-    
+
     // Type conversions
     Cast(LocalId, MIROperand, MIRType),
-    
+
     // Constants
     Const(LocalId, MIRConstant),
 }
@@ -115,17 +115,17 @@ pub enum MIRConstant {
 pub enum MIRTerminator {
     /// Unconditional jump
     Goto(BlockId),
-    
+
     /// Conditional jump
     Branch {
         condition: MIROperand,
         then_block: BlockId,
         else_block: BlockId,
     },
-    
+
     /// Return from function
     Return(Option<MIROperand>),
-    
+
     /// Unreachable code
     Unreachable,
 }
@@ -133,8 +133,12 @@ pub enum MIRTerminator {
 /// MIR Type system
 #[derive(Debug, Clone, PartialEq)]
 pub enum MIRType {
-    I8, I16, I32, I64,
-    F32, F64,
+    I8,
+    I16,
+    I32,
+    I64,
+    F32,
+    F64,
     Bool,
     Ptr(Box<MIRType>),
     Array(Box<MIRType>, usize),

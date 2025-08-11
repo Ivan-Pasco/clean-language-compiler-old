@@ -22,11 +22,11 @@ impl CleanLexer {
             current_token: None,
         }
     }
-    
+
     fn current_char(&self) -> Option<char> {
         self.input.get(self.position).copied()
     }
-    
+
     fn advance(&mut self) -> Option<char> {
         if let Some(ch) = self.current_char() {
             self.position += 1;
@@ -41,11 +41,11 @@ impl CleanLexer {
             None
         }
     }
-    
+
     fn peek(&self) -> Option<char> {
         self.input.get(self.position + 1).copied()
     }
-    
+
     fn skip_whitespace(&mut self) {
         while let Some(ch) = self.current_char() {
             if ch.is_whitespace() && ch != '\n' && ch != '\t' {
@@ -55,11 +55,11 @@ impl CleanLexer {
             }
         }
     }
-    
+
     fn read_string(&mut self) -> LexResult<String> {
         let mut string = String::new();
         self.advance(); // Skip opening quote
-        
+
         while let Some(ch) = self.current_char() {
             if ch == '"' {
                 self.advance(); // Skip closing quote
@@ -79,8 +79,14 @@ impl CleanLexer {
                         // For unknown escape sequences, include both backslash and character
                         string.push('\\');
                         string.push(other);
-                    },
-                    None => return Err(CompilerError::syntax_error("Unterminated string escape", None, None)),
+                    }
+                    None => {
+                        return Err(CompilerError::syntax_error(
+                            "Unterminated string escape",
+                            None,
+                            None,
+                        ))
+                    }
                 }
                 self.advance();
             } else {
@@ -88,15 +94,19 @@ impl CleanLexer {
                 self.advance();
             }
         }
-        
-        Err(CompilerError::syntax_error("Unterminated string literal", None, None))
+
+        Err(CompilerError::syntax_error(
+            "Unterminated string literal",
+            None,
+            None,
+        ))
     }
-    
+
     /// Check if a string contains interpolation markers
     fn has_interpolation(s: &str) -> bool {
         s.contains('{') && s.contains('}')
     }
-    
+
     fn read_number(&mut self) -> LexResult<TokenKind> {
         // Check for different number bases
         if let Some('0') = self.current_char() {
@@ -109,17 +119,21 @@ impl CleanLexer {
                 }
             }
         }
-        
+
         // Decimal number parsing (existing logic enhanced)
         let mut number = String::new();
         let mut is_float = false;
         let mut has_scientific = false;
-        
+
         while let Some(ch) = self.current_char() {
             if ch.is_ascii_digit() {
                 number.push(ch);
                 self.advance();
-            } else if ch == '.' && !is_float && !has_scientific && self.peek().map_or(false, |c| c.is_ascii_digit()) {
+            } else if ch == '.'
+                && !is_float
+                && !has_scientific
+                && self.peek().map_or(false, |c| c.is_ascii_digit())
+            {
                 is_float = true;
                 number.push(ch);
                 self.advance();
@@ -139,22 +153,24 @@ impl CleanLexer {
                 break;
             }
         }
-        
+
         if is_float {
-            number.parse::<f64>()
+            number
+                .parse::<f64>()
                 .map(TokenKind::Number)
                 .map_err(|_| CompilerError::syntax_error("Invalid number literal", None, None))
         } else {
-            number.parse::<i64>()
+            number
+                .parse::<i64>()
                 .map(TokenKind::Integer)
                 .map_err(|_| CompilerError::syntax_error("Invalid integer literal", None, None))
         }
     }
-    
+
     fn read_hex_number(&mut self) -> LexResult<TokenKind> {
         self.advance(); // Skip '0'
         self.advance(); // Skip 'x' or 'X'
-        
+
         let mut hex_str = String::new();
         while let Some(ch) = self.current_char() {
             if ch.is_ascii_hexdigit() {
@@ -164,20 +180,24 @@ impl CleanLexer {
                 break;
             }
         }
-        
+
         if hex_str.is_empty() {
-            return Err(CompilerError::syntax_error("Invalid hexadecimal literal", None, None));
+            return Err(CompilerError::syntax_error(
+                "Invalid hexadecimal literal",
+                None,
+                None,
+            ));
         }
-        
+
         i64::from_str_radix(&hex_str, 16)
             .map(TokenKind::Integer)
             .map_err(|_| CompilerError::syntax_error("Invalid hexadecimal literal", None, None))
     }
-    
+
     fn read_binary_number(&mut self) -> LexResult<TokenKind> {
         self.advance(); // Skip '0'
         self.advance(); // Skip 'b' or 'B'
-        
+
         let mut bin_str = String::new();
         while let Some(ch) = self.current_char() {
             if ch == '0' || ch == '1' {
@@ -187,20 +207,24 @@ impl CleanLexer {
                 break;
             }
         }
-        
+
         if bin_str.is_empty() {
-            return Err(CompilerError::syntax_error("Invalid binary literal", None, None));
+            return Err(CompilerError::syntax_error(
+                "Invalid binary literal",
+                None,
+                None,
+            ));
         }
-        
+
         i64::from_str_radix(&bin_str, 2)
             .map(TokenKind::Integer)
             .map_err(|_| CompilerError::syntax_error("Invalid binary literal", None, None))
     }
-    
+
     fn read_octal_number(&mut self) -> LexResult<TokenKind> {
         self.advance(); // Skip '0'
         self.advance(); // Skip 'o' or 'O'
-        
+
         let mut oct_str = String::new();
         while let Some(ch) = self.current_char() {
             if ch.is_ascii_digit() && ch < '8' {
@@ -210,19 +234,23 @@ impl CleanLexer {
                 break;
             }
         }
-        
+
         if oct_str.is_empty() {
-            return Err(CompilerError::syntax_error("Invalid octal literal", None, None));
+            return Err(CompilerError::syntax_error(
+                "Invalid octal literal",
+                None,
+                None,
+            ));
         }
-        
+
         i64::from_str_radix(&oct_str, 8)
             .map(TokenKind::Integer)
             .map_err(|_| CompilerError::syntax_error("Invalid octal literal", None, None))
     }
-    
+
     fn read_identifier(&mut self) -> String {
         let mut identifier = String::new();
-        
+
         while let Some(ch) = self.current_char() {
             if ch.is_alphanumeric() || ch == '_' {
                 identifier.push(ch);
@@ -231,14 +259,14 @@ impl CleanLexer {
                 break;
             }
         }
-        
+
         identifier
     }
-    
+
     fn read_line_comment(&mut self) -> LexResult<TokenKind> {
         self.advance(); // Skip first '/'
         self.advance(); // Skip second '/'
-        
+
         let mut comment = String::new();
         while let Some(ch) = self.current_char() {
             if ch == '\n' {
@@ -247,17 +275,17 @@ impl CleanLexer {
             comment.push(ch);
             self.advance();
         }
-        
+
         Ok(TokenKind::Comment(comment))
     }
-    
+
     fn read_block_comment(&mut self) -> LexResult<TokenKind> {
         self.advance(); // Skip '/'
         self.advance(); // Skip '*'
-        
+
         let mut comment = String::new();
         let mut found_end = false;
-        
+
         while let Some(ch) = self.current_char() {
             if ch == '*' && self.peek() == Some('/') {
                 self.advance(); // Skip '*'
@@ -268,17 +296,21 @@ impl CleanLexer {
             comment.push(ch);
             self.advance();
         }
-        
+
         if !found_end {
-            return Err(CompilerError::syntax_error("Unterminated block comment", None, None));
+            return Err(CompilerError::syntax_error(
+                "Unterminated block comment",
+                None,
+                None,
+            ));
         }
-        
+
         Ok(TokenKind::Comment(comment))
     }
 
     fn scan_token(&mut self) -> LexResult<TokenKind> {
         self.skip_whitespace();
-        
+
         match self.current_char() {
             None => Ok(TokenKind::Eof),
             Some('\n') => {
@@ -313,27 +345,27 @@ impl CleanLexer {
                     "returns" => TokenKind::Returns,
                     "import" => TokenKind::Import,
                     "export" => TokenKind::Export,
-                    
+
                     // Async/await
                     "async" => TokenKind::Async,
                     "await" => TokenKind::Await,
                     "start" => TokenKind::Start,
                     "later" => TokenKind::Later,
                     "background" => TokenKind::Background,
-                    
+
                     // Error handling
                     "onError" => TokenKind::OnError,
                     "error" => TokenKind::Error,
-                    
+
                     // Object-oriented
                     "base" => TokenKind::Base,
                     "this" => TokenKind::This,
                     "is" => TokenKind::Is,
-                    
+
                     // Literals
                     "true" => TokenKind::Boolean(true),
                     "false" => TokenKind::Boolean(false),
-                    
+
                     // Types
                     "integer" => TokenKind::IntegerType,
                     "number" => TokenKind::NumberType,
@@ -344,25 +376,25 @@ impl CleanLexer {
                     "matrix" => TokenKind::Matrix,
                     "pairs" => TokenKind::Pairs,
                     "any" => TokenKind::Any,
-                    
+
                     // I/O and testing
                     "print" => TokenKind::Print,
                     "println" => TokenKind::Println,
                     "input" => TokenKind::Input,
                     "test" => TokenKind::Test,
                     "tests" => TokenKind::Tests,
-                    
+
                     // Logical operators (word form)
                     "and" => TokenKind::And,
                     "or" => TokenKind::Or,
                     "not" => TokenKind::Not,
-                    
+
                     // Modifiers
                     "description" => TokenKind::Description,
                     "unit" => TokenKind::Unit,
                     "private" => TokenKind::Private,
                     "constant" => TokenKind::Constant,
-                    
+
                     _ => TokenKind::Identifier(identifier),
                 };
                 Ok(token)
@@ -412,7 +444,7 @@ impl CleanLexer {
                         self.position -= 1; // Backtrack
                         self.read_block_comment()
                     }
-                    _ => Ok(TokenKind::Divide)
+                    _ => Ok(TokenKind::Divide),
                 }
             }
             Some('^') => {
@@ -434,7 +466,7 @@ impl CleanLexer {
                         self.advance();
                         Ok(TokenKind::FatArrow)
                     }
-                    _ => Ok(TokenKind::Assign)
+                    _ => Ok(TokenKind::Assign),
                 }
             }
             Some('!') => {
@@ -537,27 +569,27 @@ impl Lexer for CleanLexer {
         let token_kind = self.scan_token()?;
         let end_pos = Position::new(self.line, self.column, self.position);
         let span = Span::new(start_pos, end_pos);
-        
+
         let token = Token::new(token_kind, span);
         self.current_token = Some(token.clone());
         Ok(token)
     }
-    
+
     fn peek_token(&mut self) -> LexResult<&Token> {
         if self.current_token.is_none() {
             self.next_token()?;
         }
         Ok(self.current_token.as_ref().unwrap())
     }
-    
+
     fn position(&self) -> Position {
         Position::new(self.line, self.column, self.position)
     }
-    
+
     fn is_at_end(&self) -> bool {
         self.position >= self.input.len()
     }
-    
+
     fn get_error_suggestions(&self) -> Vec<String> {
         // Implementation will be added in Task 2.1
         vec![]

@@ -1,8 +1,8 @@
 //! Clean Language Memory Management Module
-//! 
+//!
 //! This module implements Automatic Reference Counting (ARC) and garbage collection
 //! for the Clean Language runtime in WebAssembly.
-//! 
+//!
 //! # Features
 //! - Automatic Reference Counting (ARC) for deterministic memory management
 //! - Mark-and-sweep garbage collection for cycle detection
@@ -13,18 +13,18 @@
 use crate::error::CompilerError;
 use std::collections::HashMap;
 
+pub mod allocator;
 pub mod arc;
 pub mod gc;
-pub mod string_pool;
 pub mod layout;
-pub mod allocator;
+pub mod string_pool;
 pub mod wasm_runtime;
 
+pub use allocator::*;
 pub use arc::*;
 pub use gc::*;
-pub use string_pool::*;
 pub use layout::*;
-pub use allocator::*;
+pub use string_pool::*;
 pub use wasm_runtime::*;
 
 /// Memory management result type
@@ -99,9 +99,9 @@ impl Default for MemoryLayout {
         Self {
             stack_start: 0,
             heap_start: 1024,
-            string_pool_start: 64 * 1024,    // 64KB
-            globals_start: 128 * 1024,       // 128KB
-            total_size: 1024 * 1024,         // 1MB default
+            string_pool_start: 64 * 1024, // 64KB
+            globals_start: 128 * 1024,    // 128KB
+            total_size: 1024 * 1024,      // 1MB default
         }
     }
 }

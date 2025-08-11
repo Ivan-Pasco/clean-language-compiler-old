@@ -28,7 +28,7 @@ impl GarbageCollector {
 
     fn mark_reachable_objects(&mut self, allocator: &Allocator) -> MemoryResult<()> {
         self.marked_objects.clear();
-        
+
         // Start from all root objects (globals, stack variables, etc.)
         // For now, mark all objects with positive reference counts as reachable
         for (&address, info) in allocator.get_allocated_blocks() {
@@ -36,17 +36,17 @@ impl GarbageCollector {
                 self.mark_object(address);
             }
         }
-        
+
         // TODO: Add proper root traversal from stack and globals
         // This would involve walking through all live references
-        
+
         Ok(())
     }
 
     fn sweep_unreachable_objects(&mut self, allocator: &mut Allocator) -> MemoryResult<usize> {
         let mut freed_count = 0;
         let mut to_free = Vec::new();
-        
+
         // Collect addresses of unmarked objects
         for &address in allocator.get_allocated_blocks().keys() {
             if !self.marked_objects.contains(&address) {
@@ -54,17 +54,20 @@ impl GarbageCollector {
                 freed_count += 1;
             }
         }
-        
+
         // Deallocate unmarked objects
         for address in to_free {
             if let Err(e) = allocator.deallocate(address) {
-                eprintln!("Warning: Failed to deallocate object at {}: {:?}", address, e);
+                eprintln!(
+                    "Warning: Failed to deallocate object at {}: {:?}",
+                    address, e
+                );
             }
         }
-        
+
         Ok(freed_count)
     }
-    
+
     /// Mark an object and its references as reachable
     fn mark_object(&mut self, address: MemoryAddress) {
         if self.marked_objects.insert(address) {

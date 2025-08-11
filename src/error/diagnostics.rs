@@ -90,18 +90,20 @@ impl DiagnosticSystem {
 
     fn is_blocking_error(&self, error: &CompilerError) -> bool {
         let error_msg = error.to_string();
-        
+
         // Syntax errors that prevent further parsing
-        if error_msg.contains("Unexpected end of file") ||
-           error_msg.contains("Invalid syntax") ||
-           error_msg.contains("Parse error") {
+        if error_msg.contains("Unexpected end of file")
+            || error_msg.contains("Invalid syntax")
+            || error_msg.contains("Parse error")
+        {
             return true;
         }
 
         // Type errors that prevent code generation
-        if error_msg.contains("Undefined function") ||
-           error_msg.contains("Type not found") ||
-           error_msg.contains("Incompatible types") {
+        if error_msg.contains("Undefined function")
+            || error_msg.contains("Type not found")
+            || error_msg.contains("Incompatible types")
+        {
             return true;
         }
 
@@ -140,7 +142,10 @@ impl ErrorPatternDatabase {
         patterns.push(ErrorPattern {
             id: "undefined_variable".to_string(),
             description: "Use of undefined variable".to_string(),
-            signature: vec!["Variable not found".to_string(), "Undefined identifier".to_string()],
+            signature: vec![
+                "Variable not found".to_string(),
+                "Undefined identifier".to_string(),
+            ],
             frequency: 0.20,
             fix_complexity: FixComplexity::Moderate,
             auto_fixable: false,
@@ -149,7 +154,10 @@ impl ErrorPatternDatabase {
         patterns.push(ErrorPattern {
             id: "type_mismatch".to_string(),
             description: "Type mismatch in assignment or expression".to_string(),
-            signature: vec!["Type mismatch".to_string(), "Incompatible types".to_string()],
+            signature: vec![
+                "Type mismatch".to_string(),
+                "Incompatible types".to_string(),
+            ],
             frequency: 0.18,
             fix_complexity: FixComplexity::Complex,
             auto_fixable: false,
@@ -184,7 +192,8 @@ impl ErrorPatternDatabase {
 
         // Sort by confidence and frequency
         detected.sort_by(|a, b| {
-            b.confidence.partial_cmp(&a.confidence)
+            b.confidence
+                .partial_cmp(&a.confidence)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
@@ -215,7 +224,7 @@ impl ErrorPatternDatabase {
         // Base confidence on pattern frequency and match count
         let base_confidence = pattern.frequency;
         let match_factor = (matches.len() as f64).min(5.0) / 5.0; // Cap at 5 matches
-        
+
         (base_confidence + match_factor) / 2.0
     }
 }
@@ -230,48 +239,65 @@ impl FixSuggestionEngine {
         let mut fix_templates = HashMap::new();
 
         // Semicolon fixes
-        fix_templates.insert("missing_semicolon".to_string(), vec![
-            FixTemplate {
+        fix_templates.insert(
+            "missing_semicolon".to_string(),
+            vec![FixTemplate {
                 description: "Add missing semicolon".to_string(),
-                action: FixAction::Insert { position: "end_of_statement".to_string(), text: ";".to_string() },
+                action: FixAction::Insert {
+                    position: "end_of_statement".to_string(),
+                    text: ";".to_string(),
+                },
                 confidence: 0.95,
                 auto_apply: true,
-            },
-        ]);
+            }],
+        );
 
         // Brace fixes
-        fix_templates.insert("unmatched_braces".to_string(), vec![
-            FixTemplate {
+        fix_templates.insert(
+            "unmatched_braces".to_string(),
+            vec![FixTemplate {
                 description: "Add missing closing brace".to_string(),
-                action: FixAction::Insert { position: "end_of_block".to_string(), text: "}".to_string() },
+                action: FixAction::Insert {
+                    position: "end_of_block".to_string(),
+                    text: "}".to_string(),
+                },
                 confidence: 0.85,
                 auto_apply: true,
-            },
-        ]);
+            }],
+        );
 
         // Variable definition fixes
-        fix_templates.insert("undefined_variable".to_string(), vec![
-            FixTemplate {
-                description: "Declare variable before use".to_string(),
-                action: FixAction::InsertBefore { 
-                    line: "current".to_string(), 
-                    text: "let VARIABLE_NAME = /* initial value */;".to_string() 
+        fix_templates.insert(
+            "undefined_variable".to_string(),
+            vec![
+                FixTemplate {
+                    description: "Declare variable before use".to_string(),
+                    action: FixAction::InsertBefore {
+                        line: "current".to_string(),
+                        text: "let VARIABLE_NAME = /* initial value */;".to_string(),
+                    },
+                    confidence: 0.60,
+                    auto_apply: false,
                 },
-                confidence: 0.60,
-                auto_apply: false,
-            },
-            FixTemplate {
-                description: "Check for typos in variable name".to_string(),
-                action: FixAction::Suggest { message: "Review similar variable names in scope".to_string() },
-                confidence: 0.40,
-                auto_apply: false,
-            },
-        ]);
+                FixTemplate {
+                    description: "Check for typos in variable name".to_string(),
+                    action: FixAction::Suggest {
+                        message: "Review similar variable names in scope".to_string(),
+                    },
+                    confidence: 0.40,
+                    auto_apply: false,
+                },
+            ],
+        );
 
         Self { fix_templates }
     }
 
-    pub fn generate_suggestions(&self, errors: &[CompilerError], patterns: &[DetectedPattern]) -> Vec<FixSuggestion> {
+    pub fn generate_suggestions(
+        &self,
+        errors: &[CompilerError],
+        patterns: &[DetectedPattern],
+    ) -> Vec<FixSuggestion> {
         let mut suggestions = Vec::new();
 
         for pattern in patterns {
@@ -291,7 +317,9 @@ impl FixSuggestionEngine {
         }
 
         suggestions.sort_by(|a, b| {
-            b.template.confidence.partial_cmp(&a.template.confidence)
+            b.template
+                .confidence
+                .partial_cmp(&a.template.confidence)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
@@ -312,7 +340,7 @@ impl FixSuggestionEngine {
 
         FixContext {
             location: context.location.clone(),
-            surrounding_code: None, // TODO: Extract from source
+            surrounding_code: None,     // TODO: Extract from source
             variable_scope: Vec::new(), // TODO: Extract from semantic analysis
         }
     }
@@ -350,14 +378,17 @@ impl ErrorCorrelator {
                     if i != j {
                         if let Some(other_location) = self.get_error_location(other_error) {
                             // Check if errors are on adjacent lines (potential cascade)
-                            if source_location.file == other_location.file &&
-                               (source_location.line as i32 - other_location.line as i32).abs() <= 2 {
+                            if source_location.file == other_location.file
+                                && (source_location.line as i32 - other_location.line as i32).abs()
+                                    <= 2
+                            {
                                 correlations.push(ErrorCorrelation {
                                     correlation_type: CorrelationType::Cascade,
                                     primary_error: i,
                                     related_errors: vec![j],
                                     confidence: 0.7,
-                                    description: "Errors may be related due to proximity".to_string(),
+                                    description: "Errors may be related due to proximity"
+                                        .to_string(),
                                 });
                             }
                         }
@@ -412,7 +443,7 @@ impl ErrorCorrelator {
             CompilerError::Validation { context } => context,
             CompilerError::Module { context } => context,
         };
-        
+
         context.location.as_ref()
     }
 }
@@ -451,7 +482,7 @@ impl ErrorStatistics {
                 CompilerError::Validation { .. } => "validation",
                 CompilerError::Module { .. } => "module",
             };
-            
+
             *self.error_types.entry(error_type.to_string()).or_insert(0) += 1;
 
             // Count error locations
@@ -473,7 +504,7 @@ impl ErrorStatistics {
             CompilerError::Validation { context } => context,
             CompilerError::Module { context } => context,
         };
-        
+
         context.location.as_ref()
     }
 }
@@ -492,10 +523,10 @@ pub struct ErrorPattern {
 
 #[derive(Debug, Clone)]
 pub enum FixComplexity {
-    Trivial,   // Single character/token fix
-    Simple,    // Single line fix
-    Moderate,  // Multiple lines, single concept
-    Complex,   // Requires understanding of broader context
+    Trivial,  // Single character/token fix
+    Simple,   // Single line fix
+    Moderate, // Multiple lines, single concept
+    Complex,  // Requires understanding of broader context
 }
 
 #[derive(Debug, Clone)]
@@ -548,9 +579,9 @@ pub struct ErrorCorrelation {
 
 #[derive(Debug, Clone)]
 pub enum CorrelationType {
-    Cascade,    // One error causes another
-    Grouped,    // Errors in same scope/file
-    Pattern,    // Errors following same pattern
+    Cascade, // One error causes another
+    Grouped, // Errors in same scope/file
+    Pattern, // Errors following same pattern
 }
 
 #[derive(Debug, Clone)]

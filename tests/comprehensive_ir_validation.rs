@@ -1,9 +1,9 @@
 //! Comprehensive IR validation tests
-//! 
+//!
 //! Tests the structure and functionality of the IR pipeline without AST dependencies
 
-use clean_language_compiler::ir::*;
 use clean_language_compiler::codegen::wasm_generator::*;
+use clean_language_compiler::ir::*;
 use clean_language_compiler::memory::*;
 use std::collections::HashMap;
 
@@ -11,22 +11,20 @@ use std::collections::HashMap;
 fn test_lir_structure_validation() {
     // Test that LIR structures are correctly defined
     let lir_program = LIRProgram {
-        functions: vec![
-            LIRFunction {
-                name: "test".to_string(),
-                parameters: vec![LIRType::I32, LIRType::F32],
-                return_type: Some(LIRType::I32),
-                locals: vec![LIRType::I64],
-                instructions: vec![
-                    LIRInstruction::LocalGet(0),
-                    LIRInstruction::F32ConvertI32S,
-                    LIRInstruction::F32Store(4, 0),
-                    LIRInstruction::LocalGet(1),
-                    LIRInstruction::I32TruncF32S,
-                    LIRInstruction::Return,
-                ],
-            }
-        ],
+        functions: vec![LIRFunction {
+            name: "test".to_string(),
+            parameters: vec![LIRType::I32, LIRType::F32],
+            return_type: Some(LIRType::I32),
+            locals: vec![LIRType::I64],
+            instructions: vec![
+                LIRInstruction::LocalGet(0),
+                LIRInstruction::F32ConvertI32S,
+                LIRInstruction::F32Store(4, 0),
+                LIRInstruction::LocalGet(1),
+                LIRInstruction::I32TruncF32S,
+                LIRInstruction::Return,
+            ],
+        }],
         memory_layout: LIRMemoryLayout {
             initial_pages: 1,
             max_pages: Some(16),
@@ -43,21 +41,24 @@ fn test_lir_structure_validation() {
     assert_eq!(lir_program.functions[0].parameters.len(), 2);
     assert_eq!(lir_program.functions[0].locals.len(), 1);
     assert_eq!(lir_program.functions[0].instructions.len(), 6);
-    
+
     println!("✅ LIR structure validation passed");
 }
 
 #[test]
 fn test_mir_structure_validation() {
     let mut mir_functions = HashMap::new();
-    mir_functions.insert("main".to_string(), MIRFunction {
-        name: "main".to_string(),
-        parameters: vec![],
-        return_type: Some(MIRType::I32),
-        locals: vec![],
-        basic_blocks: HashMap::new(),
-        entry_block: 0,
-    });
+    mir_functions.insert(
+        "main".to_string(),
+        MIRFunction {
+            name: "main".to_string(),
+            parameters: vec![],
+            return_type: Some(MIRType::I32),
+            locals: vec![],
+            basic_blocks: HashMap::new(),
+            entry_block: 0,
+        },
+    );
 
     let mir_program = MIRProgram {
         functions: mir_functions,
@@ -67,23 +68,21 @@ fn test_mir_structure_validation() {
 
     assert_eq!(mir_program.functions.len(), 1);
     assert!(mir_program.functions.contains_key("main"));
-    
+
     println!("✅ MIR structure validation passed");
 }
 
 #[test]
 fn test_hir_structure_validation() {
     let hir_program = HIRProgram {
-        functions: vec![
-            HIRFunction {
-                name: "test_func".to_string(),
-                parameters: vec![],
-                return_type: Some(HIRType::Integer(None)),
-                body: vec![],
-                visibility: HIRVisibility::Public,
-                is_async: false,
-            }
-        ],
+        functions: vec![HIRFunction {
+            name: "test_func".to_string(),
+            parameters: vec![],
+            return_type: Some(HIRType::Integer(None)),
+            body: vec![],
+            visibility: HIRVisibility::Public,
+            is_async: false,
+        }],
         classes: vec![],
         globals: vec![],
         imports: vec![],
@@ -91,25 +90,20 @@ fn test_hir_structure_validation() {
 
     assert_eq!(hir_program.functions.len(), 1);
     assert_eq!(hir_program.functions[0].name, "test_func");
-    
+
     println!("✅ HIR structure validation passed");
 }
 
 #[test]
 fn test_ir_type_system() {
     // Test LIR types
-    let lir_types = vec![
-        LIRType::I32,
-        LIRType::I64, 
-        LIRType::F32,
-        LIRType::F64,
-    ];
-    
+    let lir_types = vec![LIRType::I32, LIRType::I64, LIRType::F32, LIRType::F64];
+
     for lir_type in lir_types {
         println!("LIR Type: {:?}", lir_type);
     }
 
-    // Test MIR types  
+    // Test MIR types
     let mir_types = vec![
         MIRType::I32,
         MIRType::I64,
@@ -118,7 +112,7 @@ fn test_ir_type_system() {
         MIRType::Boolean,
         MIRType::String,
     ];
-    
+
     for mir_type in mir_types {
         println!("MIR Type: {:?}", mir_type);
     }
@@ -130,15 +124,15 @@ fn test_ir_type_system() {
         HIRType::String(None),
         HIRType::Boolean(None),
     ];
-    
+
     for hir_type in hir_types {
         println!("HIR Type: {:?}", hir_type);
     }
-    
+
     println!("✅ IR type system validation passed");
 }
 
-#[test] 
+#[test]
 fn test_instruction_coverage() {
     // Test that all major LIR instruction categories work
     let control_flow = vec![
@@ -181,70 +175,67 @@ fn test_instruction_coverage() {
         LIRInstruction::MemGetRefCount,
     ];
 
-    let total_instructions = control_flow.len() + constants.len() + 
-                           arithmetic.len() + memory.len() + memory_mgmt.len();
-    
-    println!("✅ Instruction coverage test: {} instructions validated", total_instructions);
+    let total_instructions =
+        control_flow.len() + constants.len() + arithmetic.len() + memory.len() + memory_mgmt.len();
+
+    println!(
+        "✅ Instruction coverage test: {} instructions validated",
+        total_instructions
+    );
 }
 
 #[test]
 fn test_wasm_generation_completeness() {
     // Test comprehensive WebAssembly generation
     let complex_lir = LIRProgram {
-        functions: vec![
-            LIRFunction {
-                name: "fibonacci".to_string(),
-                parameters: vec![LIRType::I32],
-                return_type: Some(LIRType::I32),
-                locals: vec![],
-                instructions: vec![
-                    // if (n <= 1) return n;
-                    LIRInstruction::LocalGet(0),
-                    LIRInstruction::I32Const(1),
-                    LIRInstruction::I32LeS,
-                    LIRInstruction::If(LIRType::I32),
-                    LIRInstruction::LocalGet(0),
-                    LIRInstruction::Else,
-                    // return fib(n-1) + fib(n-2); (simplified to avoid recursion complexity)
-                    LIRInstruction::LocalGet(0),
-                    LIRInstruction::I32Const(1),
-                    LIRInstruction::I32Sub,
-                    LIRInstruction::LocalGet(0),
-                    LIRInstruction::I32Const(2),
-                    LIRInstruction::I32Sub,
-                    LIRInstruction::I32Add,
-                    LIRInstruction::End,
-                    LIRInstruction::Return,
-                ],
-            }
-        ],
+        functions: vec![LIRFunction {
+            name: "fibonacci".to_string(),
+            parameters: vec![LIRType::I32],
+            return_type: Some(LIRType::I32),
+            locals: vec![],
+            instructions: vec![
+                // if (n <= 1) return n;
+                LIRInstruction::LocalGet(0),
+                LIRInstruction::I32Const(1),
+                LIRInstruction::I32LeS,
+                LIRInstruction::If(LIRType::I32),
+                LIRInstruction::LocalGet(0),
+                LIRInstruction::Else,
+                // return fib(n-1) + fib(n-2); (simplified to avoid recursion complexity)
+                LIRInstruction::LocalGet(0),
+                LIRInstruction::I32Const(1),
+                LIRInstruction::I32Sub,
+                LIRInstruction::LocalGet(0),
+                LIRInstruction::I32Const(2),
+                LIRInstruction::I32Sub,
+                LIRInstruction::I32Add,
+                LIRInstruction::End,
+                LIRInstruction::Return,
+            ],
+        }],
         memory_layout: LIRMemoryLayout {
             initial_pages: 2,
             max_pages: Some(32),
             heap_start: 2048,
             stack_start: 0,
         },
-        imports: vec![
-            LIRImport {
-                module: "memory_runtime".to_string(),
-                name: "mem_alloc".to_string(),
-                import_type: LIRImportType::Function(
-                    vec![LIRType::I32, LIRType::I32],
-                    Some(LIRType::I32)
-                ),
-            }
-        ],
-        exports: vec![
-            LIRExport {
-                name: "fibonacci".to_string(),
-                export_type: LIRExportType::Function(1), // After imports
-            }
-        ],
+        imports: vec![LIRImport {
+            module: "memory_runtime".to_string(),
+            name: "mem_alloc".to_string(),
+            import_type: LIRImportType::Function(
+                vec![LIRType::I32, LIRType::I32],
+                Some(LIRType::I32),
+            ),
+        }],
+        exports: vec![LIRExport {
+            name: "fibonacci".to_string(),
+            export_type: LIRExportType::Function(1), // After imports
+        }],
     };
 
     let mut wasm_gen = WasmGenerator::new();
     let wasm_result = wasm_gen.generate_wasm_module(complex_lir);
-    
+
     match wasm_result {
         Ok(wasm_bytes) => {
             assert!(wasm_bytes.len() > 50, "Complex WASM should be substantial");
@@ -265,12 +256,12 @@ fn test_memory_integration_comprehensive() {
         enable_gc: true,
         gc_threshold: 2048,
     };
-    
+
     init_clean_memory_runtime(config).expect("Memory runtime initialization failed");
 
     // Test multiple allocation patterns
     let mut addresses = Vec::new();
-    
+
     for i in 0..10 {
         let addr = mem_alloc(i + 1, (i + 1) * 32);
         assert_ne!(addr, 0, "Allocation {} should succeed", i);
@@ -292,11 +283,11 @@ fn test_memory_integration_comprehensive() {
     // Run garbage collection
     let freed = mem_collect();
     println!("GC freed {} objects", freed);
-    
+
     // Test memory statistics
     let stats = get_memory_stats().expect("Failed to get memory stats");
     println!("Memory stats: {:?}", stats);
-    
+
     println!("✅ Comprehensive memory integration test passed");
 }
 
@@ -310,17 +301,23 @@ fn test_optimization_stub_functionality() {
     };
 
     let dead_code_result = eliminate_dead_code(&mut mir_program);
-    assert!(dead_code_result.is_ok(), "Dead code elimination should not error");
-    
-    let constant_result = fold_constants(&mut mir_program);  
+    assert!(
+        dead_code_result.is_ok(),
+        "Dead code elimination should not error"
+    );
+
+    let constant_result = fold_constants(&mut mir_program);
     assert!(constant_result.is_ok(), "Constant folding should not error");
-    
+
     let inline_result = inline_functions(&mut mir_program, 100);
     assert!(inline_result.is_ok(), "Function inlining should not error");
-    
+
     let control_flow_result = optimize_control_flow(&mut mir_program);
-    assert!(control_flow_result.is_ok(), "Control flow optimization should not error");
-    
+    assert!(
+        control_flow_result.is_ok(),
+        "Control flow optimization should not error"
+    );
+
     println!("✅ Optimization pipeline stubs functional");
 }
 
@@ -333,19 +330,19 @@ fn test_validation_stub_functionality() {
         globals: vec![],
         imports: vec![],
     };
-    
+
     let hir_validation = validate_hir(&hir_program);
     assert!(hir_validation.is_ok(), "HIR validation should not error");
-    
+
     let mir_program = MIRProgram {
         functions: HashMap::new(),
         globals: vec![],
         classes: HashMap::new(),
     };
-    
+
     let mir_validation = validate_mir(&mir_program);
     assert!(mir_validation.is_ok(), "MIR validation should not error");
-    
+
     let lir_program = LIRProgram {
         functions: vec![],
         memory_layout: LIRMemoryLayout {
@@ -357,9 +354,9 @@ fn test_validation_stub_functionality() {
         imports: vec![],
         exports: vec![],
     };
-    
+
     let lir_validation = validate_lir(&lir_program);
     assert!(lir_validation.is_ok(), "LIR validation should not error");
-    
+
     println!("✅ Validation pipeline stubs functional");
 }

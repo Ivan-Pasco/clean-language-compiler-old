@@ -3,28 +3,28 @@ use crate::error::{CompilerError, CompilerWarning, WarningType};
 use crate::module::{ImportResolution, ModuleResolver};
 use std::collections::{HashMap, HashSet};
 
+mod inheritance;
 mod scope;
 mod symbol_table;
-mod inheritance;
 // mod type_checker;  // Temporarily disabled until properly updated
 mod type_constraint;
 
 #[cfg(test)]
 mod tests;
 
-use scope::Scope;
-pub use symbol_table::{SymbolTable, Symbol, SymbolKind, ScopeType, ScopeInfo};
 pub use inheritance::InheritanceValidator;
+use scope::Scope;
+pub use symbol_table::{ScopeInfo, ScopeType, Symbol, SymbolKind, SymbolTable};
 // pub use type_checker::TypeChecker;  // Temporarily disabled
 pub use type_constraint::*;
 
 pub struct SemanticAnalyzer {
     // Enhanced symbol table with comprehensive scope management
     symbol_table: SymbolTable,
-    
+
     // Comprehensive inheritance validation system
     inheritance_validator: InheritanceValidator,
-    
+
     // Legacy compatibility - gradually being replaced by SymbolTable
     #[allow(dead_code)]
     legacy_symbol_table: HashMap<String, Type>,
@@ -2362,7 +2362,9 @@ impl SemanticAnalyzer {
                 Ok(())
             }
 
-            Statement::While { condition, body, .. } => {
+            Statement::While {
+                condition, body, ..
+            } => {
                 // While loop - check condition and body
                 let condition_type = self.check_expression(condition)?;
                 if !matches!(condition_type, Type::Boolean) {
@@ -4381,7 +4383,7 @@ impl SemanticAnalyzer {
             "error".to_string(),
             self.create_error_type(),
             None,
-            false
+            false,
         ) {
             // Ignore error if already exists - this is expected in nested error contexts
         }
@@ -5207,10 +5209,13 @@ impl SemanticAnalyzer {
                 Ok(t) => t,
                 Err(e) => return Err(e),
             };
-            
+
             if !self.types_compatible(expected_return_type, &expr_type) {
                 return Err(CompilerError::type_error(
-                    format!("Expected return type {:?}, but got {:?}", expected_return_type, expr_type),
+                    format!(
+                        "Expected return type {:?}, but got {:?}",
+                        expected_return_type, expr_type
+                    ),
                     Some("Check function return type matches the returned expression".to_string()),
                     None, // Expression location handling simplified
                 ));
@@ -5236,7 +5241,10 @@ impl SemanticAnalyzer {
 
     /// Check if a type is numeric
     fn is_numeric(&self, type_: &Type) -> bool {
-        matches!(type_, Type::Integer | Type::Number | Type::IntegerSized { .. } | Type::NumberSized { .. })
+        matches!(
+            type_,
+            Type::Integer | Type::Number | Type::IntegerSized { .. } | Type::NumberSized { .. }
+        )
     }
 
     // Enhanced Symbol Table Management Methods
@@ -5249,7 +5257,7 @@ impl SemanticAnalyzer {
     /// Exit the current scope and get unused symbols for warnings
     pub fn exit_scope(&mut self) -> Result<Vec<Symbol>, String> {
         let unused_symbols = self.symbol_table.exit_scope()?;
-        
+
         // Generate warnings for unused variables
         for symbol in &unused_symbols {
             if let Some(location) = &symbol.location {
@@ -5260,18 +5268,27 @@ impl SemanticAnalyzer {
                 ));
             }
         }
-        
+
         Ok(unused_symbols)
     }
 
     /// Define a variable using the enhanced symbol table
-    pub fn define_variable_enhanced(&mut self, name: String, type_: Type, location: Option<SourceLocation>, is_mutable: bool) -> Result<(), CompilerError> {
-        self.symbol_table.define_variable(name.clone(), type_, location.clone(), is_mutable)
-            .map_err(|err| CompilerError::type_error(
-                err,
-                Some("Variable already defined in current scope".to_string()),
-                location,
-            ))
+    pub fn define_variable_enhanced(
+        &mut self,
+        name: String,
+        type_: Type,
+        location: Option<SourceLocation>,
+        is_mutable: bool,
+    ) -> Result<(), CompilerError> {
+        self.symbol_table
+            .define_variable(name.clone(), type_, location.clone(), is_mutable)
+            .map_err(|err| {
+                CompilerError::type_error(
+                    err,
+                    Some("Variable already defined in current scope".to_string()),
+                    location,
+                )
+            })
     }
 
     /// Define a function using the enhanced symbol table
@@ -5285,19 +5302,23 @@ impl SemanticAnalyzer {
         modifiers: Vec<FunctionModifier>,
         is_async: bool,
     ) -> Result<(), CompilerError> {
-        self.symbol_table.define_function(
-            name.clone(),
-            parameters,
-            return_type,
-            location.clone(),
-            visibility,
-            modifiers,
-            is_async,
-        ).map_err(|err| CompilerError::type_error(
-            err,
-            Some("Function already defined in current scope".to_string()),
-            location,
-        ))
+        self.symbol_table
+            .define_function(
+                name.clone(),
+                parameters,
+                return_type,
+                location.clone(),
+                visibility,
+                modifiers,
+                is_async,
+            )
+            .map_err(|err| {
+                CompilerError::type_error(
+                    err,
+                    Some("Function already defined in current scope".to_string()),
+                    location,
+                )
+            })
     }
 
     /// Define a class using the enhanced symbol table
@@ -5310,18 +5331,22 @@ impl SemanticAnalyzer {
         location: Option<SourceLocation>,
         visibility: Visibility,
     ) -> Result<(), CompilerError> {
-        self.symbol_table.define_class(
-            name.clone(),
-            fields,
-            methods,
-            base_class,
-            location.clone(),
-            visibility,
-        ).map_err(|err| CompilerError::type_error(
-            err,
-            Some("Class already defined in current scope".to_string()),
-            location,
-        ))
+        self.symbol_table
+            .define_class(
+                name.clone(),
+                fields,
+                methods,
+                base_class,
+                location.clone(),
+                visibility,
+            )
+            .map_err(|err| {
+                CompilerError::type_error(
+                    err,
+                    Some("Class already defined in current scope".to_string()),
+                    location,
+                )
+            })
     }
 
     /// Lookup a symbol and mark it as used
@@ -5361,8 +5386,13 @@ impl SemanticAnalyzer {
 
     /// Generate warnings for unused symbols
     pub fn check_unused_symbols(&mut self) {
-        let unused_symbols: Vec<_> = self.symbol_table.get_unused_symbols().into_iter().cloned().collect();
-        
+        let unused_symbols: Vec<_> = self
+            .symbol_table
+            .get_unused_symbols()
+            .into_iter()
+            .cloned()
+            .collect();
+
         for symbol in unused_symbols {
             if let Some(location) = &symbol.location {
                 let warning_type = if symbol.is_function() {
@@ -5370,10 +5400,15 @@ impl SemanticAnalyzer {
                 } else {
                     WarningType::UnusedVariable
                 };
-                
+
                 self.add_warning(CompilerWarning::new(
-                    format!("Unused {} '{}'", 
-                        if symbol.is_function() { "function" } else { "variable" },
+                    format!(
+                        "Unused {} '{}'",
+                        if symbol.is_function() {
+                            "function"
+                        } else {
+                            "variable"
+                        },
                         symbol.name
                     ),
                     warning_type,
@@ -5389,7 +5424,11 @@ impl SemanticAnalyzer {
     }
 
     /// Enhanced variable lookup with better error messages
-    pub fn lookup_variable_enhanced(&mut self, name: &str, location: Option<SourceLocation>) -> Result<Type, CompilerError> {
+    pub fn lookup_variable_enhanced(
+        &mut self,
+        name: &str,
+        location: Option<SourceLocation>,
+    ) -> Result<Type, CompilerError> {
         if let Some(type_) = self.lookup_symbol_enhanced(name) {
             Ok(type_)
         } else {
@@ -5401,20 +5440,20 @@ impl SemanticAnalyzer {
                     // Simple similarity check
                     let s_lower = s.to_lowercase();
                     let name_lower = name.to_lowercase();
-                    s_lower.starts_with(&name_lower[..1.min(name_lower.len())]) || 
-                    s_lower.contains(&name_lower) ||
-                    name_lower.contains(&s_lower)
+                    s_lower.starts_with(&name_lower[..1.min(name_lower.len())])
+                        || s_lower.contains(&name_lower)
+                        || name_lower.contains(&s_lower)
                 })
                 .take(3)
                 .cloned()
                 .collect();
-            
+
             let help_message = if similar_names.is_empty() {
                 "Check if the variable is declared in the current scope".to_string()
             } else {
                 format!("Did you mean: {}?", similar_names.join(", "))
             };
-            
+
             Err(CompilerError::type_error(
                 format!("Undefined variable '{}'", name),
                 Some(help_message),

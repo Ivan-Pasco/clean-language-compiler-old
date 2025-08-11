@@ -3,13 +3,13 @@ use std::fmt;
 
 use crate::ast::SourceLocation;
 
+pub mod diagnostics;
 pub mod recovery;
 pub mod reporter;
-pub mod diagnostics;
 
+pub use diagnostics::*;
 pub use recovery::*;
 pub use reporter::*;
-pub use diagnostics::*;
 
 #[derive(Debug, Clone)]
 pub struct StackFrame {

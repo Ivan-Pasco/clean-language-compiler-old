@@ -1,5 +1,5 @@
 //! High-level Intermediate Representation (HIR)
-//! 
+//!
 //! HIR is a desugared AST with name resolution complete.
 
 use crate::ast::*;
@@ -211,13 +211,26 @@ pub enum Visibility {
 /// Binary operators
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOperator {
-    Add, Sub, Mul, Div, Mod, Pow,
-    Equal, NotEqual, Less, Greater, LessEqual, GreaterEqual,
-    And, Or,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
+    Equal,
+    NotEqual,
+    Less,
+    Greater,
+    LessEqual,
+    GreaterEqual,
+    And,
+    Or,
 }
 
 /// Unary operators
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOperator {
-    Plus, Minus, Not,
+    Plus,
+    Minus,
+    Not,
 }

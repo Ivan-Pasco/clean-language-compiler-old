@@ -1,6 +1,6 @@
 use clean_language_compiler::lexer::{CleanLexer, Lexer};
-use std::fs;
 use std::env;
+use std::fs;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -43,38 +43,38 @@ fn main() {
         match lexer.next_token() {
             Ok(token) => {
                 token_count += 1;
-                
+
                 // Categorize token for statistics
                 match &token.kind {
                     clean_language_compiler::lexer::TokenKind::Identifier(_) => identifiers += 1,
-                    clean_language_compiler::lexer::TokenKind::Integer(_) |
-                    clean_language_compiler::lexer::TokenKind::Number(_) |
-                    clean_language_compiler::lexer::TokenKind::String(_) |
-                    clean_language_compiler::lexer::TokenKind::Boolean(_) => literals += 1,
+                    clean_language_compiler::lexer::TokenKind::Integer(_)
+                    | clean_language_compiler::lexer::TokenKind::Number(_)
+                    | clean_language_compiler::lexer::TokenKind::String(_)
+                    | clean_language_compiler::lexer::TokenKind::Boolean(_) => literals += 1,
                     clean_language_compiler::lexer::TokenKind::Comment(_) => comments += 1,
-                    clean_language_compiler::lexer::TokenKind::Plus |
-                    clean_language_compiler::lexer::TokenKind::Minus |
-                    clean_language_compiler::lexer::TokenKind::Multiply |
-                    clean_language_compiler::lexer::TokenKind::Divide |
-                    clean_language_compiler::lexer::TokenKind::Power |
-                    clean_language_compiler::lexer::TokenKind::Modulo |
-                    clean_language_compiler::lexer::TokenKind::Assign |
-                    clean_language_compiler::lexer::TokenKind::Equal |
-                    clean_language_compiler::lexer::TokenKind::NotEqual |
-                    clean_language_compiler::lexer::TokenKind::Less |
-                    clean_language_compiler::lexer::TokenKind::Greater |
-                    clean_language_compiler::lexer::TokenKind::LessEqual |
-                    clean_language_compiler::lexer::TokenKind::GreaterEqual => operators += 1,
-                    clean_language_compiler::lexer::TokenKind::LeftParen |
-                    clean_language_compiler::lexer::TokenKind::RightParen |
-                    clean_language_compiler::lexer::TokenKind::LeftBrace |
-                    clean_language_compiler::lexer::TokenKind::RightBrace |
-                    clean_language_compiler::lexer::TokenKind::LeftBracket |
-                    clean_language_compiler::lexer::TokenKind::RightBracket |
-                    clean_language_compiler::lexer::TokenKind::Comma |
-                    clean_language_compiler::lexer::TokenKind::Dot |
-                    clean_language_compiler::lexer::TokenKind::Colon |
-                    clean_language_compiler::lexer::TokenKind::Semicolon => punctuation += 1,
+                    clean_language_compiler::lexer::TokenKind::Plus
+                    | clean_language_compiler::lexer::TokenKind::Minus
+                    | clean_language_compiler::lexer::TokenKind::Multiply
+                    | clean_language_compiler::lexer::TokenKind::Divide
+                    | clean_language_compiler::lexer::TokenKind::Power
+                    | clean_language_compiler::lexer::TokenKind::Modulo
+                    | clean_language_compiler::lexer::TokenKind::Assign
+                    | clean_language_compiler::lexer::TokenKind::Equal
+                    | clean_language_compiler::lexer::TokenKind::NotEqual
+                    | clean_language_compiler::lexer::TokenKind::Less
+                    | clean_language_compiler::lexer::TokenKind::Greater
+                    | clean_language_compiler::lexer::TokenKind::LessEqual
+                    | clean_language_compiler::lexer::TokenKind::GreaterEqual => operators += 1,
+                    clean_language_compiler::lexer::TokenKind::LeftParen
+                    | clean_language_compiler::lexer::TokenKind::RightParen
+                    | clean_language_compiler::lexer::TokenKind::LeftBrace
+                    | clean_language_compiler::lexer::TokenKind::RightBrace
+                    | clean_language_compiler::lexer::TokenKind::LeftBracket
+                    | clean_language_compiler::lexer::TokenKind::RightBracket
+                    | clean_language_compiler::lexer::TokenKind::Comma
+                    | clean_language_compiler::lexer::TokenKind::Dot
+                    | clean_language_compiler::lexer::TokenKind::Colon
+                    | clean_language_compiler::lexer::TokenKind::Semicolon => punctuation += 1,
                     clean_language_compiler::lexer::TokenKind::Eof => break,
                     clean_language_compiler::lexer::TokenKind::Invalid(_) => error_count += 1,
                     _ => keywords += 1,
@@ -82,7 +82,8 @@ fn main() {
 
                 // Display token (limit output to prevent flooding)
                 if token_count <= 100 {
-                    println!("{:<6} {:<20} {:<15} {}", 
+                    println!(
+                        "{:<6} {:<20} {:<15} {}",
                         token.span.start.line,
                         format!("{:.18}", format!("{:?}", token.kind)),
                         get_token_category(&token.kind),
@@ -112,7 +113,7 @@ fn main() {
     println!("  🔣 Punctuation: {}", punctuation);
     println!("  💬 Comments: {}", comments);
     println!("  ❌ Errors: {}", error_count);
-    
+
     if error_count == 0 {
         println!();
         println!("✅ Lexer test completed successfully!");
@@ -125,15 +126,15 @@ fn main() {
 fn get_token_category(token: &clean_language_compiler::lexer::TokenKind) -> &'static str {
     match token {
         clean_language_compiler::lexer::TokenKind::Identifier(_) => "Identifier",
-        clean_language_compiler::lexer::TokenKind::Integer(_) |
-        clean_language_compiler::lexer::TokenKind::Number(_) |
-        clean_language_compiler::lexer::TokenKind::String(_) |
-        clean_language_compiler::lexer::TokenKind::Boolean(_) => "Literal",
+        clean_language_compiler::lexer::TokenKind::Integer(_)
+        | clean_language_compiler::lexer::TokenKind::Number(_)
+        | clean_language_compiler::lexer::TokenKind::String(_)
+        | clean_language_compiler::lexer::TokenKind::Boolean(_) => "Literal",
         clean_language_compiler::lexer::TokenKind::Comment(_) => "Comment",
         clean_language_compiler::lexer::TokenKind::Eof => "EOF",
         clean_language_compiler::lexer::TokenKind::Invalid(_) => "Invalid",
-        clean_language_compiler::lexer::TokenKind::Newline |
-        clean_language_compiler::lexer::TokenKind::Tab => "Whitespace",
-        _ => "Keyword/Operator"
+        clean_language_compiler::lexer::TokenKind::Newline
+        | clean_language_compiler::lexer::TokenKind::Tab => "Whitespace",
+        _ => "Keyword/Operator",
     }
 }
