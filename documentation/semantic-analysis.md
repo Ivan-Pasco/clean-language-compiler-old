@@ -2,6 +2,8 @@
 
 This document provides comprehensive documentation for Claude on how the Clean Language semantic analysis system works. This information will help Claude understand and work with the type checking, scope management, and semantic validation systems.
 
+> 🔗 **Related Documentation**: [Parser Documentation](./parser.md) • [WebAssembly Generation](./webassembly.md) • [Standard Library](./standard-library.md) • [Development Guide](./development-guide.md)
+
 ## Overview
 
 The Clean Language semantic analysis system performs comprehensive validation of parsed code, including type checking, scope management, symbol resolution, and semantic error detection. The system bridges the gap between parsing and code generation, ensuring type safety and semantic correctness.
@@ -598,7 +600,7 @@ impl SemanticAnalyzer {
         ];
         
         for (name, params, return_type) in math_functions {
-            self.register_builtin(&format!("Math.{}", name), params, return_type);
+            self.register_builtin(&format!("math.{}", name), params, return_type);
         }
     }
     
@@ -617,7 +619,7 @@ impl SemanticAnalyzer {
         ];
         
         for (name, params, return_type) in string_functions {
-            self.register_builtin(&format!("String.{}", name), params, return_type);
+            self.register_builtin(&format!("string.{}", name), params, return_type);
         }
     }
     

@@ -1,6 +1,8 @@
 # Clean Language Parser Architecture
 
-This document provides comprehensive documentation for Claude on how the Clean Language parser works. This information will help Claude understand and work with the parsing system to build and modify the compiler.
+This document provides comprehensive documentation for Claude on how the Clean Language parser works.
+
+> 🔗 **Related Documentation**: [Semantic Analysis](./semantic-analysis.md) • [WebAssembly Generation](./webassembly.md) • [Development Guide](./development-guide.md) • [Language Specification](../docs/language/Clean_Language_Specification.md) This information will help Claude understand and work with the parsing system to build and modify the compiler.
 
 ## Overview
 

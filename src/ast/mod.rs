@@ -104,7 +104,7 @@ pub enum UnaryOperator {
     Not,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Parameter {
     pub name: String,
     pub type_: Type,
@@ -136,6 +136,14 @@ pub enum Expression {
     Binary(Box<Expression>, BinaryOperator, Box<Expression>),
     Unary(UnaryOperator, Box<Expression>),
     Call(String, Vec<Expression>),
+
+    // Namespace calls (math.sqrt(), string.length(), etc.)
+    NamespaceCall {
+        namespace: String,
+        function: String,
+        arguments: Vec<Expression>,
+        location: SourceLocation,
+    },
 
     // Property and method access
     PropertyAccess {
@@ -225,12 +233,43 @@ pub enum Expression {
         expression: Box<Expression>,
         location: SourceLocation,
     },
+
+    // Match expressions
+    Match {
+        value: Box<Expression>,
+        cases: Vec<MatchCase>,
+        location: SourceLocation,
+    },
+
+    // Input expressions (for console input)
+    Input {
+        prompt: Option<String>,
+        input_type: InputType,
+        location: SourceLocation,
+    },
+
+    // Range expressions (1..10)
+    Range {
+        start: Box<Expression>,
+        end: Box<Expression>,
+        inclusive: bool,
+        location: SourceLocation,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StringPart {
     Text(String),
     Interpolation(Expression),
+}
+
+/// Input types for console input expressions
+#[derive(Debug, Clone, PartialEq)]
+pub enum InputType {
+    String,        // input("prompt")
+    Integer,       // input.integer("prompt")
+    Number,        // input.number("prompt")
+    Boolean,       // input.yesNo("prompt")
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -293,6 +332,12 @@ pub enum Statement {
         name: String,
         type_: Type,
         initializer: Option<Expression>,
+        location: Option<SourceLocation>,
+    },
+
+    // Functions block statement
+    FunctionsBlock {
+        functions: Vec<Function>,
         location: Option<SourceLocation>,
     },
 
@@ -415,6 +460,32 @@ pub enum Statement {
         expression: Expression,
         location: Option<SourceLocation>,
     },
+
+    // While loops
+    While {
+        condition: Expression,
+        body: Vec<Statement>,
+        location: Option<SourceLocation>,
+    },
+
+    // Match expressions
+    Match {
+        value: Expression,
+        cases: Vec<MatchCase>,
+        location: Option<SourceLocation>,
+    },
+
+    // Private declaration block
+    PrivateBlock {
+        items: Vec<Statement>,
+        location: Option<SourceLocation>,
+    },
+
+    // Class definition statement
+    ClassDefinition {
+        class: Class,
+        location: Option<SourceLocation>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -450,20 +521,22 @@ pub enum FunctionModifier {
     Background,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FunctionSyntax {
-    Simple,   // function integer add() ...
-    Detailed, // function integer add() with description/input blocks
-    Block,    // functions: block
+    Simple,      // function integer add() ...
+    Detailed,    // function integer add() with description/input blocks
+    Block,       // functions: block
+    Standalone,  // start() function (can be outside functions block)
+    Background,  // background function modifier
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeConstraint {
     pub type_parameter: String,
     pub constraint_type: Type,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
     pub type_parameters: Vec<String>,
@@ -508,7 +581,7 @@ pub enum Visibility {
     Private,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Field {
     pub name: String,
     pub type_: Type,
@@ -517,7 +590,7 @@ pub struct Field {
     pub default_value: Option<Expression>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Constructor {
     pub parameters: Vec<Parameter>,
     pub body: Vec<Statement>,
@@ -538,7 +611,7 @@ impl Constructor {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Class {
     pub name: String,
     pub type_parameters: Vec<String>,
@@ -551,13 +624,15 @@ pub struct Class {
     pub location: Option<SourceLocation>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub imports: Vec<ImportItem>,
+    pub statements: Vec<Statement>,
     pub functions: Vec<Function>,
     pub classes: Vec<Class>,
     pub start_function: Option<Function>,
     pub tests: Vec<TestCase>,
+    pub location: Option<SourceLocation>,
 }
 
 // Display implementations for better error messages

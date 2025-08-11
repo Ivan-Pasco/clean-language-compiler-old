@@ -4,7 +4,7 @@ use crate::types::WasmType;
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
 use crate::stdlib::memory::MemoryManager;
-use crate::stdlib::register_stdlib_function;
+use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 
 pub const STRING_TYPE_ID: u32 = 1;
 
@@ -363,27 +363,30 @@ impl StringOperations {
             self.generate_string_ends_with(),
         )?;
 
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "string_to_upper",
             &[WasmType::I32],    // string
             Some(WasmType::I32), // new string
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32], // locals: length, new_ptr, counter, char, converted_char
             self.generate_string_to_upper(),
         )?;
 
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "string_to_lower",
             &[WasmType::I32],    // string
             Some(WasmType::I32), // new string
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32], // locals: length, new_ptr, counter, char, converted_char
             self.generate_string_to_lower(),
         )?;
 
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "string_trim",
             &[WasmType::I32],    // string
             Some(WasmType::I32), // new string
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32], // locals: orig_length, start_idx, char, end_idx, new_length, new_ptr, copy_counter, temp
             self.generate_string_trim(),
         )?;
 
@@ -443,19 +446,21 @@ impl StringOperations {
             self.generate_string_replace_all(),
         )?;
 
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "string_char_at",
             &[WasmType::I32, WasmType::I32], // string, index
             Some(WasmType::I32),             // character as string
+            &[WasmType::I32, WasmType::I32], // locals: length, new_string_ptr
             self.generate_string_char_at(),
         )?;
 
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "string_char_code_at",
             &[WasmType::I32, WasmType::I32], // string, index
             Some(WasmType::I32),             // character code
+            &[WasmType::I32], // locals: length
             self.generate_string_char_code_at(),
         )?;
 
@@ -467,11 +472,12 @@ impl StringOperations {
             self.generate_string_is_empty(),
         )?;
 
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "string_is_blank",
             &[WasmType::I32],    // string
             Some(WasmType::I32), // boolean
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // locals: length, counter, char
             self.generate_string_is_blank(),
         )?;
 
@@ -858,29 +864,211 @@ impl StringOperations {
     }
 
     pub fn generate_string_to_upper(&self) -> Vec<Instruction> {
-        // Simplified implementation to avoid WASM validation issues
-        // Parameters: string_ptr
-        // Returns a new string pointer with uppercase characters
+        // Enhanced implementation for converting string to uppercase
+        // Parameters: string_ptr (0)
+        // Returns: new string pointer with uppercase characters
         vec![
-            // For now, return the original string pointer to avoid complex local variable usage
-            // In a real implementation, this would create a new string with uppercase characters
-            Instruction::LocalGet(0), // Return original string_ptr
+            // Get string length
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store length in local variable 1
+            Instruction::LocalSet(1),
+            
+            // Allocate new string with same length
+            Instruction::LocalGet(1), // length
+            Instruction::I32Const(20), // header size + padding
+            Instruction::I32Add,
+            Instruction::Call(0), // Call memory allocate
+            Instruction::LocalSet(2), // Store new string ptr
+            
+            // Copy length to new string header
+            Instruction::LocalGet(2), // new string ptr
+            Instruction::LocalGet(1), // length
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            
+            // Convert characters using simple ASCII uppercase logic
+            Instruction::I32Const(0), // Loop counter
+            Instruction::LocalSet(3),
+            
+            // Loop start
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            
+            // Check if counter >= length
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(1),
+            Instruction::I32GeS,
+            Instruction::BrIf(1), // Break if done
+            
+            // Load character from original string
+            Instruction::LocalGet(0), // original string
+            Instruction::I32Const(16), // data offset
+            Instruction::I32Add,
+            Instruction::LocalGet(3), // counter
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            
+            // Convert to uppercase (if lowercase ASCII)
+            Instruction::LocalTee(4), // Store char and keep on stack
+            Instruction::I32Const(97), // 'a'
+            Instruction::I32GeS,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(122), // 'z'
+            Instruction::I32LeS,
+            Instruction::I32And, // is lowercase?
+            
+            Instruction::If(BlockType::Empty),
+            // Convert lowercase to uppercase
+            Instruction::LocalGet(4),
+            Instruction::I32Const(32), // difference between upper/lower
+            Instruction::I32Sub,
+            Instruction::LocalSet(4),
+            Instruction::End,
+            
+            // Store converted character
+            Instruction::LocalGet(2), // new string
+            Instruction::I32Const(16), // data offset
+            Instruction::I32Add,
+            Instruction::LocalGet(3), // counter
+            Instruction::I32Add,
+            Instruction::LocalGet(4), // character
+            Instruction::I32Store8(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            
+            // Increment counter
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            
+            Instruction::Br(0), // Continue loop
+            Instruction::End, // End loop
+            Instruction::End, // End block
+            
+            // Return new string pointer
+            Instruction::LocalGet(2),
         ]
     }
 
     pub fn generate_string_to_lower(&self) -> Vec<Instruction> {
-        // Simplified implementation to avoid WASM validation issues
-        // Parameters: string_ptr
-        // Returns a new string pointer with lowercase characters
+        // Enhanced implementation for converting string to lowercase
+        // Parameters: string_ptr (0)
+        // Returns: new string pointer with lowercase characters
         vec![
-            // For now, return the original string pointer to avoid complex local variable usage
-            // In a real implementation, this would create a new string with lowercase characters
-            Instruction::LocalGet(0), // Return original string_ptr
+            // Get string length
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store length in local variable 1
+            Instruction::LocalSet(1),
+            
+            // Allocate new string with same length
+            Instruction::LocalGet(1), // length
+            Instruction::I32Const(20), // header size + padding
+            Instruction::I32Add,
+            Instruction::Call(0), // Call memory allocate
+            Instruction::LocalSet(2), // Store new string ptr
+            
+            // Copy length to new string header
+            Instruction::LocalGet(2), // new string ptr
+            Instruction::LocalGet(1), // length
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            
+            // Convert characters using simple ASCII lowercase logic
+            Instruction::I32Const(0), // Loop counter
+            Instruction::LocalSet(3),
+            
+            // Loop start
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            
+            // Check if counter >= length
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(1),
+            Instruction::I32GeS,
+            Instruction::BrIf(1), // Break if done
+            
+            // Load character from original string
+            Instruction::LocalGet(0), // original string
+            Instruction::I32Const(16), // data offset
+            Instruction::I32Add,
+            Instruction::LocalGet(3), // counter
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            
+            // Convert to lowercase (if uppercase ASCII)
+            Instruction::LocalTee(4), // Store char and keep on stack
+            Instruction::I32Const(65), // 'A'
+            Instruction::I32GeS,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(90), // 'Z'
+            Instruction::I32LeS,
+            Instruction::I32And, // is uppercase?
+            
+            Instruction::If(BlockType::Empty),
+            // Convert uppercase to lowercase
+            Instruction::LocalGet(4),
+            Instruction::I32Const(32), // difference between upper/lower
+            Instruction::I32Add,
+            Instruction::LocalSet(4),
+            Instruction::End,
+            
+            // Store converted character
+            Instruction::LocalGet(2), // new string
+            Instruction::I32Const(16), // data offset
+            Instruction::I32Add,
+            Instruction::LocalGet(3), // counter
+            Instruction::I32Add,
+            Instruction::LocalGet(4), // character
+            Instruction::I32Store8(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            
+            // Increment counter
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            
+            Instruction::Br(0), // Continue loop
+            Instruction::End, // End loop
+            Instruction::End, // End block
+            
+            // Return new string pointer
+            Instruction::LocalGet(2),
         ]
     }
 
     pub fn generate_string_trim(&self) -> Vec<Instruction> {
-        // Implementation of string trimming - removes leading/trailing whitespace
+        // Enhanced implementation of string trimming - removes leading/trailing whitespace
         // Parameters: string_ptr (0)
         // Returns: new trimmed string pointer
         vec![
@@ -897,12 +1085,224 @@ impl StringOperations {
             Instruction::If(BlockType::Result(ValType::I32)),
             Instruction::LocalGet(0), // Return original if empty
             Instruction::Else,
-            // For now, return original string - full implementation would:
-            // 1. Find first non-whitespace character
-            // 2. Find last non-whitespace character
-            // 3. Create new string with content between them
-            Instruction::LocalGet(0), // Return original for now
-            Instruction::End,
+            
+            // Store original length
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(1), // original_length
+            
+            // Find first non-whitespace character
+            Instruction::I32Const(0), // start index
+            Instruction::LocalSet(2),
+            
+            // Loop to find start
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            
+            // Check if we've reached the end
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(1),
+            Instruction::I32GeS,
+            Instruction::BrIf(1), // Break if at end
+            
+            // Load character
+            Instruction::LocalGet(0), // string ptr
+            Instruction::I32Const(16), // data offset
+            Instruction::I32Add,
+            Instruction::LocalGet(2), // index
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            
+            // Check if it's not whitespace (space=32, tab=9, newline=10, return=13)
+            Instruction::LocalTee(3), // Store char
+            Instruction::I32Const(32), // space
+            Instruction::I32Ne,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(9), // tab
+            Instruction::I32Ne,
+            Instruction::I32And,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(10), // newline
+            Instruction::I32Ne,
+            Instruction::I32And,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(13), // return
+            Instruction::I32Ne,
+            Instruction::I32And,
+            
+            Instruction::BrIf(1), // Break if non-whitespace found
+            
+            // Increment start index
+            Instruction::LocalGet(2),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(2),
+            
+            Instruction::Br(0), // Continue loop
+            Instruction::End, // End loop
+            Instruction::End, // End block
+            
+            // Find last non-whitespace character
+            Instruction::LocalGet(1), // original length
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::LocalSet(4), // end index
+            
+            // Loop to find end (backwards)
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            
+            // Check if we've reached the start
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(2), // start index
+            Instruction::I32LtS,
+            Instruction::BrIf(1), // Break if past start
+            
+            // Load character
+            Instruction::LocalGet(0), // string ptr
+            Instruction::I32Const(16), // data offset
+            Instruction::I32Add,
+            Instruction::LocalGet(4), // index
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            
+            // Check if it's not whitespace
+            Instruction::LocalTee(3), // Store char
+            Instruction::I32Const(32), // space
+            Instruction::I32Ne,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(9), // tab
+            Instruction::I32Ne,
+            Instruction::I32And,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(10), // newline
+            Instruction::I32Ne,
+            Instruction::I32And,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(13), // return
+            Instruction::I32Ne,
+            Instruction::I32And,
+            
+            Instruction::BrIf(1), // Break if non-whitespace found
+            
+            // Decrement end index
+            Instruction::LocalGet(4),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::LocalSet(4),
+            
+            Instruction::Br(0), // Continue loop
+            Instruction::End, // End loop
+            Instruction::End, // End block
+            
+            // Calculate new length
+            Instruction::LocalGet(4), // end index
+            Instruction::LocalGet(2), // start index
+            Instruction::I32Sub,
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(5), // new_length
+            
+            // Check if trimmed length is <= 0
+            Instruction::LocalGet(5),
+            Instruction::I32Const(0),
+            Instruction::I32LeS,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            // Return empty string (allocate minimal string)
+            Instruction::I32Const(20), // minimal allocation
+            Instruction::Call(0), // allocate
+            Instruction::LocalTee(6), // store and keep on stack
+            Instruction::I32Const(0), // length = 0
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(6), // return empty string ptr
+            Instruction::Else,
+            
+            // Allocate new string
+            Instruction::LocalGet(5), // new length
+            Instruction::I32Const(20), // header + padding
+            Instruction::I32Add,
+            Instruction::Call(0), // allocate
+            Instruction::LocalSet(6), // new string ptr
+            
+            // Set new string length
+            Instruction::LocalGet(6),
+            Instruction::LocalGet(5), // new length
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            
+            // Copy trimmed content
+            Instruction::I32Const(0), // copy counter
+            Instruction::LocalSet(7),
+            
+            // Copy loop
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            
+            // Check if done copying
+            Instruction::LocalGet(7),
+            Instruction::LocalGet(5), // new length
+            Instruction::I32GeS,
+            Instruction::BrIf(1), // Break if done
+            
+            // Copy byte
+            Instruction::LocalGet(6), // new string
+            Instruction::I32Const(16), // data offset
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // copy counter
+            Instruction::I32Add,
+            
+            Instruction::LocalGet(0), // original string
+            Instruction::I32Const(16), // data offset
+            Instruction::I32Add,
+            Instruction::LocalGet(2), // start index
+            Instruction::LocalGet(7), // copy counter
+            Instruction::I32Add,
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            
+            Instruction::I32Store8(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            
+            // Increment copy counter
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(7),
+            
+            Instruction::Br(0), // Continue loop
+            Instruction::End, // End loop
+            Instruction::End, // End block
+            
+            // Return new string
+            Instruction::LocalGet(6),
+            Instruction::End, // End else
+            Instruction::End, // End main if
         ]
     }
 
@@ -1016,56 +1416,229 @@ impl StringOperations {
     }
 
     pub fn generate_string_char_at(&self) -> Vec<Instruction> {
-        // Simplified implementation to avoid WASM validation issues
-        // Parameters: string_ptr, index
-        // Returns the character at the specified index
+        // Proper implementation to get character at specified index as a single-char string
+        // Parameters: string_ptr (0), index (1)
+        // Returns: new string pointer containing single character
         vec![
-            // Consume the parameters to avoid stack mismatch
+            // Get string length for bounds checking
             Instruction::LocalGet(0), // string_ptr
-            Instruction::Drop,        // drop it
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(2), // Store length
+            
+            // Check bounds: index >= 0 && index < length
             Instruction::LocalGet(1), // index
-            Instruction::Drop,        // drop it
-            // For now, return a constant character code to avoid complex local variable usage
-            // In a real implementation, this would load the character at the specified index
-            Instruction::I32Const(65), // Return 'A' character code
+            Instruction::I32Const(0),
+            Instruction::I32LtS,
+            Instruction::LocalGet(1), // index
+            Instruction::LocalGet(2), // length
+            Instruction::I32GeS,
+            Instruction::I32Or, // out of bounds?
+            
+            Instruction::If(BlockType::Result(ValType::I32)),
+            // Out of bounds - return empty string
+            Instruction::I32Const(20), // minimal allocation
+            Instruction::Call(0), // allocate
+            Instruction::LocalTee(3), // store and keep on stack
+            Instruction::I32Const(0), // length = 0
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3), // return empty string
+            Instruction::Else,
+            
+            // Allocate single character string
+            Instruction::I32Const(21), // 1 char + header + padding
+            Instruction::Call(0), // allocate
+            Instruction::LocalSet(3), // new string ptr
+            
+            // Set length to 1
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            
+            // Copy character
+            Instruction::LocalGet(3), // new string
+            Instruction::I32Const(16), // data offset
+            Instruction::I32Add,
+            
+            Instruction::LocalGet(0), // original string
+            Instruction::I32Const(16), // data offset
+            Instruction::I32Add,
+            Instruction::LocalGet(1), // index
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            
+            Instruction::I32Store8(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            
+            // Return new string
+            Instruction::LocalGet(3),
+            Instruction::End,
         ]
     }
 
     pub fn generate_string_char_code_at(&self) -> Vec<Instruction> {
-        // Simplified implementation to avoid WASM validation issues
-        // Parameters: string_ptr, index
-        // Returns the character code at the specified index
+        // Proper implementation to get character code at specified index
+        // Parameters: string_ptr (0), index (1)
+        // Returns: character code as integer, or -1 if out of bounds
         vec![
-            // Consume the parameters to avoid stack mismatch
+            // Get string length for bounds checking
             Instruction::LocalGet(0), // string_ptr
-            Instruction::Drop,        // drop it
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(2), // Store length
+            
+            // Check bounds: index >= 0 && index < length
             Instruction::LocalGet(1), // index
-            Instruction::Drop,        // drop it
-            // For now, return a constant character code to avoid complex local variable usage
-            // In a real implementation, this would load the character code at the specified index
-            Instruction::I32Const(65), // Return 'A' character code
+            Instruction::I32Const(0),
+            Instruction::I32LtS,
+            Instruction::LocalGet(1), // index
+            Instruction::LocalGet(2), // length
+            Instruction::I32GeS,
+            Instruction::I32Or, // out of bounds?
+            
+            Instruction::If(BlockType::Result(ValType::I32)),
+            // Out of bounds - return -1
+            Instruction::I32Const(-1),
+            Instruction::Else,
+            
+            // Load character code from string
+            Instruction::LocalGet(0), // string_ptr
+            Instruction::I32Const(16), // data offset
+            Instruction::I32Add,
+            Instruction::LocalGet(1), // index
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            // Character code is now on stack as unsigned 8-bit value
+            Instruction::End,
         ]
     }
 
     pub fn generate_string_is_empty(&self) -> Vec<Instruction> {
-        // Simplified implementation to avoid WASM validation issues
-        // Parameters: string_ptr
-        // Returns 1 if string is empty, 0 otherwise
+        // Proper implementation to check if string is empty
+        // Parameters: string_ptr (0)
+        // Returns: 1 if string is empty, 0 otherwise
         vec![
-            // For now, return false (not empty) to avoid complex local variable usage
-            // In a real implementation, this would check if string length is 0
-            Instruction::I32Const(0), // Return false (not empty)
+            // Load string length from header
+            Instruction::LocalGet(0), // string_ptr
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Check if length equals 0
+            Instruction::I32Const(0),
+            Instruction::I32Eq, // Returns 1 if empty, 0 if not
         ]
     }
 
     pub fn generate_string_is_blank(&self) -> Vec<Instruction> {
-        // Simplified implementation to avoid WASM validation issues
-        // Parameters: string_ptr
-        // Returns 1 if string is blank (empty or whitespace only), 0 otherwise
+        // Proper implementation to check if string is blank (empty or whitespace only)
+        // Parameters: string_ptr (0)
+        // Returns: 1 if string is blank, 0 otherwise
         vec![
-            // For now, return false (not blank) to avoid complex local variable usage
-            // In a real implementation, this would check if string is empty or contains only whitespace
-            Instruction::I32Const(0), // Return false (not blank)
+            // Load string length from header
+            Instruction::LocalGet(0), // string_ptr
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalTee(1), // Store length and keep on stack
+            
+            // If length is 0, return true (blank)
+            Instruction::I32Const(0),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::I32Const(1), // Return true if empty
+            Instruction::Else,
+            
+            // Check each character to see if all are whitespace
+            Instruction::I32Const(0), // Loop counter
+            Instruction::LocalSet(2),
+            
+            // Loop through all characters
+            Instruction::Block(BlockType::Result(ValType::I32)),
+            Instruction::Loop(BlockType::Empty),
+            
+            // Check if we've processed all characters
+            Instruction::LocalGet(2), // counter
+            Instruction::LocalGet(1), // length
+            Instruction::I32GeS,
+            Instruction::BrIf(1), // Break if done - all were whitespace
+            
+            // Load character at current position
+            Instruction::LocalGet(0), // string_ptr
+            Instruction::I32Const(16), // data offset
+            Instruction::I32Add,
+            Instruction::LocalGet(2), // counter
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            
+            // Check if character is NOT whitespace
+            Instruction::LocalTee(3), // Store char
+            Instruction::I32Const(32), // space
+            Instruction::I32Ne,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(9), // tab
+            Instruction::I32Ne,
+            Instruction::I32And,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(10), // newline
+            Instruction::I32Ne,
+            Instruction::I32And,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(13), // carriage return
+            Instruction::I32Ne,
+            Instruction::I32And,
+            
+            Instruction::If(BlockType::Empty),
+            // Found non-whitespace character, return false
+            Instruction::I32Const(0),
+            Instruction::Br(2), // Break out with false
+            Instruction::End,
+            
+            // Increment counter
+            Instruction::LocalGet(2),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(2),
+            
+            Instruction::Br(0), // Continue loop
+            Instruction::End, // End loop
+            
+            // If we get here, all characters were whitespace
+            Instruction::I32Const(1), // Return true (blank)
+            Instruction::End, // End block
+            Instruction::End, // End if
         ]
     }
 

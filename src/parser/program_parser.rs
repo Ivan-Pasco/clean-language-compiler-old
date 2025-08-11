@@ -38,10 +38,12 @@ pub fn parse_program_ast(pair: Pair<Rule>) -> Result<Program, CompilerError> {
             // Create and return the Program
             Ok(Program {
                 imports: Vec::new(),
+                statements: Vec::new(),
                 functions,
                 classes: Vec::new(),
                 start_function: None,
                 tests: Vec::new(),
+                location: None,
             })
         }
         _ => Err(CompilerError::parse_error(

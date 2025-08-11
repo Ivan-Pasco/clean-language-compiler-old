@@ -819,10 +819,12 @@ async fn handle_parse(
                     // Try to create a minimal program from whatever we could parse
                     let partial_program = clean_language_compiler::ast::Program {
                         imports: Vec::new(),
+                        statements: Vec::new(),
                         functions: Vec::new(),
                         classes: Vec::new(),
                         start_function: None,
                         tests: Vec::new(),
+                        location: None,
                     };
 
                     if show_tree {

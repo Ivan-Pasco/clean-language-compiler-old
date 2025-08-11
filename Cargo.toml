@@ -1,6 +1,6 @@
 [package]
 name = "clean-language-compiler"
-version = "0.1.14"
+version = "1.0.0"
 authors = ["Ivan Pasco Lizarraga"]
 edition = "2021"
 homepage = "https://www.cleanlanguage.dev"
@@ -39,12 +39,32 @@ clap = { version = "4.5", features = ["derive"] }
 # Package management
 dirs = "5.0"
 
-# Utilities (only used in specific utility binaries)
+# Utilities
 regex = "1.11"
 rand = "0.8"
 
+# Logging and tracing
+env_logger = "0.10"
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+# Memory management and collections
+indexmap = "2.0"
+hashbrown = "0.14"
+
+# String processing and unicode
+unicode-normalization = "0.1"
+unicode-segmentation = "1.10"
+
+# Development tools
+num_cpus = "1.16"
+
 # HTTP client for real network requests
-# HTTP client temporarily disabled
+reqwest = { version = "0.11", features = ["json"] }
+
+# System utilities
+libc = "0.2"
 
 [profile.release]
 # WebAssembly optimization settings for best performance

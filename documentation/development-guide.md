@@ -1,6 +1,8 @@
-# Clean Language Development Guide for Claude
+# Clean Language Development Guide
 
-This document provides comprehensive guidance for Claude when working with the Clean Language compiler project. It covers best practices, common workflows, debugging techniques, and development patterns specific to this codebase.
+This document provides comprehensive development guidance for working with the Clean Language compiler project. It covers best practices, common workflows, debugging techniques, and development patterns specific to this codebase.
+
+> 🔗 **Essential References**: [Language Specification](../docs/language/Clean_Language_Specification.md) • [CLAUDE.md Commands](../CLAUDE.md) • [Parser](./parser.md) • [Semantic Analysis](./semantic-analysis.md) • [WebAssembly](./webassembly.md) • [Standard Library](./standard-library.md)
 
 ## Getting Started
 
@@ -116,7 +118,7 @@ impl YourOperations {
     pub fn register_your_function(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         register_stdlib_function(
             codegen,
-            "Your.function",
+            "your.function",
             &[WasmType::I32], // Parameter types
             Some(WasmType::I32), // Return type
             self.generate_your_function_instructions(codegen)?
@@ -150,7 +152,7 @@ impl StandardLibrary {
 // In src/semantic/mod.rs
 fn register_builtin_functions(&mut self) {
     // ... existing functions
-    self.register_builtin("Your.function", vec![Type::Integer], Type::Integer);
+    self.register_builtin("your.function", vec![Type::Integer], Type::Integer);
 }
 ```
 
@@ -161,7 +163,7 @@ fn test_your_function() {
     let source = r#"
         functions:
             void start()
-                integer result = Your.function(42)
+                integer result = your.function(42)
                 println(result.toString())
     "#;
     
@@ -767,7 +769,7 @@ feat(parser): add support for string interpolation with property access
 - Add comprehensive test coverage for edge cases
 - Fixes #123
 
-Co-authored-by: Claude <noreply@anthropic.com>
+Co-authored-by: Development Team <dev@cleanlanguage.org>
 ```
 
 ### 3. Documentation Standards

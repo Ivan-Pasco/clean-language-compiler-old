@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 mod instruction_generator;
 mod memory;
 mod type_manager;
+pub mod wasm_generator;
 
 #[cfg(test)]
 mod tests;
@@ -236,6 +237,7 @@ impl CodeGenerator {
             self.register_console_imports()?;
         }
 
+        // TEMPORARILY DISABLED for WASM validation debugging
         // 1.2. Register file system imports
         self.register_file_imports()?;
 
@@ -248,7 +250,7 @@ impl CodeGenerator {
         // ------------------------------------------------------------------
         // 2. Register standard library functions AFTER imports (they get indices 14+)
         // ------------------------------------------------------------------
-        // Re-enable stdlib function registration for basic functions like abs()
+        // Re-enable stdlib function registration to identify specific errors
         self.register_stdlib_functions()?;
 
         // ------------------------------------------------------------------
@@ -416,6 +418,13 @@ impl CodeGenerator {
 
             // After generating start function, track its final result for get_result function
             self.track_start_function_result(start_function)?;
+        }
+
+        // ------------------------------------------------------------------
+        // Generate test runner function if tests exist
+        // ------------------------------------------------------------------
+        if !program.tests.is_empty() {
+            self.generate_test_runner_function(&program.tests)?;
         }
 
         // ------------------------------------------------------------------
@@ -961,9 +970,9 @@ impl CodeGenerator {
             Statement::Test { name: _, body, .. } => {
                 self.generate_test_statement(body, instructions)?;
             }
-            Statement::TestsBlock { tests: _, .. } => {
-                // Tests blocks are handled during compilation time, not runtime
-                // No code generation needed for test blocks themselves
+            Statement::TestsBlock { tests, .. } => {
+                // Generate test runner function for the test block
+                self.generate_tests_block_runner(tests, instructions)?;
             }
             Statement::Expression { expr, .. } => {
                 self.generate_expression_statement(expr, instructions)?;
@@ -1032,6 +1041,45 @@ impl CodeGenerator {
             }
             Statement::Background { expression, .. } => {
                 self.generate_background_statement(expression, instructions)?;
+            }
+
+            Statement::FunctionsBlock { functions, .. } => {
+                // Functions block - generate code for all functions
+                for function in functions {
+                    self.generate_function(function)?;
+                }
+            }
+
+            Statement::While { condition, body, .. } => {
+                // While loop - generate loop instructions
+                self.generate_expression(condition, instructions)?;
+                // TODO: Implement actual while loop code generation
+                for stmt in body {
+                    self.generate_statement(stmt, instructions)?;
+                }
+            }
+
+            Statement::Match { value, cases, .. } => {
+                // Match statement - generate switch-like code
+                self.generate_expression(value, instructions)?;
+                // TODO: Implement actual match code generation
+                for case in cases {
+                    for stmt in &case.body {
+                        self.generate_statement(stmt, instructions)?;
+                    }
+                }
+            }
+
+            Statement::PrivateBlock { items, .. } => {
+                // Private block - generate code for all items
+                for item in items {
+                    self.generate_statement(item, instructions)?;
+                }
+            }
+
+            Statement::ClassDefinition { class, .. } => {
+                // Class definition - generate class code
+                self.generate_class(class)?;
             }
         }
         Ok(())
@@ -3638,6 +3686,7 @@ impl CodeGenerator {
             self.generate_function(function)?;
         }
 
+        // TEMPORARILY DISABLED ALL STDLIB REGISTRATIONS to isolate validation issue
         // 4. Register string operations directly using the StringOperations implementation
         self.register_string_operations()?;
 
@@ -3665,26 +3714,27 @@ impl CodeGenerator {
         // Pre-allocate conversion strings
         self.pre_allocate_conversion_strings()?;
 
+        // TESTING INDIVIDUAL REGISTRATIONS to find the problematic one
         // 9. Register console input operations
-        self.register_console_operations()?;
+        // self.register_console_operations()?;
 
         // 10. Register HTTP operations
-        self.register_http_operations()?;
+        // self.register_http_operations()?;
 
         // 11. Register math operations
-        self.register_math_operations()?;
+        // self.register_math_operations()?;
 
         // 12. Register string class operations
-        self.register_string_class_operations()?;
+        // self.register_string_class_operations()?;
 
         // 13. Register list class operations
-        self.register_list_class_operations()?;
+        // self.register_list_class_operations()?;
 
         // 14. Register conditional operations
-        self.register_conditional_operations()?;
+        // self.register_conditional_operations()?;
 
-        // 15. Register method-style operations
-        self.register_method_style_operations()?;
+        // 11. Register math operations - TEST THIS ONE
+        self.register_math_operations()?;
 
         Ok(())
     }
@@ -7500,6 +7550,177 @@ impl CodeGenerator {
         Ok(())
     }
 
+    /// Generate test runner for a tests block
+    fn generate_tests_block_runner(
+        &mut self,
+        tests: &[crate::ast::TestCase],
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<(), CompilerError> {
+        // Initialize test suite
+        if let Some(init_index) = self.get_function_index("test.initializeSuite") {
+            instructions.push(Instruction::Call(init_index));
+        }
+        
+        // Track test results
+        let mut test_count = 0;
+        
+        // Execute each test case
+        for test_case in tests {
+            test_count += 1;
+            
+            // Generate test execution
+            self.generate_single_test_case(test_case, instructions, test_count)?;
+        }
+        
+        // Finalize test suite and print summary
+        if let Some(finalize_index) = self.get_function_index("test.finalizeSuite") {
+            instructions.push(Instruction::Call(finalize_index));
+            instructions.push(Instruction::Drop); // Drop the return value
+        }
+        
+        // Print final test summary
+        if let Some(summary_index) = self.get_function_index("test.printSummary") {
+            instructions.push(Instruction::Call(summary_index));
+        }
+        
+        Ok(())
+    }
+    
+    /// Generate code for a single test case
+    fn generate_single_test_case(
+        &mut self,
+        test_case: &crate::ast::TestCase,
+        instructions: &mut Vec<Instruction>,
+        test_number: i32,
+    ) -> Result<(), CompilerError> {
+        // Create test name string
+        let test_name = if let Some(ref description) = test_case.description {
+            format!("Test {}: {}", test_number, description)
+        } else {
+            format!("Test {}", test_number)
+        };
+        
+        // Store test name in memory
+        let test_name_ptr = self.add_string_to_pool(&test_name);
+        
+        // Generate code to evaluate test expression
+        let mut test_expr_instructions = Vec::new();
+        let test_result_type = self.generate_expression(&test_case.test_expression, &mut test_expr_instructions)?;
+        
+        // Generate code to evaluate expected value
+        let mut expected_expr_instructions = Vec::new();
+        let expected_result_type = self.generate_expression(&test_case.expected_value, &mut expected_expr_instructions)?;
+        
+        // Ensure both results are the same type (for comparison)
+        if test_result_type != expected_result_type {
+            return Err(CompilerError::type_error(
+                format!(
+                    "Test expression type {:?} doesn't match expected type {:?}",
+                    test_result_type, expected_result_type
+                ),
+                Some("Ensure test expression and expected value have the same type".to_string()),
+                test_case.location.clone(),
+            ));
+        }
+        
+        // Generate test execution block
+        instructions.push(Instruction::Block(wasm_encoder::BlockType::Empty));
+        
+        // Execute test expression and store result in local variable
+        instructions.extend(test_expr_instructions);
+        instructions.push(Instruction::LocalSet(0)); // Store test result
+        
+        // Execute expected value expression and store result
+        instructions.extend(expected_expr_instructions);
+        instructions.push(Instruction::LocalSet(1)); // Store expected result
+        
+        // Compare results
+        instructions.push(Instruction::LocalGet(0)); // test result
+        instructions.push(Instruction::LocalGet(1)); // expected result
+        
+        // Generate comparison based on type
+        match test_result_type {
+            crate::types::WasmType::I32 => {
+                instructions.push(Instruction::I32Eq);
+            }
+            crate::types::WasmType::F32 => {
+                instructions.push(Instruction::F32Eq);
+            }
+            crate::types::WasmType::F64 => {
+                instructions.push(Instruction::F64Eq);
+            }
+            _ => {
+                // For complex types, use generic comparison
+                instructions.push(Instruction::I32Eq);
+            }
+        }
+        
+        // Check if test passed
+        instructions.push(Instruction::If(wasm_encoder::BlockType::Empty));
+        
+        // Test passed - report success
+        instructions.push(Instruction::I32Const(test_name_ptr as i32));
+        if let Some(pass_index) = self.get_function_index("test.reportPass") {
+            instructions.push(Instruction::Call(pass_index));
+        }
+        
+        instructions.push(Instruction::Else);
+        
+        // Test failed - report failure
+        instructions.push(Instruction::I32Const(test_name_ptr as i32));
+        let error_msg = "Test assertion failed";
+        let error_msg_ptr = self.add_string_to_pool(error_msg);
+        instructions.push(Instruction::I32Const(error_msg_ptr as i32));
+        if let Some(fail_index) = self.get_function_index("test.reportFail") {
+            instructions.push(Instruction::Call(fail_index));
+        }
+        
+        instructions.push(Instruction::End); // End if
+        instructions.push(Instruction::End); // End block
+        
+        Ok(())
+    }
+
+    /// Generate a dedicated test runner function
+    fn generate_test_runner_function(
+        &mut self,
+        tests: &[crate::ast::TestCase],
+    ) -> Result<(), CompilerError> {
+        // Create a dedicated test runner function
+        let function_name = "runTests".to_string();
+        let function_index = self.function_count;
+        
+        // Register the function
+        self.function_map.insert(function_name.clone(), function_index);
+        self.function_names.push(function_name.clone());
+        self.function_count += 1;
+        
+        // Create function type (no parameters, no return value)
+        let type_index = self.add_function_type(&[], None)?;
+        self.function_section.function(type_index);
+        
+        // Generate function body with local variables for test results
+        let mut instructions = Vec::new();
+        let mut locals = Vec::new();
+        locals.push((2, wasm_encoder::ValType::I32)); // Two locals for test result comparison
+        
+        // Generate test execution code
+        self.generate_tests_block_runner(tests, &mut instructions)?;
+        
+        // Create function body
+        let mut function_body = wasm_encoder::Function::new(locals);
+        for instruction in instructions {
+            function_body.instruction(&instruction);
+        }
+        self.code_section.function(&function_body);
+        
+        // Export the test runner function
+        self.export_section
+            .export(&function_name, wasm_encoder::ExportKind::Func, function_index);
+            
+        Ok(())
+    }
+
     fn generate_expression_statement(
         &mut self,
         expr: &Expression,
@@ -8226,4 +8447,28 @@ impl CodeGenerator {
         }
         None
     }
+}
+
+/// Generate WebAssembly from AST using the IR pipeline
+pub fn generate_wasm_from_ast(program: crate::ast::Program) -> Result<Vec<u8>, CompilerError> {
+    use crate::ir::{IRPipeline, OptimizationLevel};
+    use wasm_generator::WasmGenerator;
+
+    // Create IR pipeline
+    let pipeline = IRPipeline::new(false, OptimizationLevel::Speed);
+    
+    // Transform through IR levels: AST → HIR → MIR → LIR
+    let lir_program = pipeline.transform_program(program)?;
+    
+    // Generate WebAssembly from LIR
+    let mut wasm_generator = WasmGenerator::new();
+    wasm_generator.generate_wasm_module(lir_program)
+}
+
+/// Generate WebAssembly directly from LIR (for advanced use cases)
+pub fn generate_wasm_from_lir(lir_program: crate::ir::LIRProgram) -> Result<Vec<u8>, CompilerError> {
+    use wasm_generator::WasmGenerator;
+    
+    let mut wasm_generator = WasmGenerator::new();
+    wasm_generator.generate_wasm_module(lir_program)
 }

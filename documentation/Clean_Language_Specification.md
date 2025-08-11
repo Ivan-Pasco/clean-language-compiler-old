@@ -586,7 +586,7 @@ value.toBoolean   // convert to boolean
 **Implementation Status:**
 - ✅ **Numeric Conversions**: `integer.toNumber`, `number.toInteger`, `integer.toBoolean` fully implemented
 - ✅ **Boolean Conversions**: `integer.toBoolean` (0 = false, non-zero = true) implemented
-- ⚠️ **String Conversions**: `value.toString` requires runtime functions (not yet implemented)
+- ⚠️ **String Conversions**: `value.toString()` requires runtime functions (not yet implemented)
 
 **Examples:**
 ```clean
@@ -1202,11 +1202,11 @@ tests:
     // Named tests with descriptions
     "adds numbers": add(2, 3) = 5
     "squares a number": square(4) = 16
-    "detects empty string": String.isEmpty("") = true
+    "detects empty string": string.isEmpty("") = true
     
     // Anonymous tests (no description)
-    String.toUpperCase("hi") = "HI"
-    Math.abs(-42) = 42
+    string.toUpperCase("hi") = "HI"
+    math.abs(-42) = 42
     [1, 2, 3].length() = 3
 ```
 
@@ -1223,7 +1223,7 @@ tests:
 
 3. **Test Expressions**: Can be any valid Clean Language expression
    - Function calls: `add(2, 3)`
-   - Method calls: `String.isEmpty("")`
+   - Method calls: `string.isEmpty("")`
    - Complex expressions: `(x + y) * 2`
    - Object creation and method chaining: `Point(3, 4).distanceFromOrigin()`
 
@@ -1253,8 +1253,8 @@ Running tests for myprogram.cln...
 
 ✅ adds numbers: add(2, 3) = 5 (PASS)
 ✅ squares a number: square(4) = 16 (PASS) 
-❌ detects empty string: String.isEmpty("") = true (FAIL: expected true, got false)
-✅ String.toUpperCase("hi") = "HI" (PASS)
+❌ detects empty string: string.isEmpty("") = true (FAIL: expected true, got false)
+✅ string.toUpperCase("hi") = "HI" (PASS)
 
 Test Results: 3 passed, 1 failed, 4 total
 ```
@@ -1543,8 +1543,8 @@ point.move(1, -2)
 You can call class methods directly on the class name if they don't use instance fields:
 
 ```clean
-class Math
-functions:
+class MathUtils
+    functions:
         number add(number a, number b)
             return a + b
         
@@ -1564,8 +1564,8 @@ class DatabaseService
 // Static method calls - ClassName.method()
 functions:
     void start()
-        number result = Math.add(5.0, 3.0)
-        number maximum = Math.max(10.0, 7.5)
+        number result = MathUtils.add(5.0, 3.0)
+        number maximum = MathUtils.max(10.0, 7.5)
         boolean connected = DatabaseService.connect("mysql://localhost")
         User user = DatabaseService.findUser(42)
 ```
@@ -1574,7 +1574,7 @@ functions:
 - Use `ClassName.method()` syntax for static calls
 - Only allowed if the method doesn't access instance fields (`this.field`)
 - All methods must be in `functions:` blocks
-- Method calls require parentheses: `Math.add()` not `Math.add`
+- Method calls require parentheses: `MathUtils.add()` not `MathUtils.add`
 - Ideal for helpers, services, utilities, and database access functions
 
 **Example - Mixed Static and Instance Methods:**
@@ -2358,7 +2358,7 @@ functions:
 ```clean
 import:
     Math                # whole module
-    Math.sqrt           # single symbol
+    math.sqrt           # single symbol
     Utils as U          # module alias
     Json.decode as jd   # symbol alias
 ```

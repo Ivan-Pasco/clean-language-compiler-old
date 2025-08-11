@@ -159,10 +159,12 @@ impl ErrorRecoveringParser {
         // Create a program from recovered parts
         let recovered_program = Program {
             imports,
+            statements: Vec::new(),
             functions,
             classes,
             start_function,
             tests: Vec::new(),
+            location: None,
         };
 
         if collected_errors.is_empty() {
@@ -307,10 +309,12 @@ impl ErrorRecoveringParser {
             let start_func = parse_start_function(pairs.into_iter().next().unwrap())?;
             return Ok(Program {
                 imports: Vec::new(),
+                statements: Vec::new(),
                 functions: Vec::new(),
                 classes: Vec::new(),
                 start_function: Some(start_func),
                 tests: Vec::new(),
+                location: None,
             });
         }
 
@@ -399,10 +403,12 @@ impl ErrorRecoveringParser {
 
                 Ok(Program {
                     imports: Vec::new(),
+                    statements: Vec::new(),
                     functions,
                     classes: Vec::new(),
                     start_function,
                     tests: Vec::new(),
+                    location: None,
                 })
             }
             Err(e) => Err(e),
@@ -416,10 +422,12 @@ impl ErrorRecoveringParser {
                 let class = parse_class(pairs.into_iter().next().unwrap())?;
                 Ok(Program {
                     imports: Vec::new(),
+                    statements: Vec::new(),
                     functions: Vec::new(),
                     classes: vec![class],
                     start_function: None,
                     tests: Vec::new(),
+                    location: None,
                 })
             }
             Err(pest_error) => Err(crate::error::ErrorUtils::from_pest_error(
@@ -690,10 +698,12 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
     }
     let program = Program {
         imports,
+        statements: Vec::new(),
         functions,
         classes,
         start_function,
         tests,
+        location: None,
     };
 
     Ok(program)

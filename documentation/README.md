@@ -1,6 +1,8 @@
-# Clean Language Compiler Documentation for Claude
+# Clean Language Compiler Documentation
 
-This directory contains comprehensive documentation specifically designed to help Claude understand and work effectively with the Clean Language compiler project.
+This directory contains comprehensive documentation for the Clean Language compiler project.
+
+> 📖 **Cross-Reference**: See [Clean Language Specification](../docs/language/Clean_Language_Specification.md) for the complete language definition and [CLAUDE.md](../CLAUDE.md) for development commands.
 
 ## Quick Start
 

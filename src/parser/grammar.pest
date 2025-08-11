@@ -50,14 +50,14 @@ type_parameter = @{ identifier }
 type_parameters = { "<" ~ type_parameter ~ ("," ~ type_parameter)* ~ ">" }
 type_arguments = { type_ ~ ("," ~ type_)* }
 
-// Type definition
+// Type definition - Order matters: core types before sized types to make size specifiers optional
 type_ = { 
     matrix_type |
     list_type |
     pairs_type |
     generic_type |
-    sized_type |
     core_type |
+    sized_type |
     identifier |
     type_parameter
 }
@@ -77,7 +77,7 @@ indented_constant_assignments = { NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ c
 constant_assignment = { type_ ~ identifier ~ "=" ~ expression }
 
 // Type apply-blocks: integer: count = 0, maxSize = 100 (types before generic identifiers)
-type_apply_block = { (core_type | sized_type | matrix_type | list_type | pairs_type) ~ ":" ~ indented_variable_assignments }
+type_apply_block = { (core_type | matrix_type | list_type | pairs_type | sized_type) ~ ":" ~ indented_variable_assignments }
 indented_variable_assignments = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ variable_assignment ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ variable_assignment)* }
 variable_assignment = { identifier ~ "=" ~ expression }
 
@@ -92,12 +92,12 @@ indented_expressions = { NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ expression
 // Setup blocks for functions
 description_block = { "description" ~ string }
 input_type = { 
-    sized_type |
-    core_type |
     matrix_type |
     list_type |
     pairs_type |
     generic_type |
+    core_type |
+    sized_type |
     type_parameter
 }
 input_declaration = { input_type ~ identifier ~ ("=" ~ expression)? }
@@ -132,6 +132,7 @@ primary = {
     base_call |
     static_method_call |
     method_call |
+    start_expr |
     number |
     boolean |
     string |
@@ -229,7 +230,7 @@ return_stmt = { "return" ~ expression? }
 // Parameter definitions for function declarations
 parameter_list = { parameter ~ ("," ~ parameter)* }
 parameter_name = @{ !critical_keyword ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
-critical_keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start") ~ !(ASCII_ALPHANUMERIC | "_") }
+critical_keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start") ~ !(ASCII_ALPHANUMERIC | "_") }
 parameter = { type_ ~ parameter_name ~ ("=" ~ expression)? }
 
 // Functions block (the main supported syntax for function declarations)
@@ -253,7 +254,7 @@ function_body = {
 }
 
 // Function statements - statements inside function body
-function_statements = { statement ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ statement)* }
+function_statements = { statement ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ !function_type ~ statement)* }
 
 // Function return type (excludes generic identifiers to avoid ambiguity with function names)
 function_type = { 
@@ -261,8 +262,8 @@ function_type = {
     list_type |
     pairs_type |
     generic_type |
-    sized_type |
-    core_type
+    core_type |
+    sized_type
 }
 
 // Private blocks (removed duplicate - defined later in async/import section)

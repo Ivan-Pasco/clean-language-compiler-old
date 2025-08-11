@@ -140,8 +140,8 @@ tests:
 ### **Type System**
 - **Primitive Types**: `boolean`, `integer`, `number`, `string`, `void`
 - **Precision Control**: `integer:64`, `number:32` for explicit sizing
-- **Composite Types**: `list<T>`, `matrix<T>`, `pairs<K,V>`
-- **Generic Support**: `any` type for universal generic programming
+- **Composite Types**: `list<any>`, `matrix<any>`, `pairs<any,any>`
+- **Generic Support**: `any` type for universal generic programming (no explicit type parameters needed)
 - **Method Chaining**: `value.toString().trim().length()`
 
 ## Compilation Pipeline Details

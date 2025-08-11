@@ -2,6 +2,8 @@
 
 This document provides comprehensive documentation for Claude on how the Clean Language standard library is organized and implemented. This information will help Claude understand and work with the standard library system to extend functionality and maintain compatibility.
 
+> 🔗 **Related Documentation**: [Semantic Analysis](./semantic-analysis.md) • [WebAssembly Generation](./webassembly.md) • [Development Guide](./development-guide.md) • [Language Specification](../docs/language/Clean_Language_Specification.md)
+
 ## Overview
 
 The Clean Language standard library provides essential functionality for Clean Language programs, including mathematical operations, string manipulation, list operations, file I/O, and HTTP client capabilities. The library is designed with WebAssembly as the primary target, emphasizing memory safety, performance, and integration with the host environment.
@@ -172,10 +174,10 @@ impl MathOperations {
     }
     
     fn register_basic_arithmetic(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Math.add(number a, number b) -> number
+        // math.add(number a, number b) -> number
         register_stdlib_function(
             codegen,
-            "Math.add",
+            "math.add",
             &[WasmType::F64, WasmType::F64],
             Some(WasmType::F64),
             vec![
@@ -185,10 +187,10 @@ impl MathOperations {
             ]
         )?;
         
-        // Math.sqrt(number x) -> number
+        // math.sqrt(number x) -> number
         register_stdlib_function(
             codegen,
-            "Math.sqrt",
+            "math.sqrt",
             &[WasmType::F64],
             Some(WasmType::F64),
             vec![
@@ -197,10 +199,10 @@ impl MathOperations {
             ]
         )?;
         
-        // Math.abs(number x) -> number
+        // math.abs(number x) -> number
         register_stdlib_function(
             codegen,
-            "Math.abs",
+            "math.abs",
             &[WasmType::F64],
             Some(WasmType::F64),
             vec![
@@ -213,23 +215,21 @@ impl MathOperations {
     }
     
     fn register_transcendental_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        let transcendental_funcs = [
-            ("sin", Instruction::F64Sin),
-            ("cos", Instruction::F64Cos),
-            ("tan", Instruction::F64Tan),
-            ("ln", Instruction::F64Ln),
-            ("exp", Instruction::F64Exp),
-        ];
+        // Note: WebAssembly doesn't have native transcendental instructions
+        // These functions use host imports for mathematical operations
         
-        for (name, instruction) in transcendental_funcs {
+        let transcendental_funcs = ["sin", "cos", "tan", "ln", "exp"];
+        
+        for name in transcendental_funcs {
+            let import_index = codegen.get_math_import_index(name)?;
             register_stdlib_function(
                 codegen,
-                &format!("Math.{}", name),
+                &format!("math.{}", name),
                 &[WasmType::F64],
                 Some(WasmType::F64),
                 vec![
                     Instruction::LocalGet(0),
-                    instruction,
+                    Instruction::Call(import_index),  // Call host function
                 ]
             )?;
         }
@@ -238,10 +238,10 @@ impl MathOperations {
     }
     
     fn register_constants(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Math.pi() -> number
+        // math.pi() -> number
         register_stdlib_function(
             codegen,
-            "Math.pi",
+            "math.pi",
             &[],
             Some(WasmType::F64),
             vec![
@@ -249,10 +249,10 @@ impl MathOperations {
             ]
         )?;
         
-        // Math.e() -> number
+        // math.e() -> number
         register_stdlib_function(
             codegen,
-            "Math.e",
+            "math.e",
             &[],
             Some(WasmType::F64),
             vec![
@@ -286,10 +286,10 @@ impl StringOperations {
     }
     
     fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // String.length(string text) -> integer
+        // string.length(string text) -> integer
         register_stdlib_function(
             codegen,
-            "String.length",
+            "string.length",
             &[WasmType::I32],  // String pointer
             Some(WasmType::I32),
             vec![
@@ -302,10 +302,10 @@ impl StringOperations {
             ]
         )?;
         
-        // String.concat(string a, string b) -> string
+        // string.concat(string a, string b) -> string
         register_stdlib_function(
             codegen,
-            "String.concat",
+            "string.concat",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_concat_instructions(codegen)?
@@ -386,10 +386,10 @@ impl ListOperations {
     const LIST_TYPE_ID: u32 = 2;
     
     fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // List.length(list array) -> integer
+        // list.length(list array) -> integer
         register_stdlib_function(
             codegen,
-            "List.length",
+            "list.length",
             &[WasmType::I32],
             Some(WasmType::I32),
             vec![
@@ -402,19 +402,19 @@ impl ListOperations {
             ]
         )?;
         
-        // List.push(list array, any item) -> list
+        // list.push(list array, any item) -> list
         register_stdlib_function(
             codegen,
-            "List.push",
+            "list.push",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_push_instructions(codegen)?
         )?;
         
-        // List.get(list array, integer index) -> any
+        // list.get(list array, integer index) -> any
         register_stdlib_function(
             codegen,
-            "List.get",
+            "list.get",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_get_instructions(codegen)?
@@ -488,28 +488,28 @@ pub struct FileOperations;
 
 impl FileOperations {
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // File.read(string path) -> string
+        // file.read(string path) -> string
         register_stdlib_function(
             codegen,
-            "File.read",
+            "file.read",
             &[WasmType::I32],  // Path string pointer
             Some(WasmType::I32),  // Result string pointer
             self.generate_read_with_host_call(codegen, "file_read")?
         )?;
         
-        // File.write(string path, string content) -> void
+        // file.write(string path, string content) -> void
         register_stdlib_function(
             codegen,
-            "File.write",
+            "file.write",
             &[WasmType::I32, WasmType::I32],
             None,  // Void return
             self.generate_write_with_host_call(codegen, "file_write")?
         )?;
         
-        // File.exists(string path) -> boolean
+        // file.exists(string path) -> boolean
         register_stdlib_function(
             codegen,
-            "File.exists",
+            "file.exists",
             &[WasmType::I32],
             Some(WasmType::I32),
             self.generate_exists_with_host_call(codegen, "file_exists")?
@@ -568,19 +568,19 @@ pub struct HttpOperations;
 
 impl HttpOperations {
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Http.get(string url) -> string
+        // http.get(string url) -> string
         register_stdlib_function(
             codegen,
-            "Http.get",
+            "http.get",
             &[WasmType::I32],
             Some(WasmType::I32),
             self.generate_get_with_host_call(codegen, "http_get")?
         )?;
         
-        // Http.post(string url, string body) -> string
+        // http.post(string url, string body) -> string
         register_stdlib_function(
             codegen,
-            "Http.post",
+            "http.post",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_post_with_host_call(codegen, "http_post")?

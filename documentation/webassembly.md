@@ -2,6 +2,8 @@
 
 This document provides comprehensive documentation for Claude on how the Clean Language compiler generates WebAssembly code. This information will help Claude understand and work with the WebAssembly compilation pipeline.
 
+> 🔗 **Related Documentation**: [Parser Documentation](./parser.md) • [Semantic Analysis](./semantic-analysis.md) • [Standard Library](./standard-library.md) • [Development Guide](./development-guide.md)
+
 ## Overview
 
 The Clean Language compiler uses a sophisticated multi-layered architecture to translate Clean Language source code into efficient WebAssembly bytecode. The system emphasizes type safety, memory management, and runtime performance while maintaining compatibility with WebAssembly's execution model.
@@ -220,6 +222,8 @@ Object Instance:
 ```
 
 ## Integration with Runtime
+
+> ⚠️ **WebAssembly Compatibility Note**: The instruction examples in this document use the standard WebAssembly instruction set. Mathematical functions like trigonometric operations (sin, cos, tan) require host imports as they are not native WebAssembly instructions.
 
 ### 1. Import Functions
 

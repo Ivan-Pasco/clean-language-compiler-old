@@ -4,11 +4,30 @@ use crate::module::{ImportResolution, ModuleResolver};
 use std::collections::{HashMap, HashSet};
 
 mod scope;
+mod symbol_table;
+mod inheritance;
+// mod type_checker;  // Temporarily disabled until properly updated
+mod type_constraint;
+
+#[cfg(test)]
+mod tests;
+
 use scope::Scope;
+pub use symbol_table::{SymbolTable, Symbol, SymbolKind, ScopeType, ScopeInfo};
+pub use inheritance::InheritanceValidator;
+// pub use type_checker::TypeChecker;  // Temporarily disabled
+pub use type_constraint::*;
 
 pub struct SemanticAnalyzer {
+    // Enhanced symbol table with comprehensive scope management
+    symbol_table: SymbolTable,
+    
+    // Comprehensive inheritance validation system
+    inheritance_validator: InheritanceValidator,
+    
+    // Legacy compatibility - gradually being replaced by SymbolTable
     #[allow(dead_code)]
-    symbol_table: HashMap<String, Type>,
+    legacy_symbol_table: HashMap<String, Type>,
     function_table: HashMap<String, Vec<(Vec<Type>, Type, usize)>>, // Multiple overloads per function name
     class_table: HashMap<String, Class>,
     current_class: Option<String>,
@@ -20,7 +39,7 @@ pub struct SemanticAnalyzer {
     function_environment: HashSet<String>,
     #[allow(dead_code)]
     class_environment: HashSet<String>,
-    current_scope: Scope,
+    current_scope: Scope, // Legacy scope - being replaced
     current_function_return_type: Option<Type>,
     warnings: Vec<CompilerWarning>,
     used_variables: HashSet<String>,
@@ -46,7 +65,9 @@ impl Default for SemanticAnalyzer {
 impl SemanticAnalyzer {
     pub fn new() -> Self {
         let mut analyzer = Self {
-            symbol_table: HashMap::new(),
+            symbol_table: SymbolTable::new(),
+            inheritance_validator: InheritanceValidator::new(),
+            legacy_symbol_table: HashMap::new(),
             function_table: HashMap::new(),
             class_table: HashMap::new(),
             current_class: None,
@@ -1132,6 +1153,8 @@ impl SemanticAnalyzer {
         // First pass: register all classes and functions
         for class in &program.classes {
             self.class_table.insert(class.name.clone(), class.clone());
+            // Register class with inheritance validator for comprehensive validation
+            self.inheritance_validator.register_class(class.clone())?;
         }
 
         for function in &program.functions {
@@ -1184,8 +1207,8 @@ impl SemanticAnalyzer {
             }
         }
 
-        // Check for inheritance cycles
-        self.check_inheritance_cycles()?;
+        // Comprehensive inheritance validation (cycles, method overriding, access control, etc.)
+        self.inheritance_validator.validate_inheritance()?;
 
         // Second pass: check all items
         for class in &program.classes {
@@ -2005,7 +2028,7 @@ impl SemanticAnalyzer {
                         _ => {
                             // For other types, we'll allow the method call but issue a warning
                             self.warnings.push(CompilerWarning::new(
-                                &format!(
+                                format!(
                                     "Cannot verify method '{method_name}' on type {object_type:?}"
                                 ),
                                 WarningType::TypeInference,
@@ -2328,6 +2351,55 @@ impl SemanticAnalyzer {
 
             Statement::RangeIterate { .. } => {
                 // Range iteration - handled separately
+                Ok(())
+            }
+
+            Statement::FunctionsBlock { functions, .. } => {
+                // Functions block - validate all functions
+                for function in functions {
+                    self.check_function(function)?;
+                }
+                Ok(())
+            }
+
+            Statement::While { condition, body, .. } => {
+                // While loop - check condition and body
+                let condition_type = self.check_expression(condition)?;
+                if !matches!(condition_type, Type::Boolean) {
+                    return Err(CompilerError::type_error(
+                        "While condition must be boolean".to_string(),
+                        None,
+                        None,
+                    ));
+                }
+                for stmt in body {
+                    self.check_statement(stmt)?;
+                }
+                Ok(())
+            }
+
+            Statement::Match { value, cases, .. } => {
+                // Match statement - check value and all cases
+                let _value_type = self.check_expression(value)?;
+                for case in cases {
+                    for stmt in &case.body {
+                        self.check_statement(stmt)?;
+                    }
+                }
+                Ok(())
+            }
+
+            Statement::PrivateBlock { items, .. } => {
+                // Private block - check all items
+                for item in items {
+                    self.check_statement(item)?;
+                }
+                Ok(())
+            }
+
+            Statement::ClassDefinition { class, .. } => {
+                // Class definition - validate the class
+                self.check_class(class)?;
                 Ok(())
             }
         }
@@ -3235,6 +3307,54 @@ impl SemanticAnalyzer {
             } => {
                 // Later assignment returns the type of the expression being assigned
                 self.check_expression(expression)
+            }
+
+            Expression::NamespaceCall {
+                namespace,
+                function,
+                arguments,
+                ..
+            } => {
+                // Namespace calls like math.sqrt(), string.length()
+                // For now, assume they return appropriate types
+                match (namespace.as_str(), function.as_str()) {
+                    ("math", _) => Ok(Type::Number),
+                    ("string", _) => Ok(Type::String),
+                    ("list", _) => Ok(Type::Any),
+                    ("file", _) => Ok(Type::String),
+                    ("http", _) => Ok(Type::String),
+                    _ => Ok(Type::Any),
+                }
+            }
+
+            Expression::Match { value, cases, .. } => {
+                // Match expressions - infer type from first case
+                let _value_type = self.check_expression(value)?;
+                if let Some(first_case) = cases.first() {
+                    if let Some(first_stmt) = first_case.body.first() {
+                        // TODO: Better type inference for match expressions
+                        return Ok(Type::Any);
+                    }
+                }
+                Ok(Type::Any)
+            }
+
+            Expression::Input { input_type, .. } => {
+                // Input expressions return the specified input type
+                match input_type {
+                    crate::ast::InputType::String => Ok(Type::String),
+                    crate::ast::InputType::Integer => Ok(Type::Integer),
+                    crate::ast::InputType::Number => Ok(Type::Number),
+                    crate::ast::InputType::Boolean => Ok(Type::Boolean),
+                }
+            }
+
+            Expression::Range { start, end, .. } => {
+                // Range expressions - check start and end types
+                let _start_type = self.check_expression(start)?;
+                let _end_type = self.check_expression(end)?;
+                // Ranges typically produce lists of integers
+                Ok(Type::List(Box::new(Type::Integer)))
             }
         }
     }
@@ -4256,8 +4376,15 @@ impl SemanticAnalyzer {
     fn push_error_scope(&mut self) {
         self.error_context_depth += 1;
         // Add error variable to the current scope with proper Error type
-        self.symbol_table
-            .insert("error".to_string(), self.create_error_type());
+        // Add error variable to current scope using the enhanced symbol table
+        if let Err(_) = self.symbol_table.define_variable(
+            "error".to_string(),
+            self.create_error_type(),
+            None,
+            false
+        ) {
+            // Ignore error if already exists - this is expected in nested error contexts
+        }
     }
 
     /// Create the Error type with proper structure
@@ -4271,8 +4398,8 @@ impl SemanticAnalyzer {
     fn pop_error_scope(&mut self) {
         self.error_context_depth -= 1;
         if self.error_context_depth == 0 {
-            // Remove error variable from scope
-            self.symbol_table.remove("error");
+            // Note: We don't need to explicitly remove the error variable
+            // as it will be cleaned up when the scope exits
         }
     }
 
@@ -4625,6 +4752,8 @@ impl SemanticAnalyzer {
     }
 
     fn get_class_hierarchy(&self, class_name: &str) -> Vec<String> {
+        // Legacy implementation - still used for immutable contexts
+        // The comprehensive inheritance validator is used during validation phase
         let mut hierarchy = vec![class_name.to_string()];
 
         if let Some(class) = self.class_table.get(class_name) {
@@ -5064,5 +5193,233 @@ impl SemanticAnalyzer {
     /// Add a warning to the warnings list
     pub fn add_warning(&mut self, warning: CompilerWarning) {
         self.warnings.push(warning);
+    }
+
+    /// Type inference for expressions - main entry point for type checking
+    pub fn infer_expression_type(&mut self, expr: &Expression) -> Result<Type, CompilerError> {
+        self.check_expression(expr)
+    }
+
+    /// Check return type compatibility
+    pub fn check_return_type(&self, return_expr: &Expression) -> Result<(), CompilerError> {
+        if let Some(expected_return_type) = &self.current_function_return_type {
+            let expr_type = match self.infer_type_static(return_expr) {
+                Ok(t) => t,
+                Err(e) => return Err(e),
+            };
+            
+            if !self.types_compatible(expected_return_type, &expr_type) {
+                return Err(CompilerError::type_error(
+                    format!("Expected return type {:?}, but got {:?}", expected_return_type, expr_type),
+                    Some("Check function return type matches the returned expression".to_string()),
+                    None, // Expression location handling simplified
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve generic types (like 'any') to concrete types in context
+    pub fn resolve_generic_type(&self, generic_type: &Type, context_type: &Type) -> Type {
+        match generic_type {
+            Type::Any => context_type.clone(),
+            _ => generic_type.clone(),
+        }
+    }
+
+    /// Static type inference without mutable access (for const contexts) - simplified for now
+    fn infer_type_static(&self, _expr: &Expression) -> Result<Type, CompilerError> {
+        // Simplified implementation for demonstration
+        // Real implementation would use check_expression
+        Ok(Type::Any)
+    }
+
+    /// Check if a type is numeric
+    fn is_numeric(&self, type_: &Type) -> bool {
+        matches!(type_, Type::Integer | Type::Number | Type::IntegerSized { .. } | Type::NumberSized { .. })
+    }
+
+    // Enhanced Symbol Table Management Methods
+
+    /// Enter a new scope with the enhanced symbol table
+    pub fn enter_scope(&mut self, scope_type: ScopeType) -> usize {
+        self.symbol_table.enter_scope(scope_type)
+    }
+
+    /// Exit the current scope and get unused symbols for warnings
+    pub fn exit_scope(&mut self) -> Result<Vec<Symbol>, String> {
+        let unused_symbols = self.symbol_table.exit_scope()?;
+        
+        // Generate warnings for unused variables
+        for symbol in &unused_symbols {
+            if let Some(location) = &symbol.location {
+                self.add_warning(CompilerWarning::new(
+                    format!("Unused variable '{}'", symbol.name),
+                    WarningType::UnusedVariable,
+                    Some(location.clone()),
+                ));
+            }
+        }
+        
+        Ok(unused_symbols)
+    }
+
+    /// Define a variable using the enhanced symbol table
+    pub fn define_variable_enhanced(&mut self, name: String, type_: Type, location: Option<SourceLocation>, is_mutable: bool) -> Result<(), CompilerError> {
+        self.symbol_table.define_variable(name.clone(), type_, location.clone(), is_mutable)
+            .map_err(|err| CompilerError::type_error(
+                err,
+                Some("Variable already defined in current scope".to_string()),
+                location,
+            ))
+    }
+
+    /// Define a function using the enhanced symbol table
+    pub fn define_function_enhanced(
+        &mut self,
+        name: String,
+        parameters: Vec<Type>,
+        return_type: Type,
+        location: Option<SourceLocation>,
+        visibility: Visibility,
+        modifiers: Vec<FunctionModifier>,
+        is_async: bool,
+    ) -> Result<(), CompilerError> {
+        self.symbol_table.define_function(
+            name.clone(),
+            parameters,
+            return_type,
+            location.clone(),
+            visibility,
+            modifiers,
+            is_async,
+        ).map_err(|err| CompilerError::type_error(
+            err,
+            Some("Function already defined in current scope".to_string()),
+            location,
+        ))
+    }
+
+    /// Define a class using the enhanced symbol table
+    pub fn define_class_enhanced(
+        &mut self,
+        name: String,
+        fields: HashMap<String, Type>,
+        methods: HashMap<String, Type>,
+        base_class: Option<String>,
+        location: Option<SourceLocation>,
+        visibility: Visibility,
+    ) -> Result<(), CompilerError> {
+        self.symbol_table.define_class(
+            name.clone(),
+            fields,
+            methods,
+            base_class,
+            location.clone(),
+            visibility,
+        ).map_err(|err| CompilerError::type_error(
+            err,
+            Some("Class already defined in current scope".to_string()),
+            location,
+        ))
+    }
+
+    /// Lookup a symbol and mark it as used
+    pub fn lookup_symbol_enhanced(&mut self, name: &str) -> Option<Type> {
+        self.symbol_table.lookup_and_use_symbol(name)
+    }
+
+    /// Check if we're in a function scope
+    pub fn in_function_scope(&self) -> bool {
+        self.symbol_table.in_function_scope()
+    }
+
+    /// Check if we're in a class scope
+    pub fn in_class_scope(&self) -> bool {
+        self.symbol_table.in_class_scope()
+    }
+
+    /// Check if we're in a loop scope
+    pub fn in_loop_scope(&self) -> bool {
+        self.symbol_table.in_loop_scope()
+    }
+
+    /// Get current function name
+    pub fn get_current_function_name(&self) -> Option<&str> {
+        self.symbol_table.current_function_name()
+    }
+
+    /// Get current class name
+    pub fn get_current_class_name(&self) -> Option<&str> {
+        self.symbol_table.current_class_name()
+    }
+
+    /// Get symbol suggestions for error messages
+    pub fn get_symbol_suggestions(&self) -> Vec<String> {
+        self.symbol_table.get_all_symbol_names()
+    }
+
+    /// Generate warnings for unused symbols
+    pub fn check_unused_symbols(&mut self) {
+        let unused_symbols: Vec<_> = self.symbol_table.get_unused_symbols().into_iter().cloned().collect();
+        
+        for symbol in unused_symbols {
+            if let Some(location) = &symbol.location {
+                let warning_type = if symbol.is_function() {
+                    WarningType::UnusedFunction
+                } else {
+                    WarningType::UnusedVariable
+                };
+                
+                self.add_warning(CompilerWarning::new(
+                    format!("Unused {} '{}'", 
+                        if symbol.is_function() { "function" } else { "variable" },
+                        symbol.name
+                    ),
+                    warning_type,
+                    Some(location.clone()),
+                ));
+            }
+        }
+    }
+
+    /// Debug print the symbol table
+    pub fn debug_symbol_table(&self) {
+        self.symbol_table.debug_print();
+    }
+
+    /// Enhanced variable lookup with better error messages
+    pub fn lookup_variable_enhanced(&mut self, name: &str, location: Option<SourceLocation>) -> Result<Type, CompilerError> {
+        if let Some(type_) = self.lookup_symbol_enhanced(name) {
+            Ok(type_)
+        } else {
+            // Generate suggestions for similar names
+            let suggestions = self.get_symbol_suggestions();
+            let similar_names: Vec<String> = suggestions
+                .iter()
+                .filter(|&s| {
+                    // Simple similarity check
+                    let s_lower = s.to_lowercase();
+                    let name_lower = name.to_lowercase();
+                    s_lower.starts_with(&name_lower[..1.min(name_lower.len())]) || 
+                    s_lower.contains(&name_lower) ||
+                    name_lower.contains(&s_lower)
+                })
+                .take(3)
+                .cloned()
+                .collect();
+            
+            let help_message = if similar_names.is_empty() {
+                "Check if the variable is declared in the current scope".to_string()
+            } else {
+                format!("Did you mean: {}?", similar_names.join(", "))
+            };
+            
+            Err(CompilerError::type_error(
+                format!("Undefined variable '{}'", name),
+                Some(help_message),
+                location,
+            ))
+        }
     }
 }

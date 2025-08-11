@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::ast::{Expr, Type, FunctionDef, Statement};
+use crate::ast::{Expression, Type, Function, Statement};
 use crate::error::{CompilerError, CompilerResult};
 
 /// Type checker for semantic analysis
@@ -27,8 +27,8 @@ impl TypeChecker {
     pub fn check_program(&mut self, statements: &[Statement]) -> CompilerResult<()> {
         // First pass: collect function declarations
         for stmt in statements {
-            if let Statement::FunctionDef(func) = stmt {
-                self.register_function(func)?;
+            if let Statement::FunctionDeclaration { function, .. } = stmt {
+                self.register_function(function)?;
             }
         }
 
@@ -40,17 +40,17 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn register_function(&mut self, func: &FunctionDef) -> CompilerResult<()> {
+    fn register_function(&mut self, func: &Function) -> CompilerResult<()> {
         let func_type = FunctionType {
-            params: func.params.iter().map(|p| p.type_).collect(),
+            params: func.parameters.iter().map(|p| p.type_).collect(),
             return_type: func.return_type,
         };
 
         if self.function_table.insert(func.name.clone(), func_type).is_some() {
             return Err(CompilerError::undefined_function(
                 &func.name,
-                func.location.line,
-                func.location.column,
+                func.location.as_ref().map(|l| l.line).unwrap_or(0),
+                func.location.as_ref().map(|l| l.column).unwrap_or(0),
             ));
         }
 
@@ -66,7 +66,7 @@ impl TypeChecker {
                         return Err(CompilerError::type_error(
                             location.line,
                             location.column,
-                            format!("Cannot initialize variable of type {:?} with expression of type { type_, expr_type}"),
+                            format!("Cannot initialize variable of type {:?} with expression of type {:?}", type_, expr_type),
                         ));
                     }
                 }
@@ -80,7 +80,7 @@ impl TypeChecker {
                     return Err(CompilerError::type_error(
                         location.line,
                         location.column,
-                        format!("Cannot assign value of type {:?} to variable of type { value_type, target_type}"),
+                        format!("Cannot assign value of type {:?} to variable of type {:?}", value_type, target_type),
                     ));
                 }
                 Ok(())
@@ -107,7 +107,7 @@ impl TypeChecker {
                             return Err(CompilerError::type_error(
                                 location.as_ref().map(|l| l.line).unwrap_or(0),
                                 location.as_ref().map(|l| l.column).unwrap_or(0),
-                                format!("Return type mismatch: expected {:?}, found { return_type, expr_type}"),
+                                format!("Return type mismatch: expected {:?}, found {:?}", return_type, expr_type),
                             ));
                         }
                     } else if *return_type != Type::Void {
@@ -185,7 +185,7 @@ impl TypeChecker {
                             Err(CompilerError::type_error(
                                 location.line,
                                 location.column,
-                                format!("Cannot perform arithmetic operation on types {:?} and { left_type, right_type}"),
+                                format!("Cannot perform arithmetic operation on types {:?} and {:?}", left_type, right_type),
                             ))
                         }
                     }
@@ -196,7 +196,7 @@ impl TypeChecker {
                             Err(CompilerError::type_error(
                                 location.line,
                                 location.column,
-                                format!("Cannot compare values of different types: {:?} and { left_type, right_type}"),
+                                format!("Cannot compare values of different types: {:?} and {:?}", left_type, right_type),
                             ))
                         }
                     }
@@ -224,7 +224,7 @@ impl TypeChecker {
                         return Err(CompilerError::type_error(
                             location.line,
                             location.column,
-                            format!("Function {} expects {} arguments but got {function, func_type.params.len(}"), args.len()),
+                            format!("Function {} expects {} arguments but got {}", function, func_type.params.len(), args.len()),
                         ));
                     }
                     for (arg, expected_type) in args.iter().zip(func_type.params.iter()) {
@@ -233,7 +233,7 @@ impl TypeChecker {
                             return Err(CompilerError::type_error(
                                 location.line,
                                 location.column,
-                                format!("Expected argument of type {:?} but got { expected_type, arg_type}"),
+                                format!("Expected argument of type {:?} but got {:?}", expected_type, arg_type),
                             ));
                         }
                     }

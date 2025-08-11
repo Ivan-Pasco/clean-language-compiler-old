@@ -19,6 +19,8 @@ fn test_code_generation() {
     // Example Program structure
     let program = Program {
         imports: vec![],
+        statements: vec![],
+        location: None,
         functions: vec![AstFunction {
             name: "add".to_string(),
             description: None,
