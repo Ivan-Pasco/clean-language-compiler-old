@@ -67,6 +67,18 @@ cargo run --bin debug_wasm -- file.wasm
 cargo run --bin debug_parser -- file.clean
 ```
 
+### Language Server
+```bash
+# Build the language server
+cd language-server && cargo build --release
+
+# Run language server for VS Code integration
+cd language-server && cargo run --release
+
+# Test language server with debug output
+RUST_LOG=debug cargo run --bin clean-language-server
+```
+
 ### Package Management
 ```bash
 # Initialize a new Clean Language package
@@ -107,6 +119,12 @@ cargo run --bin clean-language-compiler package install
 - List operations, math functions, string manipulation
 - Memory management utilities
 - Type conversion functions
+
+**Language Server** (`language-server/`): IDE support and LSP implementation
+- Real-time syntax analysis and error detection
+- Intelligent autocompletion and hover information
+- Integration with VS Code, Neovim, and other LSP clients
+- Comprehensive IDE features for Clean Language development
 
 ### Key Features
 

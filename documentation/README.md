@@ -14,6 +14,7 @@ If you're new to this project, start here:
 4. **[Parser Documentation](./parser.md)** - Parsing system and grammar details
 5. **[Semantic Analysis](./semantic-analysis.md)** - Type checking and semantic validation
 6. **[Standard Library](./standard-library.md)** - Built-in functions and runtime system
+7. **[Language Server](./language-server.md)** - IDE support and LSP implementation
 
 ## Documentation Structure
 
@@ -65,6 +66,14 @@ If you're new to this project, start here:
 
 **When to read**: Adding standard library functions, debugging runtime issues
 
+### 🔧 **[Language Server](./language-server.md)**
+- LSP implementation for IDE integration and support
+- Real-time syntax analysis and intelligent autocompletion
+- VS Code extension development and other editor integrations
+- Language server maintenance and update procedures
+
+**When to read**: Setting up IDE support, extending language server features, debugging editor integration
+
 ## Key Resources
 
 ### Language Specification
@@ -93,6 +102,7 @@ The authoritative language specification is located at:
 | Fix type errors | [Semantic Analysis](./semantic-analysis.md) | `src/semantic/` modules |
 | Add stdlib function | [Standard Library](./standard-library.md) | `src/stdlib/` modules |
 | Debug WASM output | [WebAssembly](./webassembly.md) | `src/codegen/` modules |
+| Setup IDE support | [Language Server](./language-server.md) | `language-server/` modules |
 | Optimize performance | [Development Guide](./development-guide.md) | All modules |
 
 ### Debugging Quick Start
@@ -144,6 +154,7 @@ Clean Language Source (.cln)
 - **Code Generator**: Produces WebAssembly bytecode with memory management
 - **Standard Library**: Provides built-in functions and runtime support
 - **Runtime**: Handles async operations, I/O, and host integration
+- **Language Server**: Provides IDE integration via Language Server Protocol (LSP)
 
 ## Development Principles
 

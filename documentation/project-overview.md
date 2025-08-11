@@ -49,7 +49,13 @@ The Clean Language compiler follows a traditional multi-stage compilation pipeli
 - **Host Integration**: WebAssembly imports for system operations
 - **Type Conversions**: Seamless type conversion between Clean types
 
-### 5. **Runtime System** (`src/runtime/`)
+### 5. **Language Server** (`language-server/`)
+- **LSP Implementation**: Full Language Server Protocol support for IDE integration
+- **Real-time Analysis**: Syntax highlighting, error detection, and type checking
+- **Developer Tools**: Intelligent autocompletion, hover information, code formatting
+- **Editor Integration**: Native support for VS Code, Neovim, Emacs, and other LSP clients
+
+### 6. **Runtime System** (`src/runtime/`)
 - **Async Support**: Task scheduling and future resolution
 - **I/O Operations**: File and network I/O through host imports
 - **Error Handling**: Runtime error propagation and recovery

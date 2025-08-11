@@ -2,7 +2,7 @@
 
 This document provides comprehensive development guidance for working with the Clean Language compiler project. It covers best practices, common workflows, debugging techniques, and development patterns specific to this codebase.
 
-> 🔗 **Essential References**: [Language Specification](../docs/language/Clean_Language_Specification.md) • [CLAUDE.md Commands](../CLAUDE.md) • [Parser](./parser.md) • [Semantic Analysis](./semantic-analysis.md) • [WebAssembly](./webassembly.md) • [Standard Library](./standard-library.md)
+> 🔗 **Essential References**: [Language Specification](../docs/language/Clean_Language_Specification.md) • [CLAUDE.md Commands](../CLAUDE.md) • [Parser](./parser.md) • [Semantic Analysis](./semantic-analysis.md) • [WebAssembly](./webassembly.md) • [Standard Library](./standard-library.md) • [Language Server](./language-server.md)
 
 ## Getting Started
 
