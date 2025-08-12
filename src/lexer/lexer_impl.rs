@@ -103,6 +103,7 @@ impl CleanLexer {
     }
 
     /// Check if a string contains interpolation markers
+    #[allow(dead_code)]
     fn has_interpolation(s: &str) -> bool {
         s.contains('{') && s.contains('}')
     }

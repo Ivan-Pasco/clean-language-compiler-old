@@ -152,6 +152,7 @@ impl WasmGenerator {
     }
 
     /// Get return types for a function type pattern
+    #[allow(dead_code)]
     fn get_return_types_for_function_type(&self, param_types: Vec<ValType>) -> Vec<ValType> {
         // Map specific parameter patterns to return types
         match param_types.as_slice() {

@@ -121,6 +121,7 @@ pub enum SyncPoint {
 #[derive(Debug, Clone)]
 pub struct LexerRecovery {
     /// Common character substitutions for recovery
+    #[allow(dead_code)]
     char_substitutions: HashMap<char, Vec<char>>,
 }
 
@@ -189,6 +190,7 @@ impl LexerRecovery {
 #[derive(Debug, Clone)]
 pub struct ParserRecovery {
     /// Synchronization tokens for recovery
+    #[allow(dead_code)]
     sync_tokens: Vec<String>,
 }
 
@@ -255,6 +257,7 @@ impl ParserRecovery {
 #[derive(Debug, Clone)]
 pub struct SemanticRecovery {
     /// Default types for recovery
+    #[allow(dead_code)]
     default_types: HashMap<String, String>,
 }
 

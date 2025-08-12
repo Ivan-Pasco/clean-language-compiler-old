@@ -2,7 +2,6 @@
 //!
 //! LIR represents WebAssembly-ready instruction sequences
 
-use crate::ir::*;
 
 /// LIR Program - WebAssembly ready
 #[derive(Debug, Clone)]

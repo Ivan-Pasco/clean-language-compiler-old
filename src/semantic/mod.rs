@@ -16,7 +16,7 @@ pub use inheritance::InheritanceValidator;
 use scope::Scope;
 pub use symbol_table::{ScopeInfo, ScopeType, Symbol, SymbolKind, SymbolTable};
 // pub use type_checker::TypeChecker;  // Temporarily disabled
-pub use type_constraint::*;
+pub use type_constraint::{TypeConstraint as SemanticTypeConstraint, NumericTypeConstraint, BaseTypeConstraint, AnyTypeConstraint, ComparableConstraint};
 
 pub struct SemanticAnalyzer {
     // Enhanced symbol table with comprehensive scope management
@@ -3314,7 +3314,7 @@ impl SemanticAnalyzer {
             Expression::NamespaceCall {
                 namespace,
                 function,
-                arguments,
+                arguments: _,
                 ..
             } => {
                 // Namespace calls like math.sqrt(), string.length()
@@ -3333,7 +3333,7 @@ impl SemanticAnalyzer {
                 // Match expressions - infer type from first case
                 let _value_type = self.check_expression(value)?;
                 if let Some(first_case) = cases.first() {
-                    if let Some(first_stmt) = first_case.body.first() {
+                    if let Some(_first_stmt) = first_case.body.first() {
                         // TODO: Better type inference for match expressions
                         return Ok(Type::Any);
                     }
@@ -5240,6 +5240,7 @@ impl SemanticAnalyzer {
     }
 
     /// Check if a type is numeric
+    #[allow(dead_code)]
     fn is_numeric(&self, type_: &Type) -> bool {
         matches!(
             type_,

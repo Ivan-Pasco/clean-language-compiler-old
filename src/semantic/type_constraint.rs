@@ -2,6 +2,7 @@ use crate::ast::Type;
 
 /// Type constraint trait for semantic analysis
 pub trait TypeConstraint: Send + Sync {
+    #[allow(dead_code)]
     fn check(&self, type_: &Type) -> bool;
 }
 
@@ -60,6 +61,7 @@ pub struct InheritanceConstraint {
 }
 
 impl InheritanceConstraint {
+    #[allow(dead_code)]
     pub fn new(base_type: Type) -> Self {
         Self { base_type }
     }

@@ -121,6 +121,16 @@ enum Commands {
         #[arg(long)]
         recover_errors: bool,
     },
+    /// Run a Clean Language source file or WebAssembly binary
+    Run {
+        /// Input file to run (.cln source file or .wasm binary)
+        #[arg(short, long)]
+        input: String,
+
+        /// Enable debug output
+        #[arg(short, long)]
+        debug: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -240,6 +250,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             show_tree,
             recover_errors,
         } => handle_parse(input, show_tree, recover_errors).await?,
+        Commands::Run { input, debug } => handle_run(input, debug).await?,
     }
 
     Ok(())
@@ -860,6 +871,467 @@ async fn handle_parse(
                 }
             }
         }
+    }
+
+    Ok(())
+}
+
+async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if !Path::new(&input).exists() {
+        eprintln!("❌ Error: File '{input}' not found");
+        return Ok(());
+    }
+
+    let input_path = Path::new(&input);
+    let wasm_bytes = match input_path.extension().and_then(|s| s.to_str()) {
+        Some("cln") => {
+            // Handle Clean Language source file - compile to WASM first
+            println!("🔧 Compiling Clean Language file: {input}");
+            
+            let source = fs::read_to_string(&input)?;
+            if debug {
+                println!("📝 Source file size: {} characters", source.len());
+            }
+
+            // Try to compile the source to WASM
+            let wasm_binary = match compile_with_file(&source, &input) {
+                Ok(binary) => {
+                    if debug {
+                        println!("✅ Compilation successful: {} bytes of WASM generated", binary.len());
+                    }
+                    binary
+                }
+                Err(compile_error) => {
+                    eprintln!("❌ Compilation failed: {compile_error}");
+                    return Err(compile_error.into());
+                }
+            };
+
+            println!("🚀 Running compiled WebAssembly...");
+            wasm_binary
+        }
+        Some("wasm") => {
+            // Handle WebAssembly binary file directly
+            println!("🚀 Running WebAssembly file: {input}");
+            
+            let wasm_bytes = fs::read(&input)?;
+            if debug {
+                println!("📦 WASM file size: {} bytes", wasm_bytes.len());
+            }
+            wasm_bytes
+        }
+        Some(ext) => {
+            eprintln!("❌ Error: Unsupported file extension '.{ext}'");
+            eprintln!("   Supported formats: .cln (Clean Language source), .wasm (WebAssembly binary)");
+            return Ok(());
+        }
+        None => {
+            eprintln!("❌ Error: File has no extension");
+            eprintln!("   Supported formats: .cln (Clean Language source), .wasm (WebAssembly binary)");
+            return Ok(());
+        }
+    };
+
+    // Use wasmtime to execute the WASM file
+    use wasmtime::*;
+    use std::sync::Mutex;
+
+    // Global allocator for dynamic string storage
+    static NEXT_ALLOCATION_OFFSET: Mutex<usize> = Mutex::new(2048);
+
+    // Helper function to allocate memory for a string in WASM memory
+    fn allocate_string_in_memory(
+        memory: &Memory,
+        caller: &mut Caller<'_, ()>,
+        string_value: &str,
+        debug: bool,
+    ) -> i32 {
+        let string_bytes = string_value.as_bytes();
+        let total_size = 4 + string_bytes.len();
+
+        let mut next_offset = NEXT_ALLOCATION_OFFSET.lock().unwrap();
+        let offset = *next_offset;
+        *next_offset += (total_size + 7) & !7; // Align to 8-byte boundary
+        drop(next_offset);
+
+        let data = memory.data_mut(caller);
+
+        if offset + total_size >= data.len() {
+            if debug {
+                println!("⚠️  WARNING: Not enough WASM memory for string allocation");
+            }
+            return 0;
+        }
+
+        data[offset..offset + 4].copy_from_slice(&(string_bytes.len() as u32).to_le_bytes());
+        data[offset + 4..offset + 4 + string_bytes.len()].copy_from_slice(string_bytes);
+
+        if debug {
+            println!("📝 Allocated '{}' at address {}", string_value, offset);
+        }
+
+        offset as i32
+    }
+
+    // Create engine and store
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, ());
+
+    // Create module
+    let module = Module::new(&engine, &wasm_bytes)?;
+
+    // Create linker and add imports
+    let mut linker = Linker::new(&engine);
+
+    // Add print functions
+    linker.func_wrap("env", "print", move |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+        if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+            if let Some(data) = mem.data(&caller).get(ptr as usize..(ptr + len) as usize) {
+                if let Ok(s) = std::str::from_utf8(data) {
+                    print!("{}", s);
+                } else {
+                    print!("[invalid utf8: {} bytes]", len);
+                }
+            }
+        }
+    })?;
+
+    linker.func_wrap("env", "printl", move |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+        if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+            if let Some(data) = mem.data(&caller).get(ptr as usize..(ptr + len) as usize) {
+                if let Ok(s) = std::str::from_utf8(data) {
+                    println!("{}", s);
+                } else {
+                    println!("[invalid utf8: {} bytes]", len);
+                }
+            }
+        }
+    })?;
+
+    // Add memory runtime functions with correct signatures
+    linker.func_wrap("memory_runtime", "mem_alloc", |size: i32, alignment: i32| -> i32 { 
+        // Simple allocation stub - returns aligned size
+        (size + alignment - 1) & !(alignment - 1)
+    })?;
+    linker.func_wrap("memory_runtime", "mem_retain", |_ptr: i32| {})?;
+    linker.func_wrap("memory_runtime", "mem_release", |_ptr: i32| {})?;
+
+    // Add type conversion functions
+    let debug_copy = debug;
+    linker.func_wrap("env", "int_to_string", move |mut caller: Caller<'_, ()>, value: i32| -> i32 {
+        let string_value = value.to_string();
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            allocate_string_in_memory(&memory, &mut caller, &string_value, debug_copy)
+        } else {
+            0
+        }
+    })?;
+
+    let debug_copy = debug;
+    linker.func_wrap("env", "float_to_string", move |mut caller: Caller<'_, ()>, value: f64| -> i32 {
+        let string_value = value.to_string();
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            allocate_string_in_memory(&memory, &mut caller, &string_value, debug_copy)
+        } else {
+            0
+        }
+    })?;
+
+    // Input functions - complete implementation for basic I/O
+    let debug_input = debug;
+    linker.func_wrap("env", "input", move |mut caller: Caller<'_, ()>, prompt_ptr: i32, prompt_len: i32| -> i32 {
+        // Read prompt from WASM memory and display it
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            if let Some(data) = memory.data(&caller).get(prompt_ptr as usize..(prompt_ptr + prompt_len) as usize) {
+                if let Ok(prompt) = std::str::from_utf8(data) {
+                    print!("{}", prompt);
+                    std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+                }
+            }
+        }
+        
+        // Read input from stdin
+        use std::io::{stdin, BufRead, BufReader};
+        let input = BufReader::new(stdin());
+        if let Ok(line) = input.lines().next().unwrap_or(Ok(String::new())) {
+            if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+                return allocate_string_in_memory(&memory, &mut caller, &line, debug_input);
+            }
+        }
+        0
+    })?;
+
+    linker.func_wrap("env", "input_integer", |mut caller: Caller<'_, ()>, prompt_ptr: i32, prompt_len: i32| -> i32 {
+        // Read prompt from WASM memory and display it
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            if let Some(data) = memory.data(&caller).get(prompt_ptr as usize..(prompt_ptr + prompt_len) as usize) {
+                if let Ok(prompt) = std::str::from_utf8(data) {
+                    print!("{}", prompt);
+                    std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+                }
+            }
+        }
+        
+        // Read integer from stdin
+        use std::io::{stdin, BufRead, BufReader};
+        let input = BufReader::new(stdin());
+        if let Ok(line) = input.lines().next().unwrap_or(Ok(String::new())) {
+            if let Ok(value) = line.trim().parse::<i32>() {
+                return value;
+            }
+        }
+        0
+    })?;
+
+    linker.func_wrap("env", "input_float", |mut caller: Caller<'_, ()>, prompt_ptr: i32, prompt_len: i32| -> f64 {
+        // Read prompt from WASM memory and display it
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            if let Some(data) = memory.data(&caller).get(prompt_ptr as usize..(prompt_ptr + prompt_len) as usize) {
+                if let Ok(prompt) = std::str::from_utf8(data) {
+                    print!("{}", prompt);
+                    std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+                }
+            }
+        }
+        
+        // Read float from stdin
+        use std::io::{stdin, BufRead, BufReader};
+        let input = BufReader::new(stdin());
+        if let Ok(line) = input.lines().next().unwrap_or(Ok(String::new())) {
+            if let Ok(value) = line.trim().parse::<f64>() {
+                return value;
+            }
+        }
+        0.0
+    })?;
+
+    linker.func_wrap("env", "input_yesno", |mut caller: Caller<'_, ()>, prompt_ptr: i32, prompt_len: i32| -> i32 {
+        // Read prompt from WASM memory and display it
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            if let Some(data) = memory.data(&caller).get(prompt_ptr as usize..(prompt_ptr + prompt_len) as usize) {
+                if let Ok(prompt) = std::str::from_utf8(data) {
+                    print!("{}", prompt);
+                    std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+                }
+            }
+        }
+        
+        // Read yes/no from stdin
+        use std::io::{stdin, BufRead, BufReader};
+        let input = BufReader::new(stdin());
+        if let Ok(line) = input.lines().next().unwrap_or(Ok(String::new())) {
+            let answer = line.trim().to_lowercase();
+            if answer == "y" || answer == "yes" || answer == "true" || answer == "1" {
+                return 1;
+            }
+        }
+        0
+    })?;
+
+    linker.func_wrap("env", "input_range", |_: i32, _: i32, _: i32, _: i32| -> i32 {
+        // Stub implementation for range input validation
+        // This would validate if input is within a specified range
+        println!("Note: input_range function not fully implemented");
+        0
+    })?;
+
+    // String conversion functions
+    let debug_copy = debug;
+    linker.func_wrap("env", "bool_to_string", move |mut caller: Caller<'_, ()>, value: i32| -> i32 {
+        let string_value = if value != 0 { "true" } else { "false" };
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            allocate_string_in_memory(&memory, &mut caller, string_value, debug_copy)
+        } else {
+            0
+        }
+    })?;
+
+    linker.func_wrap("env", "string_to_int", |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+        // Read string from memory at ptr (expects length-prefixed string)
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            let data = memory.data(&caller);
+            if let Some(len_bytes) = data.get(ptr as usize..(ptr + 4) as usize) {
+                let len = u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]) as usize;
+                if let Some(str_data) = data.get((ptr + 4) as usize..(ptr + 4) as usize + len) {
+                    if let Ok(s) = std::str::from_utf8(str_data) {
+                        if let Ok(value) = s.parse::<i32>() {
+                            return value;
+                        }
+                    }
+                }
+            }
+        }
+        0
+    })?;
+
+    linker.func_wrap("env", "string_to_float", |mut caller: Caller<'_, ()>, ptr: i32| -> f64 {
+        // Read string from memory at ptr (expects length-prefixed string)
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            let data = memory.data(&caller);
+            if let Some(len_bytes) = data.get(ptr as usize..(ptr + 4) as usize) {
+                let len = u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]) as usize;
+                if let Some(str_data) = data.get((ptr + 4) as usize..(ptr + 4) as usize + len) {
+                    if let Ok(s) = std::str::from_utf8(str_data) {
+                        if let Ok(value) = s.parse::<f64>() {
+                            return value;
+                        }
+                    }
+                }
+            }
+        }
+        0.0
+    })?;
+
+    // File I/O functions - basic stub implementations
+    linker.func_wrap("env", "file_write", |mut caller: Caller<'_, ()>, path_ptr: i32, path_len: i32, content_ptr: i32, content_len: i32| -> i32 {
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            let data = memory.data(&caller);
+            if let (Some(path_data), Some(content_data)) = (
+                data.get(path_ptr as usize..(path_ptr + path_len) as usize),
+                data.get(content_ptr as usize..(content_ptr + content_len) as usize)
+            ) {
+                if let (Ok(path), Ok(content)) = (std::str::from_utf8(path_data), std::str::from_utf8(content_data)) {
+                    if let Err(_) = std::fs::write(path, content) {
+                        return -1; // Error
+                    }
+                    return 0; // Success
+                }
+            }
+        }
+        -1
+    })?;
+
+    let debug_file_read = debug;
+    linker.func_wrap("env", "file_read", move |mut caller: Caller<'_, ()>, path_ptr: i32, path_len: i32, max_size: i32| -> i32 {
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            let data = memory.data(&caller);
+            if let Some(path_data) = data.get(path_ptr as usize..(path_ptr + path_len) as usize) {
+                if let Ok(path) = std::str::from_utf8(path_data) {
+                    if let Ok(content) = std::fs::read_to_string(path) {
+                        let truncated_content = if content.len() > max_size as usize {
+                            &content[..max_size as usize]
+                        } else {
+                            &content
+                        };
+                        return allocate_string_in_memory(&memory, &mut caller, truncated_content, debug_file_read);
+                    }
+                }
+            }
+        }
+        0
+    })?;
+
+    linker.func_wrap("env", "file_exists", |mut caller: Caller<'_, ()>, path_ptr: i32, path_len: i32| -> i32 {
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            let data = memory.data(&caller);
+            if let Some(path_data) = data.get(path_ptr as usize..(path_ptr + path_len) as usize) {
+                if let Ok(path) = std::str::from_utf8(path_data) {
+                    return if std::path::Path::new(path).exists() { 1 } else { 0 };
+                }
+            }
+        }
+        0
+    })?;
+
+    linker.func_wrap("env", "file_delete", |mut caller: Caller<'_, ()>, path_ptr: i32, path_len: i32| -> i32 {
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            let data = memory.data(&caller);
+            if let Some(path_data) = data.get(path_ptr as usize..(path_ptr + path_len) as usize) {
+                if let Ok(path) = std::str::from_utf8(path_data) {
+                    if let Err(_) = std::fs::remove_file(path) {
+                        return -1; // Error
+                    }
+                    return 0; // Success
+                }
+            }
+        }
+        -1
+    })?;
+
+    linker.func_wrap("env", "file_append", |mut caller: Caller<'_, ()>, path_ptr: i32, path_len: i32, content_ptr: i32, content_len: i32| -> i32 {
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            let data = memory.data(&caller);
+            if let (Some(path_data), Some(content_data)) = (
+                data.get(path_ptr as usize..(path_ptr + path_len) as usize),
+                data.get(content_ptr as usize..(content_ptr + content_len) as usize)
+            ) {
+                if let (Ok(path), Ok(content)) = (std::str::from_utf8(path_data), std::str::from_utf8(content_data)) {
+                    use std::fs::OpenOptions;
+                    use std::io::Write;
+                    if let Ok(mut file) = OpenOptions::new().append(true).create(true).open(path) {
+                        if let Err(_) = file.write_all(content.as_bytes()) {
+                            return -1; // Error
+                        }
+                        return 0; // Success
+                    }
+                }
+            }
+        }
+        -1
+    })?;
+
+    // HTTP functions - basic stub implementations
+    let debug_http = debug;
+    linker.func_wrap("env", "http_get", move |mut caller: Caller<'_, ()>, _url_ptr: i32, _url_len: i32| -> i32 {
+        // Basic stub - would need proper HTTP client implementation
+        if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+            let error_message = "HTTP functions not fully implemented";
+            allocate_string_in_memory(&memory, &mut caller, error_message, debug_http)
+        } else {
+            0
+        }
+    })?;
+
+    // HTTP stub functions with correct signatures matching WASM imports
+    linker.func_wrap("env", "http_post", |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_put", |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_patch", |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_delete", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_head", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_options", |_: i32, _: i32| -> i32 { 0 })?;
+    // HTTP functions with headers - actually use 4 parameters based on sig=19
+    linker.func_wrap("env", "http_get_with_headers", |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_post_with_headers", |_: i32, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_post_json", |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_put_json", |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_patch_json", |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_post_form", |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 })?;
+    
+    // HTTP configuration functions
+    linker.func_wrap("env", "http_set_user_agent", |_: i32, _: i32| {})?;
+    linker.func_wrap("env", "http_set_timeout", |_: i32| {})?;
+    linker.func_wrap("env", "http_set_max_redirects", |_: i32| {})?;
+    linker.func_wrap("env", "http_enable_cookies", |_: i32| {})?;
+    
+    // HTTP response functions
+    linker.func_wrap("env", "http_get_response_code", || -> i32 { 200 })?;
+    linker.func_wrap("env", "http_get_response_headers", || -> i32 { 0 })?;
+    linker.func_wrap("env", "http_encode_url", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_decode_url", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_build_query", |_: i32, _: i32| -> i32 { 0 })?;
+
+    // Instantiate and run
+    let instance = linker.instantiate(&mut store, &module)?;
+
+    if debug {
+        println!("✅ WebAssembly module loaded successfully");
+        println!("📋 Exported functions: {:?}", 
+            instance.exports(&mut store).map(|e| e.name()).collect::<Vec<_>>());
+    }
+
+    // Get and call the start function
+    if let Some(start_func) = instance.get_func(&mut store, "start") {
+        if debug {
+            println!("🎯 Executing start function...");
+            println!("--- Output ---");
+        }
+        start_func.call(&mut store, &[], &mut [])?;
+        if debug {
+            println!("--- End Output ---");
+            println!("✅ Execution completed successfully!");
+        }
+    } else {
+        eprintln!("❌ Error: start function not found in WASM module");
     }
 
     Ok(())

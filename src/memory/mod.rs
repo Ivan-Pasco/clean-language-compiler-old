@@ -108,6 +108,7 @@ impl Default for MemoryLayout {
 
 /// Main memory manager
 pub struct MemoryManager {
+    #[allow(dead_code)]
     layout: MemoryLayout,
     allocator: Allocator,
     string_pool: StringPool,

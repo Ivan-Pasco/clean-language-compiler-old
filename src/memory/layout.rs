@@ -40,6 +40,7 @@ impl MemoryPermissions {
 /// Memory layout manager
 pub struct MemoryLayoutManager {
     regions: Vec<MemoryRegion>,
+    #[allow(dead_code)]
     total_size: u32,
 }
 

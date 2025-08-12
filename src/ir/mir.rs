@@ -2,7 +2,6 @@
 //!
 //! MIR represents control flow graphs with basic blocks
 
-use crate::ir::*;
 use std::collections::HashMap;
 
 /// MIR Program - control flow representation

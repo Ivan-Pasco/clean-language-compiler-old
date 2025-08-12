@@ -216,7 +216,7 @@ fn fold_instruction(instruction: &MIRInstruction) -> Option<MIRInstruction> {
         | MIRInstruction::Add(dest, MIROperand::Constant(MIRConstant::Integer(0)), operand) => {
             // This would become a move operation - simplified representation
             match operand {
-                MIROperand::Local(src) => Some(MIRInstruction::Load(*dest, operand.clone())),
+                MIROperand::Local(_src) => Some(MIRInstruction::Load(*dest, operand.clone())),
                 _ => None,
             }
         }
@@ -297,7 +297,7 @@ fn inline_calls_in_function(
 
         for instruction in &block.instructions {
             match instruction {
-                MIRInstruction::Call(dest, func_name, args) => {
+                MIRInstruction::Call(_dest, func_name, _args) => {
                     if let Some(candidate_instructions) = inline_candidates.get(func_name) {
                         // Simple inlining: copy instructions and adjust operands
                         for candidate_instr in candidate_instructions {

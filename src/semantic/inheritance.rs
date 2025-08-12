@@ -170,7 +170,7 @@ impl InheritanceValidator {
         let mut adjacency_list: HashMap<String, Vec<String>> = HashMap::new();
 
         // Build the inheritance graph
-        for (class_name, class) in &self.class_registry {
+        for (class_name, _class) in &self.class_registry {
             in_degree.insert(class_name.clone(), 0);
             adjacency_list.insert(class_name.clone(), Vec::new());
         }
@@ -490,7 +490,7 @@ impl InheritanceValidator {
 
         for field in &class.fields {
             // Check if this field shadows a base class field
-            if let Some(base_field) = base_class.fields.iter().find(|f| f.name == field.name) {
+            if let Some(_base_field) = base_class.fields.iter().find(|f| f.name == field.name) {
                 // In Clean Language, field shadowing is generally not allowed
                 // to prevent confusion and maintain clear inheritance semantics
                 return Err(CompilerError::type_error(
