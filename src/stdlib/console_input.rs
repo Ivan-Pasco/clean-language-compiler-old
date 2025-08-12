@@ -7,6 +7,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_encoder::{Instruction, MemArg};
 
+// Type IDs for memory allocation
+const CONSOLE_TYPE_ID: u32 = 3; // For console input strings and results
+
 /// Console input implementation for Clean Language
 /// Provides comprehensive user input functionality with type conversion and validation
 pub struct ConsoleInputManager {
@@ -286,6 +289,7 @@ impl ConsoleInputManager {
             }),
             // Create result string (4 bytes length + data)
             Instruction::I32Const(16), // Allocate 16 bytes for result string
+            Instruction::I32Const(CONSOLE_TYPE_ID as i32), // type_id
             Instruction::Call(0),      // Memory allocation function
             Instruction::LocalSet(3),  // result_ptr
             // Set result string length
@@ -322,6 +326,7 @@ impl ConsoleInputManager {
             Instruction::LocalSet(1), // input_len
             // Create result string
             Instruction::I32Const(16),
+            Instruction::I32Const(CONSOLE_TYPE_ID as i32), // type_id
             Instruction::Call(0),     // Memory allocation
             Instruction::LocalSet(2), // result_ptr
             // Set result string length
@@ -604,6 +609,7 @@ impl ConsoleInputManager {
             Instruction::LocalSet(0), // str_len
             // Allocate result string
             Instruction::I32Const(32), // Allocate 32 bytes for normalized string
+            Instruction::I32Const(CONSOLE_TYPE_ID as i32), // type_id
             Instruction::Call(0),      // Memory allocation
             Instruction::LocalSet(1),  // result_ptr
             // Initialize trimming positions

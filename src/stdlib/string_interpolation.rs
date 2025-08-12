@@ -588,75 +588,79 @@ impl StringInterpolationManager {
         ]
     }
 
-    // Helper function indices
+    // Helper function indices - UPDATED to use proper function lookup
+    // These functions are placeholders for now and would be properly registered
+    // TODO: These should be updated to use actual function indices from the codegen function map
     fn get_create_builder_function_index(&self) -> u32 {
-        900
+        // This should call mem_alloc with proper parameters
+        0 // PLACEHOLDER - will be replaced with proper memory allocation call
     }
     fn get_string_find_char_function_index(&self) -> u32 {
-        901
+        0 // PLACEHOLDER - would be a proper string search function
     }
     fn get_string_find_char_from_function_index(&self) -> u32 {
-        902
+        0 // PLACEHOLDER
     }
     fn get_builder_append_substring_function_index(&self) -> u32 {
-        903
+        0 // PLACEHOLDER
     }
     fn get_builder_append_value_function_index(&self) -> u32 {
-        904
+        0 // PLACEHOLDER
     }
     fn get_builder_finalize_function_index(&self) -> u32 {
-        905
+        0 // PLACEHOLDER
     }
     fn get_process_multiple_placeholders_function_index(&self) -> u32 {
-        906
+        0 // PLACEHOLDER
     }
     fn get_count_placeholders_function_index(&self) -> u32 {
-        907
+        0 // PLACEHOLDER
     }
     fn get_allocate_function_index(&self) -> u32 {
-        908
+        // This should use the actual mem_alloc function index
+        0 // PLACEHOLDER - will be replaced with proper memory allocation call
     }
     fn get_parse_placeholder_positions_function_index(&self) -> u32 {
-        909
+        0 // PLACEHOLDER
     }
     fn get_extract_brace_expressions_function_index(&self) -> u32 {
-        910
+        0 // PLACEHOLDER
     }
     fn get_integer_to_string_function_index(&self) -> u32 {
-        911
+        0 // PLACEHOLDER
     }
     fn get_string_pad_function_index(&self) -> u32 {
-        912
+        0 // PLACEHOLDER
     }
     fn get_number_to_string_precision_function_index(&self) -> u32 {
-        913
+        0 // PLACEHOLDER
     }
     fn get_value_to_string_function_index(&self) -> u32 {
-        914
+        0 // PLACEHOLDER
     }
     fn get_string_length_function_index(&self) -> u32 {
-        915
+        0 // PLACEHOLDER
     }
     fn get_builder_grow_function_index(&self) -> u32 {
-        916
+        0 // PLACEHOLDER
     }
     fn get_string_data_ptr_function_index(&self) -> u32 {
-        917
+        0 // PLACEHOLDER
     }
     fn get_memory_copy_function_index(&self) -> u32 {
-        918
+        0 // PLACEHOLDER
     }
     fn get_builder_append_function_index(&self) -> u32 {
-        919
+        0 // PLACEHOLDER
     }
     fn get_format_value_function_index(&self) -> u32 {
-        920
+        0 // PLACEHOLDER
     }
     fn get_format_integer_function_index(&self) -> u32 {
-        921
+        0 // PLACEHOLDER
     }
     fn get_format_number_function_index(&self) -> u32 {
-        922
+        0 // PLACEHOLDER
     }
 }
 

@@ -7,6 +7,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_encoder::{Instruction, MemArg};
 
+// Type IDs for memory allocation
+const ASYNC_TYPE_ID: u32 = 2; // For async futures, contexts, etc.
+
 /// Asynchronous programming implementation for Clean Language
 /// Provides comprehensive async functionality with start/later/background keywords
 pub struct AsyncProgrammingManager {
@@ -288,6 +291,7 @@ impl AsyncProgrammingManager {
 
             // Allocate memory for future structure
             Instruction::I32Const(32),
+            Instruction::I32Const(ASYNC_TYPE_ID as i32), // type_id
             Instruction::Call(0),     // Memory allocation function
             Instruction::LocalSet(0), // future_ptr
             // Generate unique task ID
@@ -446,6 +450,7 @@ impl AsyncProgrammingManager {
             }),
             // Set mock result
             Instruction::I32Const(16), // Allocate result
+            Instruction::I32Const(ASYNC_TYPE_ID as i32), // type_id
             Instruction::Call(0),      // Memory allocation
             Instruction::LocalGet(0),  // future_ptr
             Instruction::I32Store(MemArg {
@@ -644,6 +649,7 @@ impl AsyncProgrammingManager {
             }),
             // Create execution context
             Instruction::I32Const(16), // Allocate context
+            Instruction::I32Const(ASYNC_TYPE_ID as i32), // type_id
             Instruction::Call(0),      // Memory allocation
             Instruction::LocalSet(3),  // context_ptr
             // Store context in future
@@ -835,6 +841,7 @@ impl AsyncProgrammingManager {
             Instruction::LocalSet(1), // background_queue_ptr
             // Create execution context
             Instruction::I32Const(16),
+            Instruction::I32Const(ASYNC_TYPE_ID as i32), // type_id
             Instruction::Call(0),     // Memory allocation
             Instruction::LocalSet(2), // context_ptr
             // Store function and args in context
@@ -873,6 +880,7 @@ impl AsyncProgrammingManager {
             Instruction::I32Mul,
             Instruction::I32Const(4), // Add 4 bytes for length
             Instruction::I32Add,
+            Instruction::I32Const(ASYNC_TYPE_ID as i32), // type_id
             Instruction::Call(0),     // Memory allocation
             Instruction::LocalSet(1), // results_ptr
             // Set results array length
@@ -1076,6 +1084,7 @@ impl AsyncProgrammingManager {
             // 8-11: background_tasks
             // 12-15: total_yield_count
             Instruction::I32Const(16),
+            Instruction::I32Const(ASYNC_TYPE_ID as i32), // type_id
             Instruction::Call(0),     // Memory allocation
             Instruction::LocalSet(0), // stats_ptr
             // Get scheduler pointer

@@ -472,4 +472,39 @@ start()
         let result6 = CleanParser::parse_program(source6);
         println!("Variable + print result: {:?}", result6);
     }
+
+    #[test]
+    fn test_start_function_debug() {
+        let source = r#"
+start()
+	print("Hello, World!")
+        "#;
+        
+        println!("DEBUG TEST: Parsing source: {}", source);
+        
+        match CleanParser::parse_program(source) {
+            Ok(program) => {
+                println!("DEBUG TEST: Parsing succeeded!");
+                println!("DEBUG TEST: Start function present: {}", program.start_function.is_some());
+                
+                if let Some(ref start_func) = program.start_function {
+                    println!("DEBUG TEST: Start function name: {}", start_func.name);
+                    println!("DEBUG TEST: Start function body length: {}", start_func.body.len());
+                    for (i, stmt) in start_func.body.iter().enumerate() {
+                        println!("DEBUG TEST:   Statement {}: {:?}", i, stmt);
+                    }
+                    println!("DEBUG TEST: Start function description: {:?}", start_func.description);
+                } else {
+                    println!("DEBUG TEST: No start function found!");
+                }
+                
+                println!("DEBUG TEST: Functions: {}", program.functions.len());
+                println!("DEBUG TEST: Classes: {}", program.classes.len());
+                
+            },
+            Err(e) => {
+                println!("DEBUG TEST: Parsing failed: {}", e);
+            }
+        }
+    }
 }

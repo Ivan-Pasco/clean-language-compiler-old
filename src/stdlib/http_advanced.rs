@@ -7,6 +7,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_encoder::{Instruction, MemArg};
 
+// Type IDs for memory allocation
+const HTTP_TYPE_ID: u32 = 4; // For HTTP responses, headers, etc.
+
 /// Advanced HTTP class implementation for Clean Language
 /// Provides comprehensive HTTP client functionality with headers, JSON support, and all standard methods
 pub struct HttpAdvancedManager {
@@ -329,7 +332,9 @@ impl HttpAdvancedManager {
 
             // Allocate memory for HTTP response structure (16 bytes)
             Instruction::I32Const(16),
-            Instruction::Call(0), // Assume memory allocation function at index 0
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
+            Instruction::Call(0), // memory allocation function
             Instruction::LocalSet(0), // response_ptr
             // Get URL length
             Instruction::LocalGet(0), // url_ptr
@@ -360,6 +365,8 @@ impl HttpAdvancedManager {
             }),
             // Create mock response body
             Instruction::I32Const(32), // Allocate 32 bytes for response body
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::Call(0),      // Memory allocation
             Instruction::LocalSet(4),  // body_ptr
             // Set response body pointer
@@ -387,6 +394,8 @@ impl HttpAdvancedManager {
         vec![
             // Allocate memory for HTTP response structure (16 bytes)
             Instruction::I32Const(16),
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::Call(0),     // Memory allocation function
             Instruction::LocalSet(0), // response_ptr
             // Get URL length
@@ -424,6 +433,8 @@ impl HttpAdvancedManager {
             }),
             // Create mock response body
             Instruction::I32Const(64), // Allocate 64 bytes for response body
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::Call(0),      // Memory allocation
             Instruction::LocalSet(5),  // body_ptr
             // Set response body pointer
@@ -452,6 +463,8 @@ impl HttpAdvancedManager {
             // Similar to POST but with PUT semantics
             // Allocate memory for HTTP response structure (16 bytes)
             Instruction::I32Const(16),
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::Call(0),     // Memory allocation function
             Instruction::LocalSet(0), // response_ptr
             // Process parameters similar to POST
@@ -486,6 +499,7 @@ impl HttpAdvancedManager {
             }),
             // Create mock response body
             Instruction::I32Const(32),
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::Call(0),
             Instruction::LocalSet(5), // body_ptr
             // Set response body pointer
@@ -514,6 +528,7 @@ impl HttpAdvancedManager {
             // Similar to PUT but with PATCH semantics
             // Allocate memory for HTTP response structure
             Instruction::I32Const(16),
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::Call(0),
             Instruction::LocalSet(0), // response_ptr
             // Process parameters
@@ -548,6 +563,7 @@ impl HttpAdvancedManager {
             }),
             // Create response body
             Instruction::I32Const(32),
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::Call(0),
             Instruction::LocalSet(5), // body_ptr
             Instruction::LocalGet(0),
@@ -572,6 +588,7 @@ impl HttpAdvancedManager {
         vec![
             // Allocate memory for HTTP response structure
             Instruction::I32Const(16),
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::Call(0),
             Instruction::LocalSet(0), // response_ptr
             // Get URL and headers lengths
@@ -599,6 +616,7 @@ impl HttpAdvancedManager {
             }),
             // Create empty response body
             Instruction::I32Const(4), // Minimal allocation
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::Call(0),
             Instruction::LocalSet(4), // body_ptr
             Instruction::LocalGet(0),
@@ -629,6 +647,7 @@ impl HttpAdvancedManager {
 
             // Allocate memory for headers structure (12 bytes)
             Instruction::I32Const(12),
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::Call(0),     // Memory allocation
             Instruction::LocalSet(0), // headers_ptr
             // Initialize header count to 0
@@ -650,6 +669,7 @@ impl HttpAdvancedManager {
             // Allocate memory for header entries (8 * 8 bytes = 64 bytes)
             // Each entry: 4 bytes name_ptr + 4 bytes value_ptr
             Instruction::I32Const(64),
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::Call(0),
             // Store entries pointer
             Instruction::LocalGet(0),
@@ -816,6 +836,7 @@ impl HttpAdvancedManager {
 
             // Allocate memory for JSON request structure (12 bytes)
             Instruction::I32Const(12),
+            Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::Call(0),
             Instruction::LocalSet(0), // request_ptr
             // Create headers for JSON request

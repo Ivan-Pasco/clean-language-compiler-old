@@ -76,7 +76,7 @@ impl WasmGenerator {
         // Pre-populate runtime function types
         self.add_runtime_function_types();
 
-        // Generate function types for all functions
+        // Collect all function types without adding them to the section yet
         for function in &program.functions {
             let param_types: Vec<ValType> = function
                 .parameters
@@ -89,11 +89,12 @@ impl WasmGenerator {
                 None => vec![],
             };
 
-            // Check if this function type already exists
-            let type_key = param_types.clone();
-            if !self.function_types.contains_key(&type_key) {
-                type_section.function(param_types.clone(), return_types);
-                self.function_types.insert(type_key, self.next_type_idx);
+            // Check if this function type already exists (using params and return as key)
+            let type_key = (param_types.clone(), return_types.clone());
+            if !self.runtime_function_type_map.contains_key(&type_key) {
+                self.runtime_function_type_map.insert(type_key.clone(), self.next_type_idx);
+                // Also add to function_types for backward compatibility
+                self.function_types.insert(param_types, self.next_type_idx);
                 self.next_type_idx += 1;
             }
         }
@@ -111,17 +112,18 @@ impl WasmGenerator {
                     None => vec![],
                 };
 
-                let type_key = wasm_param_types.clone();
-                if !self.function_types.contains_key(&type_key) {
-                    type_section.function(wasm_param_types.clone(), wasm_return_types);
-                    self.function_types.insert(type_key, self.next_type_idx);
+                // Check if this function type already exists (using params and return as key)
+                let type_key = (wasm_param_types.clone(), wasm_return_types.clone());
+                if !self.runtime_function_type_map.contains_key(&type_key) {
+                    self.runtime_function_type_map.insert(type_key.clone(), self.next_type_idx);
+                    // Also add to function_types for backward compatibility
+                    self.function_types.insert(wasm_param_types, self.next_type_idx);
                     self.next_type_idx += 1;
                 }
             }
         }
 
-        // Actually emit the types to the section
-        // This should be done after all types are collected
+        // Now emit all types to the section in order
         self.emit_function_types_to_section(&mut type_section);
 
         Ok(type_section)
@@ -137,22 +139,9 @@ impl WasmGenerator {
         // Collect all unique type indices and their signatures
         let mut all_types: Vec<(u32, Vec<ValType>, Vec<ValType>)> = Vec::new();
 
-        // Add runtime function types
+        // Use only runtime_function_type_map as the source of truth
         for ((param_types, return_types), &type_idx) in &self.runtime_function_type_map {
             all_types.push((type_idx, param_types.clone(), return_types.clone()));
-        }
-
-        // Add regular function types
-        for (param_types, &type_idx) in &self.function_types {
-            // Skip if already added as runtime function
-            if !self
-                .runtime_function_type_map
-                .values()
-                .any(|&idx| idx == type_idx)
-            {
-                let return_types = self.get_return_types_for_function_type(param_types.clone());
-                all_types.push((type_idx, param_types.clone(), return_types));
-            }
         }
 
         // Sort by type index and emit
@@ -194,14 +183,20 @@ impl WasmGenerator {
                         .map(|t| self.lir_type_to_wasm_val_type(t))
                         .collect();
 
-                    let type_idx =
-                        *self.function_types.get(&wasm_param_types).ok_or_else(|| {
-                            CompilerError::codegen_error(
-                                format!("Function type not found for import: {}", import.name),
-                                None,
-                                None,
-                            )
-                        })?;
+                    let wasm_return_types: Vec<ValType> = match return_type {
+                        Some(ret_type) => vec![self.lir_type_to_wasm_val_type(ret_type)],
+                        None => vec![],
+                    };
+
+                    // Use the combined key to find the correct type index
+                    let type_key = (wasm_param_types, wasm_return_types);
+                    let type_idx = *self.runtime_function_type_map.get(&type_key).ok_or_else(|| {
+                        CompilerError::codegen_error(
+                            format!("Function type not found for import: {} with signature {:?}", import.name, type_key),
+                            None,
+                            None,
+                        )
+                    })?;
 
                     import_section.import(
                         &import.module,
@@ -257,9 +252,16 @@ impl WasmGenerator {
                 .map(|t| self.lir_type_to_wasm_val_type(t))
                 .collect();
 
-            let type_idx = *self.function_types.get(&param_types).ok_or_else(|| {
+            let return_types: Vec<ValType> = match &function.return_type {
+                Some(ret_type) => vec![self.lir_type_to_wasm_val_type(ret_type)],
+                None => vec![],
+            };
+
+            // Use the combined key to find the correct type index
+            let type_key = (param_types.clone(), return_types);
+            let type_idx = *self.runtime_function_type_map.get(&type_key).ok_or_else(|| {
                 CompilerError::codegen_error(
-                    format!("Function type not found for function: {}", function.name),
+                    format!("Function type not found for function: {} with signature {:?}", function.name, type_key),
                     None,
                     None,
                 )
@@ -800,7 +802,7 @@ impl WasmGenerator {
                 let idx = self.next_type_idx;
                 self.runtime_function_type_map.insert(unique_key, idx);
 
-                // Also add to function_types for compatibility
+                // Also add to function_types for backward compatibility
                 self.function_types.insert(param_types.clone(), idx);
 
                 self.next_type_idx += 1;
