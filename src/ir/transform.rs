@@ -1030,7 +1030,7 @@ impl MIRToLIRTransformer {
         let mut parameters = Vec::new();
 
         // Store whether this is a void function for later use
-        let is_void_function = matches!(function.return_type, MIRType::Void);
+        let _is_void_function = matches!(function.return_type, MIRType::Void);
 
         // Transform parameters
         for param in &function.parameters {

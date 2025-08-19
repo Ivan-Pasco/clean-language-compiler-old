@@ -381,6 +381,7 @@ impl ListClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_contains(&self) -> Vec<Instruction> {
         // Simplified contains implementation to avoid control flow issues
         // Parameters: list, value to find

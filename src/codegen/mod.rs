@@ -3999,8 +3999,7 @@ impl CodeGenerator {
         try_block: &[Instruction],
         catch_tag: u32,
     ) -> Vec<Instruction> {
-        let mut result = Vec::new();
-        result.push(Instruction::Try(BlockType::Empty));
+        let mut result = vec![Instruction::Try(BlockType::Empty)];
 
         // Manually clone each instruction to avoid lifetime issues
         for instr in try_block {
@@ -8305,8 +8304,7 @@ impl CodeGenerator {
 
         // Generate function body with local variables for test results
         let mut instructions = Vec::new();
-        let mut locals = Vec::new();
-        locals.push((2, wasm_encoder::ValType::I32)); // Two locals for test result comparison
+        let locals = vec![(2, wasm_encoder::ValType::I32)]; // Two locals for test result comparison
 
         // Generate test execution code
         self.generate_tests_block_runner(tests, &mut instructions)?;

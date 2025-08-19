@@ -8,6 +8,19 @@
  * A modern, type-safe programming language that compiles to WebAssembly
  */
 
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::vec_init_then_push)]
+#![allow(clippy::redundant_pattern_matching)]
+#![allow(clippy::question_mark)]
+#![allow(clippy::len_zero)]
+#![allow(clippy::cast_abs_to_unsigned)]
+#![allow(clippy::unnecessary_cast)]
+#![allow(clippy::manual_div_ceil)]
+#![allow(clippy::assertions_on_constants)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::derivable_impls)]
+#![allow(clippy::unnecessary_map_or)]
+#![allow(clippy::manual_flatten)]
 #![allow(clippy::single_match)]
 #![allow(clippy::uninlined_format_args)]
 #![allow(clippy::needless_borrows_for_generic_args)]
@@ -21,6 +34,8 @@
 #![allow(clippy::module_inception)]
 #![allow(clippy::new_without_default)]
 #![allow(clippy::clone_on_copy)]
+#![allow(clippy::needless_borrows_for_generic_args)]
+#![allow(clippy::uninlined_format_args)]
 
 pub mod ast;
 pub mod codegen;

@@ -301,7 +301,7 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
             "bool_to_string",
             |mut caller: Caller<'_, ()>, value: i32| -> i32 {
                 let string_value = if value != 0 { "true" } else { "false" };
-                allocate_string_in_memory(&mut caller, &string_value)
+                allocate_string_in_memory(&mut caller, string_value)
             },
         )
         .map_err(|e| {
@@ -614,11 +614,9 @@ fn register_file_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
                 match std::fs::read_dir(&path) {
                     Ok(entries) => {
                         let mut filenames = Vec::new();
-                        for entry in entries {
-                            if let Ok(entry) = entry {
-                                if let Some(name) = entry.file_name().to_str() {
-                                    filenames.push(format!("\"{}\"", name));
-                                }
+                        for entry in entries.flatten() {
+                            if let Some(name) = entry.file_name().to_str() {
+                                filenames.push(format!("\"{}\"", name));
                             }
                         }
                         let json_array = format!("[{}]", filenames.join(","));
@@ -1209,7 +1207,7 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
             "boolean.toString",
             |mut caller: Caller<'_, ()>, value: i32| -> i32 {
                 let string_value = if value != 0 { "true" } else { "false" };
-                allocate_string_in_memory(&mut caller, &string_value)
+                allocate_string_in_memory(&mut caller, string_value)
             },
         )
         .map_err(|e| {

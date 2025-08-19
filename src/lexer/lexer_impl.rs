@@ -133,7 +133,7 @@ impl CleanLexer {
             } else if ch == '.'
                 && !is_float
                 && !has_scientific
-                && self.peek().map_or(false, |c| c.is_ascii_digit())
+                && self.peek().is_some_and(|c| c.is_ascii_digit())
             {
                 is_float = true;
                 number.push(ch);

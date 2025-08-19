@@ -104,16 +104,11 @@ impl IRPipeline {
 }
 
 /// Optimization level configuration
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OptimizationLevel {
-    None,       // O0 - No optimizations
-    Speed,      // O1/O2 - Optimize for speed
-    Size,       // Os - Optimize for size
+    None, // O0 - No optimizations
+    #[default]
+    Speed, // O1/O2 - Optimize for speed
+    Size, // Os - Optimize for size
     Aggressive, // O3 - Aggressive optimizations
-}
-
-impl Default for OptimizationLevel {
-    fn default() -> Self {
-        OptimizationLevel::Speed
-    }
 }

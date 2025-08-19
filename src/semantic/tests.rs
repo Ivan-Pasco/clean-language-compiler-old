@@ -13,7 +13,7 @@ fn test_semantic_analyzer_creation() {
     let _analyzer = SemanticAnalyzer::new();
 
     // Basic test to ensure the analyzer can be instantiated
-    assert!(true);
+    // Test passes - basic sanity check
 }
 
 #[test]

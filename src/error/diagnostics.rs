@@ -118,59 +118,54 @@ pub struct ErrorPatternDatabase {
 
 impl ErrorPatternDatabase {
     pub fn new() -> Self {
-        let mut patterns = Vec::new();
-
-        // Common syntax patterns
-        patterns.push(ErrorPattern {
-            id: "missing_semicolon".to_string(),
-            description: "Missing semicolon at end of statement".to_string(),
-            signature: vec!["Expected ';'".to_string()],
-            frequency: 0.15, // 15% of syntax errors
-            fix_complexity: FixComplexity::Trivial,
-            auto_fixable: true,
-        });
-
-        patterns.push(ErrorPattern {
-            id: "unmatched_braces".to_string(),
-            description: "Unmatched braces or brackets".to_string(),
-            signature: vec!["Expected '}'".to_string(), "Unmatched '{'".to_string()],
-            frequency: 0.12,
-            fix_complexity: FixComplexity::Simple,
-            auto_fixable: true,
-        });
-
-        patterns.push(ErrorPattern {
-            id: "undefined_variable".to_string(),
-            description: "Use of undefined variable".to_string(),
-            signature: vec![
-                "Variable not found".to_string(),
-                "Undefined identifier".to_string(),
-            ],
-            frequency: 0.20,
-            fix_complexity: FixComplexity::Moderate,
-            auto_fixable: false,
-        });
-
-        patterns.push(ErrorPattern {
-            id: "type_mismatch".to_string(),
-            description: "Type mismatch in assignment or expression".to_string(),
-            signature: vec![
-                "Type mismatch".to_string(),
-                "Incompatible types".to_string(),
-            ],
-            frequency: 0.18,
-            fix_complexity: FixComplexity::Complex,
-            auto_fixable: false,
-        });
-
-        patterns.push(ErrorPattern {
-            id: "missing_function_body".to_string(),
-            description: "Function declared without body".to_string(),
-            signature: vec!["Expected function body".to_string()],
-            frequency: 0.08,
-            fix_complexity: FixComplexity::Moderate,
-            auto_fixable: false,
-        });
+        let patterns = vec![
+            ErrorPattern {
+                id: "missing_semicolon".to_string(),
+                description: "Missing semicolon at end of statement".to_string(),
+                signature: vec!["Expected ';'".to_string()],
+                frequency: 0.15, // 15% of syntax errors
+                fix_complexity: FixComplexity::Trivial,
+                auto_fixable: true,
+            },
+            ErrorPattern {
+                id: "unmatched_braces".to_string(),
+                description: "Unmatched braces or brackets".to_string(),
+                signature: vec!["Expected '}'".to_string(), "Unmatched '{'".to_string()],
+                frequency: 0.12,
+                fix_complexity: FixComplexity::Simple,
+                auto_fixable: true,
+            },
+            ErrorPattern {
+                id: "undefined_variable".to_string(),
+                description: "Use of undefined variable".to_string(),
+                signature: vec![
+                    "Variable not found".to_string(),
+                    "Undefined identifier".to_string(),
+                ],
+                frequency: 0.20,
+                fix_complexity: FixComplexity::Moderate,
+                auto_fixable: false,
+            },
+            ErrorPattern {
+                id: "type_mismatch".to_string(),
+                description: "Type mismatch in assignment or expression".to_string(),
+                signature: vec![
+                    "Type mismatch".to_string(),
+                    "Incompatible types".to_string(),
+                ],
+                frequency: 0.18,
+                fix_complexity: FixComplexity::Complex,
+                auto_fixable: false,
+            },
+            ErrorPattern {
+                id: "missing_function_body".to_string(),
+                description: "Function declared without body".to_string(),
+                signature: vec!["Expected function body".to_string()],
+                frequency: 0.08,
+                fix_complexity: FixComplexity::Moderate,
+                auto_fixable: false,
+            },
+        ];
 
         Self { patterns }
     }

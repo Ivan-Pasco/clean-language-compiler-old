@@ -160,7 +160,7 @@ impl ErrorReporter {
         context: &ErrorContext,
         source_code: Option<&str>,
     ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Syntax Error", &self.colors.bright_red)?;
+        self.write_error_header(writer, "Syntax Error", self.colors.bright_red)?;
         self.write_error_message(writer, &context.message)?;
         self.write_error_location(writer, context)?;
 
@@ -185,7 +185,7 @@ impl ErrorReporter {
         context: &ErrorContext,
         source_code: Option<&str>,
     ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Type Error", &self.colors.red)?;
+        self.write_error_header(writer, "Type Error", self.colors.red)?;
         self.write_error_message(writer, &context.message)?;
         self.write_error_location(writer, context)?;
 
@@ -210,7 +210,7 @@ impl ErrorReporter {
         context: &ErrorContext,
         source_code: Option<&str>,
     ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Memory Error", &self.colors.magenta)?;
+        self.write_error_header(writer, "Memory Error", self.colors.magenta)?;
         self.write_error_message(writer, &context.message)?;
         self.write_error_location(writer, context)?;
 
@@ -231,7 +231,7 @@ impl ErrorReporter {
         context: &ErrorContext,
         _source_code: Option<&str>,
     ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Code Generation Error", &self.colors.yellow)?;
+        self.write_error_header(writer, "Code Generation Error", self.colors.yellow)?;
         self.write_error_message(writer, &context.message)?;
         self.write_error_location(writer, context)?;
 
@@ -248,7 +248,7 @@ impl ErrorReporter {
         context: &ErrorContext,
         _source_code: Option<&str>,
     ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "I/O Error", &self.colors.cyan)?;
+        self.write_error_header(writer, "I/O Error", self.colors.cyan)?;
         self.write_error_message(writer, &context.message)?;
         self.write_error_location(writer, context)?;
 
@@ -265,7 +265,7 @@ impl ErrorReporter {
         context: &ErrorContext,
         _source_code: Option<&str>,
     ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Runtime Error", &self.colors.bright_red)?;
+        self.write_error_header(writer, "Runtime Error", self.colors.bright_red)?;
         self.write_error_message(writer, &context.message)?;
         self.write_error_location(writer, context)?;
 
@@ -287,7 +287,7 @@ impl ErrorReporter {
         context: &ErrorContext,
         source_code: Option<&str>,
     ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Validation Error", &self.colors.yellow)?;
+        self.write_error_header(writer, "Validation Error", self.colors.yellow)?;
         self.write_error_message(writer, &context.message)?;
         self.write_error_location(writer, context)?;
 
@@ -308,7 +308,7 @@ impl ErrorReporter {
         context: &ErrorContext,
         _source_code: Option<&str>,
     ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Module Error", &self.colors.blue)?;
+        self.write_error_header(writer, "Module Error", self.colors.blue)?;
         self.write_error_message(writer, &context.message)?;
         self.write_error_location(writer, context)?;
 
@@ -370,7 +370,7 @@ impl ErrorReporter {
     ) -> Result<(), io::Error> {
         if let (Some(location), Some(source)) = (&context.location, source_code) {
             let lines: Vec<&str> = source.lines().collect();
-            let line_idx = (location.line.saturating_sub(1)) as usize;
+            let line_idx = location.line.saturating_sub(1);
 
             if line_idx < lines.len() {
                 // Show context lines
@@ -379,7 +379,7 @@ impl ErrorReporter {
 
                 for (i, line) in lines[start..end].iter().enumerate() {
                     let line_num = start + i + 1;
-                    let is_error_line = line_num == location.line as usize;
+                    let is_error_line = line_num == location.line;
 
                     if is_error_line {
                         writeln!(
@@ -394,7 +394,7 @@ impl ErrorReporter {
                         )?;
 
                         // Show error indicator
-                        let spaces = " ".repeat(location.column.saturating_sub(1) as usize);
+                        let spaces = " ".repeat(location.column.saturating_sub(1));
                         writeln!(
                             writer,
                             "{}     |{} {}{}^{}",
