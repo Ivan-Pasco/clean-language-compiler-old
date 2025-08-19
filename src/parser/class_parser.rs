@@ -42,38 +42,83 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
                         "DEBUG: Found class_item with rule: {:?}",
                         class_item.as_rule()
                     );
-                    match class_item.as_rule() {
-                        Rule::class_field => {
-                            let field = parse_class_field(class_item, ast_location.clone())?;
-                            fields.push(field);
-                        }
-                        Rule::constructor => {
-                            println!("DEBUG: Found constructor in class {name}");
-                            constructor =
-                                Some(parse_constructor(class_item, ast_location.clone())?);
-                            println!("DEBUG: Constructor parsed successfully for class {name}");
-                        }
-                        Rule::functions_block => {
-                            println!("DEBUG: Found functions_block in class {name}");
-                            // Create class context for preprocessor with all fields collected so far
-                            let class_context = ClassContext {
-                                class_name: name.clone(),
-                                fields: fields.clone(),
-                                base_class: base_class.clone(),
-                            };
-
-                            println!("DEBUG: Calling parse_functions_block_with_context for class {name}");
-                            let class_methods = parse_functions_block_with_context(
-                                class_item,
-                                Some(class_context),
-                            )?;
+                    
+                    // The class_item is actually class_body_item, we need to look at its inner content
+                    if class_item.as_rule() == Rule::class_body_item {
+                        for body_item in class_item.into_inner() {
                             println!(
-                                "DEBUG: Got {} methods from functions_block",
-                                class_methods.len()
+                                "DEBUG: Processing body_item with rule: {:?}",
+                                body_item.as_rule()
                             );
-                            methods.extend(class_methods);
+                            match body_item.as_rule() {
+                                Rule::class_field => {
+                                    let field = parse_class_field(body_item, ast_location.clone())?;
+                                    fields.push(field);
+                                }
+                                Rule::constructor => {
+                                    println!("DEBUG: Found constructor in class {name}");
+                                    constructor =
+                                        Some(parse_constructor(body_item, ast_location.clone())?);
+                                    println!("DEBUG: Constructor parsed successfully for class {name}");
+                                }
+                                Rule::functions_block => {
+                                    println!("DEBUG: Found functions_block in class {name}");
+                                    // Create class context for preprocessor with all fields collected so far
+                                    let class_context = ClassContext {
+                                        class_name: name.clone(),
+                                        fields: fields.clone(),
+                                        base_class: base_class.clone(),
+                                    };
+
+                                    println!("DEBUG: Calling parse_functions_block_with_context for class {name}");
+                                    let class_methods = parse_functions_block_with_context(
+                                        body_item,
+                                        Some(class_context),
+                                    )?;
+                                    println!(
+                                        "DEBUG: Got {} methods from functions_block",
+                                        class_methods.len()
+                                    );
+                                    methods.extend(class_methods);
+                                }
+                                _ => {}
+                            }
                         }
-                        _ => {}
+                    } else {
+                        // Handle direct rules that aren't wrapped in class_body_item
+                        match class_item.as_rule() {
+                            Rule::class_field => {
+                                let field = parse_class_field(class_item, ast_location.clone())?;
+                                fields.push(field);
+                            }
+                            Rule::constructor => {
+                                println!("DEBUG: Found constructor in class {name}");
+                                constructor =
+                                    Some(parse_constructor(class_item, ast_location.clone())?);
+                                println!("DEBUG: Constructor parsed successfully for class {name}");
+                            }
+                            Rule::functions_block => {
+                                println!("DEBUG: Found functions_block in class {name}");
+                                // Create class context for preprocessor with all fields collected so far
+                                let class_context = ClassContext {
+                                    class_name: name.clone(),
+                                    fields: fields.clone(),
+                                    base_class: base_class.clone(),
+                                };
+
+                                println!("DEBUG: Calling parse_functions_block_with_context for class {name}");
+                                let class_methods = parse_functions_block_with_context(
+                                    class_item,
+                                    Some(class_context),
+                                )?;
+                                println!(
+                                    "DEBUG: Got {} methods from functions_block",
+                                    class_methods.len()
+                                );
+                                methods.extend(class_methods);
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }

@@ -1,0 +1,4 @@
+functions:
+	string testIdentifier()
+		string s = "hello"
+		return s.toString()

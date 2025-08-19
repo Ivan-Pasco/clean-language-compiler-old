@@ -1,0 +1,16 @@
+class Parent
+	string name
+	
+	constructor(string parentName)
+		name = parentName
+
+class Child is Parent
+	boolean flag
+	
+	constructor(string childName, boolean flagValue)
+		base(childName)
+		flag = flagValue
+
+start()
+	Child test = Child("test", true)
+	print("done")

@@ -1,0 +1,4 @@
+functions:
+	void testConcat()
+		string name = "world"
+		print("Hello " + name)

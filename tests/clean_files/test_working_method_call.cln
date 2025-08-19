@@ -1,0 +1,4 @@
+functions:
+	void test()
+		string s = "hello"
+		string result = s.toString()

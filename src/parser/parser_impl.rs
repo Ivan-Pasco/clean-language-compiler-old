@@ -557,22 +557,52 @@ pub fn parse_with_file(source: &str, file_path: &str) -> Result<Program, Compile
 }
 
 /// Parse using preprocessing approach for complex multi-function programs
-fn parse_with_preprocessing(source: &str, _file_path: &str) -> Result<Program, CompilerError> {
-    // Parse the full program using traditional parsing since preprocessing has limitations
-    // Just disable preprocessing for now and fall back to traditional parsing
+fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, CompilerError> {
+    // Check if this is a functions block and use preprocessing for consistency
+    // Look for functions: anywhere in the source, potentially after comments
+    if source.contains("functions:") {
+        println!("DEBUG: Detected functions block, using direct preprocessing for consistency");
+        
+        // Use direct preprocessing for all functions blocks to avoid grammar parsing issues
+        let preprocessor = super::preprocessor::FunctionPreprocessor::new(source);
+        match preprocessor.process_functions_block(source) {
+            Ok(functions) => {
+                println!("DEBUG: Direct preprocessing succeeded, found {} functions", functions.len());
+                
+                // Create a program with just the functions
+                let program = Program {
+                    functions,
+                    classes: Vec::new(),
+                    start_function: None,
+                    imports: Vec::new(),
+                    tests: Vec::new(),
+                    statements: Vec::new(),
+                    location: None,
+                };
+                
+                return Ok(program);
+            }
+            Err(preprocess_error) => {
+                println!("DEBUG: Direct preprocessing failed: {preprocess_error}");
+            }
+        }
+    }
+    
+    // For non-functions blocks, try traditional parsing
     match <CleanParser as Parser<Rule>>::parse(Rule::program, source) {
         Ok(pairs) => {
             println!("DEBUG: Traditional parsing succeeded in preprocessing path");
             parse_program_ast(pairs)
         }
         Err(traditional_error) => {
-            println!(
-                "DEBUG: Traditional parsing failed in preprocessing path: {traditional_error}"
-            );
+            println!("DEBUG: Traditional parsing failed, no other options available");
+            
+            // If all else fails, return the original error
+            println!("DEBUG: All parsing attempts failed, returning error");
             Err(ErrorUtils::from_pest_error(
                 traditional_error,
                 source,
-                "<unknown>",
+                file_path,
             ))
         }
     }
@@ -752,13 +782,24 @@ fn parse_parameter(pair: Pair<Rule>) -> Result<Parameter, CompilerError> {
 
     for inner in pair.into_inner() {
         match inner.as_rule() {
+            Rule::parameter_type => {
+                // parameter_type can contain type_ as a child, so parse the first child
+                let type_pair = inner.into_inner().next().ok_or_else(|| {
+                    CompilerError::parse_error(
+                        "Parameter type missing".to_string(),
+                        None,
+                        Some("Parameter type is required".to_string()),
+                    )
+                })?;
+                param_type = Some(parse_type(type_pair)?);
+            }
             Rule::type_ => {
                 param_type = Some(parse_type(inner)?);
             }
             Rule::identifier | Rule::parameter_name => {
                 param_name = inner.as_str().to_string();
             }
-            Rule::expression => {
+            Rule::expression | Rule::logical_expression => {
                 // Parse default value expression
                 default_value = Some(crate::parser::expression_parser::parse_expression(inner)?);
             }

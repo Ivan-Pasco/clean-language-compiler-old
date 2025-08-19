@@ -1,0 +1,20 @@
+// Simple test for precision modifiers in class methods
+class TestPrecision
+	number:64 value
+	
+	constructor(number:64 v)
+		value = v
+	
+	functions:
+		void setValue(number:64 newValue)
+			value = newValue
+		
+		number:64 getValue()
+			return value
+
+start()
+	print("Testing precision modifiers")
+	number:64 initValue = 42.5
+	TestPrecision test = TestPrecision(initValue)
+	number:64 val = test.getValue()
+	print("Value: " + val.toString())

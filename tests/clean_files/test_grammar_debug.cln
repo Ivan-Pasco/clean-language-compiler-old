@@ -1,0 +1,3 @@
+functions:
+	void main()
+		compare.integer.greaterThan(5)

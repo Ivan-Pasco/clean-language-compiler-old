@@ -20,10 +20,11 @@ boolean = { "true" | "false" }
 // Advanced size specifiers for types
 size_specifier = { ":" ~ ASCII_DIGIT+ ~ ("u")? }
 
-// String interpolation with {} syntax
-string_content = @{ (!("\"" | "{" | "}") ~ ANY)+ }
-string_interpolation = { "{" ~ (identifier ~ ("." ~ identifier)*) ~ "}" }
-string_part = { string_content | string_interpolation }
+// String interpolation with {} syntax and escaped quotes
+string_content = @{ (!("\"" | "{" | "}" | "\\") ~ ANY)+ }
+escaped_char = @{ "\\" ~ ("\"" | "{" | "}" | "\\" | "n" | "r" | "t") }
+string_interpolation = { "{" ~ logical_expression ~ "}" }
+string_part = { string_content | escaped_char | string_interpolation }
 string = { "\"" ~ string_part* ~ "\"" }
 
 // Core types from specification
@@ -88,7 +89,10 @@ method_call_chain = { identifier ~ ("." ~ identifier)+ }
 
 // Function apply-blocks: println: "Hello", "World" (catch-all for identifiers)
 function_apply_block = { !("functions" ~ ":") ~ identifier ~ ":" ~ indented_expressions }
-indented_expressions = { NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ expression ~ (NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ expression)* }
+indented_expressions = { NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ expression ~ (NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ !apply_block_start ~ expression)* }
+
+// Helper rule to detect the start of a new apply-block
+apply_block_start = { (core_type | matrix_type | list_type | pairs_type) ~ ":" | identifier ~ ("." ~ identifier)+ ~ ":" | "constant" ~ ":" | identifier ~ ":" }
 
 // Setup blocks for functions
 description_block = { "description" ~ string }
@@ -110,29 +114,47 @@ indented_block_with_declarations = { NEWLINE ~ INDENT+ ~ input_declaration ~ (NE
 setup_block = { (description_block ~ NEWLINE ~ input_block) | (input_block ~ NEWLINE ~ description_block) | input_block | description_block }
 
 // Object access and method calls
-builtin_class_name = { "list" | "file" | "http" | "math" | "input" | "Math" | "String" | "List" | "File" | "Http" | "Console" }
-static_class_name = { "Math" | "String" | "List" | "File" | "Http" | "Console" }
-function_call = { identifier ~ type_arguments? ~ "(" ~ (logical_expression ~ ("," ~ logical_expression)*)? ~ ")" }
+builtin_class_name = { "list" | "file" | "http" | "math" | "input" | "logical" | "conditional" | "compare" | "Math" | "String" | "List" | "File" | "Http" | "Console" }
+// Basic static class identifiers
+static_class_identifier = { "Math" | "String" | "List" | "File" | "Http" | "Console" | "conditional" | "compare" | "logical" | "math" | "string" | "list" | "file" | "http" | "console" | "number" | "integer" | "boolean" }
 
-// Method call syntax for value.method() patterns
-method_call_base = { builtin_class_name | identifier | "(" ~ logical_expression ~ ")" }
-method_name = { identifier | "number" | "integer" | "boolean" | "length" | "isDefined" | "isNotDefined" | "isEmpty" | "isNotEmpty" | "mustBeTrue" | "mustBeFalse" | "mustBeEqual" | "mustNotBeEqual" | "toString" | "toInteger" | "toNumber" | "toBoolean" | "keepBetween" | "yesNo" | "prompt" }
-method_call_segment = { "." ~ method_name ~ "(" ~ (logical_expression ~ ("," ~ logical_expression)*)? ~ ")" }
+// Multi-level namespace chain (e.g., compare.number, compare.integer)
+static_class_name = { static_class_identifier ~ ("." ~ static_class_identifier)* }
+
+// Argument expression - allows expressions in function/method arguments
+// Use additive expressions to avoid circular dependency while supporting arithmetic and comparisons
+argument_expression = { additive_expression }
+argument_list = { argument_expression ~ ("," ~ argument_expression)* }
+
+function_call = { identifier ~ type_arguments? ~ "(" ~ argument_list? ~ ")" }
+
+// Method call syntax for value.method() patterns  
+method_call_base = { builtin_class_name | string | number | boolean | identifier | "(" ~ additive_expression ~ ")" }
+method_name = { "greaterThan" | "lessThan" | "equal" | "greaterEqual" | "lessEqual" | "number" | "integer" | "boolean" | "string" | "length" | "isDefined" | "isNotDefined" | "isEmpty" | "isNotEmpty" | "mustBeTrue" | "mustBeFalse" | "mustBeEqual" | "mustNotBeEqual" | "toString" | "toInteger" | "toNumber" | "toBoolean" | "keepBetween" | "yesNo" | "prompt" | "and" | "or" | "not" | identifier }
+method_call_segment = { "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
 method_call = { method_call_base ~ method_call_segment+ }
 
-// Static method call syntax for ClassName.method() patterns
-static_method_call = { static_class_name ~ "." ~ method_name ~ "(" ~ (logical_expression ~ ("," ~ logical_expression)*)? ~ ")" }
+// Three-level chained method call: namespace.class.method() patterns (most specific)
+three_level_method_call = { identifier ~ "." ~ identifier ~ "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
+
+// Chained property method call: property.access.method() patterns (two+ levels)  
+property_method_call = { identifier ~ ("." ~ identifier) ~ ("." ~ identifier)+ ~ "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
+
+// Static method call syntax for ClassName.method() patterns (single level)
+static_method_call = { static_class_name ~ "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
 
 // Property access and list access
 property_access = { identifier ~ ("." ~ identifier)+ }
-list_access = { identifier ~ "[" ~ logical_expression ~ "]" }
+list_access = { identifier ~ "[" ~ additive_expression ~ "]" }
 
-// Primary expressions
+// Primary expressions (basic terms without circular dependencies)
 primary = { 
-    conditional_expr |
     base_call |
+    three_level_method_call |
+    property_method_call |
     static_method_call |
     method_call |
+    function_call |
     start_expr |
     number |
     boolean |
@@ -140,49 +162,49 @@ primary = {
     matrix_literal |
     list_literal |
     list_access |
-    function_call |
     property_access |
     error_variable |
     identifier |
-    "(" ~ logical_expression ~ ")" |
-    multiline_parenthesized_expr
+    "(" ~ NEWLINE* ~ INDENT* ~ parenthesized_expr ~ NEWLINE* ~ INDENT* ~ ")"
 }
 
 // Base constructor call
-base_call = { "base" ~ "(" ~ (expression ~ ("," ~ expression)*)? ~ ")" }
+base_call = { "base" ~ "(" ~ argument_list? ~ ")" }
 
 // Error variable (only valid in error contexts)
 error_variable = { "error" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Conditional expressions: if condition then value else value
-conditional_expr = { "if" ~ logical_expression ~ "then" ~ logical_expression ~ "else" ~ logical_expression }
+conditional_expr = { "if" ~ comparison_expression ~ "then" ~ additive_expression ~ "else" ~ additive_expression }
 
-// Multi-line expressions within parentheses (requires at least one newline to distinguish from regular parentheses)
-multiline_parenthesized_expr = { "(" ~ NEWLINE+ ~ (INDENT* ~ multiline_expression)? ~ NEWLINE* ~ INDENT* ~ ")" }
-multiline_expression = { primary ~ (NEWLINE* ~ INDENT* ~ (logical_op | comparison_op | additive_op | multiplicative_op | power_op | arithmetic_op) ~ NEWLINE* ~ INDENT* ~ primary)* }
+// Parenthesized expressions now support optional newlines and indentation within
 
 // Error handling with onError
 on_error_expr = { base_expression ~ "onError" ~ base_expression }
 on_error_block = { base_expression ~ "onError" ~ ":" ~ indented_block }
 
 // Expression with proper operator precedence (logical < comparison < arithmetic < unary)
-logical_expression = { comparison_expression ~ (logical_op ~ comparison_expression)* }
-comparison_expression = { unary_expression ~ (comparison_op ~ unary_expression)* }
+// Now supports optional newlines and indentation around operators for multi-line expressions
+logical_expression = { comparison_expression ~ (NEWLINE* ~ INDENT* ~ logical_op ~ NEWLINE* ~ INDENT* ~ comparison_expression)* }
+comparison_expression = { unary_expression ~ (NEWLINE* ~ INDENT* ~ comparison_op ~ NEWLINE* ~ INDENT* ~ unary_expression)* }
 unary_expression = { unary_op* ~ additive_expression }
 
 // Arithmetic expressions with proper precedence: power > multiplicative > additive
-additive_expression = { multiplicative_expression ~ (additive_op ~ multiplicative_expression)* }
-multiplicative_expression = { power_expression ~ (multiplicative_op ~ power_expression)* }
-power_expression = { primary ~ (power_op ~ primary)* }
+additive_expression = { multiplicative_expression ~ (NEWLINE* ~ INDENT* ~ additive_op ~ NEWLINE* ~ INDENT* ~ multiplicative_expression)* }
+multiplicative_expression = { power_expression ~ (NEWLINE* ~ INDENT* ~ multiplicative_op ~ NEWLINE* ~ INDENT* ~ power_expression)* }
+power_expression = { primary ~ (NEWLINE* ~ INDENT* ~ power_op ~ NEWLINE* ~ INDENT* ~ primary)* }
 
 // Legacy arithmetic_expression for backward compatibility
 arithmetic_expression = { additive_expression }
-base_expression = { logical_expression }
+base_expression = { conditional_expr | logical_expression }
 expression = { on_error_block | on_error_expr | base_expression }
+
+// Parenthesized expression - uses additive expressions to avoid circular dependency
+parenthesized_expr = { additive_expression }
 
 // Operators with proper precedence levels
 logical_op = { "and" | "or" }
-comparison_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" | "is" }
+comparison_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" | ("is" ~ !(ASCII_ALPHANUMERIC | "_")) }
 unary_op = { ("not" ~ !(ASCII_ALPHANUMERIC | "_")) | "-" }
 additive_op = { "+" | "-" }
 multiplicative_op = { "*" | "/" | "%" }
@@ -232,13 +254,22 @@ return_stmt = { "return" ~ expression? }
 
 // Parameter definitions for function declarations
 parameter_list = { parameter ~ ("," ~ parameter)* }
-parameter_name = @{ !critical_keyword ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+parameter_name = @{ !critical_keyword ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* | "base" }
 critical_keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "while") ~ !(ASCII_ALPHANUMERIC | "_") }
-parameter = { type_ ~ parameter_name ~ ("=" ~ expression)? }
+parameter = { parameter_type ~ parameter_name ~ (" "* ~ "=" ~ " "* ~ logical_expression)? }
+parameter_type = { 
+    matrix_type |
+    list_type |
+    pairs_type |
+    generic_type |
+    sized_type |
+    core_type |
+    identifier
+}
 
 // Functions block (the main supported syntax for function declarations)
 functions_block = { "functions" ~ ":" ~ indented_functions_block }
-indented_functions_block = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ function_in_block ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ function_in_block)* }
+indented_functions_block = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ function_in_block ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ !("functions" ~ ":") ~ function_in_block)* }
 
 // Function declaration inside functions block - Clean Language spec compliant  
 function_in_block = { function_type? ~ function_name ~ "(" ~ parameter_list? ~ ")" ~ function_body }
@@ -247,27 +278,35 @@ function_in_block = { function_type? ~ function_name ~ "(" ~ parameter_list? ~ "
 function_name = { identifier | "start" | "stop" | "toString" | "input" | "error" | "test" | "from" | "to" | "step" }
 
 // Function body can have setup blocks (description and input) or just statements
-// Also supports single-line function bodies
+// Also supports single-line function bodies and empty functions
 function_body = { 
-    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block ~ (NEWLINE ~ (empty_line)*)* ~ INDENT+ ~ function_statements) | 
+    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block ~ (NEWLINE ~ (empty_line)*)* ~ function_statements) | 
+    (NEWLINE ~ (empty_line)* ~ function_statements) |
     (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block) |
-    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ function_statements) |
-    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ statement) | // Single indented statement
     (NEWLINE ~ (empty_line)*) // Allow empty function body
 }
 
 // Function statements - statements inside function body  
-// Use negative lookahead to prevent function declarations but allow variable declarations
-function_statements = { statement ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ !(function_type ~ function_name ~ "(") ~ statement)* }
+// Use negative lookahead to prevent function declarations but allow variable declarations and apply-blocks
+function_statements = { function_body_statement ~ (NEWLINE ~ (empty_line)* ~ function_body_statement)* }
+
+// Function body statements must be indented but allow flexible indentation
+function_body_statement = { INDENT+ ~ statement }
+
+// Helper rule to detect the start of a new function in functions: blocks
+// Matches either: 1) function with return type, 2) function without return type
+// Excludes common function call patterns like print()
+function_start = { function_type ~ function_name ~ "(" }
 
 // Function return type (excludes generic identifiers to avoid ambiguity with function names)
+// Order matters: sized types before core types to prioritize precision modifiers  
 function_type = { 
     matrix_type |
     list_type |
     pairs_type |
     generic_type |
-    core_type |
-    sized_type
+    sized_type |
+    core_type
 }
 
 // Private blocks (removed duplicate - defined later in async/import section)
@@ -322,8 +361,10 @@ indented_private_list = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ private_item ~ (NE
 private_item = { identifier | function_in_block }
 
 // Update statements to include async features and imports
+// Critical fix: Add function_call before expression to prevent parameter parsing confusion
 statement = {
-    return_stmt |
+    !function_start ~
+    (return_stmt |
     error_stmt |
     if_stmt |
     while_stmt |
@@ -333,14 +374,15 @@ statement = {
     later_assignment |
     background_stmt |
     standalone_input_declaration |
-    variable_decl |
+    apply_block |
     println_stmt |
     printl_stmt |
     print_stmt |
+    variable_decl |
     assignment |
-    apply_block |
     start_expr |
-    expression
+    function_call |
+    expression)
 }
 
 // Program with proper newline handling

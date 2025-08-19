@@ -1,0 +1,12 @@
+start()
+	// Test basic HTTP GET operation
+	string response = http.get("https://httpbin.org/get")
+	print("HTTP GET Response received")
+	
+	// Test file operations
+	string testData = "Hello from Clean Language!"
+	integer writeResult = file.write("test_output.txt", testData)
+	print("File write result: " + writeResult.toString())
+	
+	string readData = file.read("test_output.txt")
+	print("File read data: " + readData)

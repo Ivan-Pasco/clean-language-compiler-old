@@ -1,0 +1,5 @@
+functions:
+	void test()
+		integer a = 10
+		integer b = 5
+		integer result = compare.integer.greaterThan(a, b)

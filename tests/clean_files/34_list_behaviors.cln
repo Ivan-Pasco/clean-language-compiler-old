@@ -3,7 +3,7 @@
 functions:
 	void testQueueBehavior()
 		print("=== Testing Queue (FIFO) Behavior ===")
-		list<string> taskQueue = []
+		list<string> taskQueue
 		taskQueue.type = "line"
 		
 		taskQueue.add("Task 1")
@@ -24,7 +24,7 @@ functions:
 	
 	void testStackBehavior()
 		print("=== Testing Stack (LIFO) Behavior ===")
-		list<string> undoStack = []
+		list<string> undoStack
 		undoStack.type = "pile"
 		
 		undoStack.add("Operation 1")
@@ -44,7 +44,7 @@ functions:
 	
 	void testUniqueBehavior()
 		print("=== Testing Unique (Set) Behavior ===")
-		list<integer> uniqueNumbers = []
+		list<integer> uniqueNumbers
 		uniqueNumbers.type = "unique"
 		
 		uniqueNumbers.add(5)
@@ -66,7 +66,7 @@ functions:
 	void testCombinedBehaviors()
 		print("=== Testing Combined Behaviors ===")
 		
-		list<string> uniqueQueue = []
+		list<string> uniqueQueue
 		uniqueQueue.type = "line-unique"
 		
 		uniqueQueue.add("First")
@@ -80,7 +80,7 @@ functions:
 	
 	void testUtilityMethods()
 		print("=== Testing Utility Methods ===")
-		list<integer> numbers = []
+		list<integer> numbers
 		
 		boolean empty = numbers.isEmpty()
 		print("Empty list isEmpty: " + empty.toString())
@@ -92,6 +92,7 @@ functions:
 		numbers.type = "pile"
 		string behavior = numbers.type
 		print("Current behavior: " + behavior)
+
 
 start()
 	print("Clean Language List Behavior Test")

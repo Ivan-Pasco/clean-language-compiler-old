@@ -1,0 +1,7 @@
+functions:
+	greet(string name = "World")
+		return "Hello, " + name
+
+start()
+	string result = greet()
+	print(result)

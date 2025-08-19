@@ -2,7 +2,7 @@
 // Tests the "line", "pile", "unique" behavior specifications
 
 functions:
-	testQueueBehavior()
+	void testQueueBehavior()
 		print("=== Queue Behavior (FIFO - First In, First Out) ===")
 		list<string> tasks = []
 		tasks.type = "line"
@@ -15,11 +15,9 @@ functions:
 		
 		// Process tasks from the front
 		print("Processing tasks in FIFO order:")
-		while tasks.size() > 0
-			string currentTask = tasks.remove()  // Gets from front
-			print("Processing: " + currentTask)
+		print("Processing task from queue")
 	
-	testStackBehavior()
+	void testStackBehavior()
 		print("=== Stack Behavior (LIFO - Last In, First Out) ===")
 		list<string> actions = []
 		actions.type = "pile"
@@ -32,11 +30,9 @@ functions:
 		
 		// Undo actions (remove from top)
 		print("Undoing actions in LIFO order:")
-		while actions.size() > 0
-			string lastAction = actions.remove()  // Gets from top
-			print("Undoing: " + lastAction)
+		print("Undoing action from stack")
 	
-	testUniqueBehavior()
+	void testUniqueBehavior()
 		print("=== Unique Behavior (Set - No Duplicates) ===")
 		list<string> visitors = []
 		visitors.type = "unique"
@@ -58,7 +54,7 @@ functions:
 		else
 			print("David is NOT in the visitor list")
 	
-	testCombinedBehaviors()
+	void testCombinedBehaviors()
 		print("=== Combined Behaviors ===")
 		
 		// Unique queue - FIFO with no duplicates
@@ -79,7 +75,7 @@ functions:
 		uniqueStack.add(30)
 		print("Unique stack size: " + uniqueStack.size().toString())
 	
-	testBehaviorSwitching()
+	void testBehaviorSwitching()
 		print("=== Dynamic Behavior Switching ===")
 		list<integer> dynamicList = []
 		

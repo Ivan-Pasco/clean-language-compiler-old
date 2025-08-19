@@ -1,0 +1,3 @@
+functions:
+	string testNumber()
+		return 42.toString()

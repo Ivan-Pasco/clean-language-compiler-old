@@ -1,0 +1,3 @@
+functions:
+	void test()
+		string text = "Hello"

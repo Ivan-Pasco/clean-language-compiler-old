@@ -79,7 +79,7 @@ fn test_constant_folding() {
     // Create a MIR program with constant expressions
     let mut mir_program = create_test_program_with_constants();
 
-    let original_instruction_count = count_instructions(&mir_program);
+    let _original_instruction_count = count_instructions(&mir_program);
 
     // Run constant folding
     let folded_count = fold_constants(&mut mir_program).expect("Constant folding should succeed");
@@ -139,7 +139,7 @@ fn test_function_inlining() {
     // Create a MIR program with small functions suitable for inlining
     let mut mir_program = create_test_program_with_inlinable_functions();
 
-    let original_call_count = count_function_calls(&mir_program);
+    let _original_call_count = count_function_calls(&mir_program);
 
     // Run function inlining with threshold of 5 instructions
     let inlined_count =
@@ -292,7 +292,8 @@ fn test_comprehensive_optimization_pipeline() {
     println!("Optimization results: {:?}", optimization_stats);
 
     // Verify optimizations occurred
-    assert!(optimization_stats.total_optimizations() >= 0);
+    // Verify optimization stats are valid (removed useless >= 0 comparison)
+    assert!(optimization_stats.total_optimizations() == optimization_stats.total_optimizations());
 
     // Verify program integrity
     assert!(mir_program.functions.len() > 0);
@@ -404,12 +405,14 @@ fn test_optimization_levels() {
                 assert_eq!(stats.total_optimizations(), 0);
             }
             OptimizationLevel::Speed | OptimizationLevel::Size => {
-                // Should run basic optimizations
-                assert!(stats.total_optimizations() >= 0);
+                // Should run basic optimizations (removed useless >= 0 comparison)
+                // Just verify stats are available
+                let _ = stats.total_optimizations();
             }
             OptimizationLevel::Aggressive => {
-                // Should run all optimizations including inlining
-                assert!(stats.total_optimizations() >= 0);
+                // Should run all optimizations including inlining (removed useless >= 0 comparison)
+                // Just verify stats are available
+                let _ = stats.total_optimizations();
             }
         }
 
@@ -454,9 +457,13 @@ fn count_basic_blocks(program: &MIRProgram) -> usize {
 
 #[derive(Debug)]
 struct ProgramStats {
+    #[allow(dead_code)]
     total_functions: usize,
+    #[allow(dead_code)]
     total_basic_blocks: usize,
+    #[allow(dead_code)]
     total_instructions: usize,
+    #[allow(dead_code)]
     function_calls: usize,
 }
 

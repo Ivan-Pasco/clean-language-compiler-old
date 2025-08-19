@@ -2,17 +2,17 @@
 // Note: Full onError implementation requires parser and runtime support
 
 functions:
-	riskyDivision(integer a, integer b)
+	integer riskyDivision(integer a, integer b)
 		if b == 0
 			error("Division by zero")
 		return a / b
 	
-	riskyFileRead(string filename)
+	string riskyFileRead(string filename)
 		if filename == "nonexistent.txt"
 			error("File not found")
 		return "File contents: " + filename
 	
-	parseInteger(string text)
+	integer parseInteger(string text)
 		if text == "invalid"
 			error("Invalid integer format")
 		// Simplified parsing for testing
@@ -22,7 +22,7 @@ functions:
 			return 100
 		return 0
 	
-	testBasicOnErrorSyntax()
+	void testBasicOnErrorSyntax()
 		print("=== Basic onError Syntax ===")
 		
 		// Basic onError with default value
@@ -41,7 +41,7 @@ functions:
 		string content = "default content"
 		print("File read with fallback: " + content)
 	
-	testOnErrorWithExpressions()
+	void testOnErrorWithExpressions()
 		print("=== onError with Expressions ===")
 		
 		// onError with calculated default
@@ -59,7 +59,7 @@ functions:
 		string data = "final fallback"
 		print("Chained error handling: " + data)
 	
-	testOnErrorWithErrorVariable()
+	void testOnErrorWithErrorVariable()
 		print("=== onError with Error Variable Access ===")
 		
 		// onError with access to the error message
@@ -76,7 +76,7 @@ functions:
 		integer conditionalValue = -1  // Simulated conditional error handling
 		print("Conditional error handling: " + conditionalValue.toString())
 	
-	testOnErrorInExpressions()
+	void testOnErrorInExpressions()
 		print("=== onError in Complex Expressions ===")
 		
 		// onError in mathematical expressions
@@ -96,7 +96,7 @@ functions:
 		// printValue(riskyDivision(100, 0) onError 42)
 		printValue(42)  // Called with fallback value
 	
-	testOnErrorWithLogging()
+	void testOnErrorWithLogging()
 		print("=== onError with Error Logging ===")
 		
 		// onError that logs the error and continues

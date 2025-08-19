@@ -40,7 +40,13 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
                 location: Some(ast_location),
             })
         }
-
+        Rule::function_call => {
+            let expr = parse_expression(inner)?;
+            Ok(Statement::Expression {
+                expr,
+                location: Some(ast_location),
+            })
+        }
         Rule::expression => {
             let expr = parse_expression(inner)?;
             Ok(Statement::Expression {

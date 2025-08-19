@@ -1,0 +1,5 @@
+functions:
+	test()
+		println:
+			"First line"
+			"Second line"

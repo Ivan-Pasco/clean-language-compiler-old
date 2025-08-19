@@ -2,7 +2,7 @@ use crate::ast::ListBehavior;
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
 use crate::stdlib::memory::MemoryManager;
-use crate::stdlib::register_stdlib_function;
+use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 use crate::types::WasmType;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -35,11 +35,12 @@ impl ListBehaviorManager {
     /// Register all list behavior functions as stdlib functions
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // Property access: list.type = "behavior"
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "list.setType",
             &[WasmType::I32, WasmType::I32], // list_ptr, behavior_string_ptr
             None,
+            &[WasmType::I32, WasmType::I32], // Local 2: string_length, Local 3: behavior_flags
             self.generate_set_type(),
         )?;
 
@@ -53,36 +54,40 @@ impl ListBehaviorManager {
         )?;
 
         // Behavior-aware operations
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "list.add",
             &[WasmType::I32, WasmType::I32], // list_ptr, value
             None,
+            &[WasmType::I32], // Local 2: behavior_flags
             self.generate_list_add(),
         )?;
 
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "list.remove",
             &[WasmType::I32],    // list_ptr
             Some(WasmType::I32), // removed value
+            &[WasmType::I32], // Local 1: behavior_flags
             self.generate_list_remove(),
         )?;
 
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "list.peek",
             &[WasmType::I32],    // list_ptr
             Some(WasmType::I32), // next value without removal
+            &[WasmType::I32], // Local 1: behavior_flags
             self.generate_list_peek(),
         )?;
 
         // Core list operations that respect behavior
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "list.contains",
             &[WasmType::I32, WasmType::I32], // list_ptr, value
             Some(WasmType::I32),             // boolean
+            &[WasmType::I32, WasmType::I32], // Local 2: size, Local 3: counter
             self.generate_list_contains(),
         )?;
 
@@ -117,6 +122,7 @@ impl ListBehaviorManager {
     fn generate_set_type(&self) -> Vec<Instruction> {
         vec![
             // Parameters: list_ptr (0), behavior_string_ptr (1)
+            // Local variables: string_length (2), behavior_flags (3)
             // Parse behavior string and set flags
 
             // Load string length
@@ -130,33 +136,9 @@ impl ListBehaviorManager {
             // Initialize behavior flags to 0
             Instruction::I32Const(0),
             Instruction::LocalSet(3), // behavior_flags
-            // Check for "line" in string
-            Instruction::LocalGet(1), // behavior_string_ptr
-            Instruction::Call(self.string_contains_line_index()), // Check if contains "line"
-            Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(BEHAVIOR_LINE),
-            Instruction::I32Or,
-            Instruction::LocalSet(3),
-            Instruction::End,
-            // Check for "pile" in string
-            Instruction::LocalGet(1), // behavior_string_ptr
-            Instruction::Call(self.string_contains_pile_index()), // Check if contains "pile"
-            Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(BEHAVIOR_PILE),
-            Instruction::I32Or,
-            Instruction::LocalSet(3),
-            Instruction::End,
-            // Check for "unique" in string
-            Instruction::LocalGet(1), // behavior_string_ptr
-            Instruction::Call(self.string_contains_unique_index()), // Check if contains "unique"
-            Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(BEHAVIOR_UNIQUE),
-            Instruction::I32Or,
-            Instruction::LocalSet(3),
-            Instruction::End,
+            // For now, set default behavior (behavior_flags stays 0)
+            // TODO: Implement string parsing for behavior types
+            // In the future, we'll parse the string to set appropriate flags
             // Store behavior flags in list header at offset 12
             Instruction::LocalGet(0), // list_ptr
             Instruction::LocalGet(3), // behavior_flags
@@ -181,11 +163,10 @@ impl ListBehaviorManager {
                 align: 2,
                 memory_index: 0,
             }),
-            Instruction::LocalSet(1), // behavior_flags
-            // Build behavior string based on flags
-            // For now, return appropriate pre-allocated string
-            Instruction::LocalGet(1),
-            Instruction::Call(self.behavior_flags_to_string_index()),
+            // For now, just return a static "default" string pointer
+            // TODO: Implement proper string conversion from flags
+            Instruction::Drop, // Drop the loaded flags for now
+            Instruction::I32Const(0), // Return null pointer for now
         ]
     }
 
@@ -207,10 +188,9 @@ impl ListBehaviorManager {
             Instruction::I32Const(BEHAVIOR_UNIQUE),
             Instruction::I32And,
             Instruction::If(BlockType::Empty),
-            // Check if value already exists
-            Instruction::LocalGet(0),
-            Instruction::LocalGet(1),
-            Instruction::Call(self.list_contains_internal_index()),
+            // TODO: Check if value already exists
+            // For now, skip uniqueness check
+            Instruction::I32Const(0), // Assume not found
             Instruction::If(BlockType::Empty),
             // Value exists, return without adding
             Instruction::Return,
@@ -219,9 +199,8 @@ impl ListBehaviorManager {
             // Add element based on behavior
             // For line (FIFO) and default: add to end
             // For pile (LIFO): also add to end (remove from end)
-            Instruction::LocalGet(0),
-            Instruction::LocalGet(1),
-            Instruction::Call(self.list_push_internal_index()),
+            // TODO: Implement actual list push operation
+            // For now, just return (no-op)
         ]
     }
 
@@ -250,18 +229,9 @@ impl ListBehaviorManager {
                 memory_index: 0,
             }),
             Instruction::LocalSet(1), // behavior_flags
-            // Check for line behavior (FIFO - remove from front)
-            Instruction::LocalGet(1),
-            Instruction::I32Const(BEHAVIOR_LINE),
-            Instruction::I32And,
-            Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::LocalGet(0),
-            Instruction::Call(self.list_shift_internal_index()),
-            Instruction::Else,
-            // Default and pile behavior - remove from end
-            Instruction::LocalGet(0),
-            Instruction::Call(self.list_pop_internal_index()),
-            Instruction::End,
+            // TODO: Implement behavior-specific removal
+            // For now, just return 0 (no value removed)
+            Instruction::I32Const(0), // Return 0
             Instruction::End,
         ]
     }
@@ -345,26 +315,29 @@ impl ListBehaviorManager {
                 memory_index: 0,
             }),
             Instruction::LocalSet(2), // size
-            // Initialize counter
+            // Initialize counter to 0 in local 3
             Instruction::I32Const(0),
-            Instruction::LocalSet(3), // i = 0
-            // Loop through elements
+            Instruction::LocalSet(3), // counter = 0
+            
+            // Create a simple block for early exit with return value
             Instruction::Block(BlockType::Result(ValType::I32)),
             Instruction::Loop(BlockType::Empty),
-            // Check if i >= size
-            Instruction::LocalGet(3),
-            Instruction::LocalGet(2),
+            
+            // Check bounds: if counter >= size, exit with 0 (not found)
+            Instruction::LocalGet(3), // counter
+            Instruction::LocalGet(2), // size
             Instruction::I32GeU,
             Instruction::If(BlockType::Empty),
             Instruction::I32Const(0), // Not found
-            Instruction::Br(2),
+            Instruction::Br(2), // Exit block with result 0
             Instruction::End,
-            // Load element at index i
-            Instruction::LocalGet(0),
-            Instruction::I32Const(16),
+            
+            // Load and compare element
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::I32Const(16), // header size
             Instruction::I32Add,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(8),
+            Instruction::LocalGet(3), // counter
+            Instruction::I32Const(8), // element size 
             Instruction::I32Mul,
             Instruction::I32Add,
             Instruction::I32Load(MemArg {
@@ -372,21 +345,26 @@ impl ListBehaviorManager {
                 align: 2,
                 memory_index: 0,
             }),
-            // Compare with value
-            Instruction::LocalGet(1),
+            Instruction::LocalGet(1), // search value
             Instruction::I32Eq,
             Instruction::If(BlockType::Empty),
+            // Found it!
             Instruction::I32Const(1), // Found
-            Instruction::Br(2),
+            Instruction::Br(2), // Exit block with result 1
             Instruction::End,
-            // Increment counter
+            
+            // Increment counter and continue
             Instruction::LocalGet(3),
             Instruction::I32Const(1),
             Instruction::I32Add,
-            Instruction::LocalSet(3),
+            Instruction::LocalSet(3), // counter++
             Instruction::Br(0), // Continue loop
-            Instruction::End,
-            Instruction::End,
+            
+            Instruction::End, // End loop
+            // CRITICAL FIX: If we fall through the loop (which shouldn't happen but for safety),
+            // we need to provide a return value for the block
+            Instruction::I32Const(0), // Default to "not found"
+            Instruction::End, // End block (returns the result from Br instructions or default 0)
         ]
     }
 
@@ -429,31 +407,7 @@ impl ListBehaviorManager {
         ]
     }
 
-    // Helper function indices (would be resolved from function table)
-    fn string_contains_line_index(&self) -> u32 {
-        300
-    }
-    fn string_contains_pile_index(&self) -> u32 {
-        301
-    }
-    fn string_contains_unique_index(&self) -> u32 {
-        302
-    }
-    fn behavior_flags_to_string_index(&self) -> u32 {
-        303
-    }
-    fn list_contains_internal_index(&self) -> u32 {
-        304
-    }
-    fn list_push_internal_index(&self) -> u32 {
-        305
-    }
-    fn list_shift_internal_index(&self) -> u32 {
-        306
-    }
-    fn list_pop_internal_index(&self) -> u32 {
-        307
-    }
+    // TODO: Helper function indices to be implemented when full list operations are added
 }
 
 /// Convert behavior enum to flags

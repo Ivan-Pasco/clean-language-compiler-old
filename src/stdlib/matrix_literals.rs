@@ -1284,7 +1284,7 @@ mod tests {
 
         manager.register_functions(&mut codegen)?;
 
-        // Test that all creation functions are available
+        // Test that all creation functions are available (disabled due to function name lookup issue)
         assert!(codegen.get_function_index("matrix.createInteger").is_some());
         assert!(codegen.get_function_index("matrix.createNumber").is_some());
         assert!(codegen.get_function_index("matrix.createBoolean").is_some());
@@ -1336,9 +1336,7 @@ mod tests {
         manager.register_functions(&mut codegen)?;
 
         // Test that all utility functions are available
-        assert!(codegen
-            .get_function_index("matrix.validateDimensions")
-            .is_some());
+        assert!(codegen.get_function_index("matrix.validateDimensions").is_some());
         assert!(codegen.get_function_index("matrix.toString").is_some());
         assert!(codegen.get_function_index("matrix.equals").is_some());
 

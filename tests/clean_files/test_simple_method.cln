@@ -1,0 +1,10 @@
+// Test simple method call
+
+functions:
+	void test()
+		integer x = 42
+		string result = x.toString()
+		print(result)
+
+start()
+	test()

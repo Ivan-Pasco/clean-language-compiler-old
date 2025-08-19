@@ -1,0 +1,7 @@
+functions:
+	test()
+		integer:
+			x = 5
+
+start()
+	test()

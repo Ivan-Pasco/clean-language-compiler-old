@@ -1,0 +1,5 @@
+functions:
+	void test()
+		string text = "Hello"
+		integer len = 5
+		print("Done")

@@ -1,0 +1,5 @@
+functions:
+	test()
+		integer:
+			count = 0
+			maxSize = 100

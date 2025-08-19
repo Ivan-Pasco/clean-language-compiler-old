@@ -1,0 +1,4 @@
+functions:
+	void main()
+		result = obj.prop.toString()
+		print(result)

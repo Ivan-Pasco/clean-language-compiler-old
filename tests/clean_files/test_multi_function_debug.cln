@@ -1,0 +1,6 @@
+functions:
+	integer add(integer a, integer b)
+		return a + b
+	
+	string greet(string name)
+		return "Hello, " + name

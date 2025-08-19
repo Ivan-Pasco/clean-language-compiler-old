@@ -10,7 +10,7 @@ use std::collections::HashMap;
 fn test_final_hir_structure() {
     let hir_program = HIRProgram {
         declarations: vec![HIRDeclaration::Function(HIRFunction {
-            id: 0,
+            id: IRId(0),
             name: "test_function".to_string(),
             parameters: vec![HIRParameter {
                 name: "x".to_string(),
@@ -23,11 +23,15 @@ fn test_final_hir_structure() {
             )))],
             is_async: false,
             debug_info: DebugInfo {
-                source_map: HashMap::new(),
+                source_span: None,
+                original_name: None,
+                ir_level: IRLevel::HIR,
             },
         })],
         debug_info: DebugInfo {
-            source_map: HashMap::new(),
+            source_span: None,
+            original_name: None,
+            ir_level: IRLevel::HIR,
         },
     };
 
@@ -249,7 +253,9 @@ fn test_all_validation_functions() {
     let hir_program = HIRProgram {
         declarations: vec![],
         debug_info: DebugInfo {
-            source_map: HashMap::new(),
+            source_span: None,
+            original_name: None,
+            ir_level: IRLevel::HIR,
         },
     };
     assert!(
@@ -355,7 +361,9 @@ fn test_comprehensive_ir_pipeline_summary() {
             is_mutable: false,
         })],
         debug_info: DebugInfo {
-            source_map: HashMap::new(),
+            source_span: None,
+            original_name: None,
+            ir_level: IRLevel::HIR,
         },
     };
     assert_eq!(hir.declarations.len(), 1);

@@ -1,0 +1,23 @@
+class Vehicle
+	string make
+	string model
+	
+	functions:
+		string getInfo()
+			return make + " " + model
+		
+		string start()
+			return "Vehicle starting..."
+		
+		string stop()
+			return "Vehicle stopping..."
+
+class Car is Vehicle
+	integer doors
+	
+	functions:
+		string start()
+			return make + " " + model + " engine starting"
+		
+		string stop()
+			return make + " " + model + " parking"

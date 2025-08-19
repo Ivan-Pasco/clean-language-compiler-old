@@ -44,21 +44,26 @@ functions:
 		print("text.toUpperCase() = " + text.toUpperCase())
 		print("text.toLowerCase() = " + text.toLowerCase())
 		// String utility functions (lowercase namespace)
-		print("string.contains(\"" + text + "\", \"" + search + "\") = " + string.contains(text, search).toString())
-		print("string.indexOf(\"" + text + "\", \"" + search + "\") = " + string.indexOf(text, search).toString())
-		print("string.lastIndexOf(\"" + text + "\", \"l\") = " + string.lastIndexOf(text, "l").toString())
-		print("string.startsWith(\"" + text + "\", \"Hello\") = " + string.startsWith(text, "Hello").toString())
-		print("string.endsWith(\"" + text + "\", \"World!\") = " + string.endsWith(text, "World!").toString())
+		boolean containsResult = string.contains(text, search)
+		print("string.contains result = " + containsResult.toString())
+		integer indexResult = string.indexOf(text, search)
+		print("string.indexOf result = " + indexResult.toString())
+		integer lastIndexResult = string.lastIndexOf(text, "l")
+		print("string.lastIndexOf result = " + lastIndexResult.toString())
+		boolean startsWithResult = string.startsWith(text, "Hello")
+		print("string.startsWith result = " + startsWithResult.toString())
+		boolean endsWithResult = string.endsWith(text, "World!")
+		print("string.endsWith result = " + endsWithResult.toString())
 		// String manipulation with utility functions
 		string padded = "  trim test  "
-		print("Original: \"" + padded + "\"")
-		print("string.trim(\"" + padded + "\") = \"" + string.trim(padded) + "\"")
-		print("string.trimStart(\"" + padded + "\") = \"" + string.trimStart(padded) + "\"")
-		print("string.trimEnd(\"" + padded + "\") = \"" + string.trimEnd(padded) + "\"")
+		print("Original string: " + padded)
+		print("string.trim result: " + string.trim(padded))
+		print("string.trimStart result: " + string.trimStart(padded))
+		print("string.trimEnd result: " + string.trimEnd(padded))
 		// String replacement
 		string original = "The quick brown fox"
-		print("string.replace(\"" + original + "\", \"quick\", \"slow\") = " + string.replace(original, "quick", "slow"))
-		print("string.substring(\"" + original + "\", 4, 9) = " + string.substring(original, 4, 9))
+		print("string.replace result = " + string.replace(original, "quick", "slow"))
+		print("string.substring result = " + string.substring(original, 4, 9))
 	
 	testListOperations()
 		print("=== List Operations - Specification Compliant ===")
@@ -68,7 +73,8 @@ functions:
 		print("numbers.length() = " + numbers.length().toString())
 		print("words.length() = " + words.length().toString())
 		// List access and modification
-		print("numbers[2] = " + numbers[2].toString())
+		integer numberElement = numbers[2]
+		print("numbers[2] = " + numberElement.toString())
 		print("words[1] = " + words[1])
 		// List utility functions (lowercase namespace)
 		list.add(numbers, 6)

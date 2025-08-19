@@ -1,0 +1,6 @@
+functions:
+	string firstFunction()
+		return "works"
+	
+	string secondFunction()
+		return "also works"

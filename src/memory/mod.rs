@@ -18,6 +18,8 @@ pub mod arc;
 pub mod gc;
 pub mod layout;
 pub mod string_pool;
+
+// Note: layout_tests module removed due to missing implementation
 pub mod wasm_runtime;
 
 pub use allocator::*;

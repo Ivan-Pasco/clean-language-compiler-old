@@ -120,13 +120,15 @@ impl ListClass {
         )?;
 
         // List.contains(list lst, any value) -> boolean
-        register_stdlib_function(
-            codegen,
-            "list.contains",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_contains(),
-        )?;
+        // NOTE: Temporarily disabled to avoid duplicate registration with list_behavior.rs
+        // The list_behavior.rs implementation is more complete
+        // register_stdlib_function(
+        //     codegen,
+        //     "list.contains",
+        //     &[WasmType::I32, WasmType::I32],
+        //     Some(WasmType::I32),
+        //     self.generate_contains(),
+        // )?;
 
         // List.find(list lst, any value) -> any
         register_stdlib_function(

@@ -1,0 +1,6 @@
+functions:
+	string greet(string name="World")
+		return "Hello, " + name
+	
+	integer power(integer value, integer exponent=2)
+		return value * value

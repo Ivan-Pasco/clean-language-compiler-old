@@ -1516,9 +1516,8 @@ impl InstructionGenerator {
                 Ok(wasm_type)
             } else {
                 // No return type means void function
-                // We'll use I32 as a placeholder but this should be handled specially in calling code
-                // The calling code should check if the function is void and not expect a value on the stack
-                Ok(WasmType::I32) // This represents void functions - but they don't actually put values on stack
+                // Return Unit type to properly indicate that no value is produced on the stack
+                Ok(WasmType::Unit) // Void functions don't put values on stack
             }
         } else {
             // If no function type info is available, default to I32

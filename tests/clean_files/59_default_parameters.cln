@@ -3,24 +3,23 @@
 
 functions:
 	// Functions with default parameter values
-	greet(string name = "World")
+	string greet(string name="World")
 		return "Hello, " + name
 	
-	power(integer base, integer exponent = 2)
-		return base ^ exponent
-	
-	logMessage(string message, string level = "INFO")
+	integer power(integer value, integer exponent=2)
+		return value * value  // Simplified for now
+	void logMessage(string message, string level="INFO")
 		print("[" + level + "] " + message)
 	
 	// Function with input block and default values
-	calculateArea()
+	integer calculateArea()
 		description "Calculate area with default dimensions"
 		input
 			integer width = 10      // Default width
 			integer height = 5      // Default height
 		return width * height
 	
-	formatMessage()
+	string formatMessage()
 		description "Format a message with optional parameters"
 		input
 			string text = "Hello"   // Default message

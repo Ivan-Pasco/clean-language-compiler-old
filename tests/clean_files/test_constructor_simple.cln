@@ -1,0 +1,9 @@
+functions:
+	test()
+		print:
+			"test message"
+		integer:
+			x = 5
+
+start()
+	test()

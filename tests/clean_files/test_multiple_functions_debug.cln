@@ -1,0 +1,6 @@
+functions:
+	greet(string name="World")
+		return "Hello, " + name
+	
+	add(integer a, integer b)
+		return a + b

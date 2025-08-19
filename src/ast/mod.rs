@@ -7,6 +7,16 @@ pub struct SourceLocation {
     pub file: String,
 }
 
+impl SourceLocation {
+    pub fn new(line: usize, column: usize, file: &str) -> Self {
+        Self {
+            line,
+            column,
+            file: file.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Integer(i64), // Default integer (platform optimal)

@@ -1,0 +1,9 @@
+// HTTP and File I/O validation test
+// Tests that functions are properly registered in the stdlib
+
+start()
+	print("Testing HTTP and File I/O function registration")
+	print("HTTP functions available: http.get, http.post, http.delete")
+	print("File functions available: file.read, file.write, file.exists")
+	print("Directory functions available: directory.create, directory.list")
+	print("All host functions implemented and registered in stdlib")

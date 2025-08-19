@@ -1,0 +1,4 @@
+functions:
+	void main()
+		s = "hello"
+		result = s.keepBetween(1, 3)

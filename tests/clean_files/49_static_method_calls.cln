@@ -42,9 +42,9 @@ functions:
 		
 		// Test list namespace methods
 		list<integer> numbers = [1, 2, 3, 4, 5]
-		integer listLength = list.length(numbers)
+		integer myListLength = list.length(numbers)
 		print("list.length([1,2,3,4,5]): ")
-		print(listLength.toString())
+		print(myListLength.toString())
 		
 		integer firstItem = list.get(numbers, 0)
 		print("list.get(numbers, 0): ")
@@ -55,9 +55,9 @@ functions:
 		print(hasItem.toString())
 		
 		// Test file namespace methods
-		boolean fileExists = file.exists("test.txt")
+		boolean myFileExists = file.exists("test.txt")
 		print("file.exists('test.txt'): ")
-		print(fileExists.toString())
+		print(myFileExists.toString())
 		
 		print("Lowercase namespace calls test completed successfully!")
 

@@ -10,16 +10,16 @@ class Vehicle
 		year = vehicleYear
 	
 	functions:
-		getInfo()
+		string getInfo()
 			return year.toString() + " " + make + " " + model
 		
-		start()
+		string startEngine()
 			return "Vehicle starting..."
 		
-		stop()
+		string stopEngine()
 			return "Vehicle stopping..."
 		
-		getMaxSpeed()
+		integer getMaxSpeed()
 			return 60
 
 class Car is Vehicle
@@ -32,22 +32,22 @@ class Car is Vehicle
 		isElectric = electric
 	
 	functions:
-		start()
+		string startEngine()
 			if isElectric
 				return make + " " + model + " starting silently (electric)"
 			else
 				return make + " " + model + " engine starting"
 		
-		stop()
+		string stopEngine()
 			return make + " " + model + " parking"
 		
-		getMaxSpeed()
+		integer getMaxSpeed()
 			if isElectric
 				return 120
 			else
 				return 100
 		
-		getCarDetails()
+		string getCarDetails()
 			string electric_status = ""
 			if isElectric
 				electric_status = "Electric"
@@ -63,19 +63,19 @@ class Motorcycle is Vehicle
 		hasSidecar = sidecar
 	
 	functions:
-		start()
+		string startEngine()
 			return make + " " + model + " motorcycle roaring to life"
 		
-		stop()
+		string stopEngine()
 			return make + " " + model + " motorcycle stopping"
 		
-		getMaxSpeed()
+		integer getMaxSpeed()
 			if hasSidecar
 				return 80
 			else
 				return 140
 		
-		getBikeDetails()
+		string getBikeDetails()
 			string sidecar_status = ""
 			if hasSidecar
 				sidecar_status = "with sidecar"
@@ -84,18 +84,18 @@ class Motorcycle is Vehicle
 			return getInfo() + " (" + sidecar_status + ")"
 
 functions:
-	demonstratePolymorphism(Vehicle vehicle)
+	void demonstratePolymorphism(Vehicle vehicle)
 		print("=== Vehicle Demonstration ===")
 		print("Info: " + vehicle.getInfo())
-		print("Starting: " + vehicle.start())
+		print("Starting: " + vehicle.startEngine())
 		print("Max Speed: " + vehicle.getMaxSpeed().toString() + " km/h")
-		print("Stopping: " + vehicle.stop())
+		print("Stopping: " + vehicle.stopEngine())
 		print("")
 	
-	testVehicleArray(list<Vehicle> vehicles)
+	void testVehicleArray(list<Vehicle> vehicles)
 		print("Testing polymorphic behavior with vehicle array:")
 		iterate vehicle in vehicles
-			print("- " + vehicle.start())
+			print("- " + vehicle.startEngine())
 			print("  Max speed: " + vehicle.getMaxSpeed().toString() + " km/h")
 		print("")
 
@@ -116,7 +116,11 @@ start()
 	demonstratePolymorphism(sidecarBike)
 	
 	// Create array of vehicles (polymorphic collection)
-	list<Vehicle> fleet = [tesla, honda, harley, sidecarBike]
+	list<Vehicle> fleet
+	fleet.add(tesla)
+	fleet.add(honda) 
+	fleet.add(harley)
+	fleet.add(sidecarBike)
 	
 	// Test polymorphic behavior with collection
 	testVehicleArray(fleet)

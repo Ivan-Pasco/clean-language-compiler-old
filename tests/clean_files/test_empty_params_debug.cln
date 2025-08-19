@@ -1,0 +1,3 @@
+functions:
+	string test()
+		return "hello"

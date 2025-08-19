@@ -2,7 +2,7 @@
 
 functions:
 
-	testStringMethods()
+	void testStringMethods()
 		print("=== Testing String Method-Style Syntax ===")
 		string text = "Hello World"
 		integer textLength = text.length()
@@ -15,7 +15,7 @@ functions:
 		string lowerText = text.toLowerCase()
 		print("Lowercase: " + lowerText)
 
-	testNumberMethods()
+	void testNumberMethods()
 		print("=== Testing Number Method-Style Syntax ===")
 		integer num = 123
 		string numStr = num.toString()
@@ -26,24 +26,24 @@ functions:
 		print("Number to string: " + decimalStr)
 		
 		// Test type conversions
-		integer fromNumber = decimal.toInteger
+		integer fromNumber = decimal.toInteger()
 		print("Number to integer: " + fromNumber.toString())
 		
-		number fromInteger = num.toNumber
+		number fromInteger = num.toNumber()
 		print("Integer to number: " + fromInteger.toString())
 
-	testBooleanMethods()
+	void testBooleanMethods()
 		print("=== Testing Boolean Method-Style Syntax ===")
 		boolean flag = true
 		string boolStr = flag.toString()
 		print("Boolean to string: " + boolStr)
 		
 		integer boolValue = 1
-		boolean converted = boolValue.toBoolean
+		boolean converted = boolValue.toBoolean()
 		print("Integer to boolean (1): " + converted.toString())
 		
 		integer zeroValue = 0
-		boolean zeroConverted = zeroValue.toBoolean
+		boolean zeroConverted = zeroValue.toBoolean()
 		print("Integer to boolean (0): " + zeroConverted.toString())
 
 start()

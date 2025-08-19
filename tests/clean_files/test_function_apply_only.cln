@@ -1,0 +1,4 @@
+functions:
+	test()
+		println:
+			"Hello"

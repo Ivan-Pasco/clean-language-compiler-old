@@ -112,32 +112,6 @@ fn parse_integer_literal(
 
 // Helper function to convert location from parser format to AST format
 
-#[derive(Debug, Clone)]
-enum ParsedOperator {
-    Binary(BinaryOperator),
-}
-
-impl ParsedOperator {
-    fn precedence(&self) -> u8 {
-        match self {
-            ParsedOperator::Binary(op) => match op {
-                BinaryOperator::Power => 5,
-                BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Modulo => 4,
-                BinaryOperator::Add | BinaryOperator::Subtract => 3,
-                BinaryOperator::Less
-                | BinaryOperator::Greater
-                | BinaryOperator::LessEqual
-                | BinaryOperator::GreaterEqual => 2,
-                BinaryOperator::Equal
-                | BinaryOperator::NotEqual
-                | BinaryOperator::Is
-                | BinaryOperator::Not => 1,
-                BinaryOperator::And => 1,
-                BinaryOperator::Or => 0,
-            },
-        }
-    }
-}
 
 pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     match pair.as_rule() {
@@ -220,11 +194,24 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                 location,
             })
         }
+        Rule::function_call => {
+            // Parse function call directly
+            parse_function_call(pair)
+        }
+        Rule::conditional_expr => {
+            // Parse conditional expression directly
+            parse_conditional_expression(pair)
+        }
+        Rule::parenthesized_expr => {
+            // Parse parenthesized expression
+            let inner = pair.into_inner().next().unwrap();
+            parse_expression(inner)
+        }
         _ => {
             Err(CompilerError::parse_error(
                 format!("Unsupported expression rule: {:?}", pair.as_rule()),
                 Some(convert_to_ast_location(&get_location(&pair))),
-                Some("Expected expression, on_error_expr, on_error_block, base_expression, start_expr, or error_variable".to_string())
+                Some("Expected expression, on_error_expr, on_error_block, base_expression, start_expr, conditional_expr, or error_variable".to_string())
             ))
         }
     }
@@ -236,11 +223,14 @@ pub fn parse_base_expression(pair: Pair<Rule>) -> Result<Expression, CompilerErr
             Rule::logical_expression => {
                 return parse_logical_expression(item);
             }
+            Rule::conditional_expr => {
+                return parse_conditional_expression(item);
+            }
             _ => {
                 return Err(CompilerError::parse_error(
                     format!("Unexpected rule in base expression: {:?}", item.as_rule()),
                     Some(convert_to_ast_location(&get_location(&item))),
-                    Some("Expected logical expression".to_string()),
+                    Some("Expected logical expression or conditional expression".to_string()),
                 ))
             }
         }
@@ -249,7 +239,7 @@ pub fn parse_base_expression(pair: Pair<Rule>) -> Result<Expression, CompilerErr
     Err(CompilerError::parse_error(
         "Empty base expression".to_string(),
         None,
-        Some("Base expression must contain a logical expression".to_string()),
+        Some("Base expression must contain a logical or conditional expression".to_string()),
     ))
 }
 
@@ -612,15 +602,6 @@ pub fn parse_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
     Ok(result)
 }
 
-fn apply_operator(
-    left: Expression,
-    op: ParsedOperator,
-    right: Expression,
-) -> Result<Expression, CompilerError> {
-    match op {
-        ParsedOperator::Binary(op) => Ok(Expression::Binary(Box::new(left), op, Box::new(right))),
-    }
-}
 
 pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let location = get_location(&pair);
@@ -675,7 +656,9 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::list_literal => parse_list_literal(inner),
         Rule::matrix_literal => parse_matrix_literal(inner),
         Rule::function_call => parse_function_call(inner),
+        Rule::property_method_call => parse_property_method_call(inner),
         Rule::method_call => parse_method_call(inner),
+        Rule::three_level_method_call => parse_three_level_method_call(inner),
         Rule::static_method_call => parse_static_method_call(inner),
         Rule::property_access => parse_property_access(inner),
         Rule::list_access => parse_list_access(inner),
@@ -697,9 +680,10 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
             // Handle parenthesized logical expressions: (logical_expression)
             parse_logical_expression(inner)
         }
-        Rule::multiline_parenthesized_expr => {
-            // Handle multi-line parenthesized expressions: (expr + \n expr)
-            parse_multiline_parenthesized_expression(inner)
+        Rule::parenthesized_expr => {
+            // Handle parenthesized expressions: (parenthesized_expr)
+            let inner_expr = inner.into_inner().next().unwrap();
+            parse_logical_expression(inner_expr)
         }
         Rule::conditional_expr => {
             // Handle conditional expressions: if condition then value else value
@@ -902,8 +886,24 @@ pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError
     let mut arguments = Vec::new();
 
     for arg in inner {
-        if let Rule::logical_expression = arg.as_rule() {
-            arguments.push(parse_logical_expression(arg)?);
+        match arg.as_rule() {
+            Rule::argument_list => {
+                // Parse argument list - contains argument_expression items
+                for arg_expr in arg.into_inner() {
+                    if let Rule::argument_expression = arg_expr.as_rule() {
+                        // argument_expression contains additive_expression
+                        let additive_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_additive_expression(additive_expr)?);
+                    }
+                }
+            }
+            Rule::logical_expression => {
+                // Fallback for direct logical expressions (if any)
+                arguments.push(parse_logical_expression(arg)?);
+            }
+            _ => {
+                // Skip other rules (like identifier, type_arguments, parentheses)
+            }
         }
     }
 
@@ -922,7 +922,13 @@ pub fn parse_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
             match first.as_rule() {
                 Rule::identifier => Expression::Variable(first.as_str().to_string()),
                 Rule::builtin_class_name => Expression::Variable(first.as_str().to_string()),
-                Rule::expression => parse_expression(first)?,
+                Rule::string => parse_string(first)?,
+                // Handle all number variants (because number is a silent rule)
+                Rule::decimal_integer | Rule::hex_integer | Rule::binary_integer | Rule::octal_integer | Rule::float => {
+                    parse_number_literal(first)?
+                }
+                Rule::boolean => Expression::Literal(Value::Boolean(first.as_str() == "true")),
+                Rule::logical_expression => parse_expression(first)?, // Handle parenthesized expressions
                 _ => {
                     return Err(CompilerError::parse_error(
                         "Invalid method call base".to_string(),
@@ -956,8 +962,24 @@ pub fn parse_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
 
                     // Parse arguments from the remaining segments
                     for arg in seg_inner {
-                        if let Rule::logical_expression = arg.as_rule() {
-                            arguments.push(parse_logical_expression(arg)?);
+                        match arg.as_rule() {
+                            Rule::argument_list => {
+                                // Parse argument list - contains argument_expression items
+                                for arg_expr in arg.into_inner() {
+                                    if let Rule::argument_expression = arg_expr.as_rule() {
+                                        // argument_expression contains additive_expression
+                                        let additive_expr = arg_expr.into_inner().next().unwrap();
+                                        arguments.push(parse_additive_expression(additive_expr)?);
+                                    }
+                                }
+                            }
+                            Rule::logical_expression => {
+                                // Fallback for direct logical expressions (if any)
+                                arguments.push(parse_logical_expression(arg)?);
+                            }
+                            _ => {
+                                // Skip other rules
+                            }
                         }
                     }
 
@@ -1006,6 +1028,57 @@ pub fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, CompilerErr
     Ok(current_expr)
 }
 
+pub fn parse_property_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let inner = pair.into_inner();
+    let all_children: Vec<_> = inner.collect();
+    
+    // First element should be the base identifier
+    let base_identifier = all_children[0].as_str().to_string();
+    let mut current_expr = Expression::Variable(base_identifier);
+    
+    // Build property access chain until we hit the method_name
+    let mut segments = Vec::new();
+    let mut method_name = String::new();
+    let mut arguments = Vec::new();
+    
+    for child in &all_children[1..] {
+        match child.as_rule() {
+            Rule::identifier => segments.push(child.as_str().to_string()),
+            Rule::method_name => method_name = child.as_str().to_string(),
+            Rule::argument_list => {
+                // Parse argument list - contains argument_expression items
+                for arg_expr in child.clone().into_inner() {
+                    if let Rule::argument_expression = arg_expr.as_rule() {
+                        // argument_expression contains additive_expression
+                        let additive_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_additive_expression(additive_expr)?);
+                    }
+                }
+            }
+            Rule::logical_expression => arguments.push(parse_logical_expression(child.clone())?),
+            _ => {}
+        }
+    }
+    
+    // Build property access expression for the chain before the method
+    for property in segments {
+        let location = crate::ast::SourceLocation::default();
+        current_expr = Expression::PropertyAccess {
+            object: Box::new(current_expr),
+            property,
+            location,
+        };
+    }
+    
+    let location = crate::ast::SourceLocation::default();
+    Ok(Expression::MethodCall {
+        object: Box::new(current_expr),
+        method: method_name,
+        arguments,
+        location,
+    })
+}
+
 pub fn parse_list_access(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let mut inner = pair.into_inner();
 
@@ -1023,150 +1096,6 @@ pub fn parse_list_access(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
     ))
 }
 
-pub fn parse_multiline_parenthesized_expression(
-    pair: Pair<Rule>,
-) -> Result<Expression, CompilerError> {
-    // The multiline_parenthesized_expr contains a multiline_expression
-    for inner in pair.into_inner() {
-        if inner.as_rule() == Rule::multiline_expression {
-            return parse_multiline_expression(inner);
-        }
-        // Skip NEWLINE and INDENT tokens
-    }
-
-    Err(CompilerError::parse_error(
-        "Empty multi-line parenthesized expression".to_string(),
-        None,
-        Some("Multi-line expressions must contain at least one expression".to_string()),
-    ))
-}
-
-pub fn parse_multiline_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
-    let mut expr_stack = Vec::new();
-    let mut op_stack = Vec::new();
-
-    for item in pair.into_inner() {
-        match item.as_rule() {
-            Rule::primary => {
-                expr_stack.push(parse_primary(item)?);
-            }
-            Rule::arithmetic_op | Rule::additive_op | Rule::multiplicative_op | Rule::power_op => {
-                let op = match item.as_str() {
-                    "+" => BinaryOperator::Add,
-                    "-" => BinaryOperator::Subtract,
-                    "*" => BinaryOperator::Multiply,
-                    "/" => BinaryOperator::Divide,
-                    "%" => BinaryOperator::Modulo,
-                    "^" => BinaryOperator::Power,
-                    _ => {
-                        return Err(CompilerError::parse_error(
-                            format!("Invalid arithmetic operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
-                            Some("Valid arithmetic operators are: +, -, *, /, %, ^".to_string()),
-                        ))
-                    }
-                };
-                op_stack.push(ParsedOperator::Binary(op));
-            }
-            Rule::logical_op => {
-                let op = match item.as_str() {
-                    "and" => BinaryOperator::And,
-                    "or" => BinaryOperator::Or,
-                    _ => {
-                        return Err(CompilerError::parse_error(
-                            format!("Invalid logical operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
-                            Some("Valid logical operators are: and, or".to_string()),
-                        ))
-                    }
-                };
-                op_stack.push(ParsedOperator::Binary(op));
-            }
-            Rule::comparison_op => {
-                let op = match item.as_str() {
-                    "==" => BinaryOperator::Equal,
-                    "!=" => BinaryOperator::NotEqual,
-                    "<" => BinaryOperator::Less,
-                    "<=" => BinaryOperator::LessEqual,
-                    ">" => BinaryOperator::Greater,
-                    ">=" => BinaryOperator::GreaterEqual,
-                    "is" => BinaryOperator::Is,
-                    _ => {
-                        return Err(CompilerError::parse_error(
-                            format!("Invalid comparison operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
-                            Some(
-                                "Valid comparison operators are: ==, !=, <, <=, >, >=, is"
-                                    .to_string(),
-                            ),
-                        ))
-                    }
-                };
-                op_stack.push(ParsedOperator::Binary(op));
-            }
-            _ => {} // Skip NEWLINE and INDENT tokens
-        }
-    }
-
-    // Apply operators with precedence (same logic as base_expression)
-    while op_stack.len() > 1 && expr_stack.len() >= 3 {
-        let op2 = op_stack.pop().unwrap();
-        let op1 = op_stack.last().unwrap();
-
-        if op1.precedence() >= op2.precedence() {
-            let right = expr_stack.pop().ok_or_else(|| {
-                CompilerError::parse_error(
-                    "Missing right operand".to_string(),
-                    None,
-                    Some("Each operator requires two operands".to_string()),
-                )
-            })?;
-
-            let left = expr_stack.pop().ok_or_else(|| {
-                CompilerError::parse_error(
-                    "Missing left operand".to_string(),
-                    None,
-                    Some("Each operator requires two operands".to_string()),
-                )
-            })?;
-
-            expr_stack.push(apply_operator(left, op2, right)?);
-        } else {
-            op_stack.push(op2);
-            break;
-        }
-    }
-
-    // Apply remaining operators
-    while !op_stack.is_empty() && expr_stack.len() >= 2 {
-        let op = op_stack.pop().unwrap();
-        let right = expr_stack.pop().ok_or_else(|| {
-            CompilerError::parse_error(
-                "Missing right operand".to_string(),
-                None,
-                Some("Each operator requires two operands".to_string()),
-            )
-        })?;
-
-        let left = expr_stack.pop().ok_or_else(|| {
-            CompilerError::parse_error(
-                "Missing left operand".to_string(),
-                None,
-                Some("Each operator requires two operands".to_string()),
-            )
-        })?;
-
-        expr_stack.push(apply_operator(left, op, right)?);
-    }
-
-    expr_stack.pop().ok_or_else(|| {
-        CompilerError::parse_error(
-            "Empty multiline expression".to_string(),
-            None,
-            Some("A multiline expression must contain at least one value".to_string()),
-        )
-    })
-}
 
 pub fn parse_conditional_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let location = convert_to_ast_location(&get_location(&pair));
@@ -1215,8 +1144,26 @@ pub fn parse_base_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let mut arguments = Vec::new();
 
     for arg in pair.into_inner() {
-        if let Rule::logical_expression = arg.as_rule() {
-            arguments.push(parse_logical_expression(arg)?);
+        match arg.as_rule() {
+            Rule::argument_list => {
+                // Parse argument list - contains argument_expression items
+                for arg_expr in arg.into_inner() {
+                    if let Rule::argument_expression = arg_expr.as_rule() {
+                        // argument_expression contains additive_expression
+                        let additive_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_additive_expression(additive_expr)?);
+                    }
+                }
+            }
+            Rule::logical_expression => {
+                arguments.push(parse_logical_expression(arg)?);
+            }
+            Rule::expression => {
+                arguments.push(parse_expression(arg)?);
+            }
+            _ => {
+                // Skip other rules (like "base", parentheses)
+            }
         }
     }
 
@@ -1230,17 +1177,78 @@ pub fn parse_static_method_call(pair: Pair<Rule>) -> Result<Expression, Compiler
     let location = get_location(&pair);
     let mut inner = pair.into_inner();
 
-    // Parse: ClassName.method(args...)
-    let class_name = inner.next().unwrap().as_str().to_string();
+    // Parse: ClassName.method(args...) or namespace.subnamespace.method(args...)
+    let static_class_name_pair = inner.next().unwrap();
+    let class_name = static_class_name_pair.as_str().to_string();
     let method_name = inner.next().unwrap().as_str().to_string();
     let mut arguments = Vec::new();
 
     // Parse arguments
     for arg in inner {
-        if let Rule::logical_expression = arg.as_rule() {
-            arguments.push(parse_logical_expression(arg)?);
+        match arg.as_rule() {
+            Rule::argument_list => {
+                // Parse argument list - contains argument_expression items
+                for arg_expr in arg.into_inner() {
+                    if let Rule::argument_expression = arg_expr.as_rule() {
+                        // argument_expression contains additive_expression
+                        let additive_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_additive_expression(additive_expr)?);
+                    }
+                }
+            }
+            Rule::logical_expression => {
+                // Fallback for direct logical expressions (if any)
+                arguments.push(parse_logical_expression(arg)?);
+            }
+            _ => {
+                // Skip other rules (like static_class_name, method_name, parentheses)
+            }
         }
     }
+
+    Ok(Expression::StaticMethodCall {
+        class_name,
+        method: method_name,
+        arguments,
+        location: convert_to_ast_location(&location),
+    })
+}
+
+pub fn parse_three_level_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = get_location(&pair);
+    let mut inner = pair.into_inner();
+
+    // Parse: namespace.subnamespace.method(args...) like compare.integer.greaterThan(a, b)
+    let namespace = inner.next().unwrap().as_str().to_string();
+    let subnamespace = inner.next().unwrap().as_str().to_string();
+    let method_name = inner.next().unwrap().as_str().to_string();
+    let mut arguments = Vec::new();
+
+    // Parse arguments
+    for arg in inner {
+        match arg.as_rule() {
+            Rule::argument_list => {
+                // Parse argument list - contains argument_expression items
+                for arg_expr in arg.into_inner() {
+                    if let Rule::argument_expression = arg_expr.as_rule() {
+                        // argument_expression contains additive_expression
+                        let additive_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_additive_expression(additive_expr)?);
+                    }
+                }
+            }
+            Rule::logical_expression => {
+                // Fallback for direct logical expressions (if any)
+                arguments.push(parse_logical_expression(arg)?);
+            }
+            _ => {
+                // Skip other rules (like identifiers, method_name, parentheses)
+            }
+        }
+    }
+
+    // Combine namespace and subnamespace into class name like "compare.integer"
+    let class_name = format!("{}.{}", namespace, subnamespace);
 
     Ok(Expression::StaticMethodCall {
         class_name,

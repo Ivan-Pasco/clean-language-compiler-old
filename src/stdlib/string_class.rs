@@ -327,11 +327,10 @@ impl StringClass {
 
     fn generate_concat(&self) -> Vec<Instruction> {
         vec![
-            // Simplified concat implementation - return first string to maintain spec compliance
-            // Parameters: str1_ptr, str2_ptr
-            // Returns: string pointer (simplified to return first string)
-            // In a full implementation, this would properly concatenate the strings
-            Instruction::LocalGet(0), // return first string ptr
+            // Ultra-simplified concat implementation - just return first string
+            // Parameters: str1_ptr, str2_ptr  
+            // Returns: string pointer (just return first string for now)
+            Instruction::LocalGet(0), // Return first string ptr
         ]
     }
 

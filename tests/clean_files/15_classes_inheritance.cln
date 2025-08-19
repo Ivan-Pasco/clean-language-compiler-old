@@ -37,9 +37,9 @@ class Dog is Animal
 class Cat is Animal
 	boolean isIndoor
 	
-	constructor(string catName, integer catAge, boolean indoor)
+	constructor(string catName, integer catAge, boolean indoorFlag)
 		base(catName, catAge)
-		isIndoor = indoor
+		isIndoor = indoorFlag
 	
 	functions:
 		string makeSound()

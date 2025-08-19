@@ -2,10 +2,10 @@
 // Tests combinations of all new syntax patterns
 
 import:
-    Math
-    String
-    List
-    Http
+    math
+    string
+    list
+    http
 
 private:
     internalValidation
@@ -19,14 +19,21 @@ functions:
         integer age = input.integer("Enter your age: ")
         boolean confirmed = input.yesNo("Confirm registration? ")
         
-        // Validate using method-style syntax
-        name.mustBeFalse(name.isEmpty())
-        age.mustBeTrue(age > 0)
-        age.mustBeTrue(age < 150)
+        // Validate using basic conditions
+        if string.isEmpty(name)
+            return false
+        if age <= 0
+            return false
+        if age >= 150
+            return false
         
-        // Process using static methods and method chaining
-        string cleanName = String.trim(name).toString()
-        integer validAge = age.keepBetween(18, 120)
+        // Process using static methods
+        string cleanName = string.trim(name)
+        integer validAge = age
+        if validAge < 18
+            validAge = 18
+        if validAge > 120
+            validAge = 120
         
         // Use HTTP methods for data submission
         string userData = "{\"name\": \"" + cleanName + "\", \"age\": " + validAge.toString() + "}"
@@ -35,7 +42,7 @@ functions:
         // Background logging
         background logUserAction("User registration attempted")
         
-        return confirmed and response.isNotEmpty()
+        return confirmed and string.length(response) > 0
     
     // Function using async keywords with method chaining
     fetchAndProcessData()
@@ -48,19 +55,22 @@ functions:
         list<string> results = []
         
         // Wait for and validate results
-        data1.mustBeFalse(data1.isEmpty())
-        data2.mustBeFalse(data2.isEmpty())
-        data3.mustBeFalse(data3.isEmpty())
+        if string.isEmpty(data1)
+            return []
+        if string.isEmpty(data2)
+            return []
+        if string.isEmpty(data3)
+            return []
         
         // Use static methods for processing
-        string processed1 = String.toUpperCase(data1)
-        string processed2 = String.toLowerCase(data2)
-        string processed3 = String.trim(data3)
+        string processed1 = string.toUpperCase(data1)
+        string processed2 = string.toLowerCase(data2)
+        string processed3 = string.trim(data3)
         
         // Build result list
-        results = List.push(results, processed1)
-        results = List.push(results, processed2)
-        results = List.push(results, processed3)
+        results = list.push(results, processed1)
+        results = list.push(results, processed2)
+        results = list.push(results, processed3)
         
         // Background cleanup
         background clearCache()
@@ -68,17 +78,17 @@ functions:
         return results
     
     // Private helper functions
-    internalValidation(string data)
-        data.mustBeTrue(data.length() > 0)
+    boolean internalValidation(string data)
+        return string.length(data) > 0
     
     secretKey()
         return "secret-api-key-123"
     
-    logUserAction(string action)
-        string timestamp = Math.floor(Math.random() * 1000000.0).toString()
-        print("LOG [" + timestamp + "]: " + action)
+    void logUserAction(string action)
+        integer timestamp = 123456
+        print("LOG [" + timestamp.toString() + "]: " + action)
     
-    clearCache()
+    void clearCache()
         print("Cache cleared in background")
 
 start()
@@ -86,8 +96,8 @@ start()
     print("Starting integration test...")
     
     // Combine static methods with method-style calls
-    number value = Math.sqrt(144.0)
-    string valueText = value.toString().toUpperCase()
+    number value = math.sqrt(144.0)
+    string valueText = string.toUpperCase(value.toString())
     print("Computed value: " + valueText)
     
     // Test async with HTTP and validation
@@ -95,20 +105,21 @@ start()
     
     // Use input methods with validation chains
     string testInput = input("Enter test data: ")
-    string cleanInput = testInput.trim().toString()
-    cleanInput.mustBeFalse(cleanInput.isEmpty())
+    string cleanInput = string.trim(testInput)
+    if string.isEmpty(cleanInput)
+        return
     
     // Test method chaining with async results
     string status = apiStatus
-    boolean validStatus = status.isNotEmpty()
+    boolean validStatus = string.length(status) > 0
     print("API status valid: " + validStatus.toString())
     
     // Test static method combinations
     list<integer> numbers = [5, 2, 8, 1, 9]
-    integer listLength = List.length(numbers)
-    integer maxValue = Math.max(8.0, 9.0).toInteger()
+    integer listLength = list.length(numbers)
+    integer maxValue = math.max(8.0, 9.0).toInteger()
     
-    print("List length: " + listLength.toString())
+    print("list length: " + listLength.toString())
     print("Max value: " + maxValue.toString())
     
     // Test background operations with method calls
@@ -125,8 +136,8 @@ start()
     
     // Final validation with all patterns
     string finalMessage = "Integration test completed successfully!"
-    finalMessage.mustBeFalse(finalMessage.isEmpty())
-    boolean messageValid = finalMessage.isDefined()
+    boolean messageEmpty = string.isEmpty(finalMessage)
+    boolean messageValid = string.length(finalMessage) > 0
     
     print("Final message valid: " + messageValid.toString())
     print(finalMessage)

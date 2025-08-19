@@ -1,0 +1,10 @@
+class Test
+	functions:
+		string first()
+			if true
+				return "true"
+			else
+				return "false"
+		
+		string second()
+			return "hello"

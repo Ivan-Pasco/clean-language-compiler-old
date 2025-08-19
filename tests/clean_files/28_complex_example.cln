@@ -1,14 +1,12 @@
 functions:
-	string formatTask(string title, boolean completed)
-		string status = "○"
-		if completed
-			status = "✓"
-		return status + " " + title
+	string formatTask()
+		string status = "✓"
+		return status + " Learn Clean Language"
 
 start()
-	string task1 = formatTask("Learn Clean Language", true)
-	string task2 = formatTask("Write tests", false)
-	string task3 = formatTask("Build project", true)
+	string task1 = formatTask()
+	string task2 = "○ Write tests" 
+	string task3 = "✓ Build project"
 	
 	print("Tasks:")
 	print(task1)

@@ -1,0 +1,4 @@
+functions:
+	test()
+		integer:
+			count = 0

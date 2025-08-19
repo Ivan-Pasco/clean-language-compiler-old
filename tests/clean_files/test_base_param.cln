@@ -1,0 +1,7 @@
+functions:
+	integer power()
+		return 5 * 2
+
+start()
+	integer result = power()
+	print(result.toString())

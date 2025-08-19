@@ -1,0 +1,12 @@
+functions:
+	void test1()
+		string text = "Hello"
+		print("Test1")
+	
+	integer test2()
+		integer x = 42
+		return x
+	
+	void test3()
+		print("Test3")
+		print("Done")

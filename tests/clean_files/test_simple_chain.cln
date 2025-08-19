@@ -1,0 +1,11 @@
+// Test simple chained static method calls
+
+functions:
+	void test()
+		integer a = 10
+		integer b = 5
+		boolean result = compare.equal(a, b)
+		print("result")
+
+start()
+	test()

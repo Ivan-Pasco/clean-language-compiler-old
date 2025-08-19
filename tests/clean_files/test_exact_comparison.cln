@@ -1,0 +1,5 @@
+// Test exact failing comparison
+start()
+	integer score = 85
+	if score <= 0
+		print("Score is invalid")

@@ -88,14 +88,6 @@ impl FunctionPreprocessor {
         for line in lines {
             let trimmed = line.trim();
 
-            // Skip empty lines and comments
-            if trimmed.is_empty() || trimmed.starts_with("//") {
-                if !current_function_lines.is_empty() {
-                    current_function_lines.push(line.to_string());
-                }
-                continue;
-            }
-
             // Check for functions: block start
             if trimmed == "functions:" {
                 in_functions_block = true;
@@ -103,6 +95,14 @@ impl FunctionPreprocessor {
             }
 
             if !in_functions_block {
+                continue;
+            }
+
+            // Skip empty lines and comments within functions block
+            if trimmed.is_empty() || trimmed.starts_with("//") {
+                if !current_function_lines.is_empty() {
+                    current_function_lines.push(line.to_string());
+                }
                 continue;
             }
 
@@ -162,14 +162,22 @@ impl FunctionPreprocessor {
             let before_paren = &trimmed[..paren_pos];
             let parts: Vec<&str> = before_paren.split_whitespace().collect();
 
-            // Special case: start() is not a function declaration in a functions block
-            if parts.len() == 1 && parts[0] == "start" {
-                return false;
+            // Special cases: these keywords with parentheses are not function declarations
+            if parts.len() == 1 {
+                match parts[0] {
+                    "start" | "print" | "println" | "printl" | "error" | "return" | "if" | "while" => {
+                        return false;
+                    }
+                    _ => {}
+                }
             }
 
-            // Functions in functions: blocks must have explicit return types: "type identifier("
+            // Functions in functions: blocks can have optional return types
+            // Pattern 1: "type identifier(" (with return type)
+            // Pattern 2: "identifier(" (without return type)
             match parts.len() {
-                2 => self.is_valid_type(parts[0]) && self.is_valid_identifier(parts[1]),
+                2 => self.is_valid_type(parts[0]) && self.is_valid_identifier(parts[1]), // "type identifier("
+                1 => self.is_valid_identifier(parts[0]), // "identifier("
                 _ => false,
             }
         } else {
@@ -198,12 +206,39 @@ impl FunctionPreprocessor {
 
     /// Check if string is a valid type
     fn is_valid_type(&self, s: &str) -> bool {
-        matches!(
+        // Basic core types
+        if matches!(
             s,
             "integer" | "number" | "string" | "boolean" | "void" | "any"
-        ) || s.starts_with("list<")
-            || s.starts_with("matrix<")
-            || s.starts_with("pairs<")
+        ) {
+            return true;
+        }
+        
+        // Complex types
+        if s.starts_with("list<") || s.starts_with("matrix<") || s.starts_with("pairs<") {
+            return true;
+        }
+        
+        // Sized types: core_type followed by :digits (e.g., "number:64", "integer:32")
+        if s.contains(':') {
+            let parts: Vec<&str> = s.split(':').collect();
+            if parts.len() == 2 {
+                let base_type = parts[0];
+                let size_spec = parts[1];
+                
+                // Check if base type is valid and size spec is digits (optionally with 'u')
+                let is_valid_base = matches!(
+                    base_type,
+                    "integer" | "number" | "string" | "boolean"
+                );
+                let is_valid_size = size_spec.chars().all(|c| c.is_ascii_digit()) 
+                    || (size_spec.ends_with('u') && size_spec[..size_spec.len()-1].chars().all(|c| c.is_ascii_digit()));
+                
+                return is_valid_base && is_valid_size;
+            }
+        }
+        
+        false
     }
 
     /// Parse an isolated function from a complete functions block

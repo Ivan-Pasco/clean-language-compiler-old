@@ -1,0 +1,3 @@
+functions:
+	number divide(number a, number b)
+		return a / b

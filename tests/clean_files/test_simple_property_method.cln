@@ -1,0 +1,3 @@
+functions:
+	void test()
+		string result = compare.integer.toString()

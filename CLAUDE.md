@@ -201,7 +201,35 @@ When implementing new features:
 7. Update examples and documentation
 8. Update the language specification in `documentation/Clean_Language_Specification.md`
 9. when you find an error while compiling, add it to the `TASKS.md` file.
-10. when a test fails, check if the test is correct and has the right syntax according to the Clean Language Specification (`documentation/Clean_Language_Specification.md`), if it is wrong, fix the test. once the test is fixed if it still fails add the needed changes to the TASKS.md file.
+
+### **🔥 CRITICAL: Test Failure Protocol**
+
+**MANDATORY workflow when ANY test fails:**
+
+10. **📚 FIRST: Review Clean Language Specification** (`documentation/Clean_Language_Specification.md`)
+    - Verify test syntax matches the specification exactly
+    - Check test expectations align with intended language behavior
+    - Confirm test is actually testing the correct feature
+
+11. **🔍 SECOND: Validate Test Correctness**
+    - Is the test syntax correct according to specification?
+    - Are the test expectations reasonable and well-defined?
+    - Does the test follow established testing patterns?
+
+12. **✏️ THIRD: Fix Test if Wrong**
+    - If test syntax is incorrect, fix the test FIRST
+    - Update test expectations to match specification
+    - Ensure test is actually testing what it claims to test
+    - Re-run test to verify fix
+
+13. **🔧 FOURTH: Fix Implementation Only if Test is Correct**
+    - Only after confirming test is correct, fix the compiler/implementation
+    - Implementation must match the specification, not incorrect tests
+    - Add needed changes to `TASKS.md` with specific details
+
+**❌ NEVER remove failing tests without fixing them first**
+**❌ NEVER fix implementation to match wrong test expectations**
+**✅ ALWAYS validate test correctness against specification before fixing implementation**
 
 ## File Extensions
 

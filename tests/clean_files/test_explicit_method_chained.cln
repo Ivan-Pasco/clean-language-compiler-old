@@ -1,0 +1,4 @@
+functions:
+	void main()
+		result = obj.prop.greaterThan(5)
+		print(result)

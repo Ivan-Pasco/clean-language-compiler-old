@@ -1,0 +1,9 @@
+class Base
+	functions:
+		string baseMethod()
+			return "base"
+
+class Child is Base
+	functions:
+		string childMethod()
+			return "child"

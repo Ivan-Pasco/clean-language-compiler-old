@@ -5,41 +5,48 @@ start()
 	// Test http.get() method
 	string getResponse = http.get("https://api.example.com/users")
 	print("GET response length: ")
-	print(getResponse.length().toString())
+	integer getLength = string.length(getResponse)
+	print(int_to_string(getLength))
 	
 	// Test http.post() method
 	string postData = "name=John&email=john@example.com"
 	string postResponse = http.post("https://api.example.com/users", postData)
 	print("POST response length: ")
-	print(postResponse.length().toString())
+	integer postLength = string.length(postResponse)
+	print(int_to_string(postLength))
 	
 	// Test http.put() method
 	string putData = "name=Jane&email=jane@example.com"
 	string putResponse = http.put("https://api.example.com/users/123", putData)
 	print("PUT response length: ")
-	print(putResponse.length().toString())
+	integer putLength = string.length(putResponse)
+	print(int_to_string(putLength))
 	
 	// Test http.patch() method
 	string patchData = "email=newemail@example.com"
 	string patchResponse = http.patch("https://api.example.com/users/123", patchData)
 	print("PATCH response length: ")
-	print(patchResponse.length().toString())
+	integer patchLength = string.length(patchResponse)
+	print(int_to_string(patchLength))
 	
 	// Test http.delete() method
 	string deleteResponse = http.delete("https://api.example.com/users/123")
 	print("DELETE response length: ")
-	print(deleteResponse.length().toString())
+	integer deleteLength = string.length(deleteResponse)
+	print(int_to_string(deleteLength))
 	
 	// Test method chaining with HTTP responses
 	string apiData = http.get("https://api.weather.com/current")
-	boolean hasData = apiData.isNotEmpty()
+	integer dataLength = string.length(apiData)
+	boolean hasData = dataLength > 0
 	print("Weather API has data: ")
-	print(hasData.toString())
+	print(bool_to_string(hasData))
 	
 	// Test HTTP methods with validation
 	string userList = http.get("https://api.example.com/users")
-	userList.mustBeFalse(userList.isEmpty())
-	print("User list retrieved successfully")
+	boolean isEmpty = string.isEmpty(userList)
+	string message = if isEmpty then "Warning: User list is empty" else "User list retrieved successfully"
+	print(message)
 	
 	// Test multiple HTTP operations
 	string endpoint = "https://api.example.com"
@@ -47,14 +54,17 @@ start()
 	string settingsData = http.get(endpoint + "/user/settings")
 	
 	print("Profile data length: ")
-	print(userData.length().toString())
+	integer userDataLength = string.length(userData)
+	print(int_to_string(userDataLength))
 	print("Settings data length: ")
-	print(settingsData.length().toString())
+	integer settingsLength = string.length(settingsData)
+	print(int_to_string(settingsLength))
 	
 	// Test HTTP with form data
 	string jsonPayload = "status=active&type=premium"
 	string updateResponse = http.post("https://api.example.com/account", jsonPayload)
 	print("Account update response: ")
-	print(updateResponse.length().toString())
+	integer updateLength = string.length(updateResponse)
+	print(int_to_string(updateLength))
 	
 	print("HTTP method syntax test completed successfully!")

@@ -1,0 +1,4 @@
+functions:
+	void test()
+		integer x = 42
+		print(x.toString())

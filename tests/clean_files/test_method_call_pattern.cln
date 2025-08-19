@@ -1,0 +1,4 @@
+functions:
+	string first()
+		integer x = 42
+		return x.toString()

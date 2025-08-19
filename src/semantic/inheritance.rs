@@ -629,7 +629,7 @@ impl Default for InheritanceValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Parameter, SourceLocation};
+    use crate::ast::SourceLocation;
 
     fn create_test_location() -> Option<SourceLocation> {
         Some(SourceLocation {

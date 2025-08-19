@@ -256,7 +256,7 @@ fn test_comprehensive_ir_summary() {
     println!("========================================");
 
     // Test HIR capabilities
-    let hir_debug_info = DebugInfo {
+    let _hir_debug_info = DebugInfo {
         source_span: None,
         original_name: Some("test_program".to_string()),
         ir_level: IRLevel::HIR,

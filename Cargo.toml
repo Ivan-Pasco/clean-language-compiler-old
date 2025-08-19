@@ -1,6 +1,6 @@
 [package]
 name = "clean-language-compiler"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Ivan Pasco Lizarraga"]
 edition = "2021"
 homepage = "https://www.cleanlanguage.dev"
@@ -79,11 +79,39 @@ strip = true
 opt-level = 1
 debug = true
 
+[profile.test]
+# Optimized testing profile
+opt-level = 1
+debug = true
+codegen-units = 16
+incremental = true
+
+[profile.bench]
+# Benchmarking profile
+opt-level = 3
+lto = false
+codegen-units = 1
+
 [dev-dependencies]
 # Testing
 insta = "1.34"
 pretty_assertions = "1.4"
 tempfile = "3.8"
+
+# Property-based testing for edge cases
+proptest = "1.4"
+
+# Fuzzing for parser robustness
+arbitrary = "1.4"
+
+# Benchmarking for performance regression detection
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Coverage reporting
+grcov = "0.8"
+
+# File system utilities
+walkdir = "2.4"
 
 # Main compiler binary
 [[bin]]
@@ -122,6 +150,19 @@ path = "src/bin/wasm2wat.rs"
 [[bin]]
 name = "wasmtime_runner"
 path = "src/bin/wasmtime_runner.rs"
+
+# Testing and quality assurance tools
+[[bin]]
+name = "test_runner"
+path = "src/bin/test_runner.rs"
+
+[[bin]]
+name = "coverage_report"
+path = "src/bin/coverage_report.rs"
+
+[[bin]]
+name = "performance_benchmark"
+path = "src/bin/performance_benchmark.rs"
 
 
 [lib]

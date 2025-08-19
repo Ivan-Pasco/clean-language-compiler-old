@@ -1,0 +1,6 @@
+functions:
+	string first()
+		return "first"
+		
+	string second()
+		return "second"

@@ -1049,12 +1049,8 @@ mod tests {
         manager.register_functions(&mut codegen)?;
 
         // Test that character functions are available
-        assert!(codegen
-            .get_function_index("string.charAtAdvanced")
-            .is_some());
-        assert!(codegen
-            .get_function_index("string.charCodeAtAdvanced")
-            .is_some());
+        assert!(codegen.get_function_index("string.charAtAdvanced").is_some());
+        assert!(codegen.get_function_index("string.charCodeAtAdvanced").is_some());
 
         Ok(())
     }
@@ -1068,12 +1064,8 @@ mod tests {
         manager.register_functions(&mut codegen)?;
 
         // Test that padding functions are available
-        assert!(codegen
-            .get_function_index("string.padStartAdvanced")
-            .is_some());
-        assert!(codegen
-            .get_function_index("string.padEndAdvanced")
-            .is_some());
+        assert!(codegen.get_function_index("string.padStartAdvanced").is_some());
+        assert!(codegen.get_function_index("string.padEndAdvanced").is_some());
 
         Ok(())
     }
@@ -1087,9 +1079,7 @@ mod tests {
         manager.register_functions(&mut codegen)?;
 
         // Test that validation functions are available
-        assert!(codegen
-            .get_function_index("string.isBlankAdvanced")
-            .is_some());
+        assert!(codegen.get_function_index("string.isBlankAdvanced").is_some());
 
         Ok(())
     }

@@ -15,7 +15,7 @@ functions:
 start()
 
 	// Test start keyword for async execution
-	string result1 = start fetchData("https://api.example.com/data1")
+	later result1 = start fetchData("https://api.example.com/data1")
 	print("Started async fetch for data1")
 	
 	// Test later keyword for deferred execution

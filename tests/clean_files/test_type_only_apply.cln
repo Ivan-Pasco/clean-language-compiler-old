@@ -1,0 +1,9 @@
+functions:
+	test()
+		integer:
+			x = 5
+		string:
+			name = "test"
+
+start()
+	test()

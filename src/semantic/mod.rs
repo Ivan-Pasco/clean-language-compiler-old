@@ -583,6 +583,11 @@ impl SemanticAnalyzer {
         );
 
         self.function_table.insert(
+            "string.isEmpty".to_string(),
+            vec![(vec![Type::String], Type::Boolean, 1)],
+        );
+
+        self.function_table.insert(
             "string.replace".to_string(),
             vec![(
                 vec![Type::String, Type::String, Type::String],
@@ -935,41 +940,41 @@ impl SemanticAnalyzer {
         // List operations - module.function() syntax
         // List method-style functions (0 arguments - object is implicit)
         self.function_table
-            .insert("list.size".to_string(), vec![(vec![], Type::Integer, 0)]);
+            .insert("list.size".to_string(), vec![(vec![Type::List(Box::new(Type::Any))], Type::Integer, 1)]);
         self.function_table
-            .insert("list.isEmpty".to_string(), vec![(vec![], Type::Boolean, 0)]);
+            .insert("list.isEmpty".to_string(), vec![(vec![Type::List(Box::new(Type::Any))], Type::Boolean, 1)]);
         self.function_table.insert(
             "list.isNotEmpty".to_string(),
-            vec![(vec![], Type::Boolean, 0)],
+            vec![(vec![Type::List(Box::new(Type::Any))], Type::Boolean, 1)],
         );
         self.function_table.insert(
             "list.add".to_string(),
-            vec![(vec![Type::Any], Type::Void, 1)],
+            vec![(vec![Type::List(Box::new(Type::Any)), Type::Any], Type::Void, 2)],
         );
         self.function_table.insert(
             "list.remove".to_string(),
-            vec![(vec![Type::Integer], Type::Any, 1)],
+            vec![(vec![Type::List(Box::new(Type::Any)), Type::Integer], Type::Any, 2)],
         );
         self.function_table.insert(
             "list.get".to_string(),
-            vec![(vec![Type::Integer], Type::Any, 1)],
+            vec![(vec![Type::List(Box::new(Type::Any)), Type::Integer], Type::Any, 2)],
         );
         self.function_table.insert(
             "list.set".to_string(),
-            vec![(vec![Type::Integer, Type::Any], Type::Void, 2)],
+            vec![(vec![Type::List(Box::new(Type::Any)), Type::Integer, Type::Any], Type::Void, 3)],
         );
         self.function_table.insert(
             "list.contains".to_string(),
-            vec![(vec![Type::Any], Type::Boolean, 1)],
+            vec![(vec![Type::List(Box::new(Type::Any)), Type::Any], Type::Boolean, 2)],
         );
         self.function_table.insert(
             "list.indexOf".to_string(),
-            vec![(vec![Type::Any], Type::Integer, 1)],
+            vec![(vec![Type::List(Box::new(Type::Any)), Type::Any], Type::Integer, 2)],
         );
         self.function_table
-            .insert("list.clear".to_string(), vec![(vec![], Type::Void, 0)]);
+            .insert("list.clear".to_string(), vec![(vec![Type::List(Box::new(Type::Any))], Type::Void, 1)]);
         self.function_table
-            .insert("list.reverse".to_string(), vec![(vec![], Type::Void, 0)]);
+            .insert("list.reverse".to_string(), vec![(vec![Type::List(Box::new(Type::Any))], Type::Void, 1)]);
 
         // Register method-style functions for type-based method calls
         self.register_method_style_functions();
@@ -980,44 +985,51 @@ impl SemanticAnalyzer {
         let types = ["integer", "number", "string", "boolean", "value"];
 
         for type_name in &types {
-            // Type conversion methods (0 arguments - object is implicit)
+            // Type conversion methods (1 argument - object as first parameter)
+            let object_type = match *type_name {
+                "integer" => Type::Integer,
+                "number" => Type::Number,
+                "string" => Type::String,
+                "boolean" => Type::Boolean,
+                _ => Type::Any,
+            };
             self.function_table.insert(
                 format!("{type_name}.toString"),
-                vec![(vec![], Type::String, 0)],
+                vec![(vec![object_type.clone()], Type::String, 1)],
             );
             self.function_table.insert(
                 format!("{type_name}.toInteger"),
-                vec![(vec![], Type::Integer, 0)],
+                vec![(vec![object_type.clone()], Type::Integer, 1)],
             );
             self.function_table.insert(
                 format!("{type_name}.toNumber"),
-                vec![(vec![], Type::Number, 0)],
+                vec![(vec![object_type.clone()], Type::Number, 1)],
             );
             self.function_table.insert(
                 format!("{type_name}.toBoolean"),
-                vec![(vec![], Type::Boolean, 0)],
+                vec![(vec![object_type.clone()], Type::Boolean, 1)],
             );
 
-            // Utility methods (0 arguments - object is implicit)
+            // Utility methods (1 argument - object as first parameter)
             self.function_table.insert(
                 format!("{type_name}.length"),
-                vec![(vec![], Type::Integer, 0)],
+                vec![(vec![object_type.clone()], Type::Integer, 1)],
             );
             self.function_table.insert(
                 format!("{type_name}.isDefined"),
-                vec![(vec![], Type::Boolean, 0)],
+                vec![(vec![object_type.clone()], Type::Boolean, 1)],
             );
             self.function_table.insert(
                 format!("{type_name}.isNotDefined"),
-                vec![(vec![], Type::Boolean, 0)],
+                vec![(vec![object_type.clone()], Type::Boolean, 1)],
             );
             self.function_table.insert(
                 format!("{type_name}.isEmpty"),
-                vec![(vec![], Type::Boolean, 0)],
+                vec![(vec![object_type.clone()], Type::Boolean, 1)],
             );
             self.function_table.insert(
                 format!("{type_name}.isNotEmpty"),
-                vec![(vec![], Type::Boolean, 0)],
+                vec![(vec![object_type.clone()], Type::Boolean, 1)],
             );
 
             // Validation methods (1 argument + implicit object)
@@ -1167,7 +1179,7 @@ impl SemanticAnalyzer {
             let required_param_count = function
                 .parameters
                 .iter()
-                .take_while(|p| p.default_value.is_none())
+                .filter(|p| p.default_value.is_none())
                 .count();
             // Don't overwrite builtin functions like print, printl, etc.
             if !self.is_builtin_function(&function.name) {
@@ -1192,7 +1204,7 @@ impl SemanticAnalyzer {
             let required_param_count = start_fn
                 .parameters
                 .iter()
-                .take_while(|p| p.default_value.is_none())
+                .filter(|p| p.default_value.is_none())
                 .count();
             // Don't overwrite builtin functions like print, printl, etc.
             if !self.is_builtin_function(&start_fn.name) {
@@ -2617,11 +2629,18 @@ impl SemanticAnalyzer {
                 match object_type {
                     Type::Object(class_name) => {
                         if let Some(class) = self.class_table.get(&class_name) {
+                            // First check direct fields
                             for field in &class.fields {
                                 if field.name == *property {
                                     return Ok(field.type_.clone());
                                 }
                             }
+                            
+                            // Then check inherited fields
+                            if let Some(field_type) = self.lookup_inherited_field(&class_name, property) {
+                                return Ok(field_type);
+                            }
+                            
                             Err(CompilerError::type_error(
                                 &format!("Property '{property}' not found in class '{class_name}'"),
                                 Some("Check if the property name is correct".to_string()),
@@ -3130,9 +3149,9 @@ impl SemanticAnalyzer {
 
             Expression::StaticMethodCall {
                 class_name,
-                method: _,
+                method,
                 arguments,
-                location: _,
+                location,
             } => {
                 // Handle static method calls
                 if class_name == "MathUtils"
@@ -3142,12 +3161,16 @@ impl SemanticAnalyzer {
                     || class_name == "File"
                     || class_name == "Http"
                     || class_name == "Console"
+                    || class_name == "math"
+                    || class_name == "string"
+                    || class_name == "list"
+                    || class_name == "file"
+                    || class_name == "http"
+                    || class_name == "console"
                 {
-                    // Built-in static methods - validate arguments and return appropriate type
-                    for arg in arguments {
-                        self.check_expression(arg)?;
-                    }
-                    Ok(Type::Any) // Simplified return type for now
+                    // Properly resolve static method calls using the function table
+                    let qualified_name = format!("{}.{}", class_name.to_lowercase(), method);
+                    self.check_function_call(&qualified_name, arguments, Some(location.clone()))
                 } else {
                     Err(CompilerError::type_error(
                         &format!("Unknown static class '{class_name}'"),
@@ -3491,9 +3514,13 @@ impl SemanticAnalyzer {
                     let type_method_name = format!("{}.{}", type_name, method);
 
                     if self.function_table.contains_key(&type_method_name) {
+                        // Create new arguments list with the object as the first argument
+                        let mut method_args = vec![Expression::Variable(module_name.to_string())];
+                        method_args.extend(args.iter().cloned());
+                        
                         return self.check_function_call(
                             &type_method_name,
-                            args,
+                            &method_args,
                             Some(location.clone()),
                         );
                     }
@@ -4517,6 +4544,7 @@ impl SemanticAnalyzer {
                     i, param_types, return_type, required_param_count
                 );
             }
+            
 
             for (param_types, return_type, required_param_count) in &overloads {
                 // Check basic parameter count constraints
@@ -5348,6 +5376,24 @@ impl SemanticAnalyzer {
                     location,
                 )
             })
+    }
+
+    /// Look up a field in the inheritance hierarchy
+    fn lookup_inherited_field(&mut self, class_name: &str, field_name: &str) -> Option<Type> {
+        // Get the inheritance hierarchy for this class
+        if let Ok(hierarchy) = self.inheritance_validator.get_inheritance_hierarchy(class_name) {
+            // Skip the current class (already checked) and look at parent classes
+            for parent_class_name in hierarchy.iter().skip(1) {
+                if let Some(parent_class) = self.class_table.get(parent_class_name) {
+                    for field in &parent_class.fields {
+                        if field.name == field_name {
+                            return Some(field.type_.clone());
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Lookup a symbol and mark it as used

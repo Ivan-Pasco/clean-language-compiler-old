@@ -1,0 +1,3 @@
+functions:
+	void main()
+		obj.prop.toString()

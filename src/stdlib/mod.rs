@@ -193,7 +193,7 @@ impl StandardLibrary {
         self.string_class.register_functions(codegen)?;
         self.list_class.register_functions(codegen)?;
         self.file_class.register_functions(codegen)?;
-        // self.http_class.register_functions(codegen)?;
+        self.http_class.register_functions(codegen)?;
         self.list_behavior.register_functions(codegen)?;
         self.method_style.register_functions(codegen)?;
         self.conditional.register_functions(codegen)?;
