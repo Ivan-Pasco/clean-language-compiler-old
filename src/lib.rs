@@ -13,7 +13,6 @@
 #![allow(clippy::pedantic)]
 #![allow(clippy::nursery)]
 #![allow(clippy::cargo)]
-
 // Rustc lint suppressions for CI compatibility
 #![allow(unknown_lints)]
 #![allow(mismatched_lifetime_syntaxes)]
