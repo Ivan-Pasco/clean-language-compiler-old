@@ -122,8 +122,8 @@ static_class_identifier = { "Math" | "String" | "List" | "File" | "Http" | "Cons
 static_class_name = { static_class_identifier ~ ("." ~ static_class_identifier)* }
 
 // Argument expression - allows expressions in function/method arguments
-// Use additive expressions to avoid circular dependency while supporting arithmetic and comparisons
-argument_expression = { additive_expression }
+// Use unary expressions to support negative numbers and other unary operators in arguments
+argument_expression = { unary_expression }
 argument_list = { argument_expression ~ ("," ~ argument_expression)* }
 
 function_call = { identifier ~ type_arguments? ~ "(" ~ argument_list? ~ ")" }
@@ -133,6 +133,9 @@ method_call_base = { builtin_class_name | string | number | boolean | identifier
 method_name = { "greaterThan" | "lessThan" | "equal" | "greaterEqual" | "lessEqual" | "number" | "integer" | "boolean" | "string" | "length" | "isDefined" | "isNotDefined" | "isEmpty" | "isNotEmpty" | "mustBeTrue" | "mustBeFalse" | "mustBeEqual" | "mustNotBeEqual" | "toString" | "toInteger" | "toNumber" | "toBoolean" | "keepBetween" | "yesNo" | "prompt" | "and" | "or" | "not" | identifier }
 method_call_segment = { "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
 method_call = { method_call_base ~ method_call_segment+ }
+
+// Chained method calls - allows method calls on function/static call results
+chained_method_call = { (static_method_call | function_call) ~ method_call_segment+ }
 
 // Three-level chained method call: namespace.class.method() patterns (most specific)
 three_level_method_call = { identifier ~ "." ~ identifier ~ "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
@@ -152,8 +155,9 @@ primary = {
     base_call |
     three_level_method_call |
     property_method_call |
-    static_method_call |
+    chained_method_call |
     method_call |
+    static_method_call |
     function_call |
     start_expr |
     number |

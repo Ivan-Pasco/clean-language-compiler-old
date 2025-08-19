@@ -292,8 +292,8 @@ impl AsyncProgrammingManager {
             // Allocate memory for future structure
             Instruction::I32Const(32),
             Instruction::I32Const(ASYNC_TYPE_ID as i32), // type_id
-            Instruction::Call(0),     // Memory allocation function
-            Instruction::LocalSet(0), // future_ptr
+            Instruction::Call(0),                        // Memory allocation function
+            Instruction::LocalSet(0),                    // future_ptr
             // Generate unique task ID
             Instruction::I32Const(0x9000), // scheduler base
             Instruction::I32Load(MemArg {
@@ -449,10 +449,10 @@ impl AsyncProgrammingManager {
                 memory_index: 0,
             }),
             // Set mock result
-            Instruction::I32Const(16), // Allocate result
+            Instruction::I32Const(16),                   // Allocate result
             Instruction::I32Const(ASYNC_TYPE_ID as i32), // type_id
-            Instruction::Call(0),      // Memory allocation
-            Instruction::LocalGet(0),  // future_ptr
+            Instruction::Call(0),                        // Memory allocation
+            Instruction::LocalGet(0),                    // future_ptr
             Instruction::I32Store(MemArg {
                 offset: 12,
                 align: 2,
@@ -648,10 +648,10 @@ impl AsyncProgrammingManager {
                 memory_index: 0,
             }),
             // Create execution context
-            Instruction::I32Const(16), // Allocate context
+            Instruction::I32Const(16),                   // Allocate context
             Instruction::I32Const(ASYNC_TYPE_ID as i32), // type_id
-            Instruction::Call(0),      // Memory allocation
-            Instruction::LocalSet(3),  // context_ptr
+            Instruction::Call(0),                        // Memory allocation
+            Instruction::LocalSet(3),                    // context_ptr
             // Store context in future
             Instruction::LocalGet(0), // future_ptr
             Instruction::LocalGet(3), // context_ptr
@@ -842,8 +842,8 @@ impl AsyncProgrammingManager {
             // Create execution context
             Instruction::I32Const(16),
             Instruction::I32Const(ASYNC_TYPE_ID as i32), // type_id
-            Instruction::Call(0),     // Memory allocation
-            Instruction::LocalSet(2), // context_ptr
+            Instruction::Call(0),                        // Memory allocation
+            Instruction::LocalSet(2),                    // context_ptr
             // Store function and args in context
             Instruction::LocalGet(2), // context_ptr
             Instruction::LocalGet(0), // function_ptr (original parameter)
@@ -881,8 +881,8 @@ impl AsyncProgrammingManager {
             Instruction::I32Const(4), // Add 4 bytes for length
             Instruction::I32Add,
             Instruction::I32Const(ASYNC_TYPE_ID as i32), // type_id
-            Instruction::Call(0),     // Memory allocation
-            Instruction::LocalSet(1), // results_ptr
+            Instruction::Call(0),                        // Memory allocation
+            Instruction::LocalSet(1),                    // results_ptr
             // Set results array length
             Instruction::LocalGet(1), // results_ptr
             Instruction::LocalGet(0), // array_len
@@ -1085,8 +1085,8 @@ impl AsyncProgrammingManager {
             // 12-15: total_yield_count
             Instruction::I32Const(16),
             Instruction::I32Const(ASYNC_TYPE_ID as i32), // type_id
-            Instruction::Call(0),     // Memory allocation
-            Instruction::LocalSet(0), // stats_ptr
+            Instruction::Call(0),                        // Memory allocation
+            Instruction::LocalSet(0),                    // stats_ptr
             // Get scheduler pointer
             Instruction::I32Const(0x9000),
             // Load active tasks count and store in stats

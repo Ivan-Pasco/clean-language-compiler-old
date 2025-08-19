@@ -1,0 +1,1206 @@
+=== ERROR for 16_classes_polymorphism_fixed.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/16_classes_polymorphism_fixed.cln -o tests/wasm/16_classes_polymorphism_fixed.wasm`
+Compiling tests/clean_files/16_classes_polymorphism_fixed.cln to tests/wasm/16_classes_polymorphism_fixed.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 73:32
+   |
+73 | 		print("Starting: " + vehicle.start())
+   | 		                             ^---
+   |
+   = expected identifier), trying recovery parsing
+DEBUG: parse_class called from class_parser.rs
+DEBUG: parse_class pair rule: class_decl
+DEBUG: parse_class pair content: class Vehicle
+	string make
+	string model
+	integer year
+	
+	constructor(string vehicleMake, string vehicleModel, integer vehicleYear)
+		make = vehicleMake
+		model = vehicleModel
+		year = vehicleYear
+	
+	functions:
+		string getInfo()
+			return year.toString() + " " + make + " " + model
+		
+		string start()
+			return "Vehicle starting..."
+		
+		string stop()
+			return "Vehicle stopping..."
+		
+		integer getMaxSpeed()
+			return 60
+
+
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: constructor
+DEBUG: Found constructor in class Vehicle
+DEBUG: Constructor parsed successfully for class Vehicle
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: functions_block
+DEBUG: Found functions_block in class Vehicle
+DEBUG: Calling parse_functions_block_with_context for class Vehicle
+DEBUG: parse_functions_block_with_context called with class_context: Some("Vehicle")
+DEBUG: Creating preprocessor with class context: Vehicle
+DEBUG: Preprocessor succeeded, found 4 functions
+DEBUG: Function 0: getInfo - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 1: start - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 2: stop - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 3: getMaxSpeed - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Got 4 methods from functions_block
+DEBUG: Recovery parsing also failed with 2 errors
+🔄 Regular parsing failed, trying recovery compilation...
+DEBUG: parse_class called from class_parser.rs
+DEBUG: parse_class pair rule: class_decl
+DEBUG: parse_class pair content: class Vehicle
+	string make
+	string model
+	integer year
+	
+	constructor(string vehicleMake, string vehicleModel, integer vehicleYear)
+		make = vehicleMake
+		model = vehicleModel
+		year = vehicleYear
+	
+	functions:
+		string getInfo()
+			return year.toString() + " " + make + " " + model
+		
+		string start()
+			return "Vehicle starting..."
+		
+		string stop()
+			return "Vehicle stopping..."
+		
+		integer getMaxSpeed()
+			return 60
+
+
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: constructor
+DEBUG: Found constructor in class Vehicle
+DEBUG: Constructor parsed successfully for class Vehicle
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: functions_block
+DEBUG: Found functions_block in class Vehicle
+DEBUG: Calling parse_functions_block_with_context for class Vehicle
+DEBUG: parse_functions_block_with_context called with class_context: Some("Vehicle")
+DEBUG: Creating preprocessor with class context: Vehicle
+DEBUG: Preprocessor succeeded, found 4 functions
+DEBUG: Function 0: getInfo - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 1: start - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 2: stop - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 3: getMaxSpeed - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Got 4 methods from functions_block
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected identifier", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 73, column: 32, file: "tests/clean_files/16_classes_polymorphism_fixed.cln" }), suggestions: ["Use a valid identifier (letters, numbers, underscore, starting with letter)"], source_snippet: Some("  71 | \t\tprint(\"=== Vehicle Demonstration ===\")\n  72 | \t\tprint(\"Info: \" + vehicle.getInfo())\n  73 | \t\tprint(\"Starting: \" + vehicle.start())\n     |                                ^\n  74 | \t\tprint(\"Max Speed: \" + vehicle.getMaxSpeed().toString() + \" km/h\")\n  75 | \t\tprint(\"Stopping: \" + vehicle.stop())\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected identifier", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 73, column: 32, file: "tests/clean_files/16_classes_polymorphism_fixed.cln" }), suggestions: ["Use a valid identifier (letters, numbers, underscore, starting with letter)"], source_snippet: Some("  71 | \t\tprint(\"=== Vehicle Demonstration ===\")\n  72 | \t\tprint(\"Info: \" + vehicle.getInfo())\n  73 | \t\tprint(\"Starting: \" + vehicle.start())\n     |                                ^\n  74 | \t\tprint(\"Max Speed: \" + vehicle.getMaxSpeed().toString() + \" km/h\")\n  75 | \t\tprint(\"Stopping: \" + vehicle.stop())\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 16_classes_polymorphism_new.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/16_classes_polymorphism_new.cln -o tests/wasm/16_classes_polymorphism_new.wasm`
+Compiling tests/clean_files/16_classes_polymorphism_new.cln to tests/wasm/16_classes_polymorphism_new.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 76:26
+   |
+76 | 	print("Tesla: " + tesla.start())
+   | 	                        ^---
+   |
+   = expected identifier), trying recovery parsing
+DEBUG: parse_class called from class_parser.rs
+DEBUG: parse_class pair rule: class_decl
+DEBUG: parse_class pair content: class Vehicle
+	string make
+	string model
+	integer year
+	
+	constructor(string vehicleMake, string vehicleModel, integer vehicleYear)
+		make = vehicleMake
+		model = vehicleModel
+		year = vehicleYear
+	
+	functions:
+		string getInfo()
+			return year.toString() + " " + make + " " + model
+		
+		string start()
+			return "Vehicle starting..."
+		
+		string stop()
+			return "Vehicle stopping..."
+		
+		integer getMaxSpeed()
+			return 60
+
+
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: constructor
+DEBUG: Found constructor in class Vehicle
+DEBUG: Constructor parsed successfully for class Vehicle
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: functions_block
+DEBUG: Found functions_block in class Vehicle
+DEBUG: Calling parse_functions_block_with_context for class Vehicle
+DEBUG: parse_functions_block_with_context called with class_context: Some("Vehicle")
+DEBUG: Creating preprocessor with class context: Vehicle
+DEBUG: Preprocessor succeeded, found 4 functions
+DEBUG: Function 0: getInfo - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 1: start - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 2: stop - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 3: getMaxSpeed - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Got 4 methods from functions_block
+DEBUG: Recovery parsing also failed with 2 errors
+🔄 Regular parsing failed, trying recovery compilation...
+DEBUG: parse_class called from class_parser.rs
+DEBUG: parse_class pair rule: class_decl
+DEBUG: parse_class pair content: class Vehicle
+	string make
+	string model
+	integer year
+	
+	constructor(string vehicleMake, string vehicleModel, integer vehicleYear)
+		make = vehicleMake
+		model = vehicleModel
+		year = vehicleYear
+	
+	functions:
+		string getInfo()
+			return year.toString() + " " + make + " " + model
+		
+		string start()
+			return "Vehicle starting..."
+		
+		string stop()
+			return "Vehicle stopping..."
+		
+		integer getMaxSpeed()
+			return 60
+
+
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: constructor
+DEBUG: Found constructor in class Vehicle
+DEBUG: Constructor parsed successfully for class Vehicle
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: functions_block
+DEBUG: Found functions_block in class Vehicle
+DEBUG: Calling parse_functions_block_with_context for class Vehicle
+DEBUG: parse_functions_block_with_context called with class_context: Some("Vehicle")
+DEBUG: Creating preprocessor with class context: Vehicle
+DEBUG: Preprocessor succeeded, found 4 functions
+DEBUG: Function 0: getInfo - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 1: start - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 2: stop - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 3: getMaxSpeed - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Got 4 methods from functions_block
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected identifier", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 76, column: 26, file: "tests/clean_files/16_classes_polymorphism_new.cln" }), suggestions: ["Use a valid identifier (letters, numbers, underscore, starting with letter)"], source_snippet: Some("  74 | \tMotorcycle harley = Motorcycle(\"Harley-Davidson\", \"Street 750\", 2021, false)\n  75 | \t\n  76 | \tprint(\"Tesla: \" + tesla.start())\n     |                          ^\n  77 | \tprint(\"Honda: \" + honda.start())\n  78 | \tprint(\"Harley: \" + harley.start())\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected identifier", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 76, column: 26, file: "tests/clean_files/16_classes_polymorphism_new.cln" }), suggestions: ["Use a valid identifier (letters, numbers, underscore, starting with letter)"], source_snippet: Some("  74 | \tMotorcycle harley = Motorcycle(\"Harley-Davidson\", \"Street 750\", 2021, false)\n  75 | \t\n  76 | \tprint(\"Tesla: \" + tesla.start())\n     |                          ^\n  77 | \tprint(\"Honda: \" + honda.start())\n  78 | \tprint(\"Harley: \" + harley.start())\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 16_classes_polymorphism.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/16_classes_polymorphism.cln -o tests/wasm/16_classes_polymorphism.wasm`
+Compiling tests/clean_files/16_classes_polymorphism.cln to tests/wasm/16_classes_polymorphism.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 89:32
+   |
+89 | 		print("Starting: " + vehicle.start())
+   | 		                             ^---
+   |
+   = expected identifier), trying recovery parsing
+DEBUG: parse_class called from class_parser.rs
+DEBUG: parse_class pair rule: class_decl
+DEBUG: parse_class pair content: class Vehicle
+	string make
+	string model
+	integer year
+	
+	constructor(string vehicleMake, string vehicleModel, integer vehicleYear)
+		make = vehicleMake
+		model = vehicleModel
+		year = vehicleYear
+	
+	functions:
+		string getInfo()
+			return year.toString() + " " + make + " " + model
+		
+		string start()
+			return "Vehicle starting..."
+		
+		string stop()
+			return "Vehicle stopping..."
+		
+		integer getMaxSpeed()
+			return 60
+
+
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: constructor
+DEBUG: Found constructor in class Vehicle
+DEBUG: Constructor parsed successfully for class Vehicle
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: functions_block
+DEBUG: Found functions_block in class Vehicle
+DEBUG: Calling parse_functions_block_with_context for class Vehicle
+DEBUG: parse_functions_block_with_context called with class_context: Some("Vehicle")
+DEBUG: Creating preprocessor with class context: Vehicle
+DEBUG: Preprocessor succeeded, found 4 functions
+DEBUG: Function 0: getInfo - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 1: start - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 2: stop - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 3: getMaxSpeed - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Got 4 methods from functions_block
+DEBUG: Recovery parsing also failed with 2 errors
+🔄 Regular parsing failed, trying recovery compilation...
+DEBUG: parse_class called from class_parser.rs
+DEBUG: parse_class pair rule: class_decl
+DEBUG: parse_class pair content: class Vehicle
+	string make
+	string model
+	integer year
+	
+	constructor(string vehicleMake, string vehicleModel, integer vehicleYear)
+		make = vehicleMake
+		model = vehicleModel
+		year = vehicleYear
+	
+	functions:
+		string getInfo()
+			return year.toString() + " " + make + " " + model
+		
+		string start()
+			return "Vehicle starting..."
+		
+		string stop()
+			return "Vehicle stopping..."
+		
+		integer getMaxSpeed()
+			return 60
+
+
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: class_field
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: constructor
+DEBUG: Found constructor in class Vehicle
+DEBUG: Constructor parsed successfully for class Vehicle
+DEBUG: Found class_item with rule: class_body_item
+DEBUG: Processing body_item with rule: functions_block
+DEBUG: Found functions_block in class Vehicle
+DEBUG: Calling parse_functions_block_with_context for class Vehicle
+DEBUG: parse_functions_block_with_context called with class_context: Some("Vehicle")
+DEBUG: Creating preprocessor with class context: Vehicle
+DEBUG: Preprocessor succeeded, found 4 functions
+DEBUG: Function 0: getInfo - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 1: start - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 2: stop - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Function 3: getMaxSpeed - description: Some("CLASS_CONTEXT:Vehicle")
+DEBUG: Got 4 methods from functions_block
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected identifier", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 90, column: 31, file: "tests/clean_files/16_classes_polymorphism.cln" }), suggestions: ["Use a valid identifier (letters, numbers, underscore, starting with letter)"], source_snippet: Some("  88 | \t\tprint(\"=== Vehicle Demonstration ===\")\n  89 | \t\tprint(\"Info: \" + vehicle.getInfo())\n  90 | \t\tprint(\"Starting: \" + vehicle.start())\n     |                               ^\n  91 | \t\tprint(\"Max Speed: \" + vehicle.getMaxSpeed().toString() + \" km/h\")\n  92 | \t\tprint(\"Stopping: \" + vehicle.stop())\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected identifier", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 90, column: 31, file: "tests/clean_files/16_classes_polymorphism.cln" }), suggestions: ["Use a valid identifier (letters, numbers, underscore, starting with letter)"], source_snippet: Some("  88 | \t\tprint(\"=== Vehicle Demonstration ===\")\n  89 | \t\tprint(\"Info: \" + vehicle.getInfo())\n  90 | \t\tprint(\"Starting: \" + vehicle.start())\n     |                               ^\n  91 | \t\tprint(\"Max Speed: \" + vehicle.getMaxSpeed().toString() + \" km/h\")\n  92 | \t\tprint(\"Stopping: \" + vehicle.stop())\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 32_comprehensive_stdlib.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/32_comprehensive_stdlib.cln -o tests/wasm/32_comprehensive_stdlib.wasm`
+Compiling tests/clean_files/32_comprehensive_stdlib.cln to tests/wasm/32_comprehensive_stdlib.wasm
+DEBUG: Traditional parsing succeeded in preprocessing path
+DEBUG: Parsing program item: functions_block
+DEBUG: Found standalone functions_block rule (not part of class)
+DEBUG: parse_functions_block_with_context called with class_context: None
+DEBUG: Creating preprocessor without class context
+DEBUG: Preprocessor failed: Syntax error: Failed to parse isolated function:  --> 2:22
+  |
+2 | 	testMathOperations()
+  | 	                    ^---
+  |
+  = expected function_body, falling back to traditional
+DEBUG: Using traditional functions block parsing (no class context)
+DEBUG: Parsing program item: start_function
+DEBUG: Building program with 3 functions, 0 classes
+DEBUG: Parsed program with 3 functions, 0 classes
+DEBUG: Traditional parsing succeeded in preprocessing path
+DEBUG: Parsing program item: functions_block
+DEBUG: Found standalone functions_block rule (not part of class)
+DEBUG: parse_functions_block_with_context called with class_context: None
+DEBUG: Creating preprocessor without class context
+DEBUG: Preprocessor failed: Syntax error: Failed to parse isolated function:  --> 2:22
+  |
+2 | 	testMathOperations()
+  | 	                    ^---
+  |
+  = expected function_body, falling back to traditional
+DEBUG: Using traditional functions block parsing (no class context)
+DEBUG: Parsing program item: start_function
+DEBUG: Building program with 3 functions, 0 classes
+DEBUG: Function testMathOperations has no description
+DEBUG: Attempting to infer class context for function testMathOperations. Class table has 0 classes
+DEBUG: Could not infer class context for function testMathOperations
+DEBUG: Function testStringOperations has no description
+DEBUG: Attempting to infer class context for function testStringOperations. Class table has 0 classes
+DEBUG: Could not infer class context for function testStringOperations
+DEBUG: Function testListOperations has no description
+DEBUG: Attempting to infer class context for function testListOperations. Class table has 0 classes
+DEBUG: Could not infer class context for function testListOperations
+DEBUG: Function start has no description
+DEBUG: Attempting to infer class context for function start. Class table has 0 classes
+DEBUG: Could not infer class context for function start
+DEBUG: Found function 'testMathOperations' with 1 overloads
+DEBUG: Resolving function 'testMathOperations' with 0 args
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [] -> Void (required: 0)
+DEBUG: Selected overload: [] -> Void
+DEBUG: Found function 'testStringOperations' with 1 overloads
+DEBUG: Resolving function 'testStringOperations' with 0 args
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [] -> Void (required: 0)
+DEBUG: Selected overload: [] -> Void
+DEBUG: Found function 'testListOperations' with 1 overloads
+DEBUG: Resolving function 'testListOperations' with 0 args
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [] -> Void (required: 0)
+DEBUG: Selected overload: [] -> Void
+Error: Type { context: ErrorContext { message: "Function 'testFileOperations' not found", help: Some("Check if the function name is correct and the function is defined"), error_type: Type, location: Some(SourceLocation { line: 0, column: 0, file: "" }), suggestions: ["Check if 'testFileOperations' is defined and spelled correctly", "Did you mean: Did you mean 'testListOperations'??"], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E011"), related_errors: [] } }
+
+=== ERROR for 33_complex_integration.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.11s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/33_complex_integration.cln -o tests/wasm/33_complex_integration.wasm`
+Compiling tests/clean_files/33_complex_integration.cln to tests/wasm/33_complex_integration.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 97:41
+   |
+97 | 	void processShapes(list<Shape> shapes) onError:
+   | 	                                       ^---
+   |
+   = expected function_body), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected function body", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 97, column: 41, file: "tests/clean_files/33_complex_integration.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  95 | \t\treturn report\n  96 | \t\n  97 | \tvoid processShapes(list<Shape> shapes) onError:\n     |                                         ^\n  98 | \t\tprint(\"Error processing shapes - using default handling\")\n  99 | \t\tprint(\"Continuing with available shapes...\")\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:41\n  |\n2 | \tvoid processShapes(list<Shape> shapes) onError:\n  | \t                                       ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected function body", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 97, column: 41, file: "tests/clean_files/33_complex_integration.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  95 | \t\treturn report\n  96 | \t\n  97 | \tvoid processShapes(list<Shape> shapes) onError:\n     |                                         ^\n  98 | \t\tprint(\"Error processing shapes - using default handling\")\n  99 | \t\tprint(\"Continuing with available shapes...\")\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:41\n  |\n2 | \tvoid processShapes(list<Shape> shapes) onError:\n  | \t                                       ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 34_list_behaviors.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.11s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/34_list_behaviors.cln -o tests/wasm/34_list_behaviors.wasm`
+Compiling tests/clean_files/34_list_behaviors.cln to tests/wasm/34_list_behaviors.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 88:10
+   |
+88 | 		numbers.add(42)
+   | 		       ^---
+   |
+   = expected EOI or program_item), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: end of input, program_item", help: Some("Error in: 'Expected one of: end of input, program_item'"), error_type: Syntax, location: Some(SourceLocation { line: 88, column: 10, file: "tests/clean_files/34_list_behaviors.cln" }), suggestions: ["The file may be incomplete or have unclosed constructs"], source_snippet: Some("  86 | \t\tprint(\"Empty list isEmpty: \" + empty.toString())\n  87 | \t\t\n  88 | \t\tnumbers.add(42)\n     |          ^\n  89 | \t\tboolean notEmpty = numbers.isNotEmpty()\n  90 | \t\tprint(\"Non-empty list isNotEmpty: \" + notEmpty.toString())\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:26\n  |\n2 | \tvoid testQueueBehavior()\n  | \t                        ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: end of input, program_item", help: Some("Error in: 'Expected one of: end of input, program_item'"), error_type: Syntax, location: Some(SourceLocation { line: 88, column: 10, file: "tests/clean_files/34_list_behaviors.cln" }), suggestions: ["The file may be incomplete or have unclosed constructs"], source_snippet: Some("  86 | \t\tprint(\"Empty list isEmpty: \" + empty.toString())\n  87 | \t\t\n  88 | \t\tnumbers.add(42)\n     |          ^\n  89 | \t\tboolean notEmpty = numbers.isNotEmpty()\n  90 | \t\tprint(\"Non-empty list isNotEmpty: \" + notEmpty.toString())\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:26\n  |\n2 | \tvoid testQueueBehavior()\n  | \t                        ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 36_conditionals_simple.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/36_conditionals_simple.cln -o tests/wasm/36_conditionals_simple.wasm`
+Compiling tests/clean_files/36_conditionals_simple.cln to tests/wasm/36_conditionals_simple.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed ( --> 9:50
+  |
+9 | 		boolean greater = compare.integer.greaterThan(a, b)
+  | 		                                               ^---
+  |
+  = expected type_, method_call_segment, logical_op, comparison_op, additive_op, multiplicative_op, or power_op), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: type annotation, method_call_segment, logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 9, column: 50, file: "tests/clean_files/36_conditionals_simple.cln" }), suggestions: ["Add a type annotation (e.g., 'integer', 'string', 'boolean')", "Check if you're missing a type before the variable name"], source_snippet: Some("   7 | \t\tinteger b = 5\n   8 | \t\t\n   9 | \t\tboolean greater = compare.integer.greaterThan(a, b)\n     |                                                  ^\n  10 | \t\tprint(\"10 > 5: \" + greater.toString())\n  11 | \t\t\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:25\n  |\n2 | \tvoid testConditionals()\n  | \t                       ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: type annotation, method_call_segment, logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 9, column: 50, file: "tests/clean_files/36_conditionals_simple.cln" }), suggestions: ["Add a type annotation (e.g., 'integer', 'string', 'boolean')", "Check if you're missing a type before the variable name"], source_snippet: Some("   7 | \t\tinteger b = 5\n   8 | \t\t\n   9 | \t\tboolean greater = compare.integer.greaterThan(a, b)\n     |                                                  ^\n  10 | \t\tprint(\"10 > 5: \" + greater.toString())\n  11 | \t\t\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:25\n  |\n2 | \tvoid testConditionals()\n  | \t                       ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 36_conditionals.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.11s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/36_conditionals.cln -o tests/wasm/36_conditionals.wasm`
+Compiling tests/clean_files/36_conditionals.cln to tests/wasm/36_conditionals.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 12:67
+   |
+12 | 		integer result = conditional.integer(compare.integer.greaterThan(a, b), a, b)
+   | 		                                                                ^---
+   |
+   = expected logical_op, comparison_op, additive_op, multiplicative_op, or power_op), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Error in: 'Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op'"), error_type: Syntax, location: Some(SourceLocation { line: 12, column: 67, file: "tests/clean_files/36_conditionals.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  10 | \t\t\n  11 | \t\t// Test basic conditional\n  12 | \t\tinteger result = conditional.integer(compare.integer.greaterThan(a, b), a, b)\n     |                                                                   ^\n  13 | \t\tprint(\"Max of 10 and 5: \" + result.toString())\n  14 | \t\t\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:32\n  |\n2 | \tvoid testIntegerConditionals()\n  | \t                              ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Error in: 'Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op'"), error_type: Syntax, location: Some(SourceLocation { line: 12, column: 67, file: "tests/clean_files/36_conditionals.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  10 | \t\t\n  11 | \t\t// Test basic conditional\n  12 | \t\tinteger result = conditional.integer(compare.integer.greaterThan(a, b), a, b)\n     |                                                                   ^\n  13 | \t\tprint(\"Max of 10 and 5: \" + result.toString())\n  14 | \t\t\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:32\n  |\n2 | \tvoid testIntegerConditionals()\n  | \t                              ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 42_test_framework.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.11s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/42_test_framework.cln -o tests/wasm/42_test_framework.wasm`
+Compiling tests/clean_files/42_test_framework.cln to tests/wasm/42_test_framework.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 16:34
+   |
+16 | 	// Nothing needed here for tests
+   | 	                                ^---
+   |
+   = expected statement), trying recovery parsing
+DEBUG: Failed to parse start function, continuing without it
+DEBUG: Recovery parsing also failed with 2 errors
+🔄 Regular parsing failed, trying recovery compilation...
+DEBUG: Failed to parse start function, continuing without it
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected statement", help: Some("Error in: 'Expected statement'"), error_type: Syntax, location: Some(SourceLocation { line: 16, column: 34, file: "tests/clean_files/42_test_framework.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  14 | \n  15 | start()\n  16 | \t// Nothing needed here for tests\n     |                                  ^\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected statement", help: Some("Error in: 'Expected statement'"), error_type: Syntax, location: Some(SourceLocation { line: 16, column: 34, file: "tests/clean_files/42_test_framework.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  14 | \n  15 | start()\n  16 | \t// Nothing needed here for tests\n     |                                  ^\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 48_method_style_syntax_fixed.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/48_method_style_syntax_fixed.cln -o tests/wasm/48_method_style_syntax_fixed.wasm`
+Compiling tests/clean_files/48_method_style_syntax_fixed.cln to tests/wasm/48_method_style_syntax_fixed.wasm
+DEBUG: Parsing program item: start_function
+DEBUG: Building program with 0 functions, 0 classes
+DEBUG: Parsed program with 0 functions, 0 classes
+DEBUG: Parsing program item: start_function
+DEBUG: Building program with 0 functions, 0 classes
+DEBUG: Function start has no description
+DEBUG: Attempting to infer class context for function start. Class table has 0 classes
+DEBUG: Could not infer class context for function start
+DEBUG: Object is variable: text
+DEBUG: Checking qualified function: text.length
+DEBUG: Function not found: text.length
+DEBUG: Found function 'string.length' with 1 overloads
+DEBUG: Resolving function 'string.length' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> Integer (required: 1)
+DEBUG: Selected overload: [String] -> Integer
+DEBUG: Object is variable: length
+DEBUG: Checking qualified function: length.toString
+DEBUG: Function not found: length.toString
+DEBUG: Found function 'integer.toString' with 1 overloads
+DEBUG: Resolving function 'integer.toString' with 1 args
+DEBUG:   arg[0]: Integer
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [Integer] -> String (required: 1)
+DEBUG: Selected overload: [Integer] -> String
+DEBUG: Object is variable: age
+DEBUG: Checking qualified function: age.toNumber
+DEBUG: Function not found: age.toNumber
+DEBUG: Found function 'integer.toNumber' with 1 overloads
+DEBUG: Resolving function 'integer.toNumber' with 1 args
+DEBUG:   arg[0]: Integer
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [Integer] -> Number (required: 1)
+DEBUG: Selected overload: [Integer] -> Number
+DEBUG: Object is variable: age
+DEBUG: Checking qualified function: age.toString
+DEBUG: Function not found: age.toString
+DEBUG: Found function 'integer.toString' with 1 overloads
+DEBUG: Resolving function 'integer.toString' with 1 args
+DEBUG:   arg[0]: Integer
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [Integer] -> String (required: 1)
+DEBUG: Selected overload: [Integer] -> String
+DEBUG: Object is variable: age
+DEBUG: Checking qualified function: age.toBoolean
+DEBUG: Function not found: age.toBoolean
+DEBUG: Found function 'integer.toBoolean' with 1 overloads
+DEBUG: Resolving function 'integer.toBoolean' with 1 args
+DEBUG:   arg[0]: Integer
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [Integer] -> Boolean (required: 1)
+DEBUG: Selected overload: [Integer] -> Boolean
+DEBUG: Object is variable: ageFloat
+DEBUG: Checking qualified function: ageFloat.toString
+DEBUG: Function not found: ageFloat.toString
+DEBUG: Found function 'number.toString' with 1 overloads
+DEBUG: Resolving function 'number.toString' with 1 args
+DEBUG:   arg[0]: Number
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [Number] -> String (required: 1)
+DEBUG: Selected overload: [Number] -> String
+DEBUG: Object is variable: ageValid
+DEBUG: Checking qualified function: ageValid.toString
+DEBUG: Function not found: ageValid.toString
+DEBUG: Found function 'boolean.toString' with 1 overloads
+DEBUG: Resolving function 'boolean.toString' with 1 args
+DEBUG:   arg[0]: Boolean
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [Boolean] -> String (required: 1)
+DEBUG: Selected overload: [Boolean] -> String
+DEBUG: Object is variable: score
+DEBUG: Checking qualified function: score.mustBeTrue
+DEBUG: Function not found: score.mustBeTrue
+DEBUG: Found function 'integer.mustBeTrue' with 1 overloads
+DEBUG: Resolving function 'integer.mustBeTrue' with 2 args
+DEBUG:   arg[0]: Integer
+DEBUG:   arg[1]: Boolean
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [Boolean] -> Void (required: 1)
+Error: Type { context: ErrorContext { message: "No compatible overload found for function 'integer.mustBeTrue' with arguments (Integer, Boolean)", help: Some("Check function signature and argument types"), error_type: Type, location: Some(SourceLocation { line: 0, column: 0, file: "" }), suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E002"), related_errors: [] } }
+
+=== ERROR for 49_static_method_calls.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/49_static_method_calls.cln -o tests/wasm/49_static_method_calls.wasm`
+Compiling tests/clean_files/49_static_method_calls.cln to tests/wasm/49_static_method_calls.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 47:28
+   |
+47 | 		print(listLength.toString())
+   | 		                         ^---
+   |
+   = expected logical_op, comparison_op, additive_op, multiplicative_op, or power_op), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Error in: 'Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op'"), error_type: Syntax, location: Some(SourceLocation { line: 47, column: 28, file: "tests/clean_files/49_static_method_calls.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  45 | \t\tinteger listLength = list.length(numbers)\n  46 | \t\tprint(\"list.length([1,2,3,4,5]): \")\n  47 | \t\tprint(listLength.toString())\n     |                            ^\n  48 | \t\t\n  49 | \t\tinteger firstItem = list.get(numbers, 0)\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:8\n  |\n2 | \tprint(\"5.0 + 3.0: \")\n  | \t      ^---\n  |\n  = expected parameter_type", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Error in: 'Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op'"), error_type: Syntax, location: Some(SourceLocation { line: 47, column: 28, file: "tests/clean_files/49_static_method_calls.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  45 | \t\tinteger listLength = list.length(numbers)\n  46 | \t\tprint(\"list.length([1,2,3,4,5]): \")\n  47 | \t\tprint(listLength.toString())\n     |                            ^\n  48 | \t\t\n  49 | \t\tinteger firstItem = list.get(numbers, 0)\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:8\n  |\n2 | \tprint(\"5.0 + 3.0: \")\n  | \t      ^---\n  |\n  = expected parameter_type", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 51_http_method_syntax.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.11s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/51_http_method_syntax.cln -o tests/wasm/51_http_method_syntax.wasm`
+Compiling tests/clean_files/51_http_method_syntax.cln to tests/wasm/51_http_method_syntax.wasm
+DEBUG: Parsing program item: start_function
+DEBUG: Building program with 0 functions, 0 classes
+DEBUG: Parsed program with 0 functions, 0 classes
+DEBUG: Parsing program item: start_function
+DEBUG: Building program with 0 functions, 0 classes
+DEBUG: Function start has no description
+DEBUG: Attempting to infer class context for function start. Class table has 0 classes
+DEBUG: Could not infer class context for function start
+DEBUG: Found function 'http.get' with 1 overloads
+DEBUG: Resolving function 'http.get' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> String (required: 1)
+DEBUG: Selected overload: [String] -> String
+DEBUG: Object is variable: getResponse
+DEBUG: Checking qualified function: getResponse.length
+DEBUG: Function not found: getResponse.length
+DEBUG: Found function 'string.length' with 1 overloads
+DEBUG: Resolving function 'string.length' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> Integer (required: 1)
+DEBUG: Selected overload: [String] -> Integer
+DEBUG: Found function 'http.post' with 1 overloads
+DEBUG: Resolving function 'http.post' with 2 args
+DEBUG:   arg[0]: String
+DEBUG:   arg[1]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String, String] -> String (required: 2)
+DEBUG: Selected overload: [String, String] -> String
+DEBUG: Object is variable: postResponse
+DEBUG: Checking qualified function: postResponse.length
+DEBUG: Function not found: postResponse.length
+DEBUG: Found function 'string.length' with 1 overloads
+DEBUG: Resolving function 'string.length' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> Integer (required: 1)
+DEBUG: Selected overload: [String] -> Integer
+DEBUG: Found function 'http.put' with 1 overloads
+DEBUG: Resolving function 'http.put' with 2 args
+DEBUG:   arg[0]: String
+DEBUG:   arg[1]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String, String] -> String (required: 2)
+DEBUG: Selected overload: [String, String] -> String
+DEBUG: Object is variable: putResponse
+DEBUG: Checking qualified function: putResponse.length
+DEBUG: Function not found: putResponse.length
+DEBUG: Found function 'string.length' with 1 overloads
+DEBUG: Resolving function 'string.length' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> Integer (required: 1)
+DEBUG: Selected overload: [String] -> Integer
+DEBUG: Found function 'http.patch' with 1 overloads
+DEBUG: Resolving function 'http.patch' with 2 args
+DEBUG:   arg[0]: String
+DEBUG:   arg[1]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String, String] -> String (required: 2)
+DEBUG: Selected overload: [String, String] -> String
+DEBUG: Object is variable: patchResponse
+DEBUG: Checking qualified function: patchResponse.length
+DEBUG: Function not found: patchResponse.length
+DEBUG: Found function 'string.length' with 1 overloads
+DEBUG: Resolving function 'string.length' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> Integer (required: 1)
+DEBUG: Selected overload: [String] -> Integer
+DEBUG: Found function 'http.delete' with 1 overloads
+DEBUG: Resolving function 'http.delete' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> String (required: 1)
+DEBUG: Selected overload: [String] -> String
+DEBUG: Object is variable: deleteResponse
+DEBUG: Checking qualified function: deleteResponse.length
+DEBUG: Function not found: deleteResponse.length
+DEBUG: Found function 'string.length' with 1 overloads
+DEBUG: Resolving function 'string.length' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> Integer (required: 1)
+DEBUG: Selected overload: [String] -> Integer
+DEBUG: Found function 'http.get' with 1 overloads
+DEBUG: Resolving function 'http.get' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> String (required: 1)
+DEBUG: Selected overload: [String] -> String
+DEBUG: Found function 'string.length' with 1 overloads
+DEBUG: Resolving function 'string.length' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> Integer (required: 1)
+DEBUG: Selected overload: [String] -> Integer
+DEBUG: Object is variable: hasData
+DEBUG: Checking qualified function: hasData.toString
+DEBUG: Function not found: hasData.toString
+DEBUG: Found function 'boolean.toString' with 1 overloads
+DEBUG: Resolving function 'boolean.toString' with 1 args
+DEBUG:   arg[0]: Boolean
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [Boolean] -> String (required: 1)
+DEBUG: Selected overload: [Boolean] -> String
+DEBUG: Found function 'http.get' with 1 overloads
+DEBUG: Resolving function 'http.get' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> String (required: 1)
+DEBUG: Selected overload: [String] -> String
+DEBUG: Found function 'string.isEmpty' with 1 overloads
+DEBUG: Resolving function 'string.isEmpty' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> Boolean (required: 1)
+DEBUG: Selected overload: [String] -> Boolean
+DEBUG: Found function 'http.get' with 1 overloads
+DEBUG: Resolving function 'http.get' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> String (required: 1)
+DEBUG: Selected overload: [String] -> String
+DEBUG: Found function 'http.get' with 1 overloads
+DEBUG: Resolving function 'http.get' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> String (required: 1)
+DEBUG: Selected overload: [String] -> String
+DEBUG: Object is variable: userData
+DEBUG: Checking qualified function: userData.length
+DEBUG: Function not found: userData.length
+DEBUG: Found function 'string.length' with 1 overloads
+DEBUG: Resolving function 'string.length' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> Integer (required: 1)
+DEBUG: Selected overload: [String] -> Integer
+DEBUG: Object is variable: settingsData
+DEBUG: Checking qualified function: settingsData.length
+DEBUG: Function not found: settingsData.length
+DEBUG: Found function 'string.length' with 1 overloads
+DEBUG: Resolving function 'string.length' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> Integer (required: 1)
+DEBUG: Selected overload: [String] -> Integer
+DEBUG: Found function 'http.post' with 1 overloads
+DEBUG: Resolving function 'http.post' with 2 args
+DEBUG:   arg[0]: String
+DEBUG:   arg[1]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String, String] -> String (required: 2)
+DEBUG: Selected overload: [String, String] -> String
+DEBUG: Object is variable: updateResponse
+DEBUG: Checking qualified function: updateResponse.length
+DEBUG: Function not found: updateResponse.length
+DEBUG: Found function 'string.length' with 1 overloads
+DEBUG: Resolving function 'string.length' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> Integer (required: 1)
+DEBUG: Selected overload: [String] -> Integer
+DEBUG: Semantic analyzer returning program with 0 classes
+DEBUG: Importing float_to_string at function index 38
+DEBUG: Registered method-style imports for type-based method calls
+DEBUG: Function index 75 is 'string_index_of'
+DEBUG: Generating function 'string_trim_start' at index 106
+DEBUG: CODEGEN No class context inferred for function 'string_trim_start'
+DEBUG: Generating function 'string_trim_end' at index 107
+DEBUG: CODEGEN No class context inferred for function 'string_trim_end'
+DEBUG: Generating function 'string_last_index_of' at index 108
+DEBUG: CODEGEN No class context inferred for function 'string_last_index_of'
+DEBUG: Generating function 'string_substring' at index 109
+DEBUG: CODEGEN No class context inferred for function 'string_substring'
+DEBUG: Generating function 'string_replace' at index 110
+DEBUG: CODEGEN No class context inferred for function 'string_replace'
+DEBUG: Generating function 'string_pad_start' at index 111
+DEBUG: CODEGEN No class context inferred for function 'string_pad_start'
+DEBUG: Generating function 'string_trim' at index 112
+DEBUG: CODEGEN No class context inferred for function 'string_trim'
+DEBUG: Generating function 'string_to_lower_case' at index 113
+DEBUG: CODEGEN No class context inferred for function 'string_to_lower_case'
+DEBUG: Generating function 'string_to_upper_case' at index 114
+DEBUG: CODEGEN No class context inferred for function 'string_to_upper_case'
+DEBUG: About to register numeric operations
+DEBUG: Numeric operations registered successfully
+DEBUG: Function index 183 is 'i32_to_f64'
+DEBUG: Adding float_to_string to function_map at index 195 (potential DUPLICATE)
+DEBUG: Allocating 'true' (len=4) at address 300
+DEBUG: Length bytes: [4, 0, 0, 0], Content bytes: [116, 114, 117, 101]
+DEBUG: Allocating 'false' (len=5) at address 310
+DEBUG: Length bytes: [5, 0, 0, 0], Content bytes: [102, 97, 108, 115, 101]
+DEBUG: Allocating '42' (len=2) at address 320
+DEBUG: Length bytes: [2, 0, 0, 0], Content bytes: [52, 50]
+DEBUG: Allocating '[int]' (len=5) at address 330
+DEBUG: Length bytes: [5, 0, 0, 0], Content bytes: [91, 105, 110, 116, 93]
+DEBUG: Allocating '3.14' (len=4) at address 340
+DEBUG: Length bytes: [4, 0, 0, 0], Content bytes: [51, 46, 49, 52]
+DEBUG: Allocating '[float]' (len=7) at address 350
+DEBUG: Length bytes: [7, 0, 0, 0], Content bytes: [91, 102, 108, 111, 97, 116, 93]
+DEBUG: Allocating '0' (len=1) at address 400
+DEBUG: Length bytes: [1, 0, 0, 0], Content bytes: [48]
+DEBUG: Allocating '1' (len=1) at address 410
+DEBUG: Length bytes: [1, 0, 0, 0], Content bytes: [49]
+DEBUG: Allocating '2' (len=1) at address 420
+DEBUG: Length bytes: [1, 0, 0, 0], Content bytes: [50]
+DEBUG: Allocating '3' (len=1) at address 430
+DEBUG: Length bytes: [1, 0, 0, 0], Content bytes: [51]
+DEBUG: Allocating '5' (len=1) at address 440
+DEBUG: Length bytes: [1, 0, 0, 0], Content bytes: [53]
+DEBUG: Allocating '7' (len=1) at address 450
+DEBUG: Length bytes: [1, 0, 0, 0], Content bytes: [55]
+DEBUG: Function index 253 is 'math.exp'
+DEBUG: Function index 267 is 'abs'
+DEBUG: Function index 268 is 'min'
+DEBUG: Function index 269 is 'max'
+DEBUG: Function index 272 is 'less_than'
+DEBUG: Function index 277 is 'abs'
+DEBUG: Function index 278 is 'sqrt'
+DEBUG: Function index 284 is 'min'
+DEBUG: Function index 286 is 'cos'
+DEBUG: Function index 295 is 'exp'
+DEBUG: PARSE Program has 0 classes
+DEBUG: Generating function 'start' at index 349
+DEBUG: CODEGEN No class context inferred for function 'start'
+Error: Codegen { context: ErrorContext { message: "Function 'http.get' not found", help: None, error_type: Codegen, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E007"), related_errors: [] } }
+
+=== ERROR for 52_async_keywords.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/52_async_keywords.cln -o tests/wasm/52_async_keywords.wasm`
+Compiling tests/clean_files/52_async_keywords.cln to tests/wasm/52_async_keywords.wasm
+DEBUG: Traditional parsing succeeded in preprocessing path
+DEBUG: Parsing program item: functions_block
+DEBUG: Found standalone functions_block rule (not part of class)
+DEBUG: parse_functions_block_with_context called with class_context: None
+DEBUG: Creating preprocessor without class context
+DEBUG: Preprocessor failed: Syntax error: Function 'logMessage' is missing a body., falling back to traditional
+DEBUG: Using traditional functions block parsing (no class context)
+DEBUG: Parsing program item: start_function
+DEBUG: Building program with 2 functions, 0 classes
+DEBUG: Parsed program with 2 functions, 0 classes
+DEBUG: Traditional parsing succeeded in preprocessing path
+DEBUG: Parsing program item: functions_block
+DEBUG: Found standalone functions_block rule (not part of class)
+DEBUG: parse_functions_block_with_context called with class_context: None
+DEBUG: Creating preprocessor without class context
+DEBUG: Preprocessor failed: Syntax error: Function 'logMessage' is missing a body., falling back to traditional
+DEBUG: Using traditional functions block parsing (no class context)
+DEBUG: Parsing program item: start_function
+DEBUG: Building program with 2 functions, 0 classes
+DEBUG: Function fetchData has no description
+DEBUG: Attempting to infer class context for function fetchData. Class table has 0 classes
+DEBUG: Could not infer class context for function fetchData
+DEBUG: Function logMessage has no description
+DEBUG: Attempting to infer class context for function logMessage. Class table has 0 classes
+DEBUG: Could not infer class context for function logMessage
+DEBUG: Function start has no description
+DEBUG: Attempting to infer class context for function start. Class table has 0 classes
+DEBUG: Could not infer class context for function start
+DEBUG: Found function 'fetchData' with 1 overloads
+DEBUG: Resolving function 'fetchData' with 1 args
+DEBUG:   arg[0]: String
+DEBUG: Available overloads:
+DEBUG:   overload[0]: [String] -> String (required: 1)
+DEBUG: Selected overload: [String] -> String
+Error: Type { context: ErrorContext { message: "Cannot assign Future(String) to variable of type String", help: Some("Change the initializer expression to match the variable type"), error_type: Type, location: Some(SourceLocation { line: 335, column: 65, file: "" }), suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E002"), related_errors: [] } }
+
+=== ERROR for 53_import_export_blocks.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/53_import_export_blocks.cln -o tests/wasm/53_import_export_blocks.wasm`
+Compiling tests/clean_files/53_import_export_blocks.cln to tests/wasm/53_import_export_blocks.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed ( --> 5:8
+  |
+5 | import:␊
+  |        ^---
+  |
+  = expected import_item), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected import_item", help: Some("Error in: 'Expected import_item'"), error_type: Syntax, location: Some(SourceLocation { line: 5, column: 8, file: "tests/clean_files/53_import_export_blocks.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("   3 | \n   4 | // Test simple import block syntax\n   5 | import:\n     |        ^\n   6 |     Math\n   7 |     String\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:23\n  |\n2 | \tvoid helperFunction()\n  | \t                     ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected import_item", help: Some("Error in: 'Expected import_item'"), error_type: Syntax, location: Some(SourceLocation { line: 5, column: 8, file: "tests/clean_files/53_import_export_blocks.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("   3 | \n   4 | // Test simple import block syntax\n   5 | import:\n     |        ^\n   6 |     Math\n   7 |     String\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:23\n  |\n2 | \tvoid helperFunction()\n  | \t                     ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 54_integration_test.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.14s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/54_integration_test.cln -o tests/wasm/54_integration_test.wasm`
+Compiling tests/clean_files/54_integration_test.cln to tests/wasm/54_integration_test.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed ( --> 4:8
+  |
+4 | import:␊
+  |        ^---
+  |
+  = expected import_item), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected import_item", help: Some("Error in: 'Expected import_item'"), error_type: Syntax, location: Some(SourceLocation { line: 4, column: 8, file: "tests/clean_files/54_integration_test.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("   2 | // Tests combinations of all new syntax patterns\n   3 | \n   4 | import:\n     |        ^\n   5 |     math\n   6 |     string\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:8\n  |\n2 | \tprint(\"LOG [\" + timestamp.toString() + \"]: \" + action)\n  | \t      ^---\n  |\n  = expected parameter_type", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected import_item", help: Some("Error in: 'Expected import_item'"), error_type: Syntax, location: Some(SourceLocation { line: 4, column: 8, file: "tests/clean_files/54_integration_test.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("   2 | // Tests combinations of all new syntax patterns\n   3 | \n   4 | import:\n     |        ^\n   5 |     math\n   6 |     string\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:8\n  |\n2 | \tprint(\"LOG [\" + timestamp.toString() + \"]: \" + action)\n  | \t      ^---\n  |\n  = expected parameter_type", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 58_error_handling_simple.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/58_error_handling_simple.cln -o tests/wasm/58_error_handling_simple.wasm`
+Compiling tests/clean_files/58_error_handling_simple.cln to tests/wasm/58_error_handling_simple.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed ( --> 8:3
+  |
+8 | 		return a / b
+  | 		^---
+  |
+  = expected logical_op, comparison_op, additive_op, multiplicative_op, or power_op), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Error in: 'Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op'"), error_type: Syntax, location: Some(SourceLocation { line: 8, column: 3, file: "tests/clean_files/58_error_handling_simple.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("   6 | \t\tif b == 0\n   7 | \t\t\treturn 0  // Simple fallback instead of error()\n   8 | \t\treturn a / b\n     |   ^\n   9 | \t\n  10 | \tstring readFileContents(string filename)\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:8\n  |\n2 | \tprint(\"Safe division result: \" + result1.toString())\n  | \t      ^---\n  |\n  = expected parameter_type", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Error in: 'Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op'"), error_type: Syntax, location: Some(SourceLocation { line: 8, column: 3, file: "tests/clean_files/58_error_handling_simple.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("   6 | \t\tif b == 0\n   7 | \t\t\treturn 0  // Simple fallback instead of error()\n   8 | \t\treturn a / b\n     |   ^\n   9 | \t\n  10 | \tstring readFileContents(string filename)\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:8\n  |\n2 | \tprint(\"Safe division result: \" + result1.toString())\n  | \t      ^---\n  |\n  = expected parameter_type", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 59_default_parameters_simple.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.13s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/59_default_parameters_simple.cln -o tests/wasm/59_default_parameters_simple.wasm`
+Compiling tests/clean_files/59_default_parameters_simple.cln to tests/wasm/59_default_parameters_simple.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 12:16
+   |
+12 | 	power(integer base, integer exponent)
+   | 	              ^---
+   |
+   = expected type_, method_call_segment, logical_op, comparison_op, additive_op, multiplicative_op, or power_op), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: type annotation, method_call_segment, logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Error in: 'Expected one of: type annotation, method_call_segment, logical_op, comparison_op, additive_op, multiplicative_op, power_op'"), error_type: Syntax, location: Some(SourceLocation { line: 12, column: 16, file: "tests/clean_files/59_default_parameters_simple.cln" }), suggestions: ["Add a type annotation (e.g., 'integer', 'string', 'boolean')", "Check if you're missing a type before the variable name"], source_snippet: Some("  10 | \t\t\treturn \"Hello, \" + name\n  11 | \t\n  12 | \tpower(integer base, integer exponent)\n     |                ^\n  13 | \t\tif exponent == 0\n  14 | \t\t\treturn 1\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Function 'logMessage' is missing a body.", help: None, error_type: Syntax, location: Some(SourceLocation { line: 12, column: 41, file: "" }), suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: type annotation, method_call_segment, logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Error in: 'Expected one of: type annotation, method_call_segment, logical_op, comparison_op, additive_op, multiplicative_op, power_op'"), error_type: Syntax, location: Some(SourceLocation { line: 12, column: 16, file: "tests/clean_files/59_default_parameters_simple.cln" }), suggestions: ["Add a type annotation (e.g., 'integer', 'string', 'boolean')", "Check if you're missing a type before the variable name"], source_snippet: Some("  10 | \t\t\treturn \"Hello, \" + name\n  11 | \t\n  12 | \tpower(integer base, integer exponent)\n     |                ^\n  13 | \t\tif exponent == 0\n  14 | \t\t\treturn 1\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Function 'logMessage' is missing a body.", help: None, error_type: Syntax, location: Some(SourceLocation { line: 12, column: 41, file: "" }), suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 59_default_parameters_working.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/59_default_parameters_working.cln -o tests/wasm/59_default_parameters_working.wasm`
+Compiling tests/clean_files/59_default_parameters_working.cln to tests/wasm/59_default_parameters_working.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed ( --> 8:10
+  |
+8 | 		return base * exponent  // Simplified for testing
+  | 		       ^---
+  |
+  = expected EOI, expression, or program_item), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: end of input, expression, program_item", help: Some("Error in: 'Expected one of: end of input, expression, program_item'"), error_type: Syntax, location: Some(SourceLocation { line: 8, column: 10, file: "tests/clean_files/59_default_parameters_working.cln" }), suggestions: ["The file may be incomplete or have unclosed constructs", "Add a valid expression (variable, literal, or function call)"], source_snippet: Some("   6 | \t\n   7 | \tpower(integer base, integer exponent)\n   8 | \t\treturn base * exponent  // Simplified for testing\n     |          ^\n   9 | \t\n  10 | \ttestDefaultParameters()\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:25\n  |\n2 | \ttestDefaultParameters()\n  | \t                       ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: end of input, expression, program_item", help: Some("Error in: 'Expected one of: end of input, expression, program_item'"), error_type: Syntax, location: Some(SourceLocation { line: 8, column: 10, file: "tests/clean_files/59_default_parameters_working.cln" }), suggestions: ["The file may be incomplete or have unclosed constructs", "Add a valid expression (variable, literal, or function call)"], source_snippet: Some("   6 | \t\n   7 | \tpower(integer base, integer exponent)\n   8 | \t\treturn base * exponent  // Simplified for testing\n     |          ^\n   9 | \t\n  10 | \ttestDefaultParameters()\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:25\n  |\n2 | \ttestDefaultParameters()\n  | \t                       ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 59_default_parameters.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/59_default_parameters.cln -o tests/wasm/59_default_parameters.wasm`
+Compiling tests/clean_files/59_default_parameters.cln to tests/wasm/59_default_parameters.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 11:2
+   |
+11 | 	void logMessage(string message, string level="INFO")
+   | 	^---
+   |
+   = expected logical_op, comparison_op, additive_op, multiplicative_op, or power_op), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Verify the if statement has proper condition and body"), error_type: Syntax, location: Some(SourceLocation { line: 11, column: 2, file: "tests/clean_files/59_default_parameters.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("   9 | \tinteger power(integer value, integer exponent=2)\n  10 | \t\treturn value * value  // Simplified for now\n  11 | \tvoid logMessage(string message, string level=\"INFO\")\n     |  ^\n  12 | \t\tprint(\"[\" + level + \"] \" + message)\n  13 | \t\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:54\n  |\n2 | \tvoid logMessage(string message, string level=\"INFO\")\n  | \t                                                    ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Verify the if statement has proper condition and body"), error_type: Syntax, location: Some(SourceLocation { line: 11, column: 2, file: "tests/clean_files/59_default_parameters.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("   9 | \tinteger power(integer value, integer exponent=2)\n  10 | \t\treturn value * value  // Simplified for now\n  11 | \tvoid logMessage(string message, string level=\"INFO\")\n     |  ^\n  12 | \t\tprint(\"[\" + level + \"] \" + message)\n  13 | \t\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:54\n  |\n2 | \tvoid logMessage(string message, string level=\"INFO\")\n  | \t                                                    ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 60_automatic_return.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/60_automatic_return.cln -o tests/wasm/60_automatic_return.wasm`
+Compiling tests/clean_files/60_automatic_return.cln to tests/wasm/60_automatic_return.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed ( --> 7:2
+  |
+7 | 	␊
+  | 	^---
+  |
+  = expected logical_op, comparison_op, additive_op, multiplicative_op, or power_op), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Error in: 'Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op'"), error_type: Syntax, location: Some(SourceLocation { line: 7, column: 2, file: "tests/clean_files/60_automatic_return.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("   5 | \tinteger addOne(integer x)\n   6 | \t\tx + 1    // Automatically returned\n   7 | \t\n     |  ^\n   8 | \tstring greet(string name)\n   9 | \t\t\"Hello, \" + name    // Automatically returned\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:8\n  |\n2 | \tprint(\"Add one result: \" + result1.toString())\n  | \t      ^---\n  |\n  = expected parameter_type", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Error in: 'Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op'"), error_type: Syntax, location: Some(SourceLocation { line: 7, column: 2, file: "tests/clean_files/60_automatic_return.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("   5 | \tinteger addOne(integer x)\n   6 | \t\tx + 1    // Automatically returned\n   7 | \t\n     |  ^\n   8 | \tstring greet(string name)\n   9 | \t\t\"Hello, \" + name    // Automatically returned\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:8\n  |\n2 | \tprint(\"Add one result: \" + result1.toString())\n  | \t      ^---\n  |\n  = expected parameter_type", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 62_apply_blocks_specification.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/62_apply_blocks_specification.cln -o tests/wasm/62_apply_blocks_specification.wasm`
+Compiling tests/clean_files/62_apply_blocks_specification.cln to tests/wasm/62_apply_blocks_specification.wasm
+DEBUG: Traditional parsing succeeded in preprocessing path
+DEBUG: Parsing program item: functions_block
+DEBUG: Found standalone functions_block rule (not part of class)
+DEBUG: parse_functions_block_with_context called with class_context: None
+DEBUG: Creating preprocessor without class context
+DEBUG: Preprocessor failed: Syntax error: Failed to parse isolated function:  --> 2:31
+  |
+2 | 	void processItem(string item)
+  | 	                             ^---
+  |
+  = expected function_body, falling back to traditional
+DEBUG: Using traditional functions block parsing (no class context)
+DEBUG: Parsing program item: start_function
+DEBUG: Building program with 2 functions, 0 classes
+DEBUG: Parsed program with 2 functions, 0 classes
+DEBUG: Traditional parsing succeeded in preprocessing path
+DEBUG: Parsing program item: functions_block
+DEBUG: Found standalone functions_block rule (not part of class)
+DEBUG: parse_functions_block_with_context called with class_context: None
+DEBUG: Creating preprocessor without class context
+DEBUG: Preprocessor failed: Syntax error: Failed to parse isolated function:  --> 2:31
+  |
+2 | 	void processItem(string item)
+  | 	                             ^---
+  |
+  = expected function_body, falling back to traditional
+DEBUG: Using traditional functions block parsing (no class context)
+DEBUG: Parsing program item: start_function
+DEBUG: Building program with 2 functions, 0 classes
+DEBUG: Function processItem has no description
+DEBUG: Attempting to infer class context for function processItem. Class table has 0 classes
+DEBUG: Could not infer class context for function processItem
+DEBUG: Function showNumber has no description
+DEBUG: Attempting to infer class context for function showNumber. Class table has 0 classes
+DEBUG: Could not infer class context for function showNumber
+DEBUG: Function start has no description
+DEBUG: Attempting to infer class context for function start. Class table has 0 classes
+DEBUG: Could not infer class context for function start
+Error: Type { context: ErrorContext { message: "Function 'print' expects type String, but got Void in apply-block", help: Some("Each expression in a function apply-block must match the function's single parameter type"), error_type: Type, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E002"), related_errors: [] } }
+
+=== ERROR for 64_default_parameters_spec.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/64_default_parameters_spec.cln -o tests/wasm/64_default_parameters_spec.wasm`
+Compiling tests/clean_files/64_default_parameters_spec.cln to tests/wasm/64_default_parameters_spec.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 10:16
+   |
+10 | 	formatMessage(string text = "Default", string prefix = ">> ", boolean uppercase = false)
+   | 	              ^---
+   |
+   = expected unary_expression), trying recovery parsing
+DEBUG: Recovery parsing also failed with 2 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected unary_expression", help: Some("Check if you have a complete assignment statement"), error_type: Syntax, location: Some(SourceLocation { line: 10, column: 16, file: "tests/clean_files/64_default_parameters_spec.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("   8 | \t\n   9 | \t// Test 2: Multiple default parameters\n  10 | \tformatMessage(string text = \"Default\", string prefix = \">> \", boolean uppercase = false)\n     |                ^\n  11 | \t\tif uppercase\n  12 | \t\t\treturn prefix + text.toUpperCase()\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected unary_expression", help: Some("Check if you have a complete assignment statement"), error_type: Syntax, location: Some(SourceLocation { line: 10, column: 16, file: "tests/clean_files/64_default_parameters_spec.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("   8 | \t\n   9 | \t// Test 2: Multiple default parameters\n  10 | \tformatMessage(string text = \"Default\", string prefix = \">> \", boolean uppercase = false)\n     |                ^\n  11 | \t\tif uppercase\n  12 | \t\t\treturn prefix + text.toUpperCase()\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 65_error_handling_onerror_spec.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/65_error_handling_onerror_spec.cln -o tests/wasm/65_error_handling_onerror_spec.wasm`
+Compiling tests/clean_files/65_error_handling_onerror_spec.cln to tests/wasm/65_error_handling_onerror_spec.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 55:42
+   |
+55 | 	integer complex = (riskyDivision(20, 0) onError riskyDivision(15, 3)) onError 999
+   | 	                                        ^---
+   |
+   = expected logical_op, comparison_op, additive_op, multiplicative_op, or power_op), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Error in: 'Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op'"), error_type: Syntax, location: Some(SourceLocation { line: 55, column: 42, file: "tests/clean_files/65_error_handling_onerror_spec.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  53 | \t// Test 5: Nested onError handling\n  54 | \tprint(\"5. Nested onError Handling:\")\n  55 | \tinteger complex = (riskyDivision(20, 0) onError riskyDivision(15, 3)) onError 999\n     |                                          ^\n  56 | \tprint(\"Nested onError result: \" + complex.toString())\n  57 | \t\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Function 'riskyDivision' is missing a body.", help: None, error_type: Syntax, location: Some(SourceLocation { line: 12, column: 44, file: "" }), suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Error in: 'Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op'"), error_type: Syntax, location: Some(SourceLocation { line: 55, column: 42, file: "tests/clean_files/65_error_handling_onerror_spec.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  53 | \t// Test 5: Nested onError handling\n  54 | \tprint(\"5. Nested onError Handling:\")\n  55 | \tinteger complex = (riskyDivision(20, 0) onError riskyDivision(15, 3)) onError 999\n     |                                          ^\n  56 | \tprint(\"Nested onError result: \" + complex.toString())\n  57 | \t\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Function 'riskyDivision' is missing a body.", help: None, error_type: Syntax, location: Some(SourceLocation { line: 12, column: 44, file: "" }), suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 67_import_export_comprehensive.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/67_import_export_comprehensive.cln -o tests/wasm/67_import_export_comprehensive.wasm`
+Compiling tests/clean_files/67_import_export_comprehensive.cln to tests/wasm/67_import_export_comprehensive.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed ( --> 7:1
+  |
+7 | 	string.concat       // Import single function
+  | ^---
+  |
+  = expected EOI or program_item), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: end of input, program_item", help: Some("Error in: 'Expected one of: end of input, program_item'"), error_type: Syntax, location: Some(SourceLocation { line: 7, column: 1, file: "tests/clean_files/67_import_export_comprehensive.cln" }), suggestions: ["The file may be incomplete or have unclosed constructs"], source_snippet: Some("   5 | import:\n   6 | \tmath                // Import entire math module  \n   7 | \tstring.concat       // Import single function\n     | ^\n   8 | \tlist as listUtils   // Import with alias\n   9 | \tfile.read as readFile  // Import with alias\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:27\n  |\n2 | \tvoid demonstrateImports()\n  | \t                         ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: end of input, program_item", help: Some("Error in: 'Expected one of: end of input, program_item'"), error_type: Syntax, location: Some(SourceLocation { line: 7, column: 1, file: "tests/clean_files/67_import_export_comprehensive.cln" }), suggestions: ["The file may be incomplete or have unclosed constructs"], source_snippet: Some("   5 | import:\n   6 | \tmath                // Import entire math module  \n   7 | \tstring.concat       // Import single function\n     | ^\n   8 | \tlist as listUtils   // Import with alias\n   9 | \tfile.read as readFile  // Import with alias\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:27\n  |\n2 | \tvoid demonstrateImports()\n  | \t                         ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 68_list_behaviors_comprehensive.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/68_list_behaviors_comprehensive.cln -o tests/wasm/68_list_behaviors_comprehensive.wasm`
+Compiling tests/clean_files/68_list_behaviors_comprehensive.cln to tests/wasm/68_list_behaviors_comprehensive.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 20:4
+   |
+20 | 			print("Processing: " + currentTask)
+   | 			^---
+   |
+   = expected logical_op, comparison_op, additive_op, multiplicative_op, or power_op), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 20, column: 4, file: "tests/clean_files/68_list_behaviors_comprehensive.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  18 | \t\twhile tasks.size() > 0\n  19 | \t\t\tstring currentTask = tasks.remove()  // Gets from front\n  20 | \t\t\tprint(\"Processing: \" + currentTask)\n     |    ^\n  21 | \t\n  22 | \tvoid testStackBehavior()\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:26\n  |\n2 | \tvoid testQueueBehavior()\n  | \t                        ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 20, column: 4, file: "tests/clean_files/68_list_behaviors_comprehensive.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  18 | \t\twhile tasks.size() > 0\n  19 | \t\t\tstring currentTask = tasks.remove()  // Gets from front\n  20 | \t\t\tprint(\"Processing: \" + currentTask)\n     |    ^\n  21 | \t\n  22 | \tvoid testStackBehavior()\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:26\n  |\n2 | \tvoid testQueueBehavior()\n  | \t                        ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 69_string_interpolation_comprehensive.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/69_string_interpolation_comprehensive.cln -o tests/wasm/69_string_interpolation_comprehensive.wasm`
+Compiling tests/clean_files/69_string_interpolation_comprehensive.cln to tests/wasm/69_string_interpolation_comprehensive.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 14:1
+   |
+14 | 		
+   | ^---
+   |
+   = expected EOI or program_item), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: end of input, program_item", help: Some("Error in: 'Expected one of: end of input, program_item'"), error_type: Syntax, location: Some(SourceLocation { line: 14, column: 1, file: "tests/clean_files/69_string_interpolation_comprehensive.cln" }), suggestions: ["The file may be incomplete or have unclosed constructs"], source_snippet: Some("  12 | \t\tstring greeting = \"Hello, {name}!\"\n  13 | \t\tprint(greeting)  // Should output: Hello, World!\n  14 | \t\t\n     | ^\n  15 | \t\t// Integer interpolation\n  16 | \t\tstring countMessage = \"Count is {count}\"\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:26\n  |\n2 | \ttestBasicInterpolation()\n  | \t                        ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: end of input, program_item", help: Some("Error in: 'Expected one of: end of input, program_item'"), error_type: Syntax, location: Some(SourceLocation { line: 14, column: 1, file: "tests/clean_files/69_string_interpolation_comprehensive.cln" }), suggestions: ["The file may be incomplete or have unclosed constructs"], source_snippet: Some("  12 | \t\tstring greeting = \"Hello, {name}!\"\n  13 | \t\tprint(greeting)  // Should output: Hello, World!\n  14 | \t\t\n     | ^\n  15 | \t\t// Integer interpolation\n  16 | \t\tstring countMessage = \"Count is {count}\"\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:26\n  |\n2 | \ttestBasicInterpolation()\n  | \t                        ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 70_type_precision_comprehensive.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/70_type_precision_comprehensive.cln -o tests/wasm/70_type_precision_comprehensive.wasm`
+Compiling tests/clean_files/70_type_precision_comprehensive.cln to tests/wasm/70_type_precision_comprehensive.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (   --> 116:3
+    |
+116 | 		print("64-bit to 32-bit conversion: " + standardPrecision.toString())
+    | 		^---
+    |
+    = expected logical_op, comparison_op, additive_op, multiplicative_op, or power_op), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 116, column: 3, file: "tests/clean_files/70_type_precision_comprehensive.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some(" 114 | \t\tinteger:64 largePrecision = 1234567890\n 115 | \t\tinteger:32 standardPrecision = largePrecision  // Should convert safely\n 116 | \t\tprint(\"64-bit to 32-bit conversion: \" + standardPrecision.toString())\n     |   ^\n 117 | \t\t\n 118 | \t\t// Number precision conversions\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:33\n  |\n2 | \ttestIntegerPrecisionModifiers()\n  | \t                               ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 116, column: 3, file: "tests/clean_files/70_type_precision_comprehensive.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some(" 114 | \t\tinteger:64 largePrecision = 1234567890\n 115 | \t\tinteger:32 standardPrecision = largePrecision  // Should convert safely\n 116 | \t\tprint(\"64-bit to 32-bit conversion: \" + standardPrecision.toString())\n     |   ^\n 117 | \t\t\n 118 | \t\t// Number precision conversions\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:33\n  |\n2 | \ttestIntegerPrecisionModifiers()\n  | \t                               ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 71_error_handling_onerror_comprehensive.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.11s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/71_error_handling_onerror_comprehensive.cln -o tests/wasm/71_error_handling_onerror_comprehensive.wasm`
+Compiling tests/clean_files/71_error_handling_onerror_comprehensive.cln to tests/wasm/71_error_handling_onerror_comprehensive.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 31:3
+   |
+31 | 		print("Normal division: " + result1.toString())
+   | 		^---
+   |
+   = expected logical_op, comparison_op, additive_op, multiplicative_op, or power_op), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 31, column: 3, file: "tests/clean_files/71_error_handling_onerror_comprehensive.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  29 | \t\t// Syntax: value = riskyCall() onError defaultValue\n  30 | \t\tinteger result1 = riskyDivision(10, 2)  // Should succeed\n  31 | \t\tprint(\"Normal division: \" + result1.toString())\n     |   ^\n  32 | \t\t\n  33 | \t\t// This would use onError syntax when implemented:\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Function 'riskyDivision' is missing a body.", help: None, error_type: Syntax, location: Some(SourceLocation { line: 12, column: 44, file: "" }), suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Check the print statement syntax and arguments"), error_type: Syntax, location: Some(SourceLocation { line: 31, column: 3, file: "tests/clean_files/71_error_handling_onerror_comprehensive.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  29 | \t\t// Syntax: value = riskyCall() onError defaultValue\n  30 | \t\tinteger result1 = riskyDivision(10, 2)  // Should succeed\n  31 | \t\tprint(\"Normal division: \" + result1.toString())\n     |   ^\n  32 | \t\t\n  33 | \t\t// This would use onError syntax when implemented:\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Function 'riskyDivision' is missing a body.", help: None, error_type: Syntax, location: Some(SourceLocation { line: 12, column: 44, file: "" }), suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 72_default_parameters_comprehensive.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.12s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/72_default_parameters_comprehensive.cln -o tests/wasm/72_default_parameters_comprehensive.wasm`
+Compiling tests/clean_files/72_default_parameters_comprehensive.cln to tests/wasm/72_default_parameters_comprehensive.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 19:13
+   |
+19 | 	logMessage(string message, string level="INFO")
+   | 	           ^---
+   |
+   = expected unary_expression), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected unary_expression", help: Some("Error in: 'Expected unary_expression'"), error_type: Syntax, location: Some(SourceLocation { line: 19, column: 13, file: "tests/clean_files/72_default_parameters_comprehensive.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  17 | \t\treturn result\n  18 | \t\n  19 | \tlogMessage(string message, string level=\"INFO\")\n     |             ^\n  20 | \t\tprint(\"[\" + level + \"] \" + message)\n  21 | \t\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:49\n  |\n2 | \tlogMessage(string message, string level=\"INFO\")\n  | \t                                               ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected unary_expression", help: Some("Error in: 'Expected unary_expression'"), error_type: Syntax, location: Some(SourceLocation { line: 19, column: 13, file: "tests/clean_files/72_default_parameters_comprehensive.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  17 | \t\treturn result\n  18 | \t\n  19 | \tlogMessage(string message, string level=\"INFO\")\n     |             ^\n  20 | \t\tprint(\"[\" + level + \"] \" + message)\n  21 | \t\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:49\n  |\n2 | \tlogMessage(string message, string level=\"INFO\")\n  | \t                                               ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+
+=== ERROR for 73_console_input_comprehensive.cln ===
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.13s
+     Running `/Users/earcandy/Documents/Dev/Clean Language/tmp/target/debug/clean-language-compiler compile -i tests/clean_files/73_console_input_comprehensive.cln -o tests/wasm/73_console_input_comprehensive.wasm`
+Compiling tests/clean_files/73_console_input_comprehensive.cln to tests/wasm/73_console_input_comprehensive.wasm
+DEBUG: Traditional parsing failed, attempting functions block preprocessing
+DEBUG: All preprocessing attempts failed, returning error
+DEBUG: Traditional parsing failed (  --> 15:3
+   |
+15 | 		string message = "Hello"  // Would come from user input
+   | 		^---
+   |
+   = expected logical_op, comparison_op, additive_op, multiplicative_op, or power_op), trying recovery parsing
+DEBUG: Recovery parsing also failed with 4 errors
+🔄 Regular parsing failed, trying recovery compilation...
+❌ Both regular and recovery parsing failed.
+Recovery errors: [Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Check if you have a complete assignment statement"), error_type: Syntax, location: Some(SourceLocation { line: 15, column: 3, file: "tests/clean_files/73_console_input_comprehensive.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  13 | \t\t// For demonstration, show expected behavior\n  14 | \t\tstring name = \"TestUser\"  // Would come from user input\n  15 | \t\tstring message = \"Hello\"  // Would come from user input\n     |   ^\n  16 | \t\t\n  17 | \t\tprint(\"Hello, \" + name + \"!\")\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:30\n  |\n2 | \tvoid testBasicConsoleInput()\n  | \t                            ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Expected one of: logical_op, comparison_op, additive_op, multiplicative_op, power_op", help: Some("Check if you have a complete assignment statement"), error_type: Syntax, location: Some(SourceLocation { line: 15, column: 3, file: "tests/clean_files/73_console_input_comprehensive.cln" }), suggestions: ["Check the Clean Language syntax documentation", "Verify proper indentation and statement structure"], source_snippet: Some("  13 | \t\t// For demonstration, show expected behavior\n  14 | \t\tstring name = \"TestUser\"  // Would come from user input\n  15 | \t\tstring message = \"Hello\"  // Would come from user input\n     |   ^\n  16 | \t\t\n  17 | \t\tprint(\"Hello, \" + name + \"!\")\n"), stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }, Syntax { context: ErrorContext { message: "Failed to parse isolated function:  --> 2:30\n  |\n2 | \tvoid testBasicConsoleInput()\n  | \t                            ^---\n  |\n  = expected function_body", help: None, error_type: Syntax, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E001"), related_errors: [] } }]
+Error: "Parsing failed"
+

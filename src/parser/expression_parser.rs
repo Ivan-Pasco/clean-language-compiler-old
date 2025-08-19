@@ -112,7 +112,6 @@ fn parse_integer_literal(
 
 // Helper function to convert location from parser format to AST format
 
-
 pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     match pair.as_rule() {
         Rule::expression => {
@@ -602,7 +601,6 @@ pub fn parse_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
     Ok(result)
 }
 
-
 pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let location = get_location(&pair);
     let inner = pair.clone().into_inner().next().ok_or_else(|| {
@@ -658,6 +656,7 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::function_call => parse_function_call(inner),
         Rule::property_method_call => parse_property_method_call(inner),
         Rule::method_call => parse_method_call(inner),
+        Rule::chained_method_call => parse_chained_method_call(inner),
         Rule::three_level_method_call => parse_three_level_method_call(inner),
         Rule::static_method_call => parse_static_method_call(inner),
         Rule::property_access => parse_property_access(inner),
@@ -683,7 +682,8 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::parenthesized_expr => {
             // Handle parenthesized expressions: (parenthesized_expr)
             let inner_expr = inner.into_inner().next().unwrap();
-            parse_logical_expression(inner_expr)
+            // parenthesized_expr contains additive_expression, not logical_expression
+            parse_additive_expression(inner_expr)
         }
         Rule::conditional_expr => {
             // Handle conditional expressions: if condition then value else value
@@ -891,9 +891,9 @@ pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError
                 // Parse argument list - contains argument_expression items
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains additive_expression
-                        let additive_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_additive_expression(additive_expr)?);
+                        // argument_expression contains unary_expression
+                        let unary_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_unary_expression(unary_expr)?);
                     }
                 }
             }
@@ -924,11 +924,14 @@ pub fn parse_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
                 Rule::builtin_class_name => Expression::Variable(first.as_str().to_string()),
                 Rule::string => parse_string(first)?,
                 // Handle all number variants (because number is a silent rule)
-                Rule::decimal_integer | Rule::hex_integer | Rule::binary_integer | Rule::octal_integer | Rule::float => {
-                    parse_number_literal(first)?
-                }
+                Rule::decimal_integer
+                | Rule::hex_integer
+                | Rule::binary_integer
+                | Rule::octal_integer
+                | Rule::float => parse_number_literal(first)?,
                 Rule::boolean => Expression::Literal(Value::Boolean(first.as_str() == "true")),
                 Rule::logical_expression => parse_expression(first)?, // Handle parenthesized expressions
+                Rule::additive_expression => parse_additive_expression(first)?, // Handle parenthesized additive expressions
                 _ => {
                     return Err(CompilerError::parse_error(
                         "Invalid method call base".to_string(),
@@ -967,9 +970,9 @@ pub fn parse_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
                                 // Parse argument list - contains argument_expression items
                                 for arg_expr in arg.into_inner() {
                                     if let Rule::argument_expression = arg_expr.as_rule() {
-                                        // argument_expression contains additive_expression
-                                        let additive_expr = arg_expr.into_inner().next().unwrap();
-                                        arguments.push(parse_additive_expression(additive_expr)?);
+                                        // argument_expression contains unary_expression
+                                        let unary_expr = arg_expr.into_inner().next().unwrap();
+                                        arguments.push(parse_unary_expression(unary_expr)?);
                                     }
                                 }
                             }
@@ -1031,16 +1034,16 @@ pub fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, CompilerErr
 pub fn parse_property_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let inner = pair.into_inner();
     let all_children: Vec<_> = inner.collect();
-    
+
     // First element should be the base identifier
     let base_identifier = all_children[0].as_str().to_string();
     let mut current_expr = Expression::Variable(base_identifier);
-    
+
     // Build property access chain until we hit the method_name
     let mut segments = Vec::new();
     let mut method_name = String::new();
     let mut arguments = Vec::new();
-    
+
     for child in &all_children[1..] {
         match child.as_rule() {
             Rule::identifier => segments.push(child.as_str().to_string()),
@@ -1049,9 +1052,9 @@ pub fn parse_property_method_call(pair: Pair<Rule>) -> Result<Expression, Compil
                 // Parse argument list - contains argument_expression items
                 for arg_expr in child.clone().into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains additive_expression
-                        let additive_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_additive_expression(additive_expr)?);
+                        // argument_expression contains unary_expression
+                        let unary_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_unary_expression(unary_expr)?);
                     }
                 }
             }
@@ -1059,7 +1062,7 @@ pub fn parse_property_method_call(pair: Pair<Rule>) -> Result<Expression, Compil
             _ => {}
         }
     }
-    
+
     // Build property access expression for the chain before the method
     for property in segments {
         let location = crate::ast::SourceLocation::default();
@@ -1069,7 +1072,7 @@ pub fn parse_property_method_call(pair: Pair<Rule>) -> Result<Expression, Compil
             location,
         };
     }
-    
+
     let location = crate::ast::SourceLocation::default();
     Ok(Expression::MethodCall {
         object: Box::new(current_expr),
@@ -1095,7 +1098,6 @@ pub fn parse_list_access(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
         Box::new(index_expr),
     ))
 }
-
 
 pub fn parse_conditional_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let location = convert_to_ast_location(&get_location(&pair));
@@ -1149,9 +1151,9 @@ pub fn parse_base_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                 // Parse argument list - contains argument_expression items
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains additive_expression
-                        let additive_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_additive_expression(additive_expr)?);
+                        // argument_expression contains unary_expression
+                        let unary_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_unary_expression(unary_expr)?);
                     }
                 }
             }
@@ -1190,9 +1192,9 @@ pub fn parse_static_method_call(pair: Pair<Rule>) -> Result<Expression, Compiler
                 // Parse argument list - contains argument_expression items
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains additive_expression
-                        let additive_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_additive_expression(additive_expr)?);
+                        // argument_expression contains unary_expression
+                        let unary_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_unary_expression(unary_expr)?);
                     }
                 }
             }
@@ -1231,9 +1233,9 @@ pub fn parse_three_level_method_call(pair: Pair<Rule>) -> Result<Expression, Com
                 // Parse argument list - contains argument_expression items
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains additive_expression
-                        let additive_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_additive_expression(additive_expr)?);
+                        // argument_expression contains unary_expression
+                        let unary_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_unary_expression(unary_expr)?);
                     }
                 }
             }
@@ -1256,6 +1258,85 @@ pub fn parse_three_level_method_call(pair: Pair<Rule>) -> Result<Expression, Com
         arguments,
         location: convert_to_ast_location(&location),
     })
+}
+
+pub fn parse_chained_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut inner = pair.into_inner();
+
+    // First element is either static_method_call or function_call
+    let base_pair = inner.next().unwrap();
+    let mut current_expr = match base_pair.as_rule() {
+        Rule::static_method_call => parse_static_method_call(base_pair)?,
+        Rule::function_call => parse_function_call(base_pair)?,
+        _ => {
+            return Err(CompilerError::parse_error(
+                "Invalid base for chained method call".to_string(),
+                None,
+                Some("Expected static method call or function call".to_string()),
+            ))
+        }
+    };
+
+    // Now process all the method_call_segment rules
+    for segment in inner {
+        if let Rule::method_call_segment = segment.as_rule() {
+            let mut seg_inner = segment.into_inner();
+            let first_child = seg_inner.next().unwrap();
+
+            let (method_name, arguments) = match first_child.as_rule() {
+                Rule::method_name => {
+                    // Method call with mandatory parentheses
+                    let method_name = first_child.as_str().to_string();
+                    let mut arguments = Vec::new();
+
+                    // Parse arguments from the remaining segments
+                    for arg in seg_inner {
+                        match arg.as_rule() {
+                            Rule::argument_list => {
+                                // Parse argument list - contains argument_expression items
+                                for arg_expr in arg.into_inner() {
+                                    if let Rule::argument_expression = arg_expr.as_rule() {
+                                        // argument_expression contains unary_expression
+                                        let unary_expr = arg_expr.into_inner().next().unwrap();
+                                        arguments.push(parse_unary_expression(unary_expr)?);
+                                    }
+                                }
+                            }
+                            Rule::logical_expression => {
+                                // Fallback for direct logical expressions (if any)
+                                arguments.push(parse_logical_expression(arg)?);
+                            }
+                            _ => {
+                                // Skip other rules
+                            }
+                        }
+                    }
+
+                    (method_name, arguments)
+                }
+                _ => {
+                    return Err(CompilerError::parse_error(
+                        format!(
+                            "Unexpected chained method call segment: {:?}",
+                            first_child.as_rule()
+                        ),
+                        None,
+                        None,
+                    ))
+                }
+            };
+
+            let location = crate::ast::SourceLocation::default();
+            current_expr = Expression::MethodCall {
+                object: Box::new(current_expr),
+                method: method_name,
+                arguments,
+                location,
+            };
+        }
+    }
+
+    Ok(current_expr)
 }
 
 pub fn parse_start_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {

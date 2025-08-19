@@ -1,5 +1,5 @@
 functions:
-	testMathOperations()
+	void testMathOperations()
 		print("=== Math Operations - Specification Compliant ===")
 		// Basic arithmetic - use operators per Clean Language "one way to do things"
 		number a = 15.5
@@ -35,7 +35,7 @@ functions:
 		print("math.e() = " + math.e().toString())
 		print("math.tau() = " + math.tau().toString())
 	
-	testStringOperations()
+	void testStringOperations()
 		print("=== String Operations - Specification Compliant ===")
 		string text = "Hello, Clean Language World!"
 		string search = "Clean"
@@ -65,7 +65,7 @@ functions:
 		print("string.replace result = " + string.replace(original, "quick", "slow"))
 		print("string.substring result = " + string.substring(original, 4, 9))
 	
-	testListOperations()
+	void testListOperations()
 		print("=== List Operations - Specification Compliant ===")
 		list<integer> numbers = [1, 2, 3, 4, 5]
 		list<string> words = ["apple", "banana", "cherry"]
@@ -90,7 +90,7 @@ functions:
 		iterate num in numbers
 			print("  " + num.toString())
 	
-	testFileOperations() 
+	void testFileOperations() 
 		print("=== File Operations ===")
 		string filename = "test_file.txt"
 		string content = "Hello from Clean Language!"

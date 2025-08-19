@@ -1,47 +1,51 @@
 [build]
-# Use all available CPU cores for parallel compilation
-jobs = 8
+# Optimize build times
+rustflags = ["-C", "target-cpu=native"]
 
-# Enable build pipelining for faster incremental builds  
-pipelining = true
+[test]
+# Test configuration
+harness = true
+# Run tests in parallel for faster execution
+jobs = 0
 
-# Set target for WebAssembly compilation
-target-dir = "target"
+[bench]
+# Benchmark configuration
+harness = true
 
-[target.wasm32-unknown-unknown]
-# Optimize for WebAssembly size and performance
-rustflags = [
-    "-C", "opt-level=3",
-    "-C", "lto=fat",
-    "-C", "codegen-units=1",
-    "-C", "panic=abort",
-    "-C", "target-feature=+simd128"
-]
-
-# Use default linker on macOS (lld not available)
-# [target.x86_64-apple-darwin]
-# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-
-# Development optimizations
-[profile.dev]
-# Optimize dependencies but not our code for faster dev builds
+[profile.test]
+# Optimized testing profile
 opt-level = 1
 debug = true
+codegen-units = 16
 incremental = true
 
-[profile.release]
-# Maximum optimization for production WebAssembly
+[profile.bench]
+# Benchmarking profile
 opt-level = 3
-lto = "fat"
+lto = false
 codegen-units = 1
-panic = "abort"
-strip = true
-debug = false
 
-# Use faster incremental builds in development
-[incremental]
-debug-assertions = true
+[alias]
+# Useful aliases for development
+t = "test"
+tt = "test --verbose"
+tc = "test --color=always"
+tb = "bench"
+tr = "run"
+build = "build"
+c = "check"
+format = "fmt"
+cl = "clippy"
 
-# Cache configuration for faster rebuilds
-[env]
-CARGO_TARGET_DIR = "target"
+# Testing aliases
+test-all = "test --all-targets --all-features"
+test-fast = "test --release"
+test-slow = "test --no-default-features"
+test-parser = "test parser::"
+test-semantic = "test semantic::"
+test-codegen = "test codegen::"
+test-ir = "test ir::"
+
+# Quality assurance aliases
+qa = "run --bin test_runner && run --bin performance_benchmark && run --bin coverage_report"
+quality = "run --bin test_runner && run --bin performance_benchmark && run --bin coverage_report"

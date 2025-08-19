@@ -296,10 +296,14 @@ impl MethodStyleManager {
             Instruction::If(BlockType::Result(ValType::I32)),
             Instruction::I32Const(1), // Null is empty
             Instruction::Else,
-            // Call length and check if 0
+            // Check length using direct memory access (length is at offset 0)
             Instruction::LocalGet(0),
-            Instruction::Call(self.get_value_length_function_index()),
-            Instruction::I32Eqz,
+            Instruction::I32Load(MemArg {
+                offset: 0, // Length field is at offset 0 in Clean Language objects
+                align: 2,  // 4-byte alignment for i32
+                memory_index: 0,
+            }),
+            Instruction::I32Eqz, // Check if length is 0
             Instruction::End,
         ]
     }
@@ -316,11 +320,15 @@ impl MethodStyleManager {
             Instruction::If(BlockType::Result(ValType::I32)),
             Instruction::I32Const(0), // Null is empty, so not-empty is false
             Instruction::Else,
-            // Call length and check if > 0
+            // Check length using direct memory access and compare with 0
             Instruction::LocalGet(0),
-            Instruction::Call(self.get_value_length_function_index()),
+            Instruction::I32Load(MemArg {
+                offset: 0, // Length field is at offset 0 in Clean Language objects
+                align: 2,  // 4-byte alignment for i32
+                memory_index: 0,
+            }),
             Instruction::I32Const(0),
-            Instruction::I32GtU,
+            Instruction::I32GtU, // Check if length > 0
             Instruction::End,
         ]
     }
@@ -389,10 +397,9 @@ impl MethodStyleManager {
             // Parameters: value_ptr (0)
             // Returns: string pointer
 
-            // For now, return a simple string representation
-            // In production, would check type and convert appropriately
+            // For now, return the input value as-is (assuming it's already a string pointer)
+            // In a full implementation, this would check the object type and convert appropriately
             Instruction::LocalGet(0),
-            Instruction::Call(self.get_to_string_function_index()),
         ]
     }
 
@@ -469,8 +476,8 @@ impl MethodStyleManager {
             Instruction::LocalGet(1), // min
             Instruction::I32LtS,      // value < min (condition)
             Instruction::Select,      // Choose min if value < min, else value
-            // Store intermediate result in local 3
-            Instruction::LocalTee(3), // Store clamped-to-min value
+            // Store intermediate result in local 3 (without leaving on stack)
+            Instruction::LocalSet(3), // Store clamped-to-min value (consuming stack)
             // Clamp to maximum: select(max, clamped_value, clamped_value > max)
             Instruction::LocalGet(2), // max
             Instruction::LocalGet(3), // clamped_value
@@ -494,8 +501,8 @@ impl MethodStyleManager {
             Instruction::LocalGet(1), // min
             Instruction::F64Lt,       // value < min (condition)
             Instruction::Select,      // Choose min if value < min, else value
-            // Store intermediate result in local 3
-            Instruction::LocalTee(3), // Store clamped-to-min value
+            // Store intermediate result in local 3 (without leaving on stack)
+            Instruction::LocalSet(3), // Store clamped-to-min value (consuming stack)
             // Clamp to maximum: select(max, clamped_value, clamped_value > max)
             Instruction::LocalGet(2), // max
             Instruction::LocalGet(3), // clamped_value
@@ -506,13 +513,7 @@ impl MethodStyleManager {
         ]
     }
 
-    // Helper function indices (would be resolved from function table)
-    fn get_value_length_function_index(&self) -> u32 {
-        400
-    }
-    fn get_to_string_function_index(&self) -> u32 {
-        401
-    }
+    // Helper methods removed - replaced with direct memory access for better performance and reliability
 }
 
 #[cfg(test)]

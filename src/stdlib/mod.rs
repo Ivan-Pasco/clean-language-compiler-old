@@ -314,7 +314,11 @@ pub(crate) fn register_stdlib_function(
     instructions: Vec<Instruction>,
 ) -> Result<u32, CompilerError> {
     // Function registration completed successfully
-    codegen.register_function(name, params, return_type, &instructions)
+    let function_index = codegen.register_function(name, params, return_type, &instructions)?;
+
+    // Function registration completed successfully
+
+    Ok(function_index)
 }
 
 /// Enhanced helper function to register stdlib functions with explicit local variable types
@@ -327,7 +331,17 @@ pub(crate) fn register_stdlib_function_with_locals(
     instructions: Vec<Instruction>,
 ) -> Result<u32, CompilerError> {
     // Function registration with locals completed successfully
-    codegen.register_function_with_locals(name, params, return_type, local_types, &instructions)
+    let function_index = codegen.register_function_with_locals(
+        name,
+        params,
+        return_type,
+        local_types,
+        &instructions,
+    )?;
+
+    // Function registration with locals completed successfully
+
+    Ok(function_index)
 }
 
 #[cfg(test)]

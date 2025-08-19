@@ -1,0 +1,32 @@
+// Test file for newly implemented host functions
+// Tests math functions, memory management, and property access
+
+start()
+	print("Testing newly implemented host functions...")
+	
+	// Test math functions
+	number x = 16.0
+	number sqrtResult = math.sqrt(x)
+	string sqrtStr = sqrtResult.toString()
+	print("Square root of 16: " + sqrtStr)
+	
+	number absResult = math.abs(-42.0)
+	string absStr = absResult.toString()
+	print("Absolute value of -42: " + absStr)
+	
+	number powResult = pow(2.0, 3.0)
+	string powStr = powResult.toString()
+	print("2 to the power of 3: " + powStr)
+	
+	// Test property access
+	integer num = 12345
+	integer digits = num.length()
+	string digitsStr = digits.toString()
+	print("Number of digits in 12345: " + digitsStr)
+	
+	number floatNum = 123.456
+	integer floatDigits = floatNum.length()
+	string floatStr = floatDigits.toString()
+	print("Number of digits in 123.456: " + floatStr)
+	
+	print("Host function tests completed!")

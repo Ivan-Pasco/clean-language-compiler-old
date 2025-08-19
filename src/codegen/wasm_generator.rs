@@ -92,7 +92,8 @@ impl WasmGenerator {
             // Check if this function type already exists (using params and return as key)
             let type_key = (param_types.clone(), return_types.clone());
             if !self.runtime_function_type_map.contains_key(&type_key) {
-                self.runtime_function_type_map.insert(type_key.clone(), self.next_type_idx);
+                self.runtime_function_type_map
+                    .insert(type_key.clone(), self.next_type_idx);
                 // Also add to function_types for backward compatibility
                 self.function_types.insert(param_types, self.next_type_idx);
                 self.next_type_idx += 1;
@@ -115,9 +116,11 @@ impl WasmGenerator {
                 // Check if this function type already exists (using params and return as key)
                 let type_key = (wasm_param_types.clone(), wasm_return_types.clone());
                 if !self.runtime_function_type_map.contains_key(&type_key) {
-                    self.runtime_function_type_map.insert(type_key.clone(), self.next_type_idx);
+                    self.runtime_function_type_map
+                        .insert(type_key.clone(), self.next_type_idx);
                     // Also add to function_types for backward compatibility
-                    self.function_types.insert(wasm_param_types, self.next_type_idx);
+                    self.function_types
+                        .insert(wasm_param_types, self.next_type_idx);
                     self.next_type_idx += 1;
                 }
             }
@@ -191,13 +194,20 @@ impl WasmGenerator {
 
                     // Use the combined key to find the correct type index
                     let type_key = (wasm_param_types, wasm_return_types);
-                    let type_idx = *self.runtime_function_type_map.get(&type_key).ok_or_else(|| {
-                        CompilerError::codegen_error(
-                            format!("Function type not found for import: {} with signature {:?}", import.name, type_key),
-                            None,
-                            None,
-                        )
-                    })?;
+                    let type_idx =
+                        *self
+                            .runtime_function_type_map
+                            .get(&type_key)
+                            .ok_or_else(|| {
+                                CompilerError::codegen_error(
+                                    format!(
+                                    "Function type not found for import: {} with signature {:?}",
+                                    import.name, type_key
+                                ),
+                                    None,
+                                    None,
+                                )
+                            })?;
 
                     import_section.import(
                         &import.module,
@@ -260,13 +270,19 @@ impl WasmGenerator {
 
             // Use the combined key to find the correct type index
             let type_key = (param_types.clone(), return_types);
-            let type_idx = *self.runtime_function_type_map.get(&type_key).ok_or_else(|| {
-                CompilerError::codegen_error(
-                    format!("Function type not found for function: {} with signature {:?}", function.name, type_key),
-                    None,
-                    None,
-                )
-            })?;
+            let type_idx = *self
+                .runtime_function_type_map
+                .get(&type_key)
+                .ok_or_else(|| {
+                    CompilerError::codegen_error(
+                        format!(
+                            "Function type not found for function: {} with signature {:?}",
+                            function.name, type_key
+                        ),
+                        None,
+                        None,
+                    )
+                })?;
 
             function_section.function(type_idx);
             self.function_indices
@@ -785,7 +801,7 @@ impl WasmGenerator {
                 "mem_alloc",
                 vec![ValType::I32, ValType::I32],
                 vec![ValType::I32],
-            ), // (type_id, size) -> address
+            ), // (size, type_id) -> address
             ("mem_retain", vec![ValType::I32], vec![]), // (address) -> ()
             ("mem_release", vec![ValType::I32], vec![]), // (address) -> ()
             ("mem_collect", vec![], vec![ValType::I32]), // () -> freed_count

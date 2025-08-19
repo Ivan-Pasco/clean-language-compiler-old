@@ -12,10 +12,10 @@ functions:
 		
 		print("Queue size: " + taskQueue.size().toString())
 		
-		string first = taskQueue.remove()
+		string first = list.remove(taskQueue, 0)  // Queue removes from front (FIFO)
 		print("Removed: " + first)
 		
-		string second = taskQueue.remove()
+		string second = list.remove(taskQueue, 0)  // Next item moves to front
 		print("Removed: " + second)
 		
 		string next = taskQueue.peek()
@@ -33,10 +33,12 @@ functions:
 		
 		print("Stack size: " + undoStack.size().toString())
 		
-		string last = undoStack.remove()
+		integer lastIndex = undoStack.size() - 1
+		string last = list.remove(undoStack, lastIndex)  // Stack removes from end (LIFO)
 		print("Undone: " + last)
 		
-		string secondLast = undoStack.remove()
+		integer newLastIndex = undoStack.size() - 1
+		string secondLast = list.remove(undoStack, newLastIndex)
 		print("Undone: " + secondLast)
 		
 		string top = undoStack.peek()
@@ -75,7 +77,7 @@ functions:
 		uniqueQueue.add("Third")
 		
 		print("Unique queue size: " + uniqueQueue.size().toString())
-		string removed = uniqueQueue.remove()
+		string removed = list.remove(uniqueQueue, 0)  // Queue behavior, remove from front
 		print("Removed from unique queue: " + removed)
 	
 	void testUtilityMethods()

@@ -42,7 +42,7 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
                         "DEBUG: Found class_item with rule: {:?}",
                         class_item.as_rule()
                     );
-                    
+
                     // The class_item is actually class_body_item, we need to look at its inner content
                     if class_item.as_rule() == Rule::class_body_item {
                         for body_item in class_item.into_inner() {
@@ -59,7 +59,9 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
                                     println!("DEBUG: Found constructor in class {name}");
                                     constructor =
                                         Some(parse_constructor(body_item, ast_location.clone())?);
-                                    println!("DEBUG: Constructor parsed successfully for class {name}");
+                                    println!(
+                                        "DEBUG: Constructor parsed successfully for class {name}"
+                                    );
                                 }
                                 Rule::functions_block => {
                                     println!("DEBUG: Found functions_block in class {name}");

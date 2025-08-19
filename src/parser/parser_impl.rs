@@ -562,13 +562,16 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
     // Look for functions: anywhere in the source, potentially after comments
     if source.contains("functions:") {
         println!("DEBUG: Detected functions block, using direct preprocessing for consistency");
-        
+
         // Use direct preprocessing for all functions blocks to avoid grammar parsing issues
         let preprocessor = super::preprocessor::FunctionPreprocessor::new(source);
         match preprocessor.process_functions_block(source) {
             Ok(functions) => {
-                println!("DEBUG: Direct preprocessing succeeded, found {} functions", functions.len());
-                
+                println!(
+                    "DEBUG: Direct preprocessing succeeded, found {} functions",
+                    functions.len()
+                );
+
                 // Create a program with just the functions
                 let program = Program {
                     functions,
@@ -579,7 +582,7 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                     statements: Vec::new(),
                     location: None,
                 };
-                
+
                 return Ok(program);
             }
             Err(preprocess_error) => {
@@ -587,7 +590,7 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
             }
         }
     }
-    
+
     // For non-functions blocks, try traditional parsing
     match <CleanParser as Parser<Rule>>::parse(Rule::program, source) {
         Ok(pairs) => {
@@ -596,7 +599,7 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
         }
         Err(traditional_error) => {
             println!("DEBUG: Traditional parsing failed, no other options available");
-            
+
             // If all else fails, return the original error
             println!("DEBUG: All parsing attempts failed, returning error");
             Err(ErrorUtils::from_pest_error(
@@ -1471,9 +1474,13 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
                             found_body = true;
                             // Process statements, handling input_declaration specially
                             for stmt_pair in body_item.into_inner() {
-                                if stmt_pair.as_rule() == Rule::statement {
+                                if stmt_pair.as_rule() == Rule::function_body_statement {
+                                    // function_body_statement = { INDENT+ ~ statement }
+                                    // So we need to get the inner statement
+                                    let statement_pair = stmt_pair.into_inner().last().unwrap(); // Skip INDENT+, get statement
+
                                     // Check if this statement contains an input_declaration
-                                    let inner = stmt_pair.clone().into_inner().next().unwrap();
+                                    let inner = statement_pair.clone().into_inner().next().unwrap();
                                     if inner.as_rule() == Rule::standalone_input_declaration {
                                         // Parse as parameter and add to parameters list
                                         let param =
@@ -1489,7 +1496,7 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
                                         parameters.push(param);
                                     } else {
                                         // Regular statement
-                                        body.push(parse_statement(stmt_pair)?);
+                                        body.push(parse_statement(statement_pair)?);
                                     }
                                 }
                             }

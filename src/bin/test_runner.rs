@@ -1,7 +1,7 @@
-use std::path::Path;
-use std::time::Instant;
 use clean_language_compiler::parser::CleanParser;
 use clean_language_compiler::semantic::SemanticAnalyzer;
+use std::path::Path;
+use std::time::Instant;
 
 #[derive(Debug)]
 struct TestResult {
@@ -56,7 +56,7 @@ impl TestSuite {
 
 fn run_parser_tests() -> TestSuite {
     let mut suite = TestSuite::new("Parser Tests".to_string());
-    
+
     // Test basic parsing with correct Clean Language syntax
     let test_cases = vec![
         ("minimal_start", "start()\n\tprint(42)"),
@@ -66,7 +66,7 @@ fn run_parser_tests() -> TestSuite {
 
     for (name, code) in test_cases {
         let start = Instant::now();
-        
+
         match CleanParser::parse_program(code) {
             Ok(_) => {
                 suite.add_test(TestResult {
@@ -94,7 +94,7 @@ fn run_parser_tests() -> TestSuite {
 
 fn run_semantic_tests() -> TestSuite {
     let mut suite = TestSuite::new("Semantic Analysis Tests".to_string());
-    
+
     // Test type checking with correct syntax
     let test_cases = vec![
         ("valid_start", "start()\n\tprint(42)"),
@@ -104,7 +104,7 @@ fn run_semantic_tests() -> TestSuite {
 
     for (name, code) in test_cases {
         let start = Instant::now();
-        
+
         // Parse first
         match CleanParser::parse_program(code) {
             Ok(ast) => {
@@ -149,7 +149,7 @@ fn run_semantic_tests() -> TestSuite {
 
 fn run_compilation_tests() -> TestSuite {
     let mut suite = TestSuite::new("Compilation Tests".to_string());
-    
+
     let test_cases = vec![
         ("simple_start", "start()\n\tprint(42)"),
         ("simple_function", "functions:\n\tinteger add(integer a, integer b)\n\t\treturn a + b"),
@@ -158,7 +158,7 @@ fn run_compilation_tests() -> TestSuite {
 
     for (name, code) in test_cases {
         let start = Instant::now();
-        
+
         // Full compilation pipeline
         match CleanParser::parse_program(code) {
             Ok(ast) => {
@@ -203,7 +203,7 @@ fn run_compilation_tests() -> TestSuite {
 
 fn run_integration_tests() -> TestSuite {
     let mut suite = TestSuite::new("Integration Tests".to_string());
-    
+
     // Test complete files from test directory
     let test_files = vec![
         "tests/clean_files/00_minimal.cln",
@@ -215,31 +215,29 @@ fn run_integration_tests() -> TestSuite {
         if Path::new(file_path).exists() {
             let start = Instant::now();
             let name = file_path.split('/').last().unwrap_or(file_path);
-            
+
             // Read and compile the file
             match std::fs::read_to_string(file_path) {
-                Ok(content) => {
-                    match CleanParser::parse_program(&content) {
-                        Ok(_) => {
-                            suite.add_test(TestResult {
-                                name: name.to_string(),
-                                passed: true,
-                                duration: start.elapsed(),
-                                errors: Vec::new(),
-                                warnings: Vec::new(),
-                            });
-                        }
-                        Err(e) => {
-                            suite.add_test(TestResult {
-                                name: name.to_string(),
-                                passed: false,
-                                duration: start.elapsed(),
-                                errors: vec![e.to_string()],
-                                warnings: Vec::new(),
-                            });
-                        }
+                Ok(content) => match CleanParser::parse_program(&content) {
+                    Ok(_) => {
+                        suite.add_test(TestResult {
+                            name: name.to_string(),
+                            passed: true,
+                            duration: start.elapsed(),
+                            errors: Vec::new(),
+                            warnings: Vec::new(),
+                        });
                     }
-                }
+                    Err(e) => {
+                        suite.add_test(TestResult {
+                            name: name.to_string(),
+                            passed: false,
+                            duration: start.elapsed(),
+                            errors: vec![e.to_string()],
+                            warnings: Vec::new(),
+                        });
+                    }
+                },
                 Err(e) => {
                     suite.add_test(TestResult {
                         name: name.to_string(),
@@ -259,30 +257,30 @@ fn run_integration_tests() -> TestSuite {
 fn main() {
     println!("🧪 Clean Language Compiler - Comprehensive Test Suite");
     println!("{}", "=".repeat(60));
-    
+
     let start_time = Instant::now();
     let mut all_suites = Vec::new();
-    
+
     // Run all test suites
     all_suites.push(run_parser_tests());
     all_suites.push(run_semantic_tests());
     all_suites.push(run_compilation_tests());
     all_suites.push(run_integration_tests());
-    
+
     let total_time = start_time.elapsed();
-    
+
     // Print results
     println!("\n📊 Test Results Summary:");
     println!("{}", "=".repeat(40));
-    
+
     let mut total_passed = 0;
     let mut total_failed = 0;
-    
+
     for suite in &all_suites {
         println!("{}", suite.summary());
         total_passed += suite.passed_count;
         total_failed += suite.failed_count;
-        
+
         // Print detailed results for failed tests
         for test in &suite.tests {
             if !test.passed {
@@ -290,12 +288,12 @@ fn main() {
             }
         }
     }
-    
+
     println!("\n🎯 Overall Results:");
     println!("  ✅ Passed: {}", total_passed);
     println!("  ❌ Failed: {}", total_failed);
     println!("  ⏱️  Total Time: {:.2?}", total_time);
-    
+
     if total_failed > 0 {
         println!("\n🚨 Some tests failed! Please review the errors above.");
         std::process::exit(1);

@@ -294,6 +294,89 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "string_to_int", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "string_to_float", |_: i32| -> f64 { 0.0 })?;
 
+    // Add memory management functions
+    linker.func_wrap(
+        "memory_runtime",
+        "mem_alloc",
+        |size: i32, type_id: i32| -> i32 {
+            println!(
+                "🔍 DEBUG: mem_alloc called with size: {}, type_id: {}",
+                size, type_id
+            );
+            // Return a mock pointer for allocation
+            1024 + size // Simple mock allocation
+        },
+    )?;
+
+    linker.func_wrap("memory_runtime", "mem_retain", |ptr: i32| {
+        println!("🔍 DEBUG: mem_retain called with ptr: {}", ptr);
+        // Mock retain - does nothing
+    })?;
+
+    linker.func_wrap("memory_runtime", "mem_release", |ptr: i32| {
+        println!("🔍 DEBUG: mem_release called with ptr: {}", ptr);
+        // Mock release - does nothing
+    })?;
+
+    // Add method-style function stubs
+    linker.func_wrap("env", "integer.toString", |value: i32| -> i32 {
+        println!("🔍 DEBUG: integer.toString called with value: {}", value);
+        0 // Mock return
+    })?;
+
+    linker.func_wrap("env", "integer.toInteger", |value: i32| -> i32 { value })?;
+    linker.func_wrap("env", "integer.toNumber", |value: i32| -> f64 {
+        value as f64
+    })?;
+    linker.func_wrap("env", "integer.toBoolean", |value: i32| -> i32 {
+        if value != 0 {
+            1
+        } else {
+            0
+        }
+    })?;
+    linker.func_wrap("env", "integer.length", |_: i32| -> i32 { 0 })?;
+
+    linker.func_wrap("env", "number.toString", |value: f64| -> i32 {
+        println!("🔍 DEBUG: number.toString called with value: {}", value);
+        0 // Mock return
+    })?;
+
+    linker.func_wrap("env", "number.toInteger", |value: f64| -> i32 {
+        value as i32
+    })?;
+    linker.func_wrap("env", "number.toNumber", |value: f64| -> f64 { value })?;
+    linker.func_wrap("env", "number.toBoolean", |value: f64| -> i32 {
+        if value != 0.0 {
+            1
+        } else {
+            0
+        }
+    })?;
+    linker.func_wrap("env", "number.length", |_: f64| -> i32 { 0 })?;
+
+    linker.func_wrap("env", "string.toString", |value: i32| -> i32 { value })?;
+    linker.func_wrap("env", "string.toInteger", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "string.toNumber", |_: i32| -> f64 { 0.0 })?;
+    linker.func_wrap("env", "string.toBoolean", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "string.length", |_: i32| -> i32 { 0 })?;
+
+    linker.func_wrap("env", "boolean.toString", |value: i32| -> i32 {
+        println!("🔍 DEBUG: boolean.toString called with value: {}", value);
+        0 // Mock return
+    })?;
+
+    linker.func_wrap("env", "boolean.toInteger", |value: i32| -> i32 { value })?;
+    linker.func_wrap("env", "boolean.toNumber", |value: i32| -> f64 {
+        value as f64
+    })?;
+    linker.func_wrap("env", "boolean.toBoolean", |value: i32| -> i32 { value })?;
+    linker.func_wrap("env", "boolean.length", |_: i32| -> i32 { 0 })?;
+
+    linker.func_wrap("env", "string.toUpperCase", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "string.toLowerCase", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "string.concat", |_: i32, _: i32| -> i32 { 0 })?;
+
     // Instantiate the module
     let instance = linker.instantiate(&mut store, &module)?;
 

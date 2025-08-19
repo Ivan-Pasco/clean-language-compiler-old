@@ -237,7 +237,7 @@ impl InstructionGenerator {
                     | ast::BinaryOperator::LessEqual
                     | ast::BinaryOperator::GreaterEqual => {
                         if let Some(string_compare_index) =
-                            self.get_function_index("string_compare")
+                            self.get_function_index("string.compare")
                         {
                             instructions.push(Instruction::Call(string_compare_index));
                             match op {

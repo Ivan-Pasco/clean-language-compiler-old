@@ -328,7 +328,7 @@ impl StringClass {
     fn generate_concat(&self) -> Vec<Instruction> {
         vec![
             // Ultra-simplified concat implementation - just return first string
-            // Parameters: str1_ptr, str2_ptr  
+            // Parameters: str1_ptr, str2_ptr
             // Returns: string pointer (just return first string for now)
             Instruction::LocalGet(0), // Return first string ptr
         ]

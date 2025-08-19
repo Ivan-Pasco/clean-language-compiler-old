@@ -1,0 +1,93 @@
+{
+  "name": "Clean Language Compiler Testing Protocol",
+  "version": "1.0.0",
+  "commands": {
+    "quick": {
+      "description": "Quick test suite for development",
+      "command": "./qa/run_tests.sh quick",
+      "timeout": 60,
+      "use_case": "Fast feedback during development"
+    },
+    "full": {
+      "description": "Complete quality gate with all tests",
+      "command": "./qa/run_tests.sh full", 
+      "timeout": 300,
+      "use_case": "Pre-commit validation"
+    },
+    "fix": {
+      "description": "Test failure protocol checker",
+      "command": "./qa/run_tests.sh fix",
+      "timeout": 30,
+      "use_case": "When tests fail - validates against specification"
+    },
+    "validate": {
+      "description": "Validate test files against Clean Language spec",
+      "command": "./qa/run_tests.sh validate",
+      "timeout": 30,
+      "use_case": "Check test correctness before fixing implementation"
+    },
+    "unit": {
+      "description": "Run unit tests only",
+      "command": "./qa/run_tests.sh unit",
+      "timeout": 120,
+      "use_case": "Focused unit test execution"
+    },
+    "benchmark": {
+      "description": "Performance benchmarking",
+      "command": "./qa/run_tests.sh benchmark", 
+      "timeout": 180,
+      "use_case": "Performance regression detection"
+    },
+    "coverage": {
+      "description": "Code coverage analysis",
+      "command": "./qa/run_tests.sh coverage",
+      "timeout": 120,
+      "use_case": "Coverage reporting and quality assessment"
+    },
+    "property": {
+      "description": "Property-based testing for edge cases",
+      "command": "./qa/run_tests.sh property",
+      "timeout": 60,
+      "use_case": "Robustness testing with random inputs"
+    },
+    "all": {
+      "description": "Complete test suite (full + coverage + property) with 100% success rate enforcement",
+      "command": "./qa/run_tests.sh all",
+      "timeout": 600,
+      "use_case": "Comprehensive testing with mandatory 100% compilation and execution rate"
+    }
+  },
+  "workflow": {
+    "quality_standard": {
+      "compilation_rate": "100% REQUIRED - ALL Clean Language test files must compile",
+      "execution_rate": "100% REQUIRED - ALL compiled programs must execute without errors",
+      "runtime_stability": "ZERO crashes, exceptions, or undefined behavior allowed"
+    },
+    "test_failure_protocol": [
+      "1. Review documentation/Clean_Language_Specification.md",
+      "2. Validate test correctness against specification", 
+      "3. Fix test if wrong (syntax, expectations, patterns)",
+      "4. Fix implementation ONLY if test is correct"
+    ],
+    "development": [
+      "Use 'quick' for rapid development feedback",
+      "Use 'full' before committing changes", 
+      "Use 'fix' when any test fails",
+      "Use 'validate' to check test correctness"
+    ]
+  },
+  "files": {
+    "specification": "documentation/Clean_Language_Specification.md",
+    "test_directory": "tests/clean_files/",
+    "tasks": "TASKS.md",
+    "testing_guide": "qa/TESTING_GUIDE.md"
+  },
+  "shortcuts": {
+    "test": "./qa/run_tests.sh quick",
+    "tests": "./qa/run_tests.sh full",
+    "check": "./qa/run_tests.sh full", 
+    "all": "./qa/run_tests.sh all",
+    "help": "./qa/run_tests.sh help",
+    "protocol": "./qa/run_tests.sh fix"
+  }
+}

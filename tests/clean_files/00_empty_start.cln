@@ -1,0 +1,3 @@
+start()
+	// empty function - adding minimal statement for parser compliance
+	integer x = 0

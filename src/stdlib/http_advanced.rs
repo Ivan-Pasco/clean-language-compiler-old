@@ -334,8 +334,8 @@ impl HttpAdvancedManager {
             Instruction::I32Const(16),
             Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
-            Instruction::Call(0), // memory allocation function
-            Instruction::LocalSet(0), // response_ptr
+            Instruction::Call(0),                       // memory allocation function
+            Instruction::LocalSet(0),                   // response_ptr
             // Get URL length
             Instruction::LocalGet(0), // url_ptr
             Instruction::I32Load(MemArg {
@@ -396,8 +396,8 @@ impl HttpAdvancedManager {
             Instruction::I32Const(16),
             Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
-            Instruction::Call(0),     // Memory allocation function
-            Instruction::LocalSet(0), // response_ptr
+            Instruction::Call(0),                       // Memory allocation function
+            Instruction::LocalSet(0),                   // response_ptr
             // Get URL length
             Instruction::LocalGet(0), // url_ptr (parameter)
             Instruction::I32Load(MemArg {
@@ -465,8 +465,8 @@ impl HttpAdvancedManager {
             Instruction::I32Const(16),
             Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
-            Instruction::Call(0),     // Memory allocation function
-            Instruction::LocalSet(0), // response_ptr
+            Instruction::Call(0),                       // Memory allocation function
+            Instruction::LocalSet(0),                   // response_ptr
             // Process parameters similar to POST
             Instruction::LocalGet(0), // url_ptr
             Instruction::I32Load(MemArg {
@@ -615,7 +615,7 @@ impl HttpAdvancedManager {
                 memory_index: 0,
             }),
             // Create empty response body
-            Instruction::I32Const(4), // Minimal allocation
+            Instruction::I32Const(4),                   // Minimal allocation
             Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
             Instruction::Call(0),
             Instruction::LocalSet(4), // body_ptr
@@ -648,8 +648,8 @@ impl HttpAdvancedManager {
             // Allocate memory for headers structure (12 bytes)
             Instruction::I32Const(12),
             Instruction::I32Const(HTTP_TYPE_ID as i32), // type_id
-            Instruction::Call(0),     // Memory allocation
-            Instruction::LocalSet(0), // headers_ptr
+            Instruction::Call(0),                       // Memory allocation
+            Instruction::LocalSet(0),                   // headers_ptr
             // Initialize header count to 0
             Instruction::LocalGet(0),
             Instruction::I32Const(0),

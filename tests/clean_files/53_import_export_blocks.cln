@@ -3,9 +3,9 @@
 
 // Test simple import block syntax
 import:
-    Math
-    String
-    List
+    math
+    string
+    list
 
 functions:
 

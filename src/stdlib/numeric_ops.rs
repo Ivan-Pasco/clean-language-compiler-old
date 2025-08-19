@@ -537,10 +537,10 @@ impl NumericOperations {
         // pow(base, exponent) - very simple implementation for basic testing
         // Parameters: base (f64), exponent (f64)
         // Returns: base^exponent (f64)
-        
+
         // For now, just implement base^3 = base * base * base
         // This will work for the test case 10^3 = 1000
-        
+
         vec![
             Instruction::LocalGet(0), // base
             Instruction::LocalGet(0), // base

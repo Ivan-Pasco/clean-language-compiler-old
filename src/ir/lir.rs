@@ -2,7 +2,6 @@
 //!
 //! LIR represents WebAssembly-ready instruction sequences
 
-
 /// LIR Program - WebAssembly ready
 #[derive(Debug, Clone)]
 pub struct LIRProgram {

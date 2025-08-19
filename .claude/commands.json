@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-commands.json",
+  "commands": [
+    {
+      "name": "test-quick",
+      "description": "🚀 Run quick test suite (parser + basic tests)",
+      "steps": [
+        {
+          "type": "bash",
+          "command": "./qa/run_tests.sh quick"
+        }
+      ]
+    },
+    {
+      "name": "test-fix",
+      "description": "🔧 Test failure protocol (when ANY test fails)",
+      "steps": [
+        {
+          "type": "bash", 
+          "command": "./qa/run_tests.sh fix"
+        }
+      ]
+    },
+    {
+      "name": "test-full",
+      "description": "🎯 Full quality gate (all tests + benchmarks)",
+      "steps": [
+        {
+          "type": "bash",
+          "command": "./qa/run_tests.sh full"
+        }
+      ]
+    },
+    {
+      "name": "test-validate",
+      "description": "📚 Validate tests against Clean Language specification",
+      "steps": [
+        {
+          "type": "bash",
+          "command": "./qa/run_tests.sh validate"
+        }
+      ]
+    },
+    {
+      "name": "test-unit",
+      "description": "🧪 Run unit tests only",
+      "steps": [
+        {
+          "type": "bash",
+          "command": "./qa/run_tests.sh unit"
+        }
+      ]
+    },
+    {
+      "name": "test-benchmark", 
+      "description": "⚡ Performance benchmarks and regression detection",
+      "steps": [
+        {
+          "type": "bash",
+          "command": "./qa/run_tests.sh benchmark"
+        }
+      ]
+    },
+    {
+      "name": "test-coverage",
+      "description": "📊 Code coverage analysis and reporting", 
+      "steps": [
+        {
+          "type": "bash",
+          "command": "./qa/run_tests.sh coverage"
+        }
+      ]
+    },
+    {
+      "name": "test-property",
+      "description": "🎲 Property-based tests (edge cases)",
+      "steps": [
+        {
+          "type": "bash",
+          "command": "./qa/run_tests.sh property"
+        }
+      ]
+    },
+    {
+      "name": "test-help",
+      "description": "❓ Show all testing commands and usage",
+      "steps": [
+        {
+          "type": "bash",
+          "command": "./qa/run_tests.sh help"
+        }
+      ]
+    },
+    {
+      "name": "test-all",
+      "description": "🎯 Complete test suite (full + coverage + property)",
+      "steps": [
+        {
+          "type": "bash",
+          "command": "./qa/run_tests.sh all"
+        }
+      ]
+    },
+    {
+      "name": "test",
+      "description": "🚀 Quick test (alias for test-quick)",
+      "steps": [
+        {
+          "type": "bash",
+          "command": "./qa/run_tests.sh quick"
+        }
+      ]
+    },
+    {
+      "name": "tests",
+      "description": "🎯 Full quality gate (alias for test-full)",
+      "steps": [
+        {
+          "type": "bash",
+          "command": "./qa/run_tests.sh full"
+        }
+      ]
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 //!
 //! HIR is a desugared AST with name resolution complete.
 
-use crate::ir::{IRId, DebugInfo};
+use crate::ir::{DebugInfo, IRId};
 
 /// HIR Program - desugared AST with resolved names
 #[derive(Debug, Clone)]

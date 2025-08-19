@@ -27,7 +27,7 @@ functions:
 		// Unsigned integers (positive only)
 		integer:8u smallUnsigned = 255
 		integer:16u mediumUnsigned = 65535
-		integer:32u largeUnsigned = 4294967295
+		integer:32u largeUnsigned = 2147483647
 		print("8-bit unsigned max: " + smallUnsigned.toString())
 		print("16-bit unsigned max: " + mediumUnsigned.toString())
 		print("32-bit unsigned max: " + largeUnsigned.toString())

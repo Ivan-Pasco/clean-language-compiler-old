@@ -633,11 +633,11 @@ impl StringOperations {
         // This is a placeholder implementation to get string interpolation working
         vec![
             Instruction::LocalGet(1), // string2_ptr - consume it
-            Instruction::Drop,        // drop string2_ptr 
+            Instruction::Drop,        // drop string2_ptr
             Instruction::LocalGet(0), // Return first string pointer for now
         ]
     }
-    
+
     #[allow(dead_code)]
     fn generate_string_concat(&self) -> Vec<Instruction> {
         // Proper string concatenation implementation
@@ -652,7 +652,6 @@ impl StringOperations {
                 memory_index: 0,
             }),
             Instruction::LocalTee(2), // Store length1 in local 2 and keep on stack
-            
             // Get length of second string
             Instruction::LocalGet(1), // string2_ptr
             Instruction::I32Load(MemArg {
@@ -661,19 +660,16 @@ impl StringOperations {
                 memory_index: 0,
             }),
             Instruction::LocalTee(3), // Store length2 in local 3 and keep on stack
-            
             // Calculate total length: length1 + length2
             Instruction::I32Add,
             Instruction::LocalTee(4), // Store total_length in local 4 and keep on stack
-            
             // Allocate new string with total length + header (16 bytes)
             Instruction::I32Const(16), // Add header size
             Instruction::I32Add,
             Instruction::I32Const(STRING_TYPE_ID.try_into().unwrap()), // type_id
             // For now, allocate a basic string (simplified memory allocation)
             Instruction::I32Const(1024), // Use a static memory location for now
-            Instruction::LocalTee(5), // Store new_string_ptr in local 5 and keep on stack
-            
+            Instruction::LocalTee(5),    // Store new_string_ptr in local 5 and keep on stack
             // Set the length header of the new string
             Instruction::LocalGet(4), // total_length
             Instruction::I32Store(MemArg {
@@ -681,44 +677,36 @@ impl StringOperations {
                 align: 2,
                 memory_index: 0,
             }),
-            
             // Copy first string data
             // Destination: new_string_ptr + 16 (skip header)
-            Instruction::LocalGet(5), // new_string_ptr
+            Instruction::LocalGet(5),  // new_string_ptr
             Instruction::I32Const(16), // header offset
             Instruction::I32Add,
-            
             // Source: string1_ptr + 16 (skip header)
-            Instruction::LocalGet(0), // string1_ptr
+            Instruction::LocalGet(0),  // string1_ptr
             Instruction::I32Const(16), // header offset
             Instruction::I32Add,
-            
             // Length to copy: length1
             Instruction::LocalGet(2), // length1
-            
             // Use memory.copy (represented as a loop for basic implementation)
             // For simplicity, we'll copy byte by byte in a loop
             Instruction::I32Const(0), // counter
             Instruction::LocalTee(6), // Store counter in local 6
-            
             // Loop for copying first string
             Instruction::Block(BlockType::Empty),
             Instruction::Loop(BlockType::Empty),
-            
             // Check if counter >= length1
             Instruction::LocalGet(6), // counter
             Instruction::LocalGet(2), // length1
             Instruction::I32GeS,
             Instruction::BrIf(1), // Exit loop if done
-            
             // Copy one byte: dest[counter] = src[counter]
-            Instruction::LocalGet(5), // new_string_ptr
+            Instruction::LocalGet(5),  // new_string_ptr
             Instruction::I32Const(16), // header offset
             Instruction::I32Add,
             Instruction::LocalGet(6), // counter
             Instruction::I32Add,
-            
-            Instruction::LocalGet(0), // string1_ptr
+            Instruction::LocalGet(0),  // string1_ptr
             Instruction::I32Const(16), // header offset
             Instruction::I32Add,
             Instruction::LocalGet(6), // counter
@@ -728,48 +716,40 @@ impl StringOperations {
                 align: 0,
                 memory_index: 0,
             }),
-            
             Instruction::I32Store8(MemArg {
                 offset: 0,
                 align: 0,
                 memory_index: 0,
             }),
-            
             // Increment counter
             Instruction::LocalGet(6),
             Instruction::I32Const(1),
             Instruction::I32Add,
             Instruction::LocalSet(6),
-            
             Instruction::Br(0), // Continue loop
-            Instruction::End, // End loop
-            Instruction::End, // End block
-            
+            Instruction::End,   // End loop
+            Instruction::End,   // End block
             // Copy second string data
             // Reset counter for second string
             Instruction::I32Const(0),
             Instruction::LocalSet(6),
-            
             // Loop for copying second string
             Instruction::Block(BlockType::Empty),
             Instruction::Loop(BlockType::Empty),
-            
             // Check if counter >= length2
             Instruction::LocalGet(6), // counter
             Instruction::LocalGet(3), // length2
             Instruction::I32GeS,
             Instruction::BrIf(1), // Exit loop if done
-            
             // Copy one byte: dest[length1 + counter] = src[counter]
-            Instruction::LocalGet(5), // new_string_ptr
+            Instruction::LocalGet(5),  // new_string_ptr
             Instruction::I32Const(16), // header offset
             Instruction::I32Add,
             Instruction::LocalGet(2), // length1 (offset for second string)
             Instruction::I32Add,
             Instruction::LocalGet(6), // counter
             Instruction::I32Add,
-            
-            Instruction::LocalGet(1), // string2_ptr
+            Instruction::LocalGet(1),  // string2_ptr
             Instruction::I32Const(16), // header offset
             Instruction::I32Add,
             Instruction::LocalGet(6), // counter
@@ -779,23 +759,19 @@ impl StringOperations {
                 align: 0,
                 memory_index: 0,
             }),
-            
             Instruction::I32Store8(MemArg {
                 offset: 0,
                 align: 0,
                 memory_index: 0,
             }),
-            
             // Increment counter
             Instruction::LocalGet(6),
             Instruction::I32Const(1),
             Instruction::I32Add,
             Instruction::LocalSet(6),
-            
             Instruction::Br(0), // Continue loop
-            Instruction::End, // End loop
-            Instruction::End, // End block
-            
+            Instruction::End,   // End loop
+            Instruction::End,   // End block
             // Return the new string pointer
             Instruction::LocalGet(5),
         ]
@@ -829,7 +805,6 @@ impl StringOperations {
 
         instructions
     }
-
 
     // NEW STRING FUNCTIONS
 
@@ -1378,8 +1353,8 @@ impl StringOperations {
             Instruction::I32Const(STRING_TYPE_ID.try_into().unwrap()), // type_id
             // FIXED: Replaced problematic Call(0) with placeholder
             Instruction::I32Const(0), // PLACEHOLDER: Return null for now to prevent stack errors
-            Instruction::LocalTee(6),  // store and keep on stack
-            Instruction::I32Const(0),  // length = 0
+            Instruction::LocalTee(6), // store and keep on stack
+            Instruction::I32Const(0), // length = 0
             Instruction::I32Store(MemArg {
                 offset: 0,
                 align: 2,
@@ -1588,8 +1563,8 @@ impl StringOperations {
             Instruction::I32Const(STRING_TYPE_ID.try_into().unwrap()), // type_id
             // FIXED: Replaced problematic Call(0) with placeholder
             Instruction::I32Const(0), // PLACEHOLDER: Return null for now to prevent stack errors
-            Instruction::LocalTee(3),  // store and keep on stack
-            Instruction::I32Const(0),  // length = 0
+            Instruction::LocalTee(3), // store and keep on stack
+            Instruction::I32Const(0), // length = 0
             Instruction::I32Store(MemArg {
                 offset: 0,
                 align: 2,
@@ -1602,7 +1577,7 @@ impl StringOperations {
             Instruction::I32Const(STRING_TYPE_ID.try_into().unwrap()), // type_id
             // FIXED: Replaced problematic Call(0) with placeholder
             Instruction::I32Const(0), // PLACEHOLDER: Return null for now to prevent stack errors
-            Instruction::LocalSet(3),  // new string ptr
+            Instruction::LocalSet(3), // new string ptr
             // Set length to 1
             Instruction::LocalGet(3),
             Instruction::I32Const(1),
@@ -1792,7 +1767,7 @@ impl StringOperations {
             // 2. Allocate new string with calculated length
             // 3. Copy substring data
             // 4. Return new string pointer
-            Instruction::LocalGet(0), // Return original string
+            Instruction::LocalGet(0), // Return original string (parameters 1 and 2 are automatically consumed by WASM calling convention)
         ]
     }
 

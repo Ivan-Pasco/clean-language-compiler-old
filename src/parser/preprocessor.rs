@@ -109,7 +109,10 @@ impl FunctionPreprocessor {
             let indentation = self.count_indentation(line);
 
             // Check if this is a function declaration (has parentheses and proper indentation)
-            if self.is_function_declaration_line(line) {
+            // Function declarations must be at the base indentation level, not nested inside other functions
+            if self.is_function_declaration_line(line)
+                && (current_function_lines.is_empty() || indentation <= base_indentation)
+            {
                 // Save previous function if exists
                 if !current_function_lines.is_empty() {
                     segments.push(current_function_lines.join("\n"));
@@ -157,15 +160,29 @@ impl FunctionPreprocessor {
             return false;
         }
 
-        // Extract the part before the opening parenthesis
+        // Function declarations cannot have assignments (=) before the parentheses
+        // This excludes variable assignments with function calls: `string result = func()`
         if let Some(paren_pos) = trimmed.find('(') {
             let before_paren = &trimmed[..paren_pos];
+
+            // If there's an = sign before the parentheses, this is an assignment, not a function declaration
+            if before_paren.contains('=') {
+                return false;
+            }
+
+            // If there's a dot before the parentheses, this is a method call, not a function declaration
+            // Examples: result1.toString(), Math.sqrt(), etc.
+            if before_paren.contains('.') {
+                return false;
+            }
+
             let parts: Vec<&str> = before_paren.split_whitespace().collect();
 
             // Special cases: these keywords with parentheses are not function declarations
             if parts.len() == 1 {
                 match parts[0] {
-                    "start" | "print" | "println" | "printl" | "error" | "return" | "if" | "while" => {
+                    "start" | "print" | "println" | "printl" | "error" | "return" | "if"
+                    | "while" => {
                         return false;
                     }
                     _ => {}
@@ -213,31 +230,32 @@ impl FunctionPreprocessor {
         ) {
             return true;
         }
-        
+
         // Complex types
         if s.starts_with("list<") || s.starts_with("matrix<") || s.starts_with("pairs<") {
             return true;
         }
-        
+
         // Sized types: core_type followed by :digits (e.g., "number:64", "integer:32")
         if s.contains(':') {
             let parts: Vec<&str> = s.split(':').collect();
             if parts.len() == 2 {
                 let base_type = parts[0];
                 let size_spec = parts[1];
-                
+
                 // Check if base type is valid and size spec is digits (optionally with 'u')
-                let is_valid_base = matches!(
-                    base_type,
-                    "integer" | "number" | "string" | "boolean"
-                );
-                let is_valid_size = size_spec.chars().all(|c| c.is_ascii_digit()) 
-                    || (size_spec.ends_with('u') && size_spec[..size_spec.len()-1].chars().all(|c| c.is_ascii_digit()));
-                
+                let is_valid_base =
+                    matches!(base_type, "integer" | "number" | "string" | "boolean");
+                let is_valid_size = size_spec.chars().all(|c| c.is_ascii_digit())
+                    || (size_spec.ends_with('u')
+                        && size_spec[..size_spec.len() - 1]
+                            .chars()
+                            .all(|c| c.is_ascii_digit()));
+
                 return is_valid_base && is_valid_size;
             }
         }
-        
+
         false
     }
 

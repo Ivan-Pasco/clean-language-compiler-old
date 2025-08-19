@@ -1029,6 +1029,9 @@ impl MIRToLIRTransformer {
         let mut locals = Vec::new();
         let mut parameters = Vec::new();
 
+        // Store whether this is a void function for later use
+        let is_void_function = matches!(function.return_type, MIRType::Void);
+
         // Transform parameters
         for param in &function.parameters {
             parameters.push(self.transform_mir_type_to_lir(param.local_type.clone())?);
@@ -1135,8 +1138,20 @@ impl MIRToLIRTransformer {
                 let function_index = self.get_function_index(function_name);
                 instructions.push(LIRInstruction::Call(function_index));
 
-                // Store result if needed
-                instructions.push(LIRInstruction::LocalSet(*result as u32));
+                // Store result if needed, or drop if unused
+                // For now, we'll check if this is a simple case where we should drop
+                let should_drop = self.should_drop_result(function_name);
+                eprintln!(
+                    "🔥 FUNCTION CALL DEBUG: '{}' -> should_drop: {}",
+                    function_name, should_drop
+                );
+                if should_drop {
+                    eprintln!("🔥 ADDING DROP for function: {}", function_name);
+                    instructions.push(LIRInstruction::Drop);
+                } else {
+                    eprintln!("🔥 ADDING LOCALSET for function: {}", function_name);
+                    instructions.push(LIRInstruction::LocalSet(*result as u32));
+                }
             }
             MIRInstruction::Cast(result, operand, target_type) => {
                 self.transform_operand_to_lir(operand, instructions)?;
@@ -1277,6 +1292,25 @@ impl MIRToLIRTransformer {
         // For now, return a placeholder index
         // This should be resolved properly with a function table
         0
+    }
+
+    fn should_drop_result(&self, function_name: &str) -> bool {
+        // Determine if the function call result should be dropped instead of stored
+        // This is a heuristic for common void-returning functions
+        match function_name {
+            // Console output functions typically return void or status codes that can be ignored
+            "print" | "printl" => true,
+            // File operations that return status codes often ignored in simple cases
+            "file_write" | "file_append" | "file_delete" => true,
+            // Most method-style calls that return self for chaining
+            _ if function_name.ends_with(".toString") => false, // Keep string results
+            _ if function_name.ends_with(".length") => false,   // Keep length results
+            _ if function_name.starts_with("math.") => false,   // Keep math results
+            _ if function_name.starts_with("string.") => false, // Keep string operation results
+            _ if function_name.starts_with("list.") => false,   // Keep list operation results
+            // Default: don't drop - store the result
+            _ => false,
+        }
     }
 
     fn get_global_index(&self, _global_name: &str) -> u32 {

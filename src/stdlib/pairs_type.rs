@@ -1177,7 +1177,9 @@ mod tests {
 
         // Verify core functions are registered
         assert!(codegen.get_function_index("pairs.create").is_some());
-        assert!(codegen.get_function_index("pairs.createWithCapacity").is_some());
+        assert!(codegen
+            .get_function_index("pairs.createWithCapacity")
+            .is_some());
         assert!(codegen.get_function_index("pairs.set").is_some());
         assert!(codegen.get_function_index("pairs.get").is_some());
         assert!(codegen.get_function_index("pairs.hasKey").is_some());
@@ -1196,7 +1198,9 @@ mod tests {
 
         // Test that creation functions are available
         assert!(codegen.get_function_index("pairs.create").is_some());
-        assert!(codegen.get_function_index("pairs.createWithCapacity").is_some());
+        assert!(codegen
+            .get_function_index("pairs.createWithCapacity")
+            .is_some());
 
         Ok(())
     }

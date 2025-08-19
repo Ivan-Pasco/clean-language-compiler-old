@@ -8,19 +8,19 @@ functions:
 		integer a = 10
 		integer b = 5
 		
-		// Test basic conditional
-		boolean comparison = compare.integer.greaterThan(a, b)
-		integer result = conditional.integer(comparison, a, b)
+		// Test basic conditional using standard operators
+		boolean comparison = a > b
+		integer result = if comparison then a else b
 		print("Max of 10 and 5: " + result.toString())
 		
 		// Test with equality
-		boolean isEqual = compare.integer.equal(a, a)
-		integer equal = conditional.integer(isEqual, 100, 200)
+		boolean isEqual = a == a
+		integer equal = if isEqual then 100 else 200
 		print("Equal test (should be 100): " + equal.toString())
 		
 		// Test less than
-		boolean isLess = compare.integer.lessThan(b, a)
-		integer min = conditional.integer(isLess, b, a)
+		boolean isLess = b < a
+		integer min = if isLess then b else a
 		print("Min of 10 and 5: " + min.toString())
 
 	void testNumberConditionals()
@@ -29,14 +29,14 @@ functions:
 		number x = 3.14
 		number y = 2.71
 		
-		// Test number conditional
-		boolean numComparison = compare.number.greaterThan(x, y)
-		number maxNum = conditional.number(numComparison, x, y)
+		// Test number conditional using standard operators
+		boolean numComparison = x > y
+		number maxNum = if numComparison then x else y
 		print("Max of 3.14 and 2.71: " + maxNum.toString())
 		
 		// Test number equality
-		boolean numEqual = compare.number.equal(x, x)
-		number equalNum = conditional.number(numEqual, 100.0, 200.0)
+		boolean numEqual = x == x
+		number equalNum = if numEqual then 100.0 else 200.0
 		print("Equal test (should be 100.0): " + equalNum.toString())
 
 	void testLogicalOperations()
@@ -46,21 +46,21 @@ functions:
 		integer b = 5
 		integer c = 15
 		
-		// Test logical AND
-		boolean greater = compare.integer.greaterThan(a, b)
-		boolean less = compare.integer.lessThan(a, c)
-		boolean andResult = logical.and(greater, less)
+		// Test logical AND using standard operators
+		boolean greater = a > b
+		boolean less = a < c
+		boolean andResult = greater and less
 		print("10 > 5 AND 10 < 15: " + andResult.toString())
 		
 		// Test logical OR
-		boolean equal = compare.integer.equal(a, b)
-		boolean greaterOr = compare.integer.greaterThan(a, b)
-		boolean orResult = logical.or(equal, greaterOr)
+		boolean equal = a == b
+		boolean greaterOr = a > b
+		boolean orResult = equal or greaterOr
 		print("10 == 5 OR 10 > 5: " + orResult.toString())
 		
-		// Test logical NOT
-		boolean equalNot = compare.integer.equal(a, b)
-		boolean notResult = logical.not(equalNot)
+		// Test logical NOT using != operator
+		boolean equalNot = a == b
+		boolean notResult = not equalNot
 		print("NOT (10 == 5): " + notResult.toString())
 
 	void testComplexConditionals()
@@ -68,12 +68,12 @@ functions:
 		print("=== Testing Complex Conditionals ===")
 		integer score = 85
 		
-		// Test nested conditionals for grade assignment
-		boolean gradeA = compare.integer.greaterEqual(score, 90)
-		boolean gradeB = compare.integer.greaterEqual(score, 80)
-		boolean gradeC = compare.integer.greaterEqual(score, 70)
+		// Test nested conditionals for grade assignment using standard operators
+		boolean gradeA = score >= 90
+		boolean gradeB = score >= 80
+		boolean gradeC = score >= 70
 		
-		string grade = conditional.string(gradeA, "A", conditional.string(gradeB, "B", conditional.string(gradeC, "C", "F")))
+		string grade = if gradeA then "A" else if gradeB then "B" else if gradeC then "C" else "F"
 		print("Score " + score.toString() + " gets grade: " + grade)
 
 start()

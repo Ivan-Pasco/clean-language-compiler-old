@@ -68,7 +68,7 @@ impl ListBehaviorManager {
             "list.remove",
             &[WasmType::I32],    // list_ptr
             Some(WasmType::I32), // removed value
-            &[WasmType::I32], // Local 1: behavior_flags
+            &[WasmType::I32],    // Local 1: behavior_flags
             self.generate_list_remove(),
         )?;
 
@@ -77,7 +77,7 @@ impl ListBehaviorManager {
             "list.peek",
             &[WasmType::I32],    // list_ptr
             Some(WasmType::I32), // next value without removal
-            &[WasmType::I32], // Local 1: behavior_flags
+            &[WasmType::I32],    // Local 1: behavior_flags
             self.generate_list_peek(),
         )?;
 
@@ -165,7 +165,7 @@ impl ListBehaviorManager {
             }),
             // For now, just return a static "default" string pointer
             // TODO: Implement proper string conversion from flags
-            Instruction::Drop, // Drop the loaded flags for now
+            Instruction::Drop,        // Drop the loaded flags for now
             Instruction::I32Const(0), // Return null pointer for now
         ]
     }
@@ -318,26 +318,23 @@ impl ListBehaviorManager {
             // Initialize counter to 0 in local 3
             Instruction::I32Const(0),
             Instruction::LocalSet(3), // counter = 0
-            
             // Create a simple block for early exit with return value
             Instruction::Block(BlockType::Result(ValType::I32)),
             Instruction::Loop(BlockType::Empty),
-            
             // Check bounds: if counter >= size, exit with 0 (not found)
             Instruction::LocalGet(3), // counter
             Instruction::LocalGet(2), // size
             Instruction::I32GeU,
             Instruction::If(BlockType::Empty),
             Instruction::I32Const(0), // Not found
-            Instruction::Br(2), // Exit block with result 0
+            Instruction::Br(2),       // Exit block with result 0
             Instruction::End,
-            
             // Load and compare element
-            Instruction::LocalGet(0), // list_ptr
+            Instruction::LocalGet(0),  // list_ptr
             Instruction::I32Const(16), // header size
             Instruction::I32Add,
             Instruction::LocalGet(3), // counter
-            Instruction::I32Const(8), // element size 
+            Instruction::I32Const(8), // element size
             Instruction::I32Mul,
             Instruction::I32Add,
             Instruction::I32Load(MemArg {
@@ -350,17 +347,15 @@ impl ListBehaviorManager {
             Instruction::If(BlockType::Empty),
             // Found it!
             Instruction::I32Const(1), // Found
-            Instruction::Br(2), // Exit block with result 1
+            Instruction::Br(2),       // Exit block with result 1
             Instruction::End,
-            
             // Increment counter and continue
             Instruction::LocalGet(3),
             Instruction::I32Const(1),
             Instruction::I32Add,
             Instruction::LocalSet(3), // counter++
-            Instruction::Br(0), // Continue loop
-            
-            Instruction::End, // End loop
+            Instruction::Br(0),       // Continue loop
+            Instruction::End,         // End loop
             // CRITICAL FIX: If we fall through the loop (which shouldn't happen but for safety),
             // we need to provide a return value for the block
             Instruction::I32Const(0), // Default to "not found"

@@ -1336,7 +1336,9 @@ mod tests {
         manager.register_functions(&mut codegen)?;
 
         // Test that all utility functions are available
-        assert!(codegen.get_function_index("matrix.validateDimensions").is_some());
+        assert!(codegen
+            .get_function_index("matrix.validateDimensions")
+            .is_some());
         assert!(codegen.get_function_index("matrix.toString").is_some());
         assert!(codegen.get_function_index("matrix.equals").is_some());
 

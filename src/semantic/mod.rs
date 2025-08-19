@@ -16,7 +16,10 @@ pub use inheritance::InheritanceValidator;
 use scope::Scope;
 pub use symbol_table::{ScopeInfo, ScopeType, Symbol, SymbolKind, SymbolTable};
 // pub use type_checker::TypeChecker;  // Temporarily disabled
-pub use type_constraint::{TypeConstraint as SemanticTypeConstraint, NumericTypeConstraint, BaseTypeConstraint, AnyTypeConstraint, ComparableConstraint};
+pub use type_constraint::{
+    AnyTypeConstraint, BaseTypeConstraint, ComparableConstraint, NumericTypeConstraint,
+    TypeConstraint as SemanticTypeConstraint,
+};
 
 pub struct SemanticAnalyzer {
     // Enhanced symbol table with comprehensive scope management
@@ -552,6 +555,11 @@ impl SemanticAnalyzer {
         );
 
         self.function_table.insert(
+            "string.contains".to_string(),
+            vec![(vec![Type::String, Type::String], Type::Boolean, 2)],
+        );
+
+        self.function_table.insert(
             "string.lastIndexOf".to_string(),
             vec![(vec![Type::String, Type::String], Type::Integer, 2)],
         );
@@ -608,6 +616,25 @@ impl SemanticAnalyzer {
         self.function_table.insert(
             "string.trim".to_string(),
             vec![(vec![Type::String], Type::String, 1)],
+        );
+
+        self.function_table.insert(
+            "string.trimStart".to_string(),
+            vec![(vec![Type::String], Type::String, 1)],
+        );
+
+        self.function_table.insert(
+            "string.trimEnd".to_string(),
+            vec![(vec![Type::String], Type::String, 1)],
+        );
+
+        self.function_table.insert(
+            "string.substring".to_string(),
+            vec![(
+                vec![Type::String, Type::Integer, Type::Integer],
+                Type::String,
+                3,
+            )],
         );
 
         self.function_table.insert(
@@ -939,42 +966,74 @@ impl SemanticAnalyzer {
 
         // List operations - module.function() syntax
         // List method-style functions (0 arguments - object is implicit)
-        self.function_table
-            .insert("list.size".to_string(), vec![(vec![Type::List(Box::new(Type::Any))], Type::Integer, 1)]);
-        self.function_table
-            .insert("list.isEmpty".to_string(), vec![(vec![Type::List(Box::new(Type::Any))], Type::Boolean, 1)]);
+        self.function_table.insert(
+            "list.size".to_string(),
+            vec![(vec![Type::List(Box::new(Type::Any))], Type::Integer, 1)],
+        );
+        self.function_table.insert(
+            "list.isEmpty".to_string(),
+            vec![(vec![Type::List(Box::new(Type::Any))], Type::Boolean, 1)],
+        );
         self.function_table.insert(
             "list.isNotEmpty".to_string(),
             vec![(vec![Type::List(Box::new(Type::Any))], Type::Boolean, 1)],
         );
         self.function_table.insert(
             "list.add".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any)), Type::Any], Type::Void, 2)],
+            vec![(
+                vec![Type::List(Box::new(Type::Any)), Type::Any],
+                Type::Void,
+                2,
+            )],
         );
         self.function_table.insert(
             "list.remove".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any)), Type::Integer], Type::Any, 2)],
+            vec![(
+                vec![Type::List(Box::new(Type::Any)), Type::Integer],
+                Type::Any,
+                2,
+            )],
         );
         self.function_table.insert(
             "list.get".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any)), Type::Integer], Type::Any, 2)],
+            vec![(
+                vec![Type::List(Box::new(Type::Any)), Type::Integer],
+                Type::Any,
+                2,
+            )],
         );
         self.function_table.insert(
             "list.set".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any)), Type::Integer, Type::Any], Type::Void, 3)],
+            vec![(
+                vec![Type::List(Box::new(Type::Any)), Type::Integer, Type::Any],
+                Type::Void,
+                3,
+            )],
         );
         self.function_table.insert(
             "list.contains".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any)), Type::Any], Type::Boolean, 2)],
+            vec![(
+                vec![Type::List(Box::new(Type::Any)), Type::Any],
+                Type::Boolean,
+                2,
+            )],
         );
         self.function_table.insert(
             "list.indexOf".to_string(),
-            vec![(vec![Type::List(Box::new(Type::Any)), Type::Any], Type::Integer, 2)],
+            vec![(
+                vec![Type::List(Box::new(Type::Any)), Type::Any],
+                Type::Integer,
+                2,
+            )],
         );
-        self.function_table
-            .insert("list.clear".to_string(), vec![(vec![Type::List(Box::new(Type::Any))], Type::Void, 1)]);
-        self.function_table
-            .insert("list.reverse".to_string(), vec![(vec![Type::List(Box::new(Type::Any))], Type::Void, 1)]);
+        self.function_table.insert(
+            "list.clear".to_string(),
+            vec![(vec![Type::List(Box::new(Type::Any))], Type::Void, 1)],
+        );
+        self.function_table.insert(
+            "list.reverse".to_string(),
+            vec![(vec![Type::List(Box::new(Type::Any))], Type::Void, 1)],
+        );
 
         // Register method-style functions for type-based method calls
         self.register_method_style_functions();
@@ -2562,6 +2621,20 @@ impl SemanticAnalyzer {
             }
 
             Expression::Call(name, args) => {
+                // Special case: Check if this is a method call that was parsed as a function call
+                // Pattern: "variable.method" should be treated as a method call on the variable
+                if let Some(dot_pos) = name.find('.') {
+                    let object_name = &name[..dot_pos];
+                    let method_name = &name[dot_pos + 1..];
+
+                    // Check if the object part is a variable in scope
+                    if self.current_scope.lookup_variable(object_name).is_some() {
+                        let object_expr = Expression::Variable(object_name.to_string());
+                        let location = SourceLocation::default();
+                        return self.check_method_call(&object_expr, method_name, args, &location);
+                    }
+                }
+
                 // Special case: Check if this is a zero-argument "function call" that should be a variable reference
                 // This can happen when a variable is mistakenly parsed as a function call
                 if args.is_empty() {
@@ -2635,12 +2708,14 @@ impl SemanticAnalyzer {
                                     return Ok(field.type_.clone());
                                 }
                             }
-                            
+
                             // Then check inherited fields
-                            if let Some(field_type) = self.lookup_inherited_field(&class_name, property) {
+                            if let Some(field_type) =
+                                self.lookup_inherited_field(&class_name, property)
+                            {
                                 return Ok(field_type);
                             }
-                            
+
                             Err(CompilerError::type_error(
                                 &format!("Property '{property}' not found in class '{class_name}'"),
                                 Some("Check if the property name is correct".to_string()),
@@ -2977,8 +3052,11 @@ impl SemanticAnalyzer {
                         } else {
                             // Module not found in imports, but it might be a valid module name
                             // Check if we have a qualified function in the function table
+                            // But only if the module_name is NOT a variable in current scope
                             let qualified_name = format!("{module_name}.{method}");
-                            if self.function_table.contains_key(&qualified_name) {
+                            if self.function_table.contains_key(&qualified_name)
+                                && self.current_scope.lookup_variable(module_name).is_none()
+                            {
                                 return self.check_function_call(
                                     &qualified_name,
                                     arguments,
@@ -2988,8 +3066,11 @@ impl SemanticAnalyzer {
                         }
                     } else {
                         // No imports, but check if we have a qualified function in the function table
+                        // But only if the module_name is NOT a variable in current scope
                         let qualified_name = format!("{module_name}.{method}");
-                        if self.function_table.contains_key(&qualified_name) {
+                        if self.function_table.contains_key(&qualified_name)
+                            && self.current_scope.lookup_variable(module_name).is_none()
+                        {
                             return self.check_function_call(
                                 &qualified_name,
                                 arguments,
@@ -3167,6 +3248,14 @@ impl SemanticAnalyzer {
                     || class_name == "file"
                     || class_name == "http"
                     || class_name == "console"
+                    || class_name == "compare"
+                    || class_name == "conditional"
+                    || class_name == "logical"
+                    || class_name == "compare.integer"
+                    || class_name == "compare.number"
+                    || class_name == "conditional.integer"
+                    || class_name == "conditional.number"
+                    || class_name == "conditional.string"
                 {
                     // Properly resolve static method calls using the function table
                     let qualified_name = format!("{}.{}", class_name.to_lowercase(), method);
@@ -3344,7 +3433,16 @@ impl SemanticAnalyzer {
                 // For now, assume they return appropriate types
                 match (namespace.as_str(), function.as_str()) {
                     ("math", _) => Ok(Type::Number),
-                    ("string", _) => Ok(Type::String),
+                    ("string", "startsWith") => Ok(Type::Boolean),
+                    ("string", "endsWith") => Ok(Type::Boolean),
+                    ("string", "contains") => Ok(Type::Boolean),
+                    ("string", "isEmpty") => Ok(Type::Boolean),
+                    ("string", "isBlank") => Ok(Type::Boolean),
+                    ("string", "indexOf") => Ok(Type::Integer),
+                    ("string", "lastIndexOf") => Ok(Type::Integer),
+                    ("string", "length") => Ok(Type::Integer),
+                    ("string", "charCodeAt") => Ok(Type::Integer),
+                    ("string", _) => Ok(Type::String), // All other string functions return strings
                     ("list", _) => Ok(Type::Any),
                     ("file", _) => Ok(Type::String),
                     ("http", _) => Ok(Type::String),
@@ -3489,14 +3587,16 @@ impl SemanticAnalyzer {
                 }
             }
 
-            // Also check if we have a qualified function regardless of imports
+            // Check if we have a qualified function, but only if it's NOT a variable in scope
+            // This prevents variable.method() calls from being treated as qualified function calls
             let qualified_name = format!("{}.{}", module_name, method);
-            println!("DEBUG: Checking qualified function: {}", qualified_name);
-            if self.function_table.contains_key(&qualified_name) {
-                println!("DEBUG: Found function: {}", qualified_name);
+            // Only treat as qualified function if the module_name is NOT a variable in current scope
+            if self.function_table.contains_key(&qualified_name)
+                && self.current_scope.lookup_variable(module_name).is_none()
+            {
                 return self.check_function_call(&qualified_name, args, Some(location.clone()));
             } else {
-                println!("DEBUG: Function not found: {}", qualified_name);
+                // println!("DEBUG: Function not found: {}", qualified_name);
 
                 // Check if this is a method-style call on a typed variable
                 if let Some(var_type) = self.current_scope.lookup_variable(module_name) {
@@ -3512,12 +3612,14 @@ impl SemanticAnalyzer {
 
                     // Try to find the type-based method function
                     let type_method_name = format!("{}.{}", type_name, method);
+                    // println!("DEBUG: Checking type-based method: {} for variable type {:?}", type_method_name, var_type);
 
                     if self.function_table.contains_key(&type_method_name) {
+                        // println!("DEBUG: Found type-based method: {}", type_method_name);
                         // Create new arguments list with the object as the first argument
                         let mut method_args = vec![Expression::Variable(module_name.to_string())];
                         method_args.extend(args.iter().cloned());
-                        
+
                         return self.check_function_call(
                             &type_method_name,
                             &method_args,
@@ -4544,7 +4646,6 @@ impl SemanticAnalyzer {
                     i, param_types, return_type, required_param_count
                 );
             }
-            
 
             for (param_types, return_type, required_param_count) in &overloads {
                 // Check basic parameter count constraints
@@ -4957,32 +5058,90 @@ impl SemanticAnalyzer {
                     Ok(Type::String)
                 }
                 // Handle numeric addition
-                else if matches!(left_type, Type::Integer | Type::Number)
-                    && matches!(right_type, Type::Integer | Type::Number)
-                {
-                    // If either operand is float, result is float
-                    if matches!(left_type, Type::Number) || matches!(right_type, Type::Number) {
-                        Ok(Type::Number)
+                else {
+                    let is_numeric_type = |t: &Type| {
+                        matches!(
+                            t,
+                            Type::Integer
+                                | Type::Number
+                                | Type::IntegerSized { .. }
+                                | Type::NumberSized { .. }
+                        )
+                    };
+
+                    if is_numeric_type(&left_type) && is_numeric_type(&right_type) {
+                        // If either operand is float/number, result is number
+                        if matches!(left_type, Type::Number | Type::NumberSized { .. })
+                            || matches!(right_type, Type::Number | Type::NumberSized { .. })
+                        {
+                            // Preserve specific number types when both operands are the same sized type
+                            match (&left_type, &right_type) {
+                                (Type::NumberSized { bits }, Type::NumberSized { bits: bits2 })
+                                    if bits == bits2 =>
+                                {
+                                    Ok(left_type)
+                                }
+                                _ => Ok(Type::Number),
+                            }
+                        } else {
+                            // Both are integer types - preserve specific sized types when possible
+                            match (&left_type, &right_type) {
+                                (
+                                    Type::IntegerSized { bits, unsigned },
+                                    Type::IntegerSized {
+                                        bits: bits2,
+                                        unsigned: unsigned2,
+                                    },
+                                ) if bits == bits2 && unsigned == unsigned2 => Ok(left_type),
+                                _ => Ok(Type::Integer),
+                            }
+                        }
                     } else {
-                        Ok(Type::Integer)
+                        Err(CompilerError::type_error(
+                            format!("Cannot apply {:?} to types {:?} and {:?}", op, left_type, right_type),
+                            Some("Add operator requires either two strings (for concatenation) or two numeric types (for arithmetic)".to_string()),
+                            None
+                        ))
                     }
-                } else {
-                    Err(CompilerError::type_error(
-                        format!("Cannot apply {:?} to types {:?} and {:?}", op, left_type, right_type),
-                        Some("Add operator requires either two strings (for concatenation) or two numeric types (for arithmetic)".to_string()),
-                        None
-                    ))
                 }
             }
             BinaryOperator::Subtract | BinaryOperator::Multiply | BinaryOperator::Divide => {
-                if matches!(left_type, Type::Integer | Type::Number)
-                    && matches!(right_type, Type::Integer | Type::Number)
-                {
-                    // If either operand is float, result is float
-                    if matches!(left_type, Type::Number) || matches!(right_type, Type::Number) {
-                        Ok(Type::Number)
+                let is_numeric_type = |t: &Type| {
+                    matches!(
+                        t,
+                        Type::Integer
+                            | Type::Number
+                            | Type::IntegerSized { .. }
+                            | Type::NumberSized { .. }
+                    )
+                };
+
+                if is_numeric_type(&left_type) && is_numeric_type(&right_type) {
+                    // If either operand is float/number, result is number
+                    if matches!(left_type, Type::Number | Type::NumberSized { .. })
+                        || matches!(right_type, Type::Number | Type::NumberSized { .. })
+                    {
+                        // Preserve specific number types when both operands are the same sized type
+                        match (&left_type, &right_type) {
+                            (Type::NumberSized { bits }, Type::NumberSized { bits: bits2 })
+                                if bits == bits2 =>
+                            {
+                                Ok(left_type)
+                            }
+                            _ => Ok(Type::Number),
+                        }
                     } else {
-                        Ok(Type::Integer)
+                        // Both are integer types - preserve specific sized types when possible
+                        match (&left_type, &right_type) {
+                            (
+                                Type::IntegerSized { bits, unsigned },
+                                Type::IntegerSized {
+                                    bits: bits2,
+                                    unsigned: unsigned2,
+                                },
+                            ) if bits == bits2 && unsigned == unsigned2 => Ok(left_type),
+                            _ => Ok(Type::Integer),
+                        }
                     }
                 } else {
                     Err(CompilerError::type_error(
@@ -5143,10 +5302,20 @@ impl SemanticAnalyzer {
 
             // Sized integer compatibility - integer literals can be assigned to sized integers
             (Type::IntegerSized { .. }, Type::Integer) => true,
+            // Reverse compatibility: sized integers can be used where Integer is expected
+            (Type::Integer, Type::IntegerSized { .. }) => true,
+            // Cross-sized integer compatibility: different sized integers can be converted
+            (Type::IntegerSized { .. }, Type::IntegerSized { .. }) => true,
 
             // Sized number compatibility - number literals can be assigned to sized numbers
             (Type::NumberSized { .. }, Type::Number) => true,
             (Type::NumberSized { .. }, Type::Integer) => true, // Integer can be promoted to sized number
+            // Reverse compatibility: sized numbers can be used where Number is expected
+            (Type::Number, Type::NumberSized { .. }) => true,
+            // Cross-sized number compatibility: different sized numbers can be converted
+            (Type::NumberSized { .. }, Type::NumberSized { .. }) => true,
+            // Integer to sized number promotion
+            (Type::NumberSized { .. }, Type::IntegerSized { .. }) => true,
 
             // List element type compatibility
             (Type::List(expected_elem), Type::List(actual_elem)) => {
@@ -5381,7 +5550,10 @@ impl SemanticAnalyzer {
     /// Look up a field in the inheritance hierarchy
     fn lookup_inherited_field(&mut self, class_name: &str, field_name: &str) -> Option<Type> {
         // Get the inheritance hierarchy for this class
-        if let Ok(hierarchy) = self.inheritance_validator.get_inheritance_hierarchy(class_name) {
+        if let Ok(hierarchy) = self
+            .inheritance_validator
+            .get_inheritance_hierarchy(class_name)
+        {
             // Skip the current class (already checked) and look at parent classes
             for parent_class_name in hierarchy.iter().skip(1) {
                 if let Some(parent_class) = self.class_table.get(parent_class_name) {

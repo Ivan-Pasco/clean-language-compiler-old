@@ -1,0 +1,74 @@
+{
+  "commands": [
+    {
+      "name": "test-quick",
+      "description": "🚀 Run quick test suite (parser + basic tests)",
+      "command": ["bash", "-c", "cd .. && ./qa/run_tests.sh quick"],
+      "working_directory": ".",
+      "timeout": 60000
+    },
+    {
+      "name": "test-fix",
+      "description": "🔧 Test failure protocol (when ANY test fails)",
+      "command": ["bash", "-c", "cd .. && ./qa/run_tests.sh fix"],
+      "working_directory": ".",
+      "timeout": 30000
+    },
+    {
+      "name": "test-full",
+      "description": "🎯 Full quality gate (all tests + benchmarks)",
+      "command": ["bash", "-c", "cd .. && ./qa/run_tests.sh full"],
+      "working_directory": ".",
+      "timeout": 300000
+    },
+    {
+      "name": "test-validate",
+      "description": "📚 Validate tests against Clean Language specification",
+      "command": ["bash", "-c", "cd .. && ./qa/run_tests.sh validate"],
+      "working_directory": ".",
+      "timeout": 30000
+    },
+    {
+      "name": "test-unit",
+      "description": "🧪 Run unit tests only",
+      "command": ["bash", "-c", "cd .. && ./qa/run_tests.sh unit"],
+      "working_directory": ".",
+      "timeout": 120000
+    },
+    {
+      "name": "test-benchmark",
+      "description": "⚡ Performance benchmarks and regression detection",
+      "command": ["bash", "-c", "cd .. && ./qa/run_tests.sh benchmark"],
+      "working_directory": ".",
+      "timeout": 180000
+    },
+    {
+      "name": "test-coverage",
+      "description": "📊 Code coverage analysis and reporting",
+      "command": ["bash", "-c", "cd .. && ./qa/run_tests.sh coverage"],
+      "working_directory": ".",
+      "timeout": 120000
+    },
+    {
+      "name": "test-property",
+      "description": "🎲 Property-based tests (edge cases)",
+      "command": ["bash", "-c", "cd .. && ./qa/run_tests.sh property"],
+      "working_directory": ".",
+      "timeout": 60000
+    },
+    {
+      "name": "test-help",
+      "description": "❓ Show all testing commands and usage",
+      "command": ["bash", "-c", "cd .. && ./qa/run_tests.sh help"],
+      "working_directory": ".",
+      "timeout": 10000
+    },
+    {
+      "name": "test-all",
+      "description": "🎯 Complete test suite (full + coverage + property)",
+      "command": ["bash", "-c", "cd .. && ./qa/run_tests.sh all"],
+      "working_directory": ".",
+      "timeout": 600000
+    }
+  ]
+}

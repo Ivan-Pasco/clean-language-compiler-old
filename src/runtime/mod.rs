@@ -16,7 +16,6 @@ pub mod task_scheduler;
 
 // Note: async_tests module removed due to missing implementation
 
-
 /// Enhanced WebAssembly runtime with async support
 pub struct CleanRuntime {
     engine: Engine,

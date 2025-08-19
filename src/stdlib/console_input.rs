@@ -327,8 +327,8 @@ impl ConsoleInputManager {
             // Create result string
             Instruction::I32Const(16),
             Instruction::I32Const(CONSOLE_TYPE_ID as i32), // type_id
-            Instruction::Call(0),     // Memory allocation
-            Instruction::LocalSet(2), // result_ptr
+            Instruction::Call(0),                          // Memory allocation
+            Instruction::LocalSet(2),                      // result_ptr
             // Set result string length
             Instruction::LocalGet(2), // result_ptr
             Instruction::LocalGet(1), // input_len

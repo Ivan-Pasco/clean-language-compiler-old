@@ -28,7 +28,8 @@ functions:
 		// Basic onError with default value
 		// Syntax: value = riskyCall() onError defaultValue
 		integer result1 = riskyDivision(10, 2)  // Should succeed
-		print("Normal division: " + result1.toString())
+		string result1Str = result1.toString()
+		print("Normal division: " + result1Str)
 		
 		// This would use onError syntax when implemented:
 		// integer result2 = riskyDivision(10, 0) onError 0
@@ -113,16 +114,16 @@ functions:
 		print("Multi-level fallback result: " + content)
 	
 	// Helper functions for demonstrations
-	getBackupValue()
+	integer getBackupValue()
 		return 999
 	
-	getDefaultValue()
+	integer getDefaultValue()
 		return 100
 	
-	readCacheFile()
+	string readCacheFile()
 		return "cached content"
 	
-	printValue(integer value)
+	void printValue(integer value)
 		print("Received value: " + value.toString())
 
 start()
