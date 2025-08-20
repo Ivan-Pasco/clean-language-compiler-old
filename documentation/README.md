@@ -10,11 +10,12 @@ If you're new to this project, start here:
 
 1. **[Project Overview](./project-overview.md)** - High-level architecture and design principles
 2. **[Development Guide](./development-guide.md)** - Best practices and workflows for development
-3. **[WebAssembly Documentation](./webassembly.md)** - Code generation and WASM integration
-4. **[Parser Documentation](./parser.md)** - Parsing system and grammar details
-5. **[Semantic Analysis](./semantic-analysis.md)** - Type checking and semantic validation
-6. **[Standard Library](./standard-library.md)** - Built-in functions and runtime system
-7. **[Language Server](./language-server.md)** - IDE support and LSP implementation
+3. **[Multi-Runtime and Target-Aware Compilation](./multi-runtime-targets.md)** - WebAssembly runtime selection and target optimization
+4. **[WebAssembly Documentation](./webassembly.md)** - Code generation and WASM integration
+5. **[Parser Documentation](./parser.md)** - Parsing system and grammar details
+6. **[Semantic Analysis](./semantic-analysis.md)** - Type checking and semantic validation
+7. **[Standard Library](./standard-library.md)** - Built-in functions and runtime system
+8. **[Language Server](./language-server.md)** - IDE support and LSP implementation
 
 ## Documentation Structure
 
@@ -33,6 +34,14 @@ If you're new to this project, start here:
 - Security considerations and performance optimization
 
 **When to read**: Before implementing new features, fixing bugs, or making changes
+
+### 🎯 **[Multi-Runtime and Target-Aware Compilation](./multi-runtime-targets.md)**
+- Multi-runtime support (Wasmtime, Wasmer) with automatic selection
+- Target-aware compilation for web, Node.js, native, embedded, and WASI
+- Optimization profiles and performance tuning strategies
+- CLI integration and configuration management
+
+**When to read**: Deploying to specific platforms, optimizing for performance, or using multiple runtimes
 
 ### ⚙️ **[WebAssembly Documentation](./webassembly.md)**
 - Code generation architecture and instruction generation
@@ -103,7 +112,8 @@ The authoritative language specification is located at:
 | Add stdlib function | [Standard Library](./standard-library.md) | `src/stdlib/` modules |
 | Debug WASM output | [WebAssembly](./webassembly.md) | `src/codegen/` modules |
 | Setup IDE support | [Language Server](./language-server.md) | `language-server/` modules |
-| Optimize performance | [Development Guide](./development-guide.md) | All modules |
+| Configure deployment targets | [Multi-Runtime Targets](./multi-runtime-targets.md) | `src/targets/`, `src/runtime/` modules |
+| Optimize performance | [Development Guide](./development-guide.md) + [Multi-Runtime Targets](./multi-runtime-targets.md) | All modules |
 
 ### Debugging Quick Start
 

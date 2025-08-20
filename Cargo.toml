@@ -1,6 +1,6 @@
 [package]
 name = "clean-language-compiler"
-version = "0.4.1"
+version = "0.5.0"
 authors = ["Ivan Pasco Lizarraga"]
 edition = "2021"
 homepage = "https://www.cleanlanguage.dev"
@@ -18,8 +18,12 @@ lazy_static = "1.5"
 # WebAssembly
 wasm-encoder = "0.35"
 wasmparser = "0.121"
-wasmtime = "24.0"
 wat = "1.0"
+
+# WebAssembly Runtimes (feature-gated)  
+wasmtime = { version = "20.0", optional = true }
+# Temporarily disabled due to version conflicts
+# wasmer = { version = "4.1", optional = true }
 
 # Error handling
 thiserror = "1.0"
@@ -188,3 +192,11 @@ path = "src/lib.rs"
 #pest = "2.7"
 #pest_derive = "2.7" 
 # HTTP client temporarily disabled
+
+# Feature flags for WebAssembly runtime selection
+[features]
+default = ["wasmtime-runtime"]
+wasmtime-runtime = ["wasmtime"]
+# Temporarily disabled due to version conflicts
+# wasmer-runtime = ["wasmer"] 
+# both-runtimes = ["wasmtime", "wasmer"]

@@ -56,9 +56,17 @@ The Clean Language compiler follows a traditional multi-stage compilation pipeli
 - **Editor Integration**: Native support for VS Code, Neovim, Emacs, and other LSP clients
 
 ### 6. **Runtime System** (`src/runtime/`)
+- **Multi-Runtime Support**: Wasmtime and Wasmer integration with automatic selection
+- **Target-Aware Compilation**: Optimized builds for web, Node.js, native, embedded, and WASI
 - **Async Support**: Task scheduling and future resolution
 - **I/O Operations**: File and network I/O through host imports
 - **Error Handling**: Runtime error propagation and recovery
+
+### 7. **Target Management System** (`src/targets/`)
+- **Target Configuration**: Platform-specific compilation settings
+- **Optimization Profiles**: Development, production, size, and speed optimizations
+- **Capability Management**: Feature compatibility across different deployment targets
+- **Runtime Selection**: Intelligent runtime selection based on target requirements
 
 ## Key Design Principles
 

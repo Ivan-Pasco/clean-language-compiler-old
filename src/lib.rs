@@ -30,6 +30,7 @@ pub mod parser;
 pub mod runtime;
 pub mod semantic;
 pub mod stdlib;
+pub mod targets;
 pub mod types;
 
 use crate::codegen::CodeGenerator;

@@ -5,6 +5,8 @@ use crate::error::CompilerError;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+#[cfg(feature = "wasmtime-runtime")]
 use wasmtime::{Engine, Linker, Module, Store};
 
 pub mod async_runtime;
@@ -15,9 +17,16 @@ pub mod http_client;
 pub mod task_scheduler;
 pub mod wasmtime_config;
 
+// New runtime abstraction modules
+pub mod runtime_trait;
+pub mod runtime_manager;
+pub mod wasmtime_runtime;
+pub mod wasmer_config;
+
 // Note: async_tests module removed due to missing implementation
 
 /// Enhanced WebAssembly runtime with async support
+#[cfg(feature = "wasmtime-runtime")]
 pub struct CleanRuntime {
     engine: Engine,
     #[allow(dead_code)]
@@ -64,6 +73,7 @@ pub struct FutureValue {
     pub created_at: Instant,
 }
 
+#[cfg(feature = "wasmtime-runtime")]
 impl CleanRuntime {
     /// Create a new Clean Language runtime with async support
     pub fn new() -> Result<Self, CompilerError> {
@@ -278,12 +288,14 @@ impl FutureResolver {
 }
 
 /// Convenience function to create and run a Clean Language program with async support
+#[cfg(feature = "wasmtime-runtime")]
 pub async fn run_clean_program_async(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
     let runtime = CleanRuntime::new()?;
     runtime.execute_async(wasm_bytes).await
 }
 
 /// Synchronous wrapper for async execution (for backward compatibility)
+#[cfg(feature = "wasmtime-runtime")]
 pub fn run_clean_program_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| {
         CompilerError::runtime_error(format!("Failed to create async runtime: {e}"), None, None)
