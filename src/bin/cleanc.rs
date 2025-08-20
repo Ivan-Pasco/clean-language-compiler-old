@@ -179,19 +179,10 @@ fn run_wasm_with_wasmtime(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
 // Synchronous WebAssembly execution (fallback)
 #[allow(unused_mut)]
 fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
-    use wasmtime::{Config, Engine, Linker, Module, Store, Val};
+    use wasmtime::{Linker, Module, Store, Val};
 
-    // Use default configuration - simpler and more compatible
-    let config = Config::default();
-
-    // Create the engine
-    let engine = Engine::new(&config).map_err(|e| {
-        CompilerError::runtime_error(
-            format!("Failed to create WebAssembly engine: {e}"),
-            None,
-            None,
-        )
-    })?;
+    // Use minimal Clean Language wasmtime configuration for execution
+    let engine = clean_language_compiler::runtime::wasmtime_config::CleanWasmtimeConfig::create_minimal_engine()?;
 
     // Create a module from the bytes
     let module = Module::new(&engine, wasm_bytes).map_err(|e| {

@@ -62,8 +62,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wasm_bytes = fs::read(wasm_file)?;
     println!("📦 File size: {len} bytes", len = wasm_bytes.len());
 
-    // Create engine and store
-    let engine = Engine::default();
+    // Create engine and store using minimal (sync) configuration for wasmtime_runner
+    let engine = clean_language_compiler::runtime::wasmtime_config::CleanWasmtimeConfig::create_minimal_engine()
+        .map_err(|e| anyhow::anyhow!("Failed to create wasmtime engine: {e}"))?;
     let mut store = Store::new(&engine, ());
 
     // Create module

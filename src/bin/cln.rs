@@ -232,31 +232,62 @@ fn execute_wasm_file(wasm_file: &str) -> Result<(), CompilerError> {
         CompilerError::io_error(format!("Failed to read WASM file: {e}"), None, None)
     })?;
 
-    // Use the async runtime to execute
-    if let Ok(rt) = tokio::runtime::Runtime::new() {
-        rt.block_on(async {
-            match clean_language_compiler::runtime::run_clean_program_async(&wasm_bytes).await {
-                Ok(()) => {
-                    println!("✅ Execution completed successfully!");
-                    Ok(())
-                }
-                Err(e) => {
-                    eprintln!("❌ Execution failed: {e}");
-                    Err(CompilerError::runtime_error(
-                        format!("Failed to execute WASM: {e}"),
-                        None,
-                        None,
-                    ))
-                }
-            }
-        })
+    // Use synchronous execution with standardized wasmtime configuration
+    run_wasm_sync(&wasm_bytes)
+}
+
+fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
+    use wasmtime::{Linker, Module, Store};
+
+    // Use minimal Clean Language wasmtime configuration for execution
+    let engine = clean_language_compiler::runtime::wasmtime_config::CleanWasmtimeConfig::create_minimal_engine()?;
+
+    // Create a module from the bytes
+    let module = Module::new(&engine, wasm_bytes).map_err(|e| {
+        CompilerError::runtime_error(
+            format!("Failed to create WebAssembly module: {e}"),
+            None,
+            None,
+        )
+    })?;
+
+    // Create store
+    let mut store = Store::new(&engine, ());
+
+    // Create linker and register host functions
+    let mut linker = Linker::new(&engine);
+    clean_language_compiler::runtime::host_functions::register_all_host_functions(&mut linker)
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to register host functions: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // Instantiate the module
+    let instance = linker.instantiate(&mut store, &module).map_err(|e| {
+        CompilerError::runtime_error(
+            format!("Failed to instantiate WebAssembly module: {e}"),
+            None,
+            None,
+        )
+    })?;
+
+    // Call the start function
+    if let Some(start_func) = instance.get_func(&mut store, "start") {
+        start_func
+            .call(&mut store, &[], &mut [])
+            .map_err(|e| CompilerError::runtime_error(format!("Runtime error: {e}"), None, None))?;
     } else {
-        Err(CompilerError::runtime_error(
-            "Failed to create async runtime".to_string(),
+        return Err(CompilerError::runtime_error(
+            "No 'start' function found in WebAssembly module".to_string(),
             None,
             None,
-        ))
+        ));
     }
+
+    Ok(())
 }
 
 fn display_error(error: &CompilerError, _source: &str, file_path: &str) {

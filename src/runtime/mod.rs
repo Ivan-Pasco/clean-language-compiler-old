@@ -5,7 +5,7 @@ use crate::error::CompilerError;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use wasmtime::{Config, Engine, Linker, Module, Store};
+use wasmtime::{Engine, Linker, Module, Store};
 
 pub mod async_runtime;
 pub mod file_io;
@@ -13,6 +13,7 @@ pub mod future_resolver;
 pub mod host_functions;
 pub mod http_client;
 pub mod task_scheduler;
+pub mod wasmtime_config;
 
 // Note: async_tests module removed due to missing implementation
 
@@ -69,18 +70,8 @@ impl CleanRuntime {
         // Initialize HTTP client
         http_client::init_http_client();
 
-        // Enable async support in Wasmtime configuration
-        let mut config = Config::new();
-        config.async_support(true);
-        config.wasm_threads(true);
-
-        let engine = Engine::new(&config).map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create async WebAssembly engine: {e}"),
-                None,
-                None,
-            )
-        })?;
+        // Use centralized wasmtime configuration for consistency
+        let engine = wasmtime_config::CleanWasmtimeConfig::create_engine()?;
 
         Ok(CleanRuntime {
             engine,

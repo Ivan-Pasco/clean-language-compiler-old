@@ -1,5 +1,5 @@
 use clean_language_compiler::compile_minimal;
-use wasmtime::{Engine, Module};
+use wasmtime::Module;
 
 fn main() {
     let source = r#"
@@ -21,7 +21,9 @@ start()
     println!("Generated WASM binary size: {len}", len = wasm_binary.len());
 
     println!("Creating engine...");
-    let engine = Engine::default();
+    let engine =
+        clean_language_compiler::runtime::wasmtime_config::CleanWasmtimeConfig::create_engine()
+            .expect("Failed to create wasmtime engine");
 
     println!("Creating module...");
     match Module::new(&engine, &wasm_binary) {

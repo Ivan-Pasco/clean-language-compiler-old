@@ -830,7 +830,7 @@ impl NumericOperations {
 mod tests {
     use super::*;
     use crate::codegen::CodeGenerator;
-    use wasmtime::{Engine, Instance, Module, Store, Val};
+    use wasmtime::{Instance, Module, Store, Val};
 
     fn setup_test_environment() -> (Store<()>, Instance) {
         // Test basic and math functions step by step
@@ -844,7 +844,8 @@ mod tests {
             .unwrap();
         numeric_ops.register_math_functions(&mut codegen).unwrap();
 
-        let engine = Engine::default();
+        let engine =
+            crate::runtime::wasmtime_config::CleanWasmtimeConfig::create_minimal_engine().unwrap();
         let wasm_bytes = codegen.generate_test_module_without_imports().unwrap();
         let module = Module::new(&engine, &wasm_bytes).unwrap();
         let mut store = Store::new(&engine, ());

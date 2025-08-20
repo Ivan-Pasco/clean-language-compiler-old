@@ -14,7 +14,7 @@
 #![allow(clippy::useless_asref)]
 
 use clap::{Parser, Subcommand};
-use clean_language_compiler::compile_with_file;
+use clean_language_compiler::{compile_with_file, runtime::wasmtime_config::CleanWasmtimeConfig};
 use std::fs;
 use std::path::Path;
 
@@ -980,8 +980,8 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
         offset as i32
     }
 
-    // Create engine and store
-    let engine = Engine::default();
+    // Create engine and store using minimal configuration for direct execution
+    let engine = CleanWasmtimeConfig::create_minimal_engine()?;
     let mut store = Store::new(&engine, ());
 
     // Create module
