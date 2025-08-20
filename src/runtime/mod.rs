@@ -18,10 +18,10 @@ pub mod task_scheduler;
 pub mod wasmtime_config;
 
 // New runtime abstraction modules
-pub mod runtime_trait;
 pub mod runtime_manager;
-pub mod wasmtime_runtime;
+pub mod runtime_trait;
 pub mod wasmer_config;
+pub mod wasmtime_runtime;
 
 // Note: async_tests module removed due to missing implementation
 

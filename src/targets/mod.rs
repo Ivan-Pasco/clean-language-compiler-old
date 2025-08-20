@@ -1,14 +1,14 @@
-pub mod target_config;
 pub mod optimization;
+pub mod target_config;
 
 use crate::error::CompilerError;
-use crate::runtime::runtime_trait::{RuntimeType, RuntimeConfig};
+use crate::runtime::runtime_trait::{RuntimeConfig, RuntimeType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
-pub use target_config::*;
 pub use optimization::*;
+pub use target_config::*;
 
 /// Target manager for handling different compilation targets
 pub struct TargetManager;
@@ -24,19 +24,15 @@ impl TargetManager {
             Target::wasi(),
         ]
     }
-    
+
     /// Get a target by name
     pub fn get_target(name: &str) -> Result<Target, CompilerError> {
         let targets = Self::get_available_targets();
-        targets.into_iter()
-            .find(|t| t.name == name)
-            .ok_or_else(|| CompilerError::runtime_error(
-                format!("Unknown target: {name}"),
-                None,
-                None,
-            ))
+        targets.into_iter().find(|t| t.name == name).ok_or_else(|| {
+            CompilerError::runtime_error(format!("Unknown target: {name}"), None, None)
+        })
     }
-    
+
     /// Auto-detect the best target for the current environment
     pub fn auto_detect_target() -> Target {
         // Simple heuristic - could be enhanced with more detection logic
@@ -48,11 +44,11 @@ impl TargetManager {
             Target::native()
         }
     }
-    
+
     /// Validate that a target is compatible with the runtime configuration
     pub fn validate_target_runtime_compatibility(
-        target: &Target, 
-        runtime_config: &RuntimeConfig
+        target: &Target,
+        runtime_config: &RuntimeConfig,
     ) -> Result<(), CompilerError> {
         // Check if the target supports the requested runtime features
         if runtime_config.async_support && !target.capabilities.async_support {
@@ -62,7 +58,7 @@ impl TargetManager {
                 None,
             ));
         }
-        
+
         if runtime_config.threads_support && !target.capabilities.threads_support {
             return Err(CompilerError::runtime_error(
                 format!("Target '{}' does not support threading", target.name),
@@ -70,7 +66,7 @@ impl TargetManager {
                 None,
             ));
         }
-        
+
         if runtime_config.simd_support && !target.capabilities.simd_support {
             return Err(CompilerError::runtime_error(
                 format!("Target '{}' does not support SIMD operations", target.name),
@@ -78,48 +74,49 @@ impl TargetManager {
                 None,
             ));
         }
-        
+
         Ok(())
     }
-    
+
     /// Get recommended runtime configuration for a target
     pub fn get_recommended_runtime_config(target: &Target) -> RuntimeConfig {
         let mut config = RuntimeConfig::default();
-        
+
         // Set runtime type based on target preference
         config.runtime_type = target.runtime_preference;
-        
+
         // Configure features based on target capabilities
         config.async_support = target.capabilities.async_support;
         config.threads_support = target.capabilities.threads_support;
         config.simd_support = target.capabilities.simd_support;
         config.bulk_memory = target.capabilities.bulk_memory;
         config.reference_types = target.capabilities.reference_types;
-        
+
         // Set optimization level based on target
         config.optimization_level = match target.target_type {
             TargetType::Web => crate::runtime::runtime_trait::OptimizationLevel::SpeedAndSize,
             TargetType::Embedded => crate::runtime::runtime_trait::OptimizationLevel::SpeedAndSize,
             _ => crate::runtime::runtime_trait::OptimizationLevel::Speed,
         };
-        
+
         // Configure memory settings based on target constraints
         if target.target_type == TargetType::Embedded {
             config.memory_config.static_memory_maximum = 1024 * 1024; // 1MB for embedded
         }
-        
+
         config
     }
-    
+
     /// Get optimization recommendations for a target
     pub fn get_optimization_recommendations(target: &Target) -> Vec<String> {
         let mut recommendations = Vec::new();
-        
+
         match target.target_type {
             TargetType::Web => {
                 recommendations.push("Enable size optimization for faster downloads".to_string());
                 recommendations.push("Use SIMD for performance-critical computations".to_string());
-                recommendations.push("Enable bulk memory for efficient data processing".to_string());
+                recommendations
+                    .push("Enable bulk memory for efficient data processing".to_string());
             }
             TargetType::NodeJS => {
                 recommendations.push("Enable async support for Node.js integration".to_string());
@@ -142,7 +139,7 @@ impl TargetManager {
                 recommendations.push("Enable bulk memory for data processing".to_string());
             }
         }
-        
+
         recommendations
     }
 }
@@ -155,7 +152,7 @@ mod tests {
     fn test_get_available_targets() {
         let targets = TargetManager::get_available_targets();
         assert!(!targets.is_empty(), "Should have available targets");
-        
+
         // Check that all standard targets are present
         let target_names: Vec<&str> = targets.iter().map(|t| t.name.as_str()).collect();
         assert!(target_names.contains(&"web"));
@@ -170,7 +167,7 @@ mod tests {
         let web_target = TargetManager::get_target("web");
         assert!(web_target.is_ok());
         assert_eq!(web_target.unwrap().name, "web");
-        
+
         let invalid_target = TargetManager::get_target("invalid");
         assert!(invalid_target.is_err());
     }
@@ -185,8 +182,9 @@ mod tests {
     fn test_target_runtime_compatibility() {
         let web_target = Target::web();
         let runtime_config = RuntimeConfig::default();
-        
-        let result = TargetManager::validate_target_runtime_compatibility(&web_target, &runtime_config);
+
+        let result =
+            TargetManager::validate_target_runtime_compatibility(&web_target, &runtime_config);
         assert!(result.is_ok());
     }
 
@@ -194,7 +192,7 @@ mod tests {
     fn test_get_recommended_runtime_config() {
         let web_target = Target::web();
         let config = TargetManager::get_recommended_runtime_config(&web_target);
-        
+
         assert_eq!(config.runtime_type, web_target.runtime_preference);
     }
 
@@ -202,8 +200,10 @@ mod tests {
     fn test_get_optimization_recommendations() {
         let web_target = Target::web();
         let recommendations = TargetManager::get_optimization_recommendations(&web_target);
-        
+
         assert!(!recommendations.is_empty());
-        assert!(recommendations.iter().any(|r| r.contains("size optimization")));
+        assert!(recommendations
+            .iter()
+            .any(|r| r.contains("size optimization")));
     }
 }

@@ -122,17 +122,17 @@ impl Target {
                 component_model: false,
                 wasi_support: false,
                 max_memory_size: Some(2 * 1024 * 1024 * 1024), // 2GB browser limit
-                filesystem_access: false, // Limited to virtual filesystem
+                filesystem_access: false,                      // Limited to virtual filesystem
                 network_access: true,
             },
             host_functions: HostFunctionSet {
                 core_functions: true,
-                io_functions: true, // Console, limited file operations
-                network_functions: true, // Fetch API, WebSocket
+                io_functions: true,       // Console, limited file operations
+                network_functions: true,  // Fetch API, WebSocket
                 graphics_functions: true, // Canvas, WebGL
-                audio_functions: true, // Web Audio API
-                system_functions: false, // No direct system access
-                crypto_functions: true, // Web Crypto API
+                audio_functions: true,    // Web Audio API
+                system_functions: false,  // No direct system access
+                crypto_functions: true,   // Web Crypto API
                 database_functions: true, // IndexedDB, WebSQL
             },
             optimizations: TargetOptimizations {
@@ -167,7 +167,7 @@ impl Target {
                 reference_types: true,
                 memory64: false,
                 component_model: false,
-                wasi_support: true, // Node.js WASI support
+                wasi_support: true,    // Node.js WASI support
                 max_memory_size: None, // No strict limit
                 filesystem_access: true,
                 network_access: true,
@@ -235,10 +235,7 @@ impl Target {
                 inline_functions: true,
                 loop_unrolling: true,
                 vectorization: true,
-                custom_flags: vec![
-                    "--enable-all".to_string(),
-                    "--opt-level=speed".to_string(),
-                ],
+                custom_flags: vec!["--enable-all".to_string(), "--opt-level=speed".to_string()],
             },
             environment: {
                 let mut env = HashMap::new();
@@ -285,10 +282,7 @@ impl Target {
                 inline_functions: false, // Can increase size
                 loop_unrolling: false,
                 vectorization: false,
-                custom_flags: vec![
-                    "--optimize-size".to_string(),
-                    "--no-debug".to_string(),
-                ],
+                custom_flags: vec!["--optimize-size".to_string(), "--no-debug".to_string()],
             },
             environment: {
                 let mut env = HashMap::new();
@@ -307,7 +301,7 @@ impl Target {
             target_type: TargetType::WASI,
             runtime_preference: RuntimeType::Wasmtime, // Best WASI support
             capabilities: TargetCapabilities {
-                async_support: false, // WASI doesn't define async primitives yet
+                async_support: false,   // WASI doesn't define async primitives yet
                 threads_support: false, // Limited thread support in current WASI
                 simd_support: true,
                 bulk_memory: true,
@@ -317,7 +311,7 @@ impl Target {
                 wasi_support: true,
                 max_memory_size: None,
                 filesystem_access: true, // Core WASI feature
-                network_access: false, // Not in current WASI spec
+                network_access: false,   // Not in current WASI spec
             },
             host_functions: HostFunctionSet {
                 core_functions: true,

@@ -59,12 +59,8 @@ fn main() -> Result<(), CompilerError> {
             let input_file = &args[2];
             check_file(input_file)
         }
-        "targets" => {
-            handle_targets_command(&args[2..])
-        }
-        "runtime" => {
-            handle_runtime_command(&args[2..])
-        }
+        "targets" => handle_targets_command(&args[2..]),
+        "runtime" => handle_runtime_command(&args[2..]),
         "version" | "--version" | "-v" => {
             print_version();
             Ok(())
@@ -134,7 +130,11 @@ fn parse_compile_args(args: &[String]) -> Result<CompileConfig, CompilerError> {
     }
 
     // Parse flags
-    let mut i = if config.output_file == *args.get(1).unwrap_or(&String::new()) { 2 } else { 1 };
+    let mut i = if config.output_file == *args.get(1).unwrap_or(&String::new()) {
+        2
+    } else {
+        1
+    };
     while i < args.len() {
         match args[i].as_str() {
             "--target" | "-t" => {
@@ -364,49 +364,91 @@ fn handle_targets_command(args: &[String]) -> Result<(), CompilerError> {
 fn list_targets() -> Result<(), CompilerError> {
     println!("🎯 Available Compilation Targets:");
     println!("==================================");
-    
+
     let targets = TargetManager::get_available_targets();
     for target in &targets {
         println!("  • {} - {}", target.name, target.description);
     }
-    
+
     println!();
     println!("💡 Use 'cln targets info <target>' for detailed information");
     println!("💡 Use '--target <name>' flag to specify target during compilation");
-    
+
     Ok(())
 }
 
 /// Show detailed target information
 fn show_target_info(target_name: &str) -> Result<(), CompilerError> {
     let target = TargetManager::get_target(target_name)?;
-    
+
     println!("🎯 Target Information: {}", target.name);
     println!("========================================");
     println!("Description: {}", target.description);
     println!("Type: {}", target.target_type);
     println!("Preferred Runtime: {}", target.runtime_preference);
     println!();
-    
+
     println!("Capabilities:");
-    println!("  • Async Support: {}", if target.capabilities.async_support { "✅" } else { "❌" });
-    println!("  • Threading: {}", if target.capabilities.threads_support { "✅" } else { "❌" });
-    println!("  • SIMD: {}", if target.capabilities.simd_support { "✅" } else { "❌" });
-    println!("  • Bulk Memory: {}", if target.capabilities.bulk_memory { "✅" } else { "❌" });
-    println!("  • Reference Types: {}", if target.capabilities.reference_types { "✅" } else { "❌" });
-    println!("  • WASI Support: {}", if target.capabilities.wasi_support { "✅" } else { "❌" });
-    
+    println!(
+        "  • Async Support: {}",
+        if target.capabilities.async_support {
+            "✅"
+        } else {
+            "❌"
+        }
+    );
+    println!(
+        "  • Threading: {}",
+        if target.capabilities.threads_support {
+            "✅"
+        } else {
+            "❌"
+        }
+    );
+    println!(
+        "  • SIMD: {}",
+        if target.capabilities.simd_support {
+            "✅"
+        } else {
+            "❌"
+        }
+    );
+    println!(
+        "  • Bulk Memory: {}",
+        if target.capabilities.bulk_memory {
+            "✅"
+        } else {
+            "❌"
+        }
+    );
+    println!(
+        "  • Reference Types: {}",
+        if target.capabilities.reference_types {
+            "✅"
+        } else {
+            "❌"
+        }
+    );
+    println!(
+        "  • WASI Support: {}",
+        if target.capabilities.wasi_support {
+            "✅"
+        } else {
+            "❌"
+        }
+    );
+
     if let Some(max_memory) = target.capabilities.max_memory_size {
         println!("  • Max Memory: {}MB", max_memory / (1024 * 1024));
     }
-    
+
     println!();
     println!("Optimization Recommendations:");
     let recommendations = TargetManager::get_optimization_recommendations(&target);
     for rec in recommendations {
         println!("  • {rec}");
     }
-    
+
     Ok(())
 }
 
@@ -428,32 +470,36 @@ fn handle_runtime_command(args: &[String]) -> Result<(), CompilerError> {
 fn list_runtimes() -> Result<(), CompilerError> {
     println!("⚙️ Available WebAssembly Runtimes:");
     println!("===================================");
-    
+
     let runtimes = RuntimeManager::list_available_runtimes();
     for runtime in &runtimes {
-        let status = if runtime.available { "✅ Available" } else { "❌ Not Available" };
+        let status = if runtime.available {
+            "✅ Available"
+        } else {
+            "❌ Not Available"
+        };
         println!("  • {} - {status}", runtime);
-        
+
         if runtime.available {
             println!("    Features: {}", runtime.features.join(", "));
         }
         println!();
     }
-    
+
     println!("💡 Use '--runtime <name>' flag to specify runtime during compilation/execution");
-    
+
     Ok(())
 }
 
 /// Auto-detect best runtime
 fn detect_runtime() -> Result<(), CompilerError> {
     println!("🔍 Detecting Best Runtime...");
-    
+
     let config = RuntimeConfig::default();
     match RuntimeManager::select_runtime(&config) {
         Ok(runtime_type) => {
             println!("✅ Recommended runtime: {runtime_type}");
-            
+
             let recommendations = RuntimeManager::get_runtime_recommendations(runtime_type);
             if !recommendations.is_empty() {
                 println!("\n💡 Recommendations:");
@@ -466,7 +512,7 @@ fn detect_runtime() -> Result<(), CompilerError> {
             println!("❌ Runtime detection failed: {e}");
         }
     }
-    
+
     Ok(())
 }
 
@@ -474,7 +520,7 @@ fn detect_runtime() -> Result<(), CompilerError> {
 fn benchmark_runtimes(file_path: &str) -> Result<(), CompilerError> {
     println!("🏁 Benchmarking Runtimes with: {file_path}");
     println!("===========================================");
-    
+
     // Read and compile the test file
     let source = fs::read_to_string(file_path).map_err(|e| {
         CompilerError::runtime_error(
@@ -483,10 +529,10 @@ fn benchmark_runtimes(file_path: &str) -> Result<(), CompilerError> {
             None,
         )
     })?;
-    
+
     // Compile to WASM
     let wasm_bytes = clean_language_compiler::compile_with_file(&source, file_path)?;
-    
+
     // Run benchmarks
     match RuntimeManager::benchmark_runtimes(&wasm_bytes) {
         Ok(benchmarks) => {
@@ -502,7 +548,7 @@ fn benchmark_runtimes(file_path: &str) -> Result<(), CompilerError> {
             println!("❌ Benchmark failed: {e}");
         }
     }
-    
+
     Ok(())
 }
 
@@ -543,7 +589,9 @@ fn print_usage() {
     println!("EXAMPLES:");
     println!("    cln compile hello.cln                           # Basic compilation");
     println!("    cln compile hello.cln --target web --debug      # Web target with debug info");
-    println!("    cln run app.cln --target nodejs --verbose       # Run on Node.js with verbose output");
+    println!(
+        "    cln run app.cln --target nodejs --verbose       # Run on Node.js with verbose output"
+    );
     println!("    cln targets list                                # List all targets");
     println!("    cln targets info web                            # Show web target details");
     println!("    cln runtime detect                              # Auto-detect best runtime");

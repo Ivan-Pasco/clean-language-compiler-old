@@ -21,43 +21,46 @@ pub trait WebAssemblyRuntime: Send + Sync {
 
     /// Create a new engine with the specified configuration
     fn create_engine(config: &RuntimeConfig) -> Result<Self::Engine, CompilerError>;
-    
+
     /// Create a new store from an engine
     fn create_store(engine: &Self::Engine) -> Result<Self::Store, CompilerError>;
-    
+
     /// Create a module from WebAssembly bytecode
-    fn create_module(engine: &Self::Engine, wasm_bytes: &[u8]) -> Result<Self::Module, CompilerError>;
-    
+    fn create_module(
+        engine: &Self::Engine,
+        wasm_bytes: &[u8],
+    ) -> Result<Self::Module, CompilerError>;
+
     /// Instantiate a module with host functions
     fn instantiate_module(
         store: &mut Self::Store,
         module: &Self::Module,
         host_functions: &HostFunctionRegistry,
     ) -> Result<Self::Instance, CompilerError>;
-    
+
     /// Get a function from an instance by name
     fn get_function(
         store: &mut Self::Store,
         instance: &Self::Instance,
         name: &str,
     ) -> Result<Option<Self::Function>, CompilerError>;
-    
+
     /// Call a function with arguments
     fn call_function(
         store: &mut Self::Store,
         function: &Self::Function,
         args: &[Self::Value],
     ) -> Result<Vec<Self::Value>, CompilerError>;
-    
+
     /// Get runtime name for identification
     fn runtime_name() -> &'static str;
-    
+
     /// Get runtime version
     fn runtime_version() -> &'static str;
-    
+
     /// Check if runtime supports specific features
     fn supports_feature(feature: RuntimeFeature) -> bool;
-    
+
     /// Validate that the runtime is working correctly
     fn validate_runtime(config: &RuntimeConfig) -> Result<(), CompilerError>;
 }
@@ -152,7 +155,8 @@ pub struct HostFunction {
     pub name: String,
     pub module: String,
     pub signature: FunctionSignature,
-    pub callback: Box<dyn Fn(&[RuntimeValue]) -> Result<Vec<RuntimeValue>, CompilerError> + Send + Sync>,
+    pub callback:
+        Box<dyn Fn(&[RuntimeValue]) -> Result<Vec<RuntimeValue>, CompilerError> + Send + Sync>,
 }
 
 impl std::fmt::Debug for HostFunction {
@@ -212,7 +216,7 @@ impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
             static_memory_maximum: 64 * 1024 * 1024, // 64MB
-            dynamic_memory_guard: 1024 * 1024,       // 1MB  
+            dynamic_memory_guard: 1024 * 1024,       // 1MB
             memory64: false,
         }
     }
@@ -225,19 +229,19 @@ impl RuntimeType {
         // In the future, we could add platform-specific logic
         #[cfg(feature = "wasmtime-runtime")]
         return RuntimeType::Wasmtime;
-        
+
         #[cfg(feature = "wasmer-runtime")]
         return RuntimeType::Wasmer;
-        
+
         // This should never happen due to default feature
         RuntimeType::Wasmtime
     }
-    
+
     /// Get human-readable name
     pub fn name(&self) -> &'static str {
         match self {
             RuntimeType::Wasmtime => "Wasmtime",
-            RuntimeType::Wasmer => "Wasmer", 
+            RuntimeType::Wasmer => "Wasmer",
             RuntimeType::Auto => "Auto",
         }
     }
@@ -265,9 +269,14 @@ impl HostFunctionRegistry {
             functions: HashMap::new(),
         }
     }
-    
-    pub fn register<F>(&mut self, name: &str, module: &str, signature: FunctionSignature, callback: F)
-    where
+
+    pub fn register<F>(
+        &mut self,
+        name: &str,
+        module: &str,
+        signature: FunctionSignature,
+        callback: F,
+    ) where
         F: Fn(&[RuntimeValue]) -> Result<Vec<RuntimeValue>, CompilerError> + Send + Sync + 'static,
     {
         let host_function = HostFunction {
@@ -276,7 +285,8 @@ impl HostFunctionRegistry {
             signature,
             callback: Box::new(callback),
         };
-        
-        self.functions.insert(format!("{}::{}", module, name), host_function);
+
+        self.functions
+            .insert(format!("{}::{}", module, name), host_function);
     }
 }

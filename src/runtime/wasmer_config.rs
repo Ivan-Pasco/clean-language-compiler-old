@@ -3,12 +3,12 @@ use crate::error::CompilerError;
 
 #[cfg(feature = "wasmer-runtime")]
 use crate::runtime::runtime_trait::{
-    HostFunctionRegistry, OptimizationLevel, RuntimeConfig, RuntimeFeature, RuntimeValue, 
+    HostFunctionRegistry, OptimizationLevel, RuntimeConfig, RuntimeFeature, RuntimeValue,
     ValueType, WebAssemblyRuntime,
 };
 
 #[cfg(feature = "wasmer-runtime")]
-use wasmer::{Engine, Instance, Module, Store, Function, Value, RuntimeError};
+use wasmer::{Engine, Function, Instance, Module, RuntimeError, Store, Value};
 
 #[cfg(feature = "wasmer-runtime")]
 use std::sync::Arc;
@@ -28,7 +28,7 @@ impl WebAssemblyRuntime for WasmerRuntime {
 
     fn create_engine(config: &RuntimeConfig) -> Result<Self::Engine, CompilerError> {
         let mut compiler_config = wasmer::Cranelift::default();
-        
+
         // Set optimization level
         match config.optimization_level {
             OptimizationLevel::None => {
@@ -60,13 +60,12 @@ impl WebAssemblyRuntime for WasmerRuntime {
         Ok(Store::new(engine))
     }
 
-    fn create_module(engine: &Self::Engine, wasm_bytes: &[u8]) -> Result<Self::Module, CompilerError> {
+    fn create_module(
+        engine: &Self::Engine,
+        wasm_bytes: &[u8],
+    ) -> Result<Self::Module, CompilerError> {
         Module::new(engine, wasm_bytes).map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create Wasmer module: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Failed to create Wasmer module: {e}"), None, None)
         })
     }
 
@@ -76,42 +75,54 @@ impl WebAssemblyRuntime for WasmerRuntime {
         host_functions: &HostFunctionRegistry,
     ) -> Result<Self::Instance, CompilerError> {
         let mut imports = wasmer::Imports::new();
-        
+
         // Register host functions
         for (name, host_func) in &host_functions.functions {
             let parts: Vec<&str> = name.split("::").collect();
             if parts.len() == 2 {
                 let module_name = parts[0];
                 let func_name = parts[1];
-                
+
                 // Create Wasmer function type
-                let params: Vec<wasmer::Type> = host_func.signature.params
+                let params: Vec<wasmer::Type> = host_func
+                    .signature
+                    .params
                     .iter()
                     .map(|p| value_type_to_wasmer_type(*p))
                     .collect();
-                    
-                let results: Vec<wasmer::Type> = host_func.signature.results
+
+                let results: Vec<wasmer::Type> = host_func
+                    .signature
+                    .results
                     .iter()
                     .map(|r| value_type_to_wasmer_type(*r))
                     .collect();
-                    
+
                 let func_type = wasmer::FunctionType::new(params, results);
-                
+
                 // Create wrapper for the callback
                 let callback = Arc::new(host_func.callback.as_ref());
                 let func = Function::new_native_with_env(
                     store,
                     Arc::clone(&callback),
-                    move |env: &Arc<dyn Fn(&[RuntimeValue]) -> Result<Vec<RuntimeValue>, CompilerError> + Send + Sync>, args: &[Value]| -> Result<Vec<Value>, RuntimeError> {
+                    move |env: &Arc<
+                        dyn Fn(&[RuntimeValue]) -> Result<Vec<RuntimeValue>, CompilerError>
+                            + Send
+                            + Sync,
+                    >,
+                          args: &[Value]|
+                          -> Result<Vec<Value>, RuntimeError> {
                         // Convert Wasmer values to runtime values
-                        let runtime_args: Vec<RuntimeValue> = args.iter()
+                        let runtime_args: Vec<RuntimeValue> = args
+                            .iter()
                             .map(|v| wasmer_value_to_runtime_value(v))
                             .collect();
-                            
+
                         // Call the host function
                         match env(&runtime_args) {
                             Ok(results) => {
-                                let wasmer_results: Vec<Value> = results.iter()
+                                let wasmer_results: Vec<Value> = results
+                                    .iter()
                                     .map(|v| runtime_value_to_wasmer_value(v))
                                     .collect();
                                 Ok(wasmer_results)
@@ -120,7 +131,7 @@ impl WebAssemblyRuntime for WasmerRuntime {
                         }
                     },
                 );
-                
+
                 imports.define(module_name, func_name, func);
             }
         }
@@ -156,11 +167,7 @@ impl WebAssemblyRuntime for WasmerRuntime {
         args: &[Self::Value],
     ) -> Result<Vec<Self::Value>, CompilerError> {
         function.call(store, args).map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Function call failed: {e}"),
-                None,
-                None,
-            )
+            CompilerError::runtime_error(format!("Function call failed: {e}"), None, None)
         })
     }
 
@@ -188,21 +195,23 @@ impl WebAssemblyRuntime for WasmerRuntime {
     fn validate_runtime(config: &RuntimeConfig) -> Result<(), CompilerError> {
         let engine = Self::create_engine(config)?;
         let mut store = Self::create_store(&engine)?;
-        
+
         // Simple WASM module that exports a test function
         let test_wasm = &[
             0x00, 0x61, 0x73, 0x6d, // WASM magic number
             0x01, 0x00, 0x00, 0x00, // WASM version
             0x01, 0x04, 0x01, 0x60, 0x00, 0x00, // type section: [] -> []
             0x03, 0x02, 0x01, 0x00, // function section: function 0 has type 0
-            0x07, 0x08, 0x01, 0x04, 0x74, 0x65, 0x73, 0x74, 0x00, 0x00, // export section: export "test" function 0
-            0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b, // code section: function 0 body is empty (just end)
+            0x07, 0x08, 0x01, 0x04, 0x74, 0x65, 0x73, 0x74, 0x00,
+            0x00, // export section: export "test" function 0
+            0x0a, 0x04, 0x01, 0x02, 0x00,
+            0x0b, // code section: function 0 body is empty (just end)
         ];
 
         let module = Self::create_module(&engine, test_wasm)?;
         let host_functions = HostFunctionRegistry::new();
         let _instance = Self::instantiate_module(&mut store, &module, &host_functions)?;
-        
+
         Ok(())
     }
 }
@@ -259,7 +268,7 @@ impl WasmerConfig {
             target_settings: std::collections::HashMap::new(),
         }
     }
-    
+
     /// Create a minimal configuration for testing
     pub fn minimal() -> RuntimeConfig {
         RuntimeConfig {
@@ -289,7 +298,7 @@ impl WasmerConfig {
     pub fn new() -> crate::runtime::runtime_trait::RuntimeConfig {
         panic!("Wasmer runtime not available - enable 'wasmer-runtime' feature")
     }
-    
+
     pub fn minimal() -> crate::runtime::runtime_trait::RuntimeConfig {
         panic!("Wasmer runtime not available - enable 'wasmer-runtime' feature")
     }

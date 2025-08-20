@@ -3,7 +3,7 @@ use crate::error::CompilerError;
 
 #[cfg(feature = "wasmtime-runtime")]
 use crate::runtime::runtime_trait::{
-    HostFunctionRegistry, OptimizationLevel, RuntimeConfig, RuntimeFeature, RuntimeValue, 
+    HostFunctionRegistry, OptimizationLevel, RuntimeConfig, RuntimeFeature, RuntimeValue,
     ValueType, WebAssemblyRuntime,
 };
 
@@ -28,16 +28,16 @@ impl WebAssemblyRuntime for WasmtimeRuntime {
 
         // Configure async support
         wasmtime_config.async_support(config.async_support);
-        
+
         // Configure threading
         wasmtime_config.wasm_threads(config.threads_support);
-        
+
         // Configure SIMD
         wasmtime_config.wasm_simd(config.simd_support);
-        
+
         // Configure bulk memory operations
         wasmtime_config.wasm_bulk_memory(config.bulk_memory);
-        
+
         // Configure reference types
         wasmtime_config.wasm_reference_types(config.reference_types);
 
@@ -55,7 +55,8 @@ impl WebAssemblyRuntime for WasmtimeRuntime {
         }
 
         // Configure memory settings
-        wasmtime_config.static_memory_maximum_size(config.memory_config.static_memory_maximum as u64);
+        wasmtime_config
+            .static_memory_maximum_size(config.memory_config.static_memory_maximum as u64);
         wasmtime_config.dynamic_memory_guard_size(config.memory_config.dynamic_memory_guard as u64);
 
         // Configure debug information
@@ -79,7 +80,10 @@ impl WebAssemblyRuntime for WasmtimeRuntime {
         Ok(Store::new(engine, ()))
     }
 
-    fn create_module(engine: &Self::Engine, wasm_bytes: &[u8]) -> Result<Self::Module, CompilerError> {
+    fn create_module(
+        engine: &Self::Engine,
+        wasm_bytes: &[u8],
+    ) -> Result<Self::Module, CompilerError> {
         Module::new(engine, wasm_bytes).map_err(|e| {
             CompilerError::runtime_error(
                 format!("Failed to create Wasmtime module: {e}"),
@@ -104,26 +108,30 @@ impl WebAssemblyRuntime for WasmtimeRuntime {
                 let func_name = parts[1];
 
                 // Convert function signature
-                let params: Vec<ValType> = host_func.signature.params
+                let params: Vec<ValType> = host_func
+                    .signature
+                    .params
                     .iter()
                     .map(|p| value_type_to_wasmtime_type(*p))
                     .collect();
-                    
-                let results: Vec<ValType> = host_func.signature.results
+
+                let results: Vec<ValType> = host_func
+                    .signature
+                    .results
                     .iter()
                     .map(|r| value_type_to_wasmtime_type(*r))
                     .collect();
 
                 // Create a simple host function placeholder for now
-                linker.func_wrap(module_name, func_name, || -> i32 {
-                    0
-                }).map_err(|e| {
-                    CompilerError::runtime_error(
-                        format!("Failed to define host function {name}: {e}"),
-                        None,
-                        None,
-                    )
-                })?;
+                linker
+                    .func_wrap(module_name, func_name, || -> i32 { 0 })
+                    .map_err(|e| {
+                        CompilerError::runtime_error(
+                            format!("Failed to define host function {name}: {e}"),
+                            None,
+                            None,
+                        )
+                    })?;
             }
         }
 
@@ -153,13 +161,11 @@ impl WebAssemblyRuntime for WasmtimeRuntime {
         args: &[Self::Value],
     ) -> Result<Vec<Self::Value>, CompilerError> {
         let mut results = vec![Val::I32(0); function.ty(&*store).results().len()];
-        function.call(&mut *store, args, &mut results).map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Function call failed: {e}"),
-                None,
-                None,
-            )
-        })?;
+        function
+            .call(&mut *store, args, &mut results)
+            .map_err(|e| {
+                CompilerError::runtime_error(format!("Function call failed: {e}"), None, None)
+            })?;
         Ok(results)
     }
 
@@ -187,21 +193,23 @@ impl WebAssemblyRuntime for WasmtimeRuntime {
     fn validate_runtime(config: &RuntimeConfig) -> Result<(), CompilerError> {
         let engine = Self::create_engine(config)?;
         let mut store = Self::create_store(&engine)?;
-        
+
         // Simple WASM module that exports a test function
         let test_wasm = &[
             0x00, 0x61, 0x73, 0x6d, // WASM magic number
             0x01, 0x00, 0x00, 0x00, // WASM version
             0x01, 0x04, 0x01, 0x60, 0x00, 0x00, // type section: [] -> []
             0x03, 0x02, 0x01, 0x00, // function section: function 0 has type 0
-            0x07, 0x08, 0x01, 0x04, 0x74, 0x65, 0x73, 0x74, 0x00, 0x00, // export section: export "test" function 0
-            0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b, // code section: function 0 body is empty (just end)
+            0x07, 0x08, 0x01, 0x04, 0x74, 0x65, 0x73, 0x74, 0x00,
+            0x00, // export section: export "test" function 0
+            0x0a, 0x04, 0x01, 0x02, 0x00,
+            0x0b, // code section: function 0 body is empty (just end)
         ];
 
         let module = Self::create_module(&engine, test_wasm)?;
         let host_functions = HostFunctionRegistry::new();
         let _instance = Self::instantiate_module(&mut store, &module, &host_functions)?;
-        
+
         Ok(())
     }
 }

@@ -33,7 +33,7 @@ impl RuntimeManager {
     /// Get information about all available runtimes
     pub fn list_available_runtimes() -> Vec<RuntimeInfo> {
         let mut runtimes = Vec::new();
-        
+
         #[cfg(feature = "wasmtime-runtime")]
         runtimes.push(RuntimeInfo {
             name: WasmtimeRuntime::runtime_name(),
@@ -42,16 +42,16 @@ impl RuntimeManager {
             description: "Bytecode Alliance WebAssembly runtime with excellent performance and standards compliance",
             features: vec!["Async Support", "WASI", "Component Model", "Threads", "SIMD"],
         });
-        
+
         #[cfg(feature = "wasmer-runtime")]
         runtimes.push(RuntimeInfo {
             name: WasmerRuntime::runtime_name(),
-            version: WasmerRuntime::runtime_version(), 
+            version: WasmerRuntime::runtime_version(),
             available: true,
             description: "Universal WebAssembly runtime with multiple compiler backends",
             features: vec!["WASI", "Threads", "SIMD", "Multiple Backends"],
         });
-        
+
         // Add unavailable runtimes for completeness
         #[cfg(not(feature = "wasmtime-runtime"))]
         runtimes.push(RuntimeInfo {
@@ -59,28 +59,34 @@ impl RuntimeManager {
             version: "N/A",
             available: false,
             description: "Bytecode Alliance WebAssembly runtime (not compiled in)",
-            features: vec!["Async Support", "WASI", "Component Model", "Threads", "SIMD"],
+            features: vec![
+                "Async Support",
+                "WASI",
+                "Component Model",
+                "Threads",
+                "SIMD",
+            ],
         });
-        
+
         #[cfg(not(feature = "wasmer-runtime"))]
         runtimes.push(RuntimeInfo {
             name: "Wasmer",
-            version: "N/A", 
+            version: "N/A",
             available: false,
             description: "Universal WebAssembly runtime (not compiled in)",
             features: vec!["WASI", "Threads", "SIMD", "Multiple Backends"],
         });
-        
+
         runtimes
     }
-    
+
     /// Select the best available runtime based on configuration
     pub fn select_runtime(config: &RuntimeConfig) -> Result<RuntimeType, CompilerError> {
         match config.runtime_type {
             RuntimeType::Wasmtime => {
                 #[cfg(feature = "wasmtime-runtime")]
                 return Ok(RuntimeType::Wasmtime);
-                
+
                 #[cfg(not(feature = "wasmtime-runtime"))]
                 return Err(CompilerError::runtime_error(
                     "Wasmtime runtime requested but not available (enable 'wasmtime-runtime' feature)".to_string(),
@@ -91,31 +97,32 @@ impl RuntimeManager {
             RuntimeType::Wasmer => {
                 #[cfg(feature = "wasmer-runtime")]
                 return Ok(RuntimeType::Wasmer);
-                
+
                 #[cfg(not(feature = "wasmer-runtime"))]
                 return Err(CompilerError::runtime_error(
-                    "Wasmer runtime requested but not available (enable 'wasmer-runtime' feature)".to_string(),
+                    "Wasmer runtime requested but not available (enable 'wasmer-runtime' feature)"
+                        .to_string(),
                     None,
                     None,
                 ));
             }
             RuntimeType::Auto => {
                 // Auto-detection logic - prefer based on features needed
-                
+
                 // If async support is needed, prefer Wasmtime
                 #[cfg(feature = "wasmtime-runtime")]
                 if config.async_support {
                     return Ok(RuntimeType::Wasmtime);
                 }
-                
+
                 // For general use, prefer Wasmtime if available
                 #[cfg(feature = "wasmtime-runtime")]
                 return Ok(RuntimeType::Wasmtime);
-                
+
                 // Fall back to Wasmer
                 #[cfg(feature = "wasmer-runtime")]
                 return Ok(RuntimeType::Wasmer);
-                
+
                 // If no runtime is available
                 return Err(CompilerError::runtime_error(
                     "No WebAssembly runtime available (enable 'wasmtime-runtime' or 'wasmer-runtime' feature)".to_string(),
@@ -125,18 +132,17 @@ impl RuntimeManager {
             }
         }
     }
-    
+
     /// Validate that a runtime can be used with the given configuration
-    pub fn validate_runtime_config(runtime_type: RuntimeType, config: &RuntimeConfig) -> Result<(), CompilerError> {
+    pub fn validate_runtime_config(
+        runtime_type: RuntimeType,
+        config: &RuntimeConfig,
+    ) -> Result<(), CompilerError> {
         match runtime_type {
             #[cfg(feature = "wasmtime-runtime")]
-            RuntimeType::Wasmtime => {
-                WasmtimeRuntime::validate_runtime(config)
-            }
+            RuntimeType::Wasmtime => WasmtimeRuntime::validate_runtime(config),
             #[cfg(feature = "wasmer-runtime")]
-            RuntimeType::Wasmer => {
-                WasmerRuntime::validate_runtime(config)
-            }
+            RuntimeType::Wasmer => WasmerRuntime::validate_runtime(config),
             _ => Err(CompilerError::runtime_error(
                 format!("Runtime {:?} is not available", runtime_type),
                 None,
@@ -144,7 +150,7 @@ impl RuntimeManager {
             )),
         }
     }
-    
+
     /// Get runtime-specific recommendations for configuration
     pub fn get_runtime_recommendations(runtime_type: RuntimeType) -> Vec<String> {
         match runtime_type {
@@ -164,7 +170,7 @@ impl RuntimeManager {
             ],
         }
     }
-    
+
     /// Benchmark available runtimes (placeholder for future implementation)
     pub fn benchmark_runtimes(_wasm_bytes: &[u8]) -> Result<Vec<RuntimeBenchmark>, CompilerError> {
         // TODO: Implement runtime benchmarking
@@ -185,9 +191,15 @@ pub struct RuntimeBenchmark {
 
 impl fmt::Display for RuntimeInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {} - {}", 
+        write!(
+            f,
+            "{} {} - {}",
             self.name,
-            if self.available { self.version } else { "(unavailable)" },
+            if self.available {
+                self.version
+            } else {
+                "(unavailable)"
+            },
             self.description
         )
     }
@@ -196,14 +208,18 @@ impl fmt::Display for RuntimeInfo {
 impl fmt::Display for RuntimeBenchmark {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.success {
-            write!(f, "{}: Compilation {:.2}ms, Execution {:.2}ms, Memory {}KB",
+            write!(
+                f,
+                "{}: Compilation {:.2}ms, Execution {:.2}ms, Memory {}KB",
                 self.runtime_name,
                 self.compilation_time_ms,
                 self.execution_time_ms,
                 self.memory_usage_bytes / 1024
             )
         } else {
-            write!(f, "{}: Failed - {}", 
+            write!(
+                f,
+                "{}: Failed - {}",
                 self.runtime_name,
                 self.error_message.as_deref().unwrap_or("Unknown error")
             )
@@ -215,7 +231,7 @@ impl fmt::Display for RuntimeBenchmark {
 pub fn create_runtime_config(runtime_type: RuntimeType) -> RuntimeConfig {
     let mut config = RuntimeConfig::default();
     config.runtime_type = runtime_type;
-    
+
     match runtime_type {
         RuntimeType::Wasmtime => {
             // Wasmtime-specific defaults
@@ -229,7 +245,7 @@ pub fn create_runtime_config(runtime_type: RuntimeType) -> RuntimeConfig {
             // Auto defaults - will be adjusted based on selected runtime
         }
     }
-    
+
     config
 }
 
@@ -241,7 +257,7 @@ mod tests {
     fn test_list_available_runtimes() {
         let runtimes = RuntimeManager::list_available_runtimes();
         assert!(!runtimes.is_empty(), "Should list at least one runtime");
-        
+
         // Check that default runtime is available
         #[cfg(feature = "wasmtime-runtime")]
         {
@@ -262,7 +278,7 @@ mod tests {
     fn test_create_runtime_config() {
         let config = create_runtime_config(RuntimeType::Auto);
         assert_eq!(config.runtime_type, RuntimeType::Auto);
-        
+
         #[cfg(feature = "wasmtime-runtime")]
         {
             let wasmtime_config = create_runtime_config(RuntimeType::Wasmtime);
