@@ -22,10 +22,11 @@ jobs:
             os: ubuntu-latest
             name: cln-linux-x86_64
             archive: tar.gz
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            name: cln-linux-aarch64
-            archive: tar.gz
+          # Temporarily disabled ARM64 Linux due to cross-compilation issues
+          # - target: aarch64-unknown-linux-gnu
+          #   os: ubuntu-latest
+          #   name: cln-linux-aarch64
+          #   archive: tar.gz
           - target: x86_64-apple-darwin
             os: macos-latest
             name: cln-macos-x86_64
@@ -48,31 +49,15 @@ jobs:
       with:
         targets: ${{ matrix.target }}
 
-    - name: Install cross (for ARM64 Linux cross-compilation)
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
-      run: cargo install cross --git https://github.com/cross-rs/cross
-
-    - name: Build binary (native targets)
-      if: matrix.target != 'aarch64-unknown-linux-gnu'
+    - name: Build binary
       run: cargo build --release --bin cln --target ${{ matrix.target }}
       env:
         OPENSSL_STATIC: 1
         OPENSSL_VENDOR: 1
 
-    - name: Build binary (ARM64 Linux with cross)
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
-      run: cross build --release --bin cln --target ${{ matrix.target }}
-      env:
-        OPENSSL_STATIC: 1
-        OPENSSL_VENDOR: 1
-
     - name: Strip binary (Unix)
-      if: matrix.os != 'windows-latest' && matrix.target != 'aarch64-unknown-linux-gnu'
+      if: matrix.os != 'windows-latest'
       run: strip target/${{ matrix.target }}/release/cln || true
-
-    - name: Skip stripping for ARM64 Linux (cross-compiled)
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
-      run: echo "Skipping stripping for cross-compiled ARM64 binary"
 
     - name: Create archive (Unix)
       if: matrix.os != 'windows-latest'
