@@ -5,8 +5,9 @@ use std::fmt;
 #[cfg(feature = "wasmtime-runtime")]
 use crate::runtime::wasmtime_runtime::WasmtimeRuntime;
 
-#[cfg(feature = "wasmer-runtime")]
-// use crate::runtime::wasmer_config::WasmerRuntime;  // Wasmer temporarily disabled
+// Wasmer runtime support temporarily disabled
+// #[cfg(feature = "wasmer-runtime")]
+// use crate::runtime::wasmer_config::WasmerRuntime;
 
 /// Runtime manager for selecting and configuring WebAssembly runtimes
 pub struct RuntimeManager;
@@ -147,13 +148,23 @@ impl RuntimeManager {
         match runtime_type {
             #[cfg(feature = "wasmtime-runtime")]
             RuntimeType::Wasmtime => WasmtimeRuntime::validate_runtime(config),
-            #[cfg(feature = "wasmer-runtime")]
-            // RuntimeType::Wasmer => WasmerRuntime::validate_runtime(config),  // Wasmer temporarily disabled
-            _ => Err(CompilerError::runtime_error(
-                format!("Runtime {:?} is not available", runtime_type),
+            RuntimeType::Wasmer => Err(CompilerError::runtime_error(
+                "Wasmer runtime is temporarily disabled".to_string(),
                 None,
                 None,
             )),
+            RuntimeType::Auto => {
+                // Auto-detection: prefer Wasmtime if available
+                #[cfg(feature = "wasmtime-runtime")]
+                return WasmtimeRuntime::validate_runtime(config);
+                
+                #[cfg(not(feature = "wasmtime-runtime"))]
+                return Err(CompilerError::runtime_error(
+                    "No runtime available for auto-detection".to_string(),
+                    None,
+                    None,
+                ));
+            }
         }
     }
 
