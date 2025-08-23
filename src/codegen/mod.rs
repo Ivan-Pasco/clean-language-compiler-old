@@ -363,9 +363,15 @@ impl CodeGenerator {
         }
 
         // Also process the start function if it exists
-        println!("DEBUG: Checking if program has start_function: {}", program.start_function.is_some());
+        println!(
+            "DEBUG: Checking if program has start_function: {}",
+            program.start_function.is_some()
+        );
         if let Some(start_function) = &program.start_function {
-            println!("DEBUG: Found start function '{}', preparing its type", start_function.name);
+            println!(
+                "DEBUG: Found start function '{}', preparing its type",
+                start_function.name
+            );
             self.prepare_function_type(start_function)?;
             // Store start function definition for default parameter handling
             self.function_definitions
@@ -479,9 +485,15 @@ impl CodeGenerator {
         // 7. Export the start function (if it exists)
         // ------------------------------------------------------------------
         println!("DEBUG: Looking for start function in function_map...");
-        println!("DEBUG: function_map keys: {:?}", self.function_map.keys().collect::<Vec<_>>());
+        println!(
+            "DEBUG: function_map keys: {:?}",
+            self.function_map.keys().collect::<Vec<_>>()
+        );
         if let Some(&start_index) = self.function_map.get("start") {
-            println!("DEBUG: Found start function at index {}, exporting it", start_index);
+            println!(
+                "DEBUG: Found start function at index {}, exporting it",
+                start_index
+            );
             self.export_section
                 .export("start", ExportKind::Func, start_index);
         } else {
@@ -2037,8 +2049,12 @@ impl CodeGenerator {
                                             match var_type {
                                                 Type::Integer => WasmType::I32,
                                                 Type::Number => WasmType::F64,
-                                                Type::IntegerSized { bits: 64, .. } => WasmType::I64,
-                                                Type::IntegerSized { bits: 32, .. } => WasmType::I32,
+                                                Type::IntegerSized { bits: 64, .. } => {
+                                                    WasmType::I64
+                                                }
+                                                Type::IntegerSized { bits: 32, .. } => {
+                                                    WasmType::I32
+                                                }
                                                 Type::NumberSized { bits: 64 } => WasmType::F64,
                                                 Type::NumberSized { bits: 32 } => WasmType::F32,
                                                 _ => WasmType::I32, // Default to I32 for other types
@@ -2060,7 +2076,9 @@ impl CodeGenerator {
                                     }
                                     _ => {
                                         // For complex expressions, try to infer the type
-                                        match self.generate_expression(&arguments[0], &mut Vec::new()) {
+                                        match self
+                                            .generate_expression(&arguments[0], &mut Vec::new())
+                                        {
                                             Ok(wasm_type) => wasm_type,
                                             Err(_) => WasmType::I32, // Default fallback
                                         }
@@ -2081,7 +2099,10 @@ impl CodeGenerator {
                                     WasmType::F32 => "math.abs".to_string(), // Use F64 version for F32
                                     WasmType::V128 | WasmType::Unit => "math.abs".to_string(), // Default to F64 version
                                 };
-                                println!("DEBUG: Final function name in MethodCall: {}", function_name);
+                                println!(
+                                    "DEBUG: Final function name in MethodCall: {}",
+                                    function_name
+                                );
                             }
 
                             // Generate arguments
@@ -6370,9 +6391,9 @@ impl CodeGenerator {
                     match clean_type {
                         crate::ast::Type::Integer => {
                             // Try env.integer.toString first (correct I32->I32 signature), then fallback to int_to_string
-                            if let Some(int_to_string_index) =
-                                self.get_function_index("env.integer.toString")
-                                    .or_else(|| self.get_function_index("int_to_string"))
+                            if let Some(int_to_string_index) = self
+                                .get_function_index("env.integer.toString")
+                                .or_else(|| self.get_function_index("int_to_string"))
                             {
                                 instructions.push(Instruction::Call(int_to_string_index));
                                 Ok(WasmType::I32) // String is represented as I32 pointer
@@ -6390,9 +6411,9 @@ impl CodeGenerator {
                         crate::ast::Type::IntegerSized { .. } => {
                             // Handle sized integers the same as regular integers for toString()
                             // Try env.integer.toString first (correct I32->I32 signature), then fallback to int_to_string
-                            if let Some(int_to_string_index) =
-                                self.get_function_index("env.integer.toString")
-                                    .or_else(|| self.get_function_index("int_to_string"))
+                            if let Some(int_to_string_index) = self
+                                .get_function_index("env.integer.toString")
+                                .or_else(|| self.get_function_index("int_to_string"))
                             {
                                 instructions.push(Instruction::Call(int_to_string_index));
                                 Ok(WasmType::I32) // String is represented as I32 pointer
@@ -6409,9 +6430,9 @@ impl CodeGenerator {
                         }
                         crate::ast::Type::Number => {
                             // Try env.number.toString first (correct F64->I32 signature), then fallback to float_to_string
-                            if let Some(float_to_string_index) =
-                                self.get_function_index("env.number.toString")
-                                    .or_else(|| self.get_function_index("float_to_string"))
+                            if let Some(float_to_string_index) = self
+                                .get_function_index("env.number.toString")
+                                .or_else(|| self.get_function_index("float_to_string"))
                             {
                                 println!("DEBUG: Found float_to_string at function index {float_to_string_index}");
 
@@ -6468,9 +6489,9 @@ impl CodeGenerator {
                         crate::ast::Type::NumberSized { .. } => {
                             // Handle sized numbers the same as regular numbers for toString()
                             // Try env.number.toString first (correct F64->I32 signature), then fallback to float_to_string
-                            if let Some(float_to_string_index) =
-                                self.get_function_index("env.number.toString")
-                                    .or_else(|| self.get_function_index("float_to_string"))
+                            if let Some(float_to_string_index) = self
+                                .get_function_index("env.number.toString")
+                                .or_else(|| self.get_function_index("float_to_string"))
                             {
                                 instructions.push(Instruction::Call(float_to_string_index));
                                 Ok(WasmType::I32) // String is represented as I32 pointer
@@ -6487,9 +6508,9 @@ impl CodeGenerator {
                         }
                         crate::ast::Type::Boolean => {
                             // Try env.boolean.toString first (correct I32->I32 signature), then fallback to bool_to_string
-                            if let Some(bool_to_string_index) =
-                                self.get_function_index("env.boolean.toString")
-                                    .or_else(|| self.get_function_index("bool_to_string"))
+                            if let Some(bool_to_string_index) = self
+                                .get_function_index("env.boolean.toString")
+                                .or_else(|| self.get_function_index("bool_to_string"))
                             {
                                 instructions.push(Instruction::Call(bool_to_string_index));
                                 Ok(WasmType::I32) // String is represented as I32 pointer

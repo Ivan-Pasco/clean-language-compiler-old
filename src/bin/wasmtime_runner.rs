@@ -430,11 +430,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Try to find and call the start function (try different possible names)
-    let start_func = instance.get_func(&mut store, "start")
+    let start_func = instance
+        .get_func(&mut store, "start")
         .or_else(|| instance.get_func(&mut store, "_start"))
         .or_else(|| instance.get_func(&mut store, "main"))
         .or_else(|| instance.get_func(&mut store, "_main"));
-        
+
     match start_func {
         Some(func) => {
             println!("🎯 Executing start function...");

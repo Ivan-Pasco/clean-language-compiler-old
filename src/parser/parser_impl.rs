@@ -493,8 +493,13 @@ impl ErrorRecoveringParser {
 
         println!("DEBUG PARSE_INTERNAL: About to call parse_program_ast");
         let result = parse_program_ast(pairs);
-        println!("DEBUG PARSE_INTERNAL: parse_program_ast returned, start_function present: {}", 
-                 result.as_ref().map(|p| p.start_function.is_some()).unwrap_or(false));
+        println!(
+            "DEBUG PARSE_INTERNAL: parse_program_ast returned, start_function present: {}",
+            result
+                .as_ref()
+                .map(|p| p.start_function.is_some())
+                .unwrap_or(false)
+        );
         result
     }
 }
@@ -587,24 +592,24 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                     let lines: Vec<&str> = start_source.lines().collect();
                     let mut start_function_lines = Vec::new();
                     let mut found_body = false;
-                    
+
                     for (i, line) in lines.iter().enumerate() {
                         if i == 0 {
                             start_function_lines.push(line.to_string());
                             continue;
                         }
-                        
+
                         let trimmed = line.trim();
                         if trimmed.is_empty() {
                             start_function_lines.push(line.to_string());
                             continue;
                         }
-                        
+
                         // If we've found the body and hit a non-indented line, we're done
                         if found_body && !line.starts_with('\t') && !line.starts_with(' ') {
                             break;
                         }
-                        
+
                         // If this line is indented, it's part of the start function
                         if line.starts_with('\t') || line.starts_with(' ') {
                             found_body = true;
@@ -614,15 +619,24 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                             break;
                         }
                     }
-                    
+
                     let start_source_text = start_function_lines.join("\n");
-                    println!("DEBUG: Extracted start function text: {:?}", start_source_text);
-                    
-                    match <CleanParser as Parser<Rule>>::parse(Rule::start_function, &start_source_text) {
+                    println!(
+                        "DEBUG: Extracted start function text: {:?}",
+                        start_source_text
+                    );
+
+                    match <CleanParser as Parser<Rule>>::parse(
+                        Rule::start_function,
+                        &start_source_text,
+                    ) {
                         Ok(pairs) => {
                             match parse_start_function(pairs.into_iter().next().unwrap()) {
                                 Ok(func) => {
-                                    println!("DEBUG: Successfully parsed start function '{}'", func.name);
+                                    println!(
+                                        "DEBUG: Successfully parsed start function '{}'",
+                                        func.name
+                                    );
                                     Some(func)
                                 }
                                 Err(e) => {
