@@ -150,6 +150,30 @@ impl ConditionalManager {
             self.generate_number_greater_than(),
         )?;
 
+        register_stdlib_function(
+            codegen,
+            "compare.number.greaterEqual",
+            &[WasmType::F64, WasmType::F64], // value1, value2
+            Some(WasmType::I32),             // boolean result
+            self.generate_number_greater_equal(),
+        )?;
+
+        register_stdlib_function(
+            codegen,
+            "compare.number.lessEqual",
+            &[WasmType::F64, WasmType::F64], // value1, value2
+            Some(WasmType::I32),             // boolean result
+            self.generate_number_less_equal(),
+        )?;
+
+        register_stdlib_function(
+            codegen,
+            "compare.number.notEqual",
+            &[WasmType::F64, WasmType::F64], // value1, value2
+            Some(WasmType::I32),             // boolean result
+            self.generate_number_not_equal(),
+        )?;
+
         Ok(())
     }
 
@@ -332,6 +356,36 @@ impl ConditionalManager {
             Instruction::LocalGet(0),
             Instruction::LocalGet(1),
             Instruction::F64Gt,
+        ]
+    }
+
+    /// Generate WASM for number greater than or equal comparison
+    fn generate_number_greater_equal(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: value1 (0), value2 (1)
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::F64Ge,
+        ]
+    }
+
+    /// Generate WASM for number less than or equal comparison
+    fn generate_number_less_equal(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: value1 (0), value2 (1)
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::F64Le,
+        ]
+    }
+
+    /// Generate WASM for number not equal comparison
+    fn generate_number_not_equal(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: value1 (0), value2 (1)
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::F64Ne,
         ]
     }
 
