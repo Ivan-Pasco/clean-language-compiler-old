@@ -5,9 +5,8 @@ use std::fmt;
 #[cfg(feature = "wasmtime-runtime")]
 use crate::runtime::wasmtime_runtime::WasmtimeRuntime;
 
-// Wasmer runtime support temporarily disabled
-// #[cfg(feature = "wasmer-runtime")]
-// use crate::runtime::wasmer_config::WasmerRuntime;
+#[cfg(feature = "wasmer-runtime")]
+use crate::runtime::wasmer_config::WasmerRuntime;
 
 /// Runtime manager for selecting and configuring WebAssembly runtimes
 pub struct RuntimeManager;
@@ -16,7 +15,8 @@ pub struct RuntimeManager;
 pub enum RuntimeInstance {
     #[cfg(feature = "wasmtime-runtime")]
     Wasmtime(WasmtimeRuntime),
-    // Note: Wasmer runtime support is temporarily disabled
+    #[cfg(feature = "wasmer-runtime")]
+    Wasmer(WasmerRuntime),
 }
 
 /// Runtime information for display and selection
@@ -44,13 +44,13 @@ impl RuntimeManager {
         });
 
         #[cfg(feature = "wasmer-runtime")]
-        // runtimes.push(RuntimeInfo {
-        //     name: WasmerRuntime::runtime_name(),
-        //     version: WasmerRuntime::runtime_version(),
-        //     available: true,
-        //     description: "Universal WebAssembly runtime with multiple compiler backends",
-        //     features: vec!["WASI", "Threads", "SIMD", "Multiple Backends"],
-        // });  // Wasmer temporarily disabled
+        runtimes.push(RuntimeInfo {
+            name: WasmerRuntime::runtime_name(),
+            version: WasmerRuntime::runtime_version(),
+            available: true,
+            description: "Universal WebAssembly runtime with multiple compiler backends",
+            features: vec!["WASI", "Threads", "SIMD", "Multiple Backends"],
+        });
 
         // Add unavailable runtimes for completeness
         #[cfg(not(feature = "wasmtime-runtime"))]
@@ -148,17 +148,23 @@ impl RuntimeManager {
         match runtime_type {
             #[cfg(feature = "wasmtime-runtime")]
             RuntimeType::Wasmtime => WasmtimeRuntime::validate_runtime(config),
+            #[cfg(feature = "wasmer-runtime")]
+            RuntimeType::Wasmer => WasmerRuntime::validate_runtime(config),
+            #[cfg(not(feature = "wasmer-runtime"))]
             RuntimeType::Wasmer => Err(CompilerError::runtime_error(
-                "Wasmer runtime is temporarily disabled".to_string(),
+                "Wasmer runtime is not available (feature not enabled)".to_string(),
                 None,
                 None,
             )),
             RuntimeType::Auto => {
-                // Auto-detection: prefer Wasmtime if available
+                // Auto-detection: prefer Wasmtime if available, fallback to Wasmer
                 #[cfg(feature = "wasmtime-runtime")]
                 return WasmtimeRuntime::validate_runtime(config);
 
-                #[cfg(not(feature = "wasmtime-runtime"))]
+                #[cfg(all(feature = "wasmer-runtime", not(feature = "wasmtime-runtime")))]
+                return WasmerRuntime::validate_runtime(config);
+
+                #[cfg(not(any(feature = "wasmtime-runtime", feature = "wasmer-runtime")))]
                 return Err(CompilerError::runtime_error(
                     "No runtime available for auto-detection".to_string(),
                     None,

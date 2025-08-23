@@ -18,12 +18,11 @@ lazy_static = "1.5"
 # WebAssembly
 wasm-encoder = "0.35"
 wasmparser = "0.121"
-wat = "1.0"
+wat = "1.0.71"
 
 # WebAssembly Runtimes (feature-gated)  
-wasmtime = { version = "20.0", optional = true }
-# Temporarily disabled due to version conflicts
-# wasmer = { version = "4.1", optional = true }
+wasmtime = { version = "10.0", optional = true }
+wasmer = { version = "4.3", optional = true, features = ["cranelift", "sys"] }
 
 # Error handling
 thiserror = "1.0"
@@ -198,5 +197,5 @@ path = "src/lib.rs"
 default = ["wasmtime-runtime"]
 wasmtime-runtime = ["wasmtime"]
 # Temporarily disabled due to version conflicts - kept for config compatibility
-wasmer-runtime = []
-# both-runtimes = ["wasmtime", "wasmer"]
+wasmer-runtime = ["wasmer"]
+both-runtimes = ["wasmtime-runtime", "wasmer-runtime"]
