@@ -157,7 +157,7 @@ impl RuntimeManager {
                 // Auto-detection: prefer Wasmtime if available
                 #[cfg(feature = "wasmtime-runtime")]
                 return WasmtimeRuntime::validate_runtime(config);
-                
+
                 #[cfg(not(feature = "wasmtime-runtime"))]
                 return Err(CompilerError::runtime_error(
                     "No runtime available for auto-detection".to_string(),
