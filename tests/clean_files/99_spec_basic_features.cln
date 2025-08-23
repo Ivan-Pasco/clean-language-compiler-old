@@ -69,7 +69,7 @@ start()
 	
 	// 6. Namespace function calls
 	print("6. Namespace Functions:")
-	integer absolute = math.abs(-15)
+	number absolute = math.abs(-15)
 	print("math.abs(-15) = " + absolute.toString())
 	
 	print("=== Basic Specification Test Completed ===")

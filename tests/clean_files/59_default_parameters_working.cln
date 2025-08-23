@@ -1,13 +1,13 @@
 // Default parameters working test - simplified version
 
 functions:
-	greet(string name)
+	string greet(string name)
 		return "Hello, " + name
 	
-	power(integer base, integer exponent)
+	integer power(integer base, integer exponent)
 		return base * exponent  // Simplified for testing
 	
-	testDefaultParameters()
+	void testDefaultParameters()
 		print(greet("World"))
 		print(greet("Alice"))
 		

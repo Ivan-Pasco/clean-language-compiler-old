@@ -117,18 +117,25 @@ impl RuntimeManager {
 
                 // For general use, prefer Wasmtime if available
                 #[cfg(feature = "wasmtime-runtime")]
-                return Ok(RuntimeType::Wasmtime);
+                {
+                    return Ok(RuntimeType::Wasmtime);
+                }
 
                 // Fall back to Wasmer
                 #[cfg(feature = "wasmer-runtime")]
-                return Ok(RuntimeType::Wasmer);
+                {
+                    return Ok(RuntimeType::Wasmer);
+                }
 
                 // If no runtime is available
-                return Err(CompilerError::runtime_error(
-                    "No WebAssembly runtime available (enable 'wasmtime-runtime' or 'wasmer-runtime' feature)".to_string(),
-                    None,
-                    None,
-                ));
+                #[cfg(not(any(feature = "wasmtime-runtime", feature = "wasmer-runtime")))]
+                {
+                    return Err(CompilerError::runtime_error(
+                        "No WebAssembly runtime available (enable 'wasmtime-runtime' or 'wasmer-runtime' feature)".to_string(),
+                        None,
+                        None,
+                    ));
+                }
             }
         }
     }

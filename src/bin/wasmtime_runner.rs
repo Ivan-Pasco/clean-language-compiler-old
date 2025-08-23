@@ -320,10 +320,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     // Add method-style function stubs
-    linker.func_wrap("env", "integer.toString", |value: i32| -> i32 {
-        println!("🔍 DEBUG: integer.toString called with value: {}", value);
-        0 // Mock return
-    })?;
+    linker.func_wrap(
+        "env",
+        "integer.toString",
+        |mut caller: Caller<'_, ()>, value: i32| -> i32 {
+            println!("🔍 DEBUG: integer.toString called with value: {}", value);
+            let string_value = value.to_string();
+
+            // Get memory to store the string
+            if let Some(memory) = caller.get_export("memory") {
+                if let Some(memory) = memory.into_memory() {
+                    return allocate_string_in_memory(&memory, &mut caller, &string_value);
+                }
+            }
+
+            0 // Return null pointer on failure
+        },
+    )?;
 
     linker.func_wrap("env", "integer.toInteger", |value: i32| -> i32 { value })?;
     linker.func_wrap("env", "integer.toNumber", |value: i32| -> f64 {
@@ -338,10 +351,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     linker.func_wrap("env", "integer.length", |_: i32| -> i32 { 0 })?;
 
-    linker.func_wrap("env", "number.toString", |value: f64| -> i32 {
-        println!("🔍 DEBUG: number.toString called with value: {}", value);
-        0 // Mock return
-    })?;
+    linker.func_wrap(
+        "env",
+        "number.toString",
+        |mut caller: Caller<'_, ()>, value: f64| -> i32 {
+            println!("🔍 DEBUG: number.toString called with value: {}", value);
+            let string_value = value.to_string();
+
+            // Get memory to store the string
+            if let Some(memory) = caller.get_export("memory") {
+                if let Some(memory) = memory.into_memory() {
+                    return allocate_string_in_memory(&memory, &mut caller, &string_value);
+                }
+            }
+
+            0 // Return null pointer on failure
+        },
+    )?;
 
     linker.func_wrap("env", "number.toInteger", |value: f64| -> i32 {
         value as i32
@@ -362,10 +388,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "string.toBoolean", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "string.length", |_: i32| -> i32 { 0 })?;
 
-    linker.func_wrap("env", "boolean.toString", |value: i32| -> i32 {
-        println!("🔍 DEBUG: boolean.toString called with value: {}", value);
-        0 // Mock return
-    })?;
+    linker.func_wrap(
+        "env",
+        "boolean.toString",
+        |mut caller: Caller<'_, ()>, value: i32| -> i32 {
+            println!("🔍 DEBUG: boolean.toString called with value: {}", value);
+            let string_value = if value != 0 { "true" } else { "false" };
+
+            // Get memory to store the string
+            if let Some(memory) = caller.get_export("memory") {
+                if let Some(memory) = memory.into_memory() {
+                    return allocate_string_in_memory(&memory, &mut caller, string_value);
+                }
+            }
+
+            0 // Return null pointer on failure
+        },
+    )?;
 
     linker.func_wrap("env", "boolean.toInteger", |value: i32| -> i32 { value })?;
     linker.func_wrap("env", "boolean.toNumber", |value: i32| -> f64 {
@@ -390,15 +429,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Vec<_>>()
     );
 
-    // Get and call the start function
-    let start_func = instance
-        .get_func(&mut store, "start")
-        .ok_or_else(|| anyhow::anyhow!("start function not found"))?;
-    println!("🎯 Executing start function...");
-    println!("--- Output ---");
-    start_func.call(&mut store, &[], &mut [])?;
-    println!("--- End Output ---");
-    println!("✅ Execution completed successfully!");
+    // Try to find and call the start function (try different possible names)
+    let start_func = instance.get_func(&mut store, "start")
+        .or_else(|| instance.get_func(&mut store, "_start"))
+        .or_else(|| instance.get_func(&mut store, "main"))
+        .or_else(|| instance.get_func(&mut store, "_main"));
+        
+    match start_func {
+        Some(func) => {
+            println!("🎯 Executing start function...");
+            println!("--- Output ---");
+            func.call(&mut store, &[], &mut [])?;
+            println!("--- End Output ---");
+            println!("✅ Execution completed successfully!");
+        }
+        None => {
+            println!("⚠️  No start function found. Available exports:");
+            for export in instance.exports(&mut store) {
+                let name = export.name().to_string();
+                if export.into_func().is_some() {
+                    println!("  • {} (function)", name);
+                }
+            }
+            return Err(anyhow::anyhow!("No start/main function found").into());
+        }
+    }
 
     Ok(())
 }

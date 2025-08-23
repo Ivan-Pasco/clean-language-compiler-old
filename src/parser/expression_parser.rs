@@ -754,23 +754,33 @@ pub fn parse_string(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                             let mut inner = inner_part.into_inner();
                             let expr_str = inner.next().unwrap().as_str();
 
-                            // Parse simple property access
-                            if expr_str.contains('.') {
-                                let parts_split: Vec<&str> = expr_str.split('.').collect();
-                                let object = Expression::Variable(parts_split[0].to_string());
-                                let property = parts_split[1].to_string();
+                            // Parse the interpolation expression properly
+                            // Instead of treating as simple variable, parse as full expression
+                            match parse_interpolation_expression(expr_str) {
+                                Ok(expr) => {
+                                    parts.push(StringPart::Interpolation(expr));
+                                }
+                                Err(_) => {
+                                    // Fallback to simple variable parsing if expression parsing fails
+                                    if expr_str.contains('.') {
+                                        let parts_split: Vec<&str> = expr_str.split('.').collect();
+                                        let object =
+                                            Expression::Variable(parts_split[0].to_string());
+                                        let property = parts_split[1].to_string();
 
-                                let location = crate::ast::SourceLocation::default();
-                                let property_access = Expression::PropertyAccess {
-                                    object: Box::new(object),
-                                    property,
-                                    location,
-                                };
-                                parts.push(StringPart::Interpolation(property_access));
-                            } else {
-                                // Simple variable
-                                let variable = Expression::Variable(expr_str.to_string());
-                                parts.push(StringPart::Interpolation(variable));
+                                        let location = crate::ast::SourceLocation::default();
+                                        let property_access = Expression::PropertyAccess {
+                                            object: Box::new(object),
+                                            property,
+                                            location,
+                                        };
+                                        parts.push(StringPart::Interpolation(property_access));
+                                    } else {
+                                        // Simple variable
+                                        let variable = Expression::Variable(expr_str.to_string());
+                                        parts.push(StringPart::Interpolation(variable));
+                                    }
+                                }
                             }
                         }
                         _ => {}
@@ -786,23 +796,31 @@ pub fn parse_string(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                 let mut inner = part.into_inner();
                 let expr_str = inner.next().unwrap().as_str();
 
-                // Parse simple property access
-                if expr_str.contains('.') {
-                    let parts_split: Vec<&str> = expr_str.split('.').collect();
-                    let object = Expression::Variable(parts_split[0].to_string());
-                    let property = parts_split[1].to_string();
+                // Parse the interpolation expression properly
+                match parse_interpolation_expression(expr_str) {
+                    Ok(expr) => {
+                        parts.push(StringPart::Interpolation(expr));
+                    }
+                    Err(_) => {
+                        // Fallback to simple parsing if expression parsing fails
+                        if expr_str.contains('.') {
+                            let parts_split: Vec<&str> = expr_str.split('.').collect();
+                            let object = Expression::Variable(parts_split[0].to_string());
+                            let property = parts_split[1].to_string();
 
-                    let location = crate::ast::SourceLocation::default();
-                    let property_access = Expression::PropertyAccess {
-                        object: Box::new(object),
-                        property,
-                        location,
-                    };
-                    parts.push(StringPart::Interpolation(property_access));
-                } else {
-                    // Simple variable
-                    let variable = Expression::Variable(expr_str.to_string());
-                    parts.push(StringPart::Interpolation(variable));
+                            let location = crate::ast::SourceLocation::default();
+                            let property_access = Expression::PropertyAccess {
+                                object: Box::new(object),
+                                property,
+                                location,
+                            };
+                            parts.push(StringPart::Interpolation(property_access));
+                        } else {
+                            // Simple variable
+                            let variable = Expression::Variable(expr_str.to_string());
+                            parts.push(StringPart::Interpolation(variable));
+                        }
+                    }
                 }
             }
             _ => {}
@@ -822,6 +840,32 @@ pub fn parse_string(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
 
     // This has interpolation parts, return as StringInterpolation
     Ok(Expression::StringInterpolation(parts))
+}
+
+/// Parse expression within string interpolation braces
+/// This handles arithmetic expressions, function calls, property access, etc.
+fn parse_interpolation_expression(expr_str: &str) -> Result<Expression, CompilerError> {
+    use crate::parser::grammar::Rule;
+    use crate::CleanParser;
+    use pest::Parser;
+
+    // Parse the expression string as a standalone expression
+    let parsed = CleanParser::parse(Rule::expression, expr_str).map_err(|e| {
+        CompilerError::parse_error(
+            format!(
+                "Failed to parse interpolation expression '{}': {}",
+                expr_str, e
+            ),
+            None,
+            None,
+        )
+    })?;
+
+    let expression_pair = parsed.into_iter().next().ok_or_else(|| {
+        CompilerError::parse_error(format!("No expression found in '{}'", expr_str), None, None)
+    })?;
+
+    parse_expression(expression_pair)
 }
 
 pub fn parse_list_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
@@ -881,6 +925,7 @@ pub fn parse_matrix_literal(pair: Pair<Rule>) -> Result<Expression, CompilerErro
 }
 
 pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = convert_to_ast_location(&get_location(&pair));
     let mut inner = pair.into_inner();
     let name = inner.next().unwrap().as_str().to_string();
     let mut arguments = Vec::new();
@@ -891,9 +936,9 @@ pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError
                 // Parse argument list - contains argument_expression items
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains unary_expression
-                        let unary_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_unary_expression(unary_expr)?);
+                        // argument_expression contains base_expression
+                        let inner_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_base_expression(inner_expr)?);
                     }
                 }
             }
@@ -907,7 +952,22 @@ pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError
         }
     }
 
-    Ok(Expression::Call(name, arguments))
+    // Check if this is a namespace call (contains a dot)
+    if let Some(dot_pos) = name.find('.') {
+        let namespace = name[..dot_pos].to_string();
+        let function = name[dot_pos + 1..].to_string();
+
+        println!("DEBUG: Parser converting function call '{}' to namespace call: namespace='{}', function='{}'", name, namespace, function);
+
+        Ok(Expression::NamespaceCall {
+            namespace,
+            function,
+            arguments,
+            location,
+        })
+    } else {
+        Ok(Expression::Call(name, arguments))
+    }
 }
 
 pub fn parse_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
@@ -970,9 +1030,9 @@ pub fn parse_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
                                 // Parse argument list - contains argument_expression items
                                 for arg_expr in arg.into_inner() {
                                     if let Rule::argument_expression = arg_expr.as_rule() {
-                                        // argument_expression contains unary_expression
-                                        let unary_expr = arg_expr.into_inner().next().unwrap();
-                                        arguments.push(parse_unary_expression(unary_expr)?);
+                                        // argument_expression contains base_expression
+                                        let base_expr = arg_expr.into_inner().next().unwrap();
+                                        arguments.push(parse_base_expression(base_expr)?);
                                     }
                                 }
                             }
@@ -1052,9 +1112,9 @@ pub fn parse_property_method_call(pair: Pair<Rule>) -> Result<Expression, Compil
                 // Parse argument list - contains argument_expression items
                 for arg_expr in child.clone().into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains unary_expression
-                        let unary_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_unary_expression(unary_expr)?);
+                        // argument_expression contains base_expression
+                        let inner_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_base_expression(inner_expr)?);
                     }
                 }
             }
@@ -1151,9 +1211,9 @@ pub fn parse_base_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                 // Parse argument list - contains argument_expression items
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains unary_expression
-                        let unary_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_unary_expression(unary_expr)?);
+                        // argument_expression contains base_expression
+                        let inner_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_base_expression(inner_expr)?);
                     }
                 }
             }
@@ -1192,9 +1252,9 @@ pub fn parse_static_method_call(pair: Pair<Rule>) -> Result<Expression, Compiler
                 // Parse argument list - contains argument_expression items
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains unary_expression
-                        let unary_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_unary_expression(unary_expr)?);
+                        // argument_expression contains base_expression
+                        let inner_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_base_expression(inner_expr)?);
                     }
                 }
             }
@@ -1233,9 +1293,9 @@ pub fn parse_three_level_method_call(pair: Pair<Rule>) -> Result<Expression, Com
                 // Parse argument list - contains argument_expression items
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains unary_expression
-                        let unary_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_unary_expression(unary_expr)?);
+                        // argument_expression contains base_expression
+                        let inner_expr = arg_expr.into_inner().next().unwrap();
+                        arguments.push(parse_base_expression(inner_expr)?);
                     }
                 }
             }
@@ -1296,9 +1356,9 @@ pub fn parse_chained_method_call(pair: Pair<Rule>) -> Result<Expression, Compile
                                 // Parse argument list - contains argument_expression items
                                 for arg_expr in arg.into_inner() {
                                     if let Rule::argument_expression = arg_expr.as_rule() {
-                                        // argument_expression contains unary_expression
-                                        let unary_expr = arg_expr.into_inner().next().unwrap();
-                                        arguments.push(parse_unary_expression(unary_expr)?);
+                                        // argument_expression contains base_expression
+                                        let base_expr = arg_expr.into_inner().next().unwrap();
+                                        arguments.push(parse_base_expression(base_expr)?);
                                     }
                                 }
                             }

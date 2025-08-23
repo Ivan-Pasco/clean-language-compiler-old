@@ -487,10 +487,15 @@ impl ErrorRecoveringParser {
 
     fn parse_internal(&mut self, source: &str) -> Result<Program, CompilerError> {
         let trimmed_source = source.trim();
+        println!("DEBUG PARSE_INTERNAL: About to parse with Rule::program");
         let pairs = <CleanParser as Parser<Rule>>::parse(Rule::program, trimmed_source)
             .map_err(|e| crate::error::ErrorUtils::from_pest_error(e, source, &self.file_path))?;
 
-        parse_program_ast(pairs)
+        println!("DEBUG PARSE_INTERNAL: About to call parse_program_ast");
+        let result = parse_program_ast(pairs);
+        println!("DEBUG PARSE_INTERNAL: parse_program_ast returned, start_function present: {}", 
+                 result.as_ref().map(|p| p.start_function.is_some()).unwrap_or(false));
+        result
     }
 }
 
@@ -572,11 +577,75 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                     functions.len()
                 );
 
-                // Create a program with just the functions
+                // Also look for start function in the source
+                println!("DEBUG: Looking for start function in preprocessing path");
+                let start_function = if let Some(start_match) = source.find("start()") {
+                    println!("DEBUG: Found start() at position {}", start_match);
+                    // Extract the start function text
+                    let start_source = &source[start_match..];
+                    // Find the end of the start function (next top-level item or end of file)
+                    let lines: Vec<&str> = start_source.lines().collect();
+                    let mut start_function_lines = Vec::new();
+                    let mut found_body = false;
+                    
+                    for (i, line) in lines.iter().enumerate() {
+                        if i == 0 {
+                            start_function_lines.push(line.to_string());
+                            continue;
+                        }
+                        
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            start_function_lines.push(line.to_string());
+                            continue;
+                        }
+                        
+                        // If we've found the body and hit a non-indented line, we're done
+                        if found_body && !line.starts_with('\t') && !line.starts_with(' ') {
+                            break;
+                        }
+                        
+                        // If this line is indented, it's part of the start function
+                        if line.starts_with('\t') || line.starts_with(' ') {
+                            found_body = true;
+                            start_function_lines.push(line.to_string());
+                        } else if found_body {
+                            // Non-indented line after body means we're done
+                            break;
+                        }
+                    }
+                    
+                    let start_source_text = start_function_lines.join("\n");
+                    println!("DEBUG: Extracted start function text: {:?}", start_source_text);
+                    
+                    match <CleanParser as Parser<Rule>>::parse(Rule::start_function, &start_source_text) {
+                        Ok(pairs) => {
+                            match parse_start_function(pairs.into_iter().next().unwrap()) {
+                                Ok(func) => {
+                                    println!("DEBUG: Successfully parsed start function '{}'", func.name);
+                                    Some(func)
+                                }
+                                Err(e) => {
+                                    println!("DEBUG: Failed to parse start function: {}", e);
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("DEBUG: Failed to parse start function with grammar: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    println!("DEBUG: No start() found in source");
+                    None
+                };
+
+                // Create a program with the functions and start function
                 let program = Program {
                     functions,
                     classes: Vec::new(),
-                    start_function: None,
+                    start_function,
                     imports: Vec::new(),
                     tests: Vec::new(),
                     statements: Vec::new(),
@@ -1431,10 +1500,19 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
                 parameters.extend(params);
             }
             Rule::function_body => {
-                // function_body = (setup_block ~ indented_block) | indented_block
+                // function_body = (setup_block ~ indented_block) | indented_block | empty
                 let mut found_body = false;
                 let mut _found_setup = false;
-                for body_item in item.into_inner() {
+                let inner_rules: Vec<_> = item.into_inner().collect();
+
+                // If function_body has no inner rules or only EOI rule, it's an empty function body
+                if inner_rules.is_empty()
+                    || (inner_rules.len() == 1 && inner_rules[0].as_rule() == Rule::EOI)
+                {
+                    found_body = true; // Empty function body is valid
+                }
+
+                for body_item in inner_rules {
                     match body_item.as_rule() {
                         Rule::setup_block => {
                             _found_setup = true;

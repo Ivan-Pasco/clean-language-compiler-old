@@ -363,11 +363,15 @@ impl CodeGenerator {
         }
 
         // Also process the start function if it exists
+        println!("DEBUG: Checking if program has start_function: {}", program.start_function.is_some());
         if let Some(start_function) = &program.start_function {
+            println!("DEBUG: Found start function '{}', preparing its type", start_function.name);
             self.prepare_function_type(start_function)?;
             // Store start function definition for default parameter handling
             self.function_definitions
                 .insert(start_function.name.clone(), start_function.clone());
+        } else {
+            println!("DEBUG: No start function in program");
         }
 
         // ------------------------------------------------------------------
@@ -436,11 +440,15 @@ impl CodeGenerator {
         }
 
         // Also generate the start function if it exists
+        println!("DEBUG: About to generate start function if it exists");
         if let Some(start_function) = &program.start_function {
+            println!("DEBUG: Generating start function '{}'", start_function.name);
             self.generate_function(start_function)?;
 
             // After generating start function, track its final result for get_result function
             self.track_start_function_result(start_function)?;
+        } else {
+            println!("DEBUG: No start function to generate");
         }
 
         // ------------------------------------------------------------------
@@ -470,9 +478,14 @@ impl CodeGenerator {
         // ------------------------------------------------------------------
         // 7. Export the start function (if it exists)
         // ------------------------------------------------------------------
+        println!("DEBUG: Looking for start function in function_map...");
+        println!("DEBUG: function_map keys: {:?}", self.function_map.keys().collect::<Vec<_>>());
         if let Some(&start_index) = self.function_map.get("start") {
+            println!("DEBUG: Found start function at index {}, exporting it", start_index);
             self.export_section
                 .export("start", ExportKind::Func, start_index);
+        } else {
+            println!("DEBUG: No start function found in function_map");
         }
 
         // Always export memory for debugging/inspection
@@ -1129,6 +1142,13 @@ impl CodeGenerator {
         location: &Option<SourceLocation>,
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
+        println!(
+            "DEBUG: generate_variable_decl_statement for '{}' with type {:?}",
+            name, type_
+        );
+        if let Some(init) = initializer {
+            println!("DEBUG: Variable '{}' has initializer: {:?}", name, init);
+        }
         let specified_type = WasmType::from(type_);
 
         let (var_type, init_instructions) = if let Some(init_expr) = initializer {
@@ -1138,7 +1158,16 @@ impl CodeGenerator {
 
             let target_type = specified_type;
 
+            println!(
+                "DEBUG: Variable '{}' assignment - init_type: {:?}, target_type: {:?}",
+                name, init_type, target_type
+            );
+
             if !self.types_compatible(&init_type, &target_type) {
+                println!(
+                    "DEBUG: Types not compatible! init_type: {:?}, target_type: {:?}",
+                    init_type, target_type
+                );
                 return Err(CompilerError::type_error(
                     format!("Initializer type {init_type:?} does not match specified type {target_type:?} for variable '{name}'"),
                     None, location.clone()
@@ -1865,6 +1894,34 @@ impl CodeGenerator {
                     }
                 }
 
+                // Check if this is a namespace function call like conditional.integer(), compare.integer.greaterThan(), etc.
+                if let Expression::Variable(namespace) = object.as_ref() {
+                    if matches!(namespace.as_str(), "conditional" | "compare" | "logical") {
+                        // This is a namespace function call - treat as namespace.function(args)
+                        let full_function_name = format!("{}.{}", namespace, method);
+
+                        // Generate arguments
+                        for arg in arguments {
+                            self.generate_expression(arg, instructions)?;
+                        }
+
+                        // Find the function index
+                        if let Some(function_index) = self.get_function_index(&full_function_name) {
+                            instructions.push(Instruction::Call(function_index));
+                            return Ok(self.get_function_return_type_by_name(&full_function_name));
+                        } else {
+                            return Err(CompilerError::codegen_error(
+                                format!("Namespace function '{}' not found", full_function_name),
+                                Some(format!(
+                                    "Function '{}' may not be registered in the standard library",
+                                    full_function_name
+                                )),
+                                None,
+                            ));
+                        }
+                    }
+                }
+
                 // Check if this is a type conversion method only if not a class method
                 if self.is_type_conversion_method(method) {
                     println!("DEBUG: Processing type conversion method '{method}' via generate_type_conversion_method");
@@ -1964,7 +2021,68 @@ impl CodeGenerator {
                 if let Expression::Variable(module_name) = object.as_ref() {
                     match module_name.as_str() {
                         "http" | "math" | "array" | "string" | "file" | "list" => {
-                            let function_name = format!("{module_name}.{method}");
+                            let mut function_name = format!("{module_name}.{method}");
+
+                            // Special handling for polymorphic math.abs - determine the correct function variant
+                            if function_name == "math.abs" && !arguments.is_empty() {
+                                println!(
+                                    "DEBUG: Processing math.abs with {} arguments in MethodCall",
+                                    arguments.len()
+                                );
+                                // Determine the argument type to select correct math.abs variant
+                                let arg_type = match &arguments[0] {
+                                    Expression::Variable(name) => {
+                                        // Look up variable type in variable_types
+                                        if let Some(var_type) = self.variable_types.get(name) {
+                                            match var_type {
+                                                Type::Integer => WasmType::I32,
+                                                Type::Number => WasmType::F64,
+                                                Type::IntegerSized { bits: 64, .. } => WasmType::I64,
+                                                Type::IntegerSized { bits: 32, .. } => WasmType::I32,
+                                                Type::NumberSized { bits: 64 } => WasmType::F64,
+                                                Type::NumberSized { bits: 32 } => WasmType::F32,
+                                                _ => WasmType::I32, // Default to I32 for other types
+                                            }
+                                        } else {
+                                            WasmType::I32 // Default fallback
+                                        }
+                                    }
+                                    Expression::Literal(Value::Integer(_)) => WasmType::I32,
+                                    Expression::Literal(Value::Number(_)) => WasmType::F64,
+                                    Expression::Literal(Value::Integer64(_)) => WasmType::I64,
+                                    Expression::Unary(UnaryOperator::Negate, inner_expr) => {
+                                        // Handle unary negation - determine type of inner expression
+                                        match inner_expr.as_ref() {
+                                            Expression::Literal(Value::Integer(_)) => WasmType::I32,
+                                            Expression::Literal(Value::Number(_)) => WasmType::F64,
+                                            _ => WasmType::I32, // Default to I32
+                                        }
+                                    }
+                                    _ => {
+                                        // For complex expressions, try to infer the type
+                                        match self.generate_expression(&arguments[0], &mut Vec::new()) {
+                                            Ok(wasm_type) => wasm_type,
+                                            Err(_) => WasmType::I32, // Default fallback
+                                        }
+                                    }
+                                };
+
+                                // Select the appropriate math.abs function based on argument type
+                                function_name = match arg_type {
+                                    WasmType::I32 => {
+                                        println!("DEBUG: Selected math.abs.i32 for I32 argument in MethodCall");
+                                        "math.abs.i32".to_string()
+                                    }
+                                    WasmType::F64 => {
+                                        println!("DEBUG: Selected math.abs for F64 argument in MethodCall");
+                                        "math.abs".to_string()
+                                    }
+                                    WasmType::I64 => "math.abs".to_string(), // Use F64 version for I64
+                                    WasmType::F32 => "math.abs".to_string(), // Use F64 version for F32
+                                    WasmType::V128 | WasmType::Unit => "math.abs".to_string(), // Default to F64 version
+                                };
+                                println!("DEBUG: Final function name in MethodCall: {}", function_name);
+                            }
 
                             // Generate arguments
                             for arg in arguments {
@@ -2862,8 +2980,38 @@ impl CodeGenerator {
                 class_name,
                 method,
                 arguments,
-                location: _,
+                location,
             } => {
+                // Check if this is actually a property access pattern like obj.prop.method()
+                if class_name.contains('.') {
+                    let parts: Vec<&str> = class_name.split('.').collect();
+                    if parts.len() == 2 {
+                        let obj_name = parts[0];
+                        let property_name = parts[1];
+
+                        // Check if the first part looks like a variable name (not a class name)
+                        let looks_like_variable =
+                            obj_name.chars().next().map_or(false, |c| c.is_lowercase());
+
+                        if looks_like_variable {
+                            // Convert to property access + method call
+                            let obj_expr = Expression::Variable(obj_name.to_string());
+                            let property_access = Expression::PropertyAccess {
+                                object: Box::new(obj_expr),
+                                property: property_name.to_string(),
+                                location: location.clone(),
+                            };
+                            let method_call = Expression::MethodCall {
+                                object: Box::new(property_access),
+                                method: method.clone(),
+                                arguments: arguments.clone(),
+                                location: location.clone(),
+                            };
+                            return self.generate_expression(&method_call, instructions);
+                        }
+                    }
+                }
+
                 // Handle static method calls - ClassName.method()
 
                 // Check if this is a built-in system class first
@@ -3288,7 +3436,62 @@ impl CodeGenerator {
                 location: _,
             } => {
                 // Handle namespace function calls like string.startsWith(), math.sqrt(), etc.
-                let full_function_name = format!("{}.{}", namespace, function);
+                let mut full_function_name = format!("{}.{}", namespace, function);
+
+                // Special handling for polymorphic math.abs - determine the correct function variant
+                if full_function_name == "math.abs" && !arguments.is_empty() {
+                    println!(
+                        "DEBUG: Processing math.abs with {} arguments",
+                        arguments.len()
+                    );
+                    // Determine the argument type to select correct math.abs variant
+                    let arg_type = match &arguments[0] {
+                        Expression::Variable(name) => {
+                            // Look up variable type in variable_types
+                            if let Some(var_type) = self.variable_types.get(name) {
+                                match var_type {
+                                    Type::Integer => WasmType::I32,
+                                    Type::Number => WasmType::F64,
+                                    Type::IntegerSized { bits: 64, .. } => WasmType::I64,
+                                    Type::IntegerSized { bits: 32, .. } => WasmType::I32,
+                                    Type::NumberSized { bits: 64 } => WasmType::F64,
+                                    Type::NumberSized { bits: 32 } => WasmType::F32,
+                                    _ => WasmType::I32, // Default to I32 for other types
+                                }
+                            } else {
+                                WasmType::I32 // Default fallback
+                            }
+                        }
+                        Expression::Literal(Value::Integer(_)) => WasmType::I32,
+                        Expression::Literal(Value::Number(_)) => WasmType::F64,
+                        Expression::Literal(Value::Integer64(_)) => WasmType::I64,
+                        _ => {
+                            // For complex expressions, try to infer the type
+                            match self.generate_expression(&arguments[0], &mut Vec::new()) {
+                                Ok(wasm_type) => wasm_type,
+                                Err(_) => WasmType::I32, // Default fallback
+                            }
+                        }
+                    };
+
+                    // Select the appropriate math.abs function based on argument type
+                    full_function_name = match arg_type {
+                        WasmType::I32 => {
+                            println!("DEBUG: Selected math.abs.i32 for I32 argument");
+                            "math.abs.i32".to_string()
+                        }
+                        WasmType::F64 => {
+                            println!("DEBUG: Selected math.abs for F64 argument");
+                            "math.abs".to_string()
+                        }
+                        WasmType::I64 => "math.abs".to_string(), // Use F64 version for I64
+                        WasmType::F32 => "math.abs".to_string(), // Use F64 version for F32
+                        WasmType::V128 | WasmType::Unit => "math.abs".to_string(), // Default to F64 version
+                    };
+                    println!("DEBUG: Final function name: {}", full_function_name);
+                }
+
+                let return_type = self.get_function_return_type_by_name(&full_function_name);
 
                 // Generate arguments
                 for arg in arguments {
@@ -3298,10 +3501,7 @@ impl CodeGenerator {
                 // Find the function index
                 if let Some(function_index) = self.get_function_index(&full_function_name) {
                     instructions.push(Instruction::Call(function_index));
-
-                    // Return the correct type based on the function name mapping
-                    // This is more reliable than the function signature lookup
-                    Ok(self.get_function_return_type_by_name(&full_function_name))
+                    Ok(return_type)
                 } else {
                     Err(CompilerError::codegen_error(
                         format!("Namespace function '{}' not found", full_function_name),
@@ -3327,6 +3527,10 @@ impl CodeGenerator {
         type_hint: Option<&Type>,
         instructions: &mut Vec<Instruction>,
     ) -> Result<WasmType, CompilerError> {
+        println!(
+            "DEBUG: generate_expression_with_type_hint called with expr: {:?}",
+            expr
+        );
         match expr {
             Expression::Literal(value) => {
                 match value {
@@ -4137,8 +4341,17 @@ impl CodeGenerator {
             Err(e) => println!("DEBUG: Conditional operations registration failed: {:?}", e),
         }
 
+        // 15. Register HTTP operations
+        println!("DEBUG: About to register HTTP operations");
+        match self.register_http_operations() {
+            Ok(()) => println!("DEBUG: HTTP operations registered successfully"),
+            Err(e) => println!("DEBUG: HTTP operations registration failed: {:?}", e),
+        }
+
         // 11. Register math operations - TEST THIS ONE
+        println!("DEBUG: About to register math operations");
         self.register_math_operations()?;
+        println!("DEBUG: Math operations registered successfully");
 
         Ok(())
     }
@@ -4593,7 +4806,6 @@ impl CodeGenerator {
     }
 
     /// Register HTTP operation functions using HttpClass
-    #[allow(dead_code)]
     fn register_http_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::http_class::HttpClass;
 
@@ -4609,9 +4821,12 @@ impl CodeGenerator {
     fn register_math_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::math_class::MathClass;
 
+        println!("DEBUG: Creating MathClass instance");
         // Create a MathClass instance and register its functions
         let math_class = MathClass::new();
+        println!("DEBUG: Calling math_class.register_functions()");
         math_class.register_functions(self)?;
+        println!("DEBUG: MathClass registration completed");
 
         Ok(())
     }
@@ -5143,12 +5358,17 @@ impl CodeGenerator {
             "http.getResponseHeaders" => WasmType::I32, // String pointer
             "http.setTimeout" | "http.setUserAgent" | "http.enableCookies" => WasmType::I32, // Void (represented as I32)
 
-            // Math functions
+            // Math functions - Note: math.abs is handled specially in generate_expression
             "math.sin" | "math.cos" | "math.tan" | "math.asin" | "math.acos" | "math.atan"
             | "math.atan2" | "math.sinh" | "math.cosh" | "math.tanh" | "math.ln" | "math.log10"
             | "math.log2" | "math.exp" | "math.exp2" | "math.sqrt" | "math.floor" | "math.ceil"
-            | "math.round" | "math.abs" | "math.min" | "math.max" | "math.mod" | "math.pi"
-            | "math.e" => WasmType::F64, // Number
+            | "math.round" | "math.min" | "math.max" | "math.mod" | "math.pi" | "math.e" => {
+                WasmType::F64
+            } // Number
+
+            // math.abs returns the same type as its input, handled specially
+            "math.abs" => WasmType::F64,     // F64 version
+            "math.abs.i32" => WasmType::I32, // I32 version
 
             // List functions
             "array.length" | "array.push" | "array.pop" | "array.indexOf" => WasmType::I32, // Integer
@@ -6149,8 +6369,10 @@ impl CodeGenerator {
                 if let Some(ref clean_type) = clean_type {
                     match clean_type {
                         crate::ast::Type::Integer => {
+                            // Try env.integer.toString first (correct I32->I32 signature), then fallback to int_to_string
                             if let Some(int_to_string_index) =
-                                self.get_function_index("int_to_string")
+                                self.get_function_index("env.integer.toString")
+                                    .or_else(|| self.get_function_index("int_to_string"))
                             {
                                 instructions.push(Instruction::Call(int_to_string_index));
                                 Ok(WasmType::I32) // String is represented as I32 pointer
@@ -6158,7 +6380,7 @@ impl CodeGenerator {
                                 Err(CompilerError::codegen_error(
                                     "Integer to string conversion function not found",
                                     Some(
-                                        "int_to_string function needs to be implemented"
+                                        "integer.toString or int_to_string function needs to be implemented"
                                             .to_string(),
                                     ),
                                     None,
@@ -6167,8 +6389,10 @@ impl CodeGenerator {
                         }
                         crate::ast::Type::IntegerSized { .. } => {
                             // Handle sized integers the same as regular integers for toString()
+                            // Try env.integer.toString first (correct I32->I32 signature), then fallback to int_to_string
                             if let Some(int_to_string_index) =
-                                self.get_function_index("int_to_string")
+                                self.get_function_index("env.integer.toString")
+                                    .or_else(|| self.get_function_index("int_to_string"))
                             {
                                 instructions.push(Instruction::Call(int_to_string_index));
                                 Ok(WasmType::I32) // String is represented as I32 pointer
@@ -6176,7 +6400,7 @@ impl CodeGenerator {
                                 Err(CompilerError::codegen_error(
                                     "Integer to string conversion function not found",
                                     Some(
-                                        "int_to_string function needs to be implemented"
+                                        "integer.toString or int_to_string function needs to be implemented"
                                             .to_string(),
                                     ),
                                     None,
@@ -6184,8 +6408,10 @@ impl CodeGenerator {
                             }
                         }
                         crate::ast::Type::Number => {
+                            // Try env.number.toString first (correct F64->I32 signature), then fallback to float_to_string
                             if let Some(float_to_string_index) =
-                                self.get_function_index("float_to_string")
+                                self.get_function_index("env.number.toString")
+                                    .or_else(|| self.get_function_index("float_to_string"))
                             {
                                 println!("DEBUG: Found float_to_string at function index {float_to_string_index}");
 
@@ -6223,16 +6449,16 @@ impl CodeGenerator {
                                 Ok(WasmType::I32) // String is represented as I32 pointer
                             } else {
                                 println!(
-                                    "ERROR: float_to_string function not found in function_map!"
+                                    "ERROR: number.toString or float_to_string function not found in function_map!"
                                 );
                                 println!(
                                     "DEBUG: Available functions: {:?}",
                                     self.function_map.keys().collect::<Vec<_>>()
                                 );
                                 Err(CompilerError::codegen_error(
-                                    "Float to string conversion function not found",
+                                    "Number to string conversion function not found",
                                     Some(
-                                        "float_to_string function needs to be implemented"
+                                        "number.toString or float_to_string function needs to be implemented"
                                             .to_string(),
                                     ),
                                     None,
@@ -6241,16 +6467,18 @@ impl CodeGenerator {
                         }
                         crate::ast::Type::NumberSized { .. } => {
                             // Handle sized numbers the same as regular numbers for toString()
+                            // Try env.number.toString first (correct F64->I32 signature), then fallback to float_to_string
                             if let Some(float_to_string_index) =
-                                self.get_function_index("float_to_string")
+                                self.get_function_index("env.number.toString")
+                                    .or_else(|| self.get_function_index("float_to_string"))
                             {
                                 instructions.push(Instruction::Call(float_to_string_index));
                                 Ok(WasmType::I32) // String is represented as I32 pointer
                             } else {
                                 Err(CompilerError::codegen_error(
-                                    "Float to string conversion function not found",
+                                    "Number to string conversion function not found",
                                     Some(
-                                        "float_to_string function needs to be implemented"
+                                        "number.toString or float_to_string function needs to be implemented"
                                             .to_string(),
                                     ),
                                     None,
@@ -6258,8 +6486,10 @@ impl CodeGenerator {
                             }
                         }
                         crate::ast::Type::Boolean => {
+                            // Try env.boolean.toString first (correct I32->I32 signature), then fallback to bool_to_string
                             if let Some(bool_to_string_index) =
-                                self.get_function_index("bool_to_string")
+                                self.get_function_index("env.boolean.toString")
+                                    .or_else(|| self.get_function_index("bool_to_string"))
                             {
                                 instructions.push(Instruction::Call(bool_to_string_index));
                                 Ok(WasmType::I32) // String is represented as I32 pointer
@@ -6267,7 +6497,7 @@ impl CodeGenerator {
                                 Err(CompilerError::codegen_error(
                                     "Boolean to string conversion function not found",
                                     Some(
-                                        "bool_to_string function needs to be implemented"
+                                        "boolean.toString or bool_to_string function needs to be implemented"
                                             .to_string(),
                                     ),
                                     None,

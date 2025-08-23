@@ -1209,6 +1209,111 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
         },
     )?;
 
+    // Method-style conversion functions
+    let debug_copy = debug;
+    linker.func_wrap(
+        "env",
+        "integer.toString",
+        move |mut caller: Caller<'_, ()>, value: i32| -> i32 {
+            let string_value = value.to_string();
+            if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+                allocate_string_in_memory(&memory, &mut caller, &string_value, debug_copy)
+            } else {
+                0
+            }
+        },
+    )?;
+
+    let debug_copy = debug;
+    linker.func_wrap(
+        "env",
+        "number.toString",
+        move |mut caller: Caller<'_, ()>, value: f64| -> i32 {
+            let string_value = value.to_string();
+            if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+                allocate_string_in_memory(&memory, &mut caller, &string_value, debug_copy)
+            } else {
+                0
+            }
+        },
+    )?;
+
+    let debug_copy = debug;
+    linker.func_wrap(
+        "env",
+        "boolean.toString",
+        move |mut caller: Caller<'_, ()>, value: i32| -> i32 {
+            let string_value = if value != 0 { "true" } else { "false" };
+            if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+                allocate_string_in_memory(&memory, &mut caller, string_value, debug_copy)
+            } else {
+                0
+            }
+        },
+    )?;
+
+    // INTEGER conversion methods
+    linker.func_wrap("env", "integer.toInteger", |value: i32| -> i32 { value })?;
+    linker.func_wrap("env", "integer.toNumber", |value: i32| -> f64 {
+        value as f64
+    })?;
+    linker.func_wrap("env", "integer.toBoolean", |value: i32| -> i32 {
+        if value != 0 {
+            1
+        } else {
+            0
+        }
+    })?;
+    linker.func_wrap("env", "integer.length", |_value: i32| -> i32 { 1 })?; // Integer length is always 1
+
+    // NUMBER conversion methods
+    linker.func_wrap("env", "number.toInteger", |value: f64| -> i32 {
+        value as i32
+    })?;
+    linker.func_wrap("env", "number.toNumber", |value: f64| -> f64 { value })?;
+    linker.func_wrap("env", "number.toBoolean", |value: f64| -> i32 {
+        if value != 0.0 {
+            1
+        } else {
+            0
+        }
+    })?;
+    linker.func_wrap("env", "number.length", |_value: f64| -> i32 { 1 })?; // Number length is always 1
+
+    // STRING conversion methods
+    linker.func_wrap(
+        "env",
+        "string.toString",
+        |value: i32| -> i32 { value }, // String toString returns itself
+    )?;
+    linker.func_wrap("env", "string.toInteger", |_ptr: i32| -> i32 { 0 })?; // Stub
+    linker.func_wrap("env", "string.toNumber", |_ptr: i32| -> f64 { 0.0 })?; // Stub
+    linker.func_wrap("env", "string.toBoolean", |_ptr: i32| -> i32 { 0 })?; // Stub
+    linker.func_wrap("env", "string.length", |_ptr: i32| -> i32 { 0 })?; // Stub
+    linker.func_wrap("env", "string.toUpperCase", |ptr: i32| -> i32 { ptr })?; // Stub - return same pointer
+    linker.func_wrap("env", "string.toLowerCase", |ptr: i32| -> i32 { ptr })?; // Stub - return same pointer
+    linker.func_wrap("env", "string.concat", |ptr1: i32, _ptr2: i32| -> i32 {
+        ptr1
+    })?; // Stub - return first pointer
+
+    // BOOLEAN conversion methods
+    linker.func_wrap("env", "boolean.toInteger", |value: i32| -> i32 {
+        if value != 0 {
+            1
+        } else {
+            0
+        }
+    })?;
+    linker.func_wrap("env", "boolean.toNumber", |value: i32| -> f64 {
+        if value != 0 {
+            1.0
+        } else {
+            0.0
+        }
+    })?;
+    linker.func_wrap("env", "boolean.toBoolean", |value: i32| -> i32 { value })?;
+    linker.func_wrap("env", "boolean.length", |_value: i32| -> i32 { 1 })?; // Boolean length is always 1
+
     linker.func_wrap(
         "env",
         "string_to_int",

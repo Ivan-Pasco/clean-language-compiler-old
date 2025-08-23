@@ -3,13 +3,13 @@
 
 functions:
 	// Standard functions with explicit parameters for now
-	greet(string name)
+	string greet(string name)
 		if name == ""
 			return "Hello, World"  // Manual default handling
 		else
 			return "Hello, " + name
 	
-	power(integer base, integer exponent)
+	integer power(integer base, integer exponent)
 		if exponent == 0
 			return 1
 		else if exponent == 1
@@ -17,7 +17,7 @@ functions:
 		else
 			return base * base  // Simple case for testing
 	
-	logMessage(string message, string level)
+	void logMessage(string message, string level)
 		if level == ""
 			print("[INFO] " + message)  // Manual default handling
 		else

@@ -12,7 +12,7 @@ impl CleanWasmtimeConfig {
         let mut config = Config::new();
 
         // Enable features required for Clean Language runtime
-        config.async_support(true); // Required for async operations
+        config.async_support(false); // Disable async for sync execution
         config.wasm_threads(true); // Required for threading support
         config.wasm_bulk_memory(true); // Required for memory operations
         config.wasm_reference_types(true); // Required for reference handling

@@ -70,12 +70,12 @@ fn compile_to_wasm(input_file: &str, output_file: &str) -> Result<CompilationRes
     })
 }
 
-/// Execute a WASM file using wasmtime
+/// Execute a WASM file using the Clean Language wasmtime runner
 fn execute_wasm(wasm_file: &str) -> Result<ExecutionResult, String> {
     let start_time = std::time::Instant::now();
 
-    let output = Command::new("wasmtime")
-        .args(&["--invoke", "start", wasm_file])
+    let output = Command::new("cargo")
+        .args(&["run", "--bin", "wasmtime_runner", wasm_file])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()

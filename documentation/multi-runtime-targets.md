@@ -4,7 +4,7 @@ This document describes the Clean Language compiler's multi-runtime support and 
 
 ## Overview
 
-The Clean Language compiler now supports multiple WebAssembly runtimes and intelligent target selection for optimized compilation:
+The Clean Language compiler supports multiple WebAssembly runtimes and intelligent target selection for optimized compilation:
 
 - **Multiple Runtime Support**: Wasmtime and Wasmer integration with automatic selection
 - **Target-Aware Compilation**: Optimized builds for web, Node.js, native, embedded, and WASI environments
@@ -251,17 +251,79 @@ pub struct Target {
 4. **Validation**: Ensure target/runtime compatibility
 5. **Compilation**: Generate optimized WebAssembly output
 
-## Feature Compatibility Matrix
+## 📊 Library Compatibility Matrix
 
-| Feature | Web | Node.js | Native | Embedded | WASI |
-|---------|-----|---------|---------|----------|------|
-| Async Support | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Threading | ✅ | ✅ | ✅ | ❌ | ❌ |
-| SIMD | ✅ | ✅ | ✅ | ❌ | ✅ |
-| File System | ❌ | ✅ | ✅ | ❌ | ✅ |
-| Network Access | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Graphics | ✅ | ❌ | ✅ | ❌ | ❌ |
-| System Calls | ❌ | ✅ | ✅ | ❌ | ✅ |
+The following matrix shows the availability of different library categories across compilation targets:
+
+| Library Category | Web | Node.js | Native | Embedded | WASI |
+|------------------|-----|---------|---------|----------|------|
+| **Core Functions** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **I/O Operations** | ⚠️ | ✅ | ✅ | ❌ | ✅ |
+| **Network Access** | ✅ | ✅ | ✅ | ❌ | ❌ |
+| **Graphics** | ✅ | ❌ | ✅ | ❌ | ❌ |
+| **Audio** | ✅ | ❌ | ✅ | ❌ | ❌ |
+| **System Calls** | ❌ | ✅ | ✅ | ❌ | ✅ |
+| **File System** | ⚠️ | ✅ | ✅ | ❌ | ✅ |
+| **Crypto** | ✅ | ✅ | ✅ | ❌ | ❌ |
+| **Database** | ✅ | ✅ | ✅ | ❌ | ❌ |
+
+**Legend:**
+- ✅ **Full Support**: Complete functionality available
+- ⚠️ **Limited Support**: Restricted or virtualized functionality
+- ❌ **Not Available**: Functionality disabled for this target
+
+### Detailed Library Breakdown by Target
+
+#### **Web Target** 🌐
+- **Core Functions**: print, memory management, type conversion
+- **I/O Functions**: Console operations, limited file operations (virtual filesystem)
+- **Network Functions**: Fetch API, WebSocket support
+- **Graphics Functions**: Canvas, WebGL support
+- **Audio Functions**: Web Audio API
+- **Crypto Functions**: Web Crypto API
+- **Database Functions**: IndexedDB, WebSQL
+- **System Functions**: No direct system access
+- **File System**: Limited to virtual filesystem
+
+#### **Node.js Target** 🟢
+- **Core Functions**: All core functionality
+- **I/O Functions**: Full file system access
+- **Network Functions**: HTTP, TCP, UDP
+- **System Functions**: Access to Node.js APIs
+- **Crypto Functions**: Node.js crypto module
+- **Database Functions**: SQLite, MongoDB, etc.
+- **Graphics Functions**: No direct graphics
+- **Audio Functions**: No direct audio
+
+#### **Native Target** 🖥️
+- **Core Functions**: All core functionality
+- **I/O Functions**: Full file system access
+- **Network Functions**: All network protocols
+- **Graphics Functions**: OpenGL, Vulkan, DirectX
+- **Audio Functions**: ALSA, PulseAudio, Core Audio
+- **System Functions**: Direct OS system calls
+- **Crypto Functions**: Native crypto libraries
+- **Database Functions**: All database systems
+
+#### **Embedded Target** 🔌
+- **Core Functions**: Basic core functionality
+- **I/O Functions**: Minimal I/O
+- **Network Functions**: No networking
+- **Graphics Functions**: No graphics
+- **Audio Functions**: No audio
+- **System Functions**: No system access
+- **Crypto Functions**: No crypto
+- **Database Functions**: No database
+
+#### **WASI Target** 🔧
+- **Core Functions**: All core functionality
+- **I/O Functions**: WASI I/O operations
+- **System Functions**: WASI system calls
+- **Network Functions**: Not in current WASI spec
+- **Graphics Functions**: No graphics
+- **Audio Functions**: No audio
+- **Crypto Functions**: No crypto
+- **Database Functions**: No database
 
 ## Performance Considerations
 

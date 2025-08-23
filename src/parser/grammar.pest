@@ -122,20 +122,20 @@ static_class_identifier = { "Math" | "String" | "List" | "File" | "Http" | "Cons
 static_class_name = { static_class_identifier ~ ("." ~ static_class_identifier)* }
 
 // Argument expression - allows expressions in function/method arguments
-// Use unary expressions to support negative numbers and other unary operators in arguments
-argument_expression = { unary_expression }
+// Use base expressions to support all expression types in arguments
+argument_expression = { base_expression }
 argument_list = { argument_expression ~ ("," ~ argument_expression)* }
 
 function_call = { identifier ~ type_arguments? ~ "(" ~ argument_list? ~ ")" }
 
 // Method call syntax for value.method() patterns  
 method_call_base = { builtin_class_name | string | number | boolean | identifier | "(" ~ additive_expression ~ ")" }
-method_name = { "greaterThan" | "lessThan" | "equal" | "greaterEqual" | "lessEqual" | "number" | "integer" | "boolean" | "string" | "length" | "isDefined" | "isNotDefined" | "isEmpty" | "isNotEmpty" | "mustBeTrue" | "mustBeFalse" | "mustBeEqual" | "mustNotBeEqual" | "toString" | "toInteger" | "toNumber" | "toBoolean" | "keepBetween" | "yesNo" | "prompt" | "and" | "or" | "not" | identifier }
+method_name = { identifier | "greaterThan" | "lessThan" | "equal" | "greaterEqual" | "lessEqual" | "number" | "integer" | "boolean" | "string" | "length" | "isDefined" | "isNotDefined" | "isEmpty" | "isNotEmpty" | "mustBeTrue" | "mustBeFalse" | "mustBeEqual" | "mustNotBeEqual" | "toString" | "toInteger" | "toNumber" | "toBoolean" | "keepBetween" | "yesNo" | "prompt" | "and" | "or" | "not" }
 method_call_segment = { "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
 method_call = { method_call_base ~ method_call_segment+ }
 
-// Chained method calls - allows method calls on function/static call results
-chained_method_call = { (static_method_call | function_call) ~ method_call_segment+ }
+// Chained method calls - allows method calls on function call results and property access
+chained_method_call = { (property_access | function_call) ~ method_call_segment+ }
 
 // Three-level chained method call: namespace.class.method() patterns (most specific)
 three_level_method_call = { identifier ~ "." ~ identifier ~ "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
@@ -157,8 +157,8 @@ primary = {
     property_method_call |
     chained_method_call |
     method_call |
-    static_method_call |
     function_call |
+    static_method_call |
     start_expr |
     number |
     boolean |
@@ -287,7 +287,8 @@ function_body = {
     (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block ~ (NEWLINE ~ (empty_line)*)* ~ function_statements) | 
     (NEWLINE ~ (empty_line)* ~ function_statements) |
     (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block) |
-    (NEWLINE ~ (empty_line)*) // Allow empty function body
+    (NEWLINE ~ (empty_line)*) | // Allow empty function body with newline
+    EOI // Allow empty function body at end of file
 }
 
 // Function statements - statements inside function body  

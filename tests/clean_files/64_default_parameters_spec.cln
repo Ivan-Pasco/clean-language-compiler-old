@@ -3,23 +3,23 @@
 
 functions:
 	// Test 1: Basic default parameters
-	greet(string name = "World")
+	string greet(string name = "World")
 		return "Hello, " + name + "!"
 	
 	// Test 2: Multiple default parameters
-	formatMessage(string text = "Default", string prefix = ">> ", boolean uppercase = false)
+	string formatMessage(string text = "Default", string prefix = ">> ", boolean uppercase = false)
 		if uppercase
 			return prefix + text.toUpperCase()
 		else
 			return prefix + text
 	
 	// Test 3: Mixed required and default parameters
-	power(integer base, integer exponent = 2)
+	integer power(integer base, integer exponent = 2)
 		// Default exponent of 2 for squaring
 		return base ^ exponent
 	
 	// Test 4: Function with input block and defaults
-	calculateArea()
+	integer calculateArea()
 		description "Calculate area with default dimensions"
 		input
 			integer width = 10
@@ -27,7 +27,7 @@ functions:
 		return width * height
 	
 	// Test 5: Complex default values
-	processData(string data, string separator = ", ", integer maxLength = 100)
+	string processData(string data, string separator = ", ", integer maxLength = 100)
 		// Simulate processing with defaults
 		if data.length() > maxLength
 			return data.substring(0, maxLength) + "..."

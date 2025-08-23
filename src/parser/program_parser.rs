@@ -9,8 +9,9 @@ pub fn parse_program_ast(pair: Pair<Rule>) -> Result<Program, CompilerError> {
     match pair.as_rule() {
         Rule::program => {
             let mut functions = Vec::new();
+            let mut start_function = None;
 
-            // Extract all functions
+            // Extract all functions and start function
             for inner_pair in pair.into_inner() {
                 match inner_pair.as_rule() {
                     Rule::functions_block => {
@@ -21,7 +22,8 @@ pub fn parse_program_ast(pair: Pair<Rule>) -> Result<Program, CompilerError> {
                     Rule::start_function => {
                         // Parse start function using the existing parser_impl
                         let function = parser_impl::parse_start_function(inner_pair)?;
-                        functions.push(function);
+                        println!("DEBUG PROGRAM_PARSER: Found start function '{}'", function.name);
+                        start_function = Some(function);
                     }
                     Rule::class_decl => {
                         // Classes are handled in a different part of the parser
@@ -35,13 +37,16 @@ pub fn parse_program_ast(pair: Pair<Rule>) -> Result<Program, CompilerError> {
                 }
             }
 
+            println!("DEBUG PROGRAM_PARSER: Creating program with {} functions, start_function = {:?}", 
+                     functions.len(), start_function.as_ref().map(|f| &f.name));
+            
             // Create and return the Program
             Ok(Program {
                 imports: Vec::new(),
                 statements: Vec::new(),
                 functions,
                 classes: Vec::new(),
-                start_function: None,
+                start_function,
                 tests: Vec::new(),
                 location: None,
             })

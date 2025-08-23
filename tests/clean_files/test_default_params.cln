@@ -1,10 +1,10 @@
 // Test default parameters
 
 functions:
-	greet(string name)
+	string greet(string name)
 		return "Hello, " + name
 	
-	add(integer a, integer b)
+	integer add(integer a, integer b)
 		return a + b
 
 start()

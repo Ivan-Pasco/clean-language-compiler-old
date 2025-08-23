@@ -2,10 +2,7 @@ pub mod optimization;
 pub mod target_config;
 
 use crate::error::CompilerError;
-use crate::runtime::runtime_trait::{RuntimeConfig, RuntimeType};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fmt;
+use crate::runtime::runtime_trait::RuntimeConfig;
 
 pub use optimization::*;
 pub use target_config::*;

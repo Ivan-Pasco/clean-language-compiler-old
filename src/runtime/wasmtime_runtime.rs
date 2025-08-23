@@ -108,14 +108,14 @@ impl WebAssemblyRuntime for WasmtimeRuntime {
                 let func_name = parts[1];
 
                 // Convert function signature
-                let params: Vec<ValType> = host_func
+                let _params: Vec<ValType> = host_func
                     .signature
                     .params
                     .iter()
                     .map(|p| value_type_to_wasmtime_type(*p))
                     .collect();
 
-                let results: Vec<ValType> = host_func
+                let _results: Vec<ValType> = host_func
                     .signature
                     .results
                     .iter()
@@ -225,6 +225,7 @@ fn value_type_to_wasmtime_type(value_type: ValueType) -> ValType {
 }
 
 #[cfg(feature = "wasmtime-runtime")]
+#[allow(dead_code)]
 fn wasmtime_value_to_runtime_value(value: &Val) -> RuntimeValue {
     match value {
         Val::I32(v) => RuntimeValue::I32(*v),
@@ -236,6 +237,7 @@ fn wasmtime_value_to_runtime_value(value: &Val) -> RuntimeValue {
 }
 
 #[cfg(feature = "wasmtime-runtime")]
+#[allow(dead_code)]
 fn runtime_value_to_wasmtime_value(value: &RuntimeValue) -> Val {
     match value {
         RuntimeValue::I32(v) => Val::I32(*v),

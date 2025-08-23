@@ -228,13 +228,20 @@ impl RuntimeType {
         // For now, prefer Wasmtime as it's more mature
         // In the future, we could add platform-specific logic
         #[cfg(feature = "wasmtime-runtime")]
-        return RuntimeType::Wasmtime;
+        {
+            return RuntimeType::Wasmtime;
+        }
 
         #[cfg(feature = "wasmer-runtime")]
-        return RuntimeType::Wasmer;
+        {
+            return RuntimeType::Wasmer;
+        }
 
         // This should never happen due to default feature
-        RuntimeType::Wasmtime
+        #[cfg(not(any(feature = "wasmtime-runtime", feature = "wasmer-runtime")))]
+        {
+            RuntimeType::Wasmtime
+        }
     }
 
     /// Get human-readable name
