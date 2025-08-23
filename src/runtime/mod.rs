@@ -20,7 +20,7 @@ pub mod wasmtime_config;
 // New runtime abstraction modules
 pub mod runtime_manager;
 pub mod runtime_trait;
-pub mod wasmer_config;
+// pub mod wasmer_config;  // Wasmer runtime support temporarily disabled
 pub mod wasmtime_runtime;
 
 // Note: async_tests module removed due to missing implementation

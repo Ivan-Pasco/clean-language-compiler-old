@@ -232,10 +232,11 @@ impl RuntimeType {
             return RuntimeType::Wasmtime;
         }
 
-        #[cfg(feature = "wasmer-runtime")]
-        {
-            return RuntimeType::Wasmer;
-        }
+        // Wasmer runtime support is currently disabled
+        // #[cfg(feature = "wasmer-runtime")]
+        // {
+        //     return RuntimeType::Wasmer;
+        // }
 
         // This should never happen due to default feature
         #[cfg(not(any(feature = "wasmtime-runtime", feature = "wasmer-runtime")))]
