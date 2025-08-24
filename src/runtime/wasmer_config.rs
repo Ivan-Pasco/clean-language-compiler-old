@@ -17,6 +17,7 @@ pub struct WasmerRuntime;
 #[cfg(feature = "wasmer-runtime")]
 impl WasmerRuntime {
     /// Create a configured Cranelift compiler based on runtime configuration
+    #[allow(dead_code)]
     fn create_configured_compiler(config: &RuntimeConfig) -> wasmer::Cranelift {
         use wasmer::{Cranelift, CraneliftOptLevel};
 
@@ -38,6 +39,7 @@ impl WasmerRuntime {
     }
 
     /// Create a store with proper configuration
+    #[allow(dead_code)]
     fn create_configured_store(config: &RuntimeConfig) -> Store {
         let compiler = Self::create_configured_compiler(config);
         Store::new(compiler)
@@ -218,6 +220,7 @@ fn value_type_to_wasmer_type(value_type: ValueType) -> wasmer::Type {
 }
 
 #[cfg(feature = "wasmer-runtime")]
+#[allow(dead_code)]
 fn wasmer_value_to_runtime_value(value: &wasmer::Value) -> RuntimeValue {
     match value {
         wasmer::Value::I32(v) => RuntimeValue::I32(*v),
@@ -229,6 +232,7 @@ fn wasmer_value_to_runtime_value(value: &wasmer::Value) -> RuntimeValue {
 }
 
 #[cfg(feature = "wasmer-runtime")]
+#[allow(dead_code)]
 fn runtime_value_to_wasmer_value(value: &RuntimeValue) -> wasmer::Value {
     match value {
         RuntimeValue::I32(v) => wasmer::Value::I32(*v),
