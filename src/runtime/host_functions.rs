@@ -1001,12 +1001,12 @@ fn register_math_functions(linker: &mut Linker<()>) -> Result<(), CompilerError>
 
 /// Memory Management Functions
 fn register_memory_functions(linker: &mut Linker<()>) -> Result<(), CompilerError> {
-    // mem_alloc(size: i32, alignment: i32) -> i32
+    // mem_alloc(type_id: i32, size: i32) -> i32
     linker
         .func_wrap(
             "memory_runtime",
             "mem_alloc",
-            |mut caller: Caller<'_, ()>, size: i32, alignment: i32| -> i32 {
+            |mut caller: Caller<'_, ()>, _type_id: i32, size: i32| -> i32 {
                 if size <= 0 {
                     return 0;
                 }
@@ -1017,7 +1017,8 @@ fn register_memory_functions(linker: &mut Linker<()>) -> Result<(), CompilerErro
                         // Get current memory size in bytes
                         let current_size = memory.data_size(&caller) as i32;
 
-                        // Align the allocation
+                        // Align the allocation (use a default alignment of 8 bytes)
+                        let alignment = 8;
                         let aligned_size = ((size + alignment - 1) / alignment) * alignment;
 
                         // Simple bump allocator - start after initial 4KB reserved space

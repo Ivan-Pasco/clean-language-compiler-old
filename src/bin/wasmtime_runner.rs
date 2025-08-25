@@ -299,10 +299,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap(
         "memory_runtime",
         "mem_alloc",
-        |size: i32, type_id: i32| -> i32 {
+        |type_id: i32, size: i32| -> i32 {
             println!(
-                "🔍 DEBUG: mem_alloc called with size: {}, type_id: {}",
-                size, type_id
+                "🔍 DEBUG: mem_alloc called with type_id: {}, size: {}",
+                type_id, size
             );
             // Return a mock pointer for allocation
             1024 + size // Simple mock allocation

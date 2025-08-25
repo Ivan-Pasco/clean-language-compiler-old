@@ -134,7 +134,64 @@ impl WasmGenerator {
 
     /// Pre-populate function types for runtime functions
     fn add_runtime_function_types(&mut self) {
-        // Do nothing here - types will be added as needed
+        // Define common runtime function signatures that need to be available
+        // These are the core types used throughout the standard library and runtime
+
+        let common_runtime_types = vec![
+            // Memory management functions
+            (vec![ValType::I32, ValType::I32], vec![ValType::I32]), // mem_alloc: (type_id, size) -> address
+            (vec![ValType::I32], vec![]),                           // mem_retain: (address) -> ()
+            (vec![ValType::I32], vec![]),                           // mem_release: (address) -> ()
+            (vec![], vec![ValType::I32]), // mem_collect: () -> freed_count
+            (vec![ValType::I32], vec![ValType::I32]), // mem_get_ref_count: (address) -> ref_count
+            // Console I/O functions
+            (vec![ValType::I32], vec![]), // print: (str_ptr) -> ()
+            (vec![ValType::I32], vec![]), // printl: (str_ptr) -> ()
+            (vec![], vec![ValType::I32]), // input: () -> str_ptr
+            (vec![], vec![ValType::I32]), // input_integer: () -> i32
+            (vec![], vec![ValType::F64]), // input_float: () -> f64
+            (vec![], vec![ValType::I32]), // input_yesno: () -> bool
+            (vec![ValType::I32, ValType::I32], vec![ValType::I32]), // input_range: (min, max) -> i32
+            // File I/O functions
+            (vec![ValType::I32, ValType::I32], vec![ValType::I32]), // file_write: (path_ptr, content_ptr) -> success
+            (vec![ValType::I32], vec![ValType::I32]), // file_read: (path_ptr) -> content_ptr
+            (vec![ValType::I32], vec![ValType::I32]), // file_exists: (path_ptr) -> exists
+            (vec![ValType::I32], vec![ValType::I32]), // file_delete: (path_ptr) -> success
+            (vec![ValType::I32, ValType::I32], vec![ValType::I32]), // file_append: (path_ptr, content_ptr) -> success
+            // HTTP networking functions
+            (vec![ValType::I32], vec![ValType::I32]), // http_get: (url_ptr) -> response_ptr
+            (vec![ValType::I32, ValType::I32], vec![ValType::I32]), // http_post: (url_ptr, data_ptr) -> response_ptr
+            (vec![ValType::I32, ValType::I32], vec![ValType::I32]), // http_put: (url_ptr, data_ptr) -> response_ptr
+            (vec![ValType::I32, ValType::I32], vec![ValType::I32]), // http_patch: (url_ptr, data_ptr) -> response_ptr
+            (vec![ValType::I32], vec![ValType::I32]), // http_delete: (url_ptr) -> response_ptr
+            // String conversion functions
+            (vec![ValType::I32], vec![ValType::I32]), // int_to_string: (value) -> str_ptr
+            (vec![ValType::F64], vec![ValType::I32]), // float_to_string: (value) -> str_ptr
+            (vec![ValType::I32], vec![ValType::I32]), // bool_to_string: (value) -> str_ptr
+            (vec![ValType::I32], vec![ValType::I32]), // string_to_int: (str_ptr) -> value
+            (vec![ValType::I32], vec![ValType::F64]), // string_to_float: (str_ptr) -> value
+            // Basic arithmetic operations
+            (vec![], vec![]),                                       // void: () -> ()
+            (vec![ValType::I32], vec![ValType::I32]),               // unary_i32: (x) -> result
+            (vec![ValType::F64], vec![ValType::F64]),               // unary_f64: (x) -> result
+            (vec![ValType::I32, ValType::I32], vec![ValType::I32]), // binary_i32: (x, y) -> result
+            (vec![ValType::F64, ValType::F64], vec![ValType::F64]), // binary_f64: (x, y) -> result
+        ];
+
+        // Add all common runtime types to the type mapping
+        for (param_types, return_types) in common_runtime_types {
+            let unique_key = (param_types.clone(), return_types.clone());
+
+            if !self.runtime_function_type_map.contains_key(&unique_key) {
+                let type_idx = self.next_type_idx;
+                self.runtime_function_type_map.insert(unique_key, type_idx);
+
+                // Also add to function_types for backward compatibility
+                self.function_types.insert(param_types, type_idx);
+
+                self.next_type_idx += 1;
+            }
+        }
     }
 
     /// Emit all collected function types to the type section  
@@ -801,7 +858,7 @@ impl WasmGenerator {
                 "mem_alloc",
                 vec![ValType::I32, ValType::I32],
                 vec![ValType::I32],
-            ), // (size, type_id) -> address
+            ), // (type_id, size) -> address
             ("mem_retain", vec![ValType::I32], vec![]), // (address) -> ()
             ("mem_release", vec![ValType::I32], vec![]), // (address) -> ()
             ("mem_collect", vec![], vec![ValType::I32]), // () -> freed_count

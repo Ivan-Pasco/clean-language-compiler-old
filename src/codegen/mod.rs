@@ -6,8 +6,8 @@ use wasm_encoder::{
 };
 
 use crate::ast::{
-    self, BinaryOperator, Class, Expression, Function as AstFunction, Program, SourceLocation,
-    Statement, Type, UnaryOperator, Value,
+    self, BinaryOperator, Class, Expression, Function as AstFunction, Pattern, Program,
+    SourceLocation, Statement, Type, UnaryOperator, Value,
 };
 use crate::error::CompilerError;
 
@@ -252,7 +252,12 @@ impl CodeGenerator {
         self.register_http_imports()?;
 
         // 1.4. Register type conversion imports - CRITICAL for runtime functionality
+        println!("DEBUG: About to register type conversion imports");
         self.register_type_conversion_imports()?;
+        println!(
+            "DEBUG: Type conversion imports registered. Type manager now has {} function types",
+            self.type_manager.get_function_types().len()
+        );
 
         // ------------------------------------------------------------------
         // 2. Register method-style functions as imports AFTER type conversion imports
@@ -600,6 +605,16 @@ impl CodeGenerator {
     /// Assemble the final WebAssembly module
     fn assemble_module(&mut self) -> Result<Vec<u8>, CompilerError> {
         let mut module = Module::new();
+
+        // Debug: Check what's in the type manager
+        println!(
+            "DEBUG: Type manager has {} function types",
+            self.type_manager.get_function_types().len()
+        );
+        println!(
+            "DEBUG: Type section function count: {}",
+            self.type_manager.get_type_section().len()
+        );
 
         // Add sections in the correct order
         module.section(&self.type_manager.clone_type_section());
@@ -1112,22 +1127,111 @@ impl CodeGenerator {
             Statement::While {
                 condition, body, ..
             } => {
-                // While loop - generate loop instructions
+                // While loop - generate WASM loop/block structure
+                // Pattern: (block (loop (condition) (br_if 1) (body) (br 0)))
+
+                // Start block (for breaking out of loop)
+                instructions.push(Instruction::Block(BlockType::Empty));
+
+                // Start loop (for continuing loop)
+                instructions.push(Instruction::Loop(BlockType::Empty));
+
+                // Generate condition
                 self.generate_expression(condition, instructions)?;
-                // TODO: Implement actual while loop code generation
+
+                // If condition is false (i32 0), break out of the block (exit loop)
+                instructions.push(Instruction::I32Eqz); // Invert condition (true if should exit)
+                instructions.push(Instruction::BrIf(1)); // Break to outer block if condition false
+
+                // Generate loop body
                 for stmt in body {
                     self.generate_statement(stmt, instructions)?;
                 }
+
+                // Continue loop (branch back to loop start)
+                instructions.push(Instruction::Br(0)); // Branch back to loop
+
+                // End loop
+                instructions.push(Instruction::End);
+
+                // End block
+                instructions.push(Instruction::End);
             }
 
             Statement::Match { value, cases, .. } => {
-                // Match statement - generate switch-like code
+                // Match statement - generate WASM if-else chain for pattern matching
+                // Generate value to match against
                 self.generate_expression(value, instructions)?;
-                // TODO: Implement actual match code generation
-                for case in cases {
+
+                if cases.is_empty() {
+                    // No cases - just drop the value from stack
+                    instructions.push(Instruction::Drop);
+                    return Ok(());
+                }
+
+                // For each case, generate: (value_copy == pattern) ? execute_body : try_next_case
+                for (case_index, case) in cases.iter().enumerate() {
+                    if case_index > 0 {
+                        // For cases after the first, duplicate the match value
+                        instructions.push(Instruction::LocalTee(self.get_or_create_temp_local()?));
+                    }
+
+                    // Generate pattern comparison based on pattern type
+                    match &case.pattern {
+                        Pattern::Literal(value) => {
+                            // Generate literal value to compare against
+                            match value {
+                                Value::Integer(n) => {
+                                    instructions.push(Instruction::I32Const((*n) as i32))
+                                }
+                                Value::Number(n) => instructions.push(Instruction::F64Const(*n)),
+                                Value::Boolean(b) => {
+                                    instructions.push(Instruction::I32Const(if *b { 1 } else { 0 }))
+                                }
+                                _ => {
+                                    // For complex values, generate a comparison expression
+                                    self.generate_expression(
+                                        &Expression::Literal(value.clone()),
+                                        instructions,
+                                    )?;
+                                }
+                            }
+                            instructions.push(Instruction::I32Eq); // Compare value == pattern
+                        }
+                        Pattern::Wildcard => {
+                            // Wildcard pattern (catch-all) - always true
+                            instructions.push(Instruction::Drop); // Drop the value
+                            instructions.push(Instruction::I32Const(1)); // Push true
+                        }
+                        _ => {
+                            // For other pattern types, treat as wildcard for now
+                            // TODO: Implement more sophisticated pattern matching
+                            instructions.push(Instruction::Drop); // Drop the value
+                            instructions.push(Instruction::I32Const(1)); // Push true
+                        }
+                    }
+
+                    // Generate conditional execution
+                    instructions.push(Instruction::If(BlockType::Empty));
+
+                    // Generate case body
                     for stmt in &case.body {
                         self.generate_statement(stmt, instructions)?;
                     }
+
+                    // If this is not the last case, need to skip other cases
+                    if case_index < cases.len() - 1 {
+                        // Branch to end of match statement
+                        let branch_depth = (cases.len() - case_index - 1) as u32;
+                        instructions.push(Instruction::Br(branch_depth));
+                    }
+
+                    instructions.push(Instruction::End); // End if
+                }
+
+                // Clean up any remaining values on stack
+                if cases.len() > 1 {
+                    instructions.push(Instruction::Drop); // Drop the match value if still on stack
                 }
             }
 
@@ -2831,7 +2935,10 @@ impl CodeGenerator {
                                     self.get_function_index(&class_method_name)
                                 {
                                     instructions.push(Instruction::Call(method_index));
-                                    return Ok(WasmType::I32); // TODO: Get actual return type
+                                    // Get actual return type from function signature
+                                    return Ok(
+                                        self.get_function_return_type_by_name(&class_method_name)
+                                    );
                                 }
                             }
                         }
@@ -2839,16 +2946,8 @@ impl CodeGenerator {
                         // Try to find a global function with the method name (method dispatch)
                         if let Some(method_index) = self.get_function_index(method) {
                             instructions.push(Instruction::Call(method_index));
-                            // TODO: Get actual return type from semantic analysis
-                            // For now, return I32 for string methods, F64 for number methods
-                            if method.contains("get")
-                                || method.contains("Name")
-                                || method.contains("String")
-                            {
-                                return Ok(WasmType::I32); // String pointer
-                            } else {
-                                return Ok(WasmType::F64); // Number
-                            }
+                            // Get actual return type from function signature
+                            return Ok(self.get_function_return_type_by_name(method));
                         }
 
                         // Try to find a function with the method name (fallback for arrays)
@@ -5398,17 +5497,81 @@ impl CodeGenerator {
             "array.contains" => WasmType::I32, // Boolean (as I32)
 
             // String functions
-            "string.length" | "string.indexOf" | "string.lastIndexOf" | "string.compare" => {
-                WasmType::I32
-            } // Integer
+            "string.length" | "string.indexOf" | "string.lastIndexOf" | "string.compare"
+            | "string.charCodeAt" => WasmType::I32, // Integer
             "string.concat" | "string.substring" | "string.toUpperCase" | "string.toLowerCase"
-            | "string.trim" | "string.replace" => WasmType::I32, // String pointer
-            "string.startsWith" | "string.endsWith" | "string.contains" => WasmType::I32, // Boolean (as I32)
+            | "string.trim" | "string.replace" | "string.replaceAll" | "string.split"
+            | "string.join" | "string.padStart" | "string.padEnd" | "string.trimStart"
+            | "string.trimEnd" | "string.charAt" | "string.toString" => WasmType::I32, // String pointer
+            "string.startsWith"
+            | "string.endsWith"
+            | "string.contains"
+            | "string.isEmpty"
+            | "string.isNotEmpty"
+            | "string.isBlank"
+            | "string.isDefined"
+            | "string.isNotDefined" => WasmType::I32, // Boolean (as I32)
 
             // File functions
             "file.read" => WasmType::I32, // String pointer
             "file.write" | "file.append" | "file.delete" => WasmType::I32, // Integer (success/failure)
             "file.exists" => WasmType::I32,                                // Boolean (as I32)
+
+            // Memory management functions
+            "mem_alloc" => WasmType::I32,         // Returns pointer
+            "mem_collect" => WasmType::I32,       // Returns count
+            "mem_get_ref_count" => WasmType::I32, // Returns reference count
+            "mem_retain" | "mem_release" => WasmType::I32, // Void (as I32)
+
+            // Type conversion functions
+            "int_to_string" | "float_to_string" | "bool_to_string" => WasmType::I32, // String pointer
+            "string_to_int" | "int_to_float" | "float_to_int" | "byte_to_int" | "int_to_byte" => {
+                WasmType::I32
+            }
+            "string_to_float" => WasmType::F64,
+            "i32_to_f64" => WasmType::F64,
+            "f64_to_i32" | "i32_to_i64" | "i64_to_i32" => WasmType::I32,
+
+            // Console I/O functions
+            "print" | "printl" => WasmType::I32, // Void (as I32)
+            "input" => WasmType::I32,            // String pointer
+            "input.integer" | "input.range" => WasmType::I32,
+            "input.number" => WasmType::F64,
+            "input.yesNo" => WasmType::I32, // Boolean
+
+            // Comparison and logical functions
+            name if name.starts_with("compare.") => WasmType::I32, // Boolean result
+            name if name.starts_with("logical.") => WasmType::I32, // Boolean result
+
+            // Conditional functions
+            name if name.starts_with("conditional.") => match name {
+                "conditional.number" => WasmType::F64,
+                _ => WasmType::I32,
+            },
+
+            // List operations
+            name if name.contains("list.") || name.contains("List.") => match name {
+                "list.size" | "list.length" => WasmType::I32,
+                "list.isEmpty" | "list.isNotEmpty" | "list.contains" => WasmType::I32, // Boolean
+                "list.get" | "list.peek" | "list.remove" | "list.pop" => WasmType::I32,
+                "list.allocate" | "list.add" | "list.set" => WasmType::I32,
+                _ => WasmType::I32,
+            },
+
+            // Class method patterns (handle names like "Person_getName", "Rectangle_getArea")
+            name if name.contains('_') => {
+                if name.contains("get") && (name.contains("Name") || name.contains("String")) {
+                    WasmType::I32 // String getter
+                } else if name.contains("get")
+                    && (name.contains("Area") || name.contains("Volume") || name.contains("Length"))
+                {
+                    WasmType::F64 // Numeric getter
+                } else if name.contains("is") || name.contains("has") || name.contains("can") {
+                    WasmType::I32 // Boolean predicate
+                } else {
+                    WasmType::I32 // Default for class methods
+                }
+            }
 
             // Default case
             _ => WasmType::I32, // Default to I32 for unknown functions
@@ -7044,6 +7207,13 @@ impl CodeGenerator {
         local_index
     }
 
+    // Helper method to get or create a temporary local for intermediate values
+    fn get_or_create_temp_local(&mut self) -> Result<u32, CompilerError> {
+        // Check if we already have a temp local for this function
+        // For now, just create a new i32 local each time (could be optimized)
+        Ok(self.add_local_variable(WasmType::I32))
+    }
+
     pub fn get_expression_type(&mut self, expr: &Expression) -> Result<WasmType, CompilerError> {
         // This is a simplified implementation - in a full implementation this would
         // analyze the expression to determine its type
@@ -7987,7 +8157,7 @@ impl CodeGenerator {
     #[allow(dead_code)]
     fn register_type_conversion_imports(&mut self) -> Result<(), CompilerError> {
         // CRITICAL: Register memory allocation function FIRST to ensure correct indices
-        // mem_alloc(size: i32, type_id: i32) -> i32 (returns pointer)
+        // mem_alloc(type_id: i32, size: i32) -> i32 (returns pointer)
         let mem_alloc_type =
             self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
         self.import_section.import(
