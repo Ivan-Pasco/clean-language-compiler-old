@@ -1099,14 +1099,14 @@ fn register_memory_functions(linker: &mut Linker<()>) -> Result<(), CompilerErro
             )
         })?;
 
-    // mem_release(ptr: i32) - Reference counting decrement
+    // mem_release(ptr: i32) - Reference counting decrement (void return)
     linker
         .func_wrap(
             "memory_runtime",
             "mem_release",
-            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, ()>, ptr: i32| {
                 if ptr <= 0 {
-                    return 0; // Invalid pointer, return false (no deallocation needed)
+                    return; // Invalid pointer, nothing to do
                 }
 
                 // Access WebAssembly memory to update reference count
@@ -1134,15 +1134,12 @@ fn register_memory_functions(linker: &mut Linker<()>) -> Result<(), CompilerErro
                                 let new_bytes = ref_count.to_le_bytes();
                                 ref_count_bytes.copy_from_slice(&new_bytes);
 
-                                // Return 1 if object should be deallocated (ref_count reached 0)
-                                if ref_count == 0 {
-                                    return 1;
-                                }
+                                // If ref_count reaches 0, the memory could be marked for collection
+                                // but we'll let the WASM-side handle deallocation logic
                             }
                         }
                     }
                 }
-                0 // Return false (no deallocation needed)
             },
         )
         .map_err(|e| {
