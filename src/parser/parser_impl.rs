@@ -391,9 +391,7 @@ impl ErrorRecoveringParser {
                     {
                         Ok(pairs) => Some(parse_start_function(pairs.into_iter().next().unwrap())?),
                         Err(_) => {
-                            println!(
-                                "DEBUG: Failed to parse start function, continuing without it"
-                            );
+                            // Failed to parse start function, continuing without it
                             None
                         }
                     }
@@ -487,19 +485,10 @@ impl ErrorRecoveringParser {
 
     fn parse_internal(&mut self, source: &str) -> Result<Program, CompilerError> {
         let trimmed_source = source.trim();
-        println!("DEBUG PARSE_INTERNAL: About to parse with Rule::program");
         let pairs = <CleanParser as Parser<Rule>>::parse(Rule::program, trimmed_source)
             .map_err(|e| crate::error::ErrorUtils::from_pest_error(e, source, &self.file_path))?;
 
-        println!("DEBUG PARSE_INTERNAL: About to call parse_program_ast");
         let result = parse_program_ast(pairs);
-        println!(
-            "DEBUG PARSE_INTERNAL: parse_program_ast returned, start_function present: {}",
-            result
-                .as_ref()
-                .map(|p| p.start_function.is_some())
-                .unwrap_or(false)
-        );
         result
     }
 }
@@ -541,19 +530,13 @@ pub fn parse_with_file(source: &str, file_path: &str) -> Result<Program, Compile
         Err(pest_error) => {
             // If traditional parsing fails, use recovery parsing instead of preprocessing
             let error_msg = pest_error.to_string();
-            println!("DEBUG: Traditional parsing failed ({error_msg}), trying recovery parsing");
 
             // Use recovery parsing which handles both classes and functions correctly
             match super::CleanParser::parse_program_with_recovery(source, file_path) {
                 Ok(program) => {
-                    println!("DEBUG: Recovery parsing succeeded!");
                     Ok(program)
                 }
                 Err(errors) => {
-                    println!(
-                        "DEBUG: Recovery parsing also failed with {} errors",
-                        errors.len()
-                    );
                     // Return the first error from recovery parsing, or the original error if recovery had no errors
                     if let Some(first_error) = errors.first() {
                         Err(first_error.clone())
@@ -571,21 +554,14 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
     // Check if this is a functions block and use preprocessing for consistency
     // Look for functions: anywhere in the source, potentially after comments
     if source.contains("functions:") {
-        println!("DEBUG: Detected functions block, using direct preprocessing for consistency");
 
         // Use direct preprocessing for all functions blocks to avoid grammar parsing issues
         let preprocessor = super::preprocessor::FunctionPreprocessor::new(source);
         match preprocessor.process_functions_block(source) {
             Ok(functions) => {
-                println!(
-                    "DEBUG: Direct preprocessing succeeded, found {} functions",
-                    functions.len()
-                );
 
                 // Also look for start function in the source
-                println!("DEBUG: Looking for start function in preprocessing path");
                 let start_function = if let Some(start_match) = source.find("start()") {
-                    println!("DEBUG: Found start() at position {}", start_match);
                     // Extract the start function text
                     let start_source = &source[start_match..];
                     // Find the end of the start function (next top-level item or end of file)
@@ -621,10 +597,6 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                     }
 
                     let start_source_text = start_function_lines.join("\n");
-                    println!(
-                        "DEBUG: Extracted start function text: {:?}",
-                        start_source_text
-                    );
 
                     match <CleanParser as Parser<Rule>>::parse(
                         Rule::start_function,
@@ -633,25 +605,18 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                         Ok(pairs) => {
                             match parse_start_function(pairs.into_iter().next().unwrap()) {
                                 Ok(func) => {
-                                    println!(
-                                        "DEBUG: Successfully parsed start function '{}'",
-                                        func.name
-                                    );
                                     Some(func)
                                 }
                                 Err(e) => {
-                                    println!("DEBUG: Failed to parse start function: {}", e);
                                     None
                                 }
                             }
                         }
                         Err(e) => {
-                            println!("DEBUG: Failed to parse start function with grammar: {}", e);
                             None
                         }
                     }
                 } else {
-                    println!("DEBUG: No start() found in source");
                     None
                 };
 
@@ -669,7 +634,6 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                 return Ok(program);
             }
             Err(preprocess_error) => {
-                println!("DEBUG: Direct preprocessing failed: {preprocess_error}");
             }
         }
     }
@@ -677,14 +641,11 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
     // For non-functions blocks, try traditional parsing
     match <CleanParser as Parser<Rule>>::parse(Rule::program, source) {
         Ok(pairs) => {
-            println!("DEBUG: Traditional parsing succeeded in preprocessing path");
             parse_program_ast(pairs)
         }
         Err(traditional_error) => {
-            println!("DEBUG: Traditional parsing failed, no other options available");
 
             // If all else fails, return the original error
-            println!("DEBUG: All parsing attempts failed, returning error");
             Err(ErrorUtils::from_pest_error(
                 traditional_error,
                 source,
@@ -708,10 +669,6 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
                 match inner.as_rule() {
                     Rule::program_item => {
                         for program_item_inner in inner.into_inner() {
-                            println!(
-                                "DEBUG: Parsing program item: {:?}",
-                                program_item_inner.as_rule()
-                            );
                             match program_item_inner.as_rule() {
                                 Rule::import_stmt => {
                                     if let Statement::Import {
@@ -723,7 +680,6 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
                                     }
                                 }
                                 Rule::functions_block => {
-                                    println!("DEBUG: Found standalone functions_block rule (not part of class)");
                                     let block_functions =
                                         parse_functions_block(program_item_inner)?;
                                     functions.extend(block_functions);
@@ -738,12 +694,7 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
                                     start_function = Some(func);
                                 }
                                 Rule::class_decl => {
-                                    println!("DEBUG: Found class_decl rule, calling parse_class");
                                     let class = parse_class(program_item_inner)?;
-                                    println!(
-                                        "DEBUG: parse_class returned class: {class_name}",
-                                        class_name = class.name
-                                    );
                                     classes.push(class);
                                 }
                                 Rule::tests_block => {
@@ -799,19 +750,19 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
         });
     }
 
-    println!(
-        "DEBUG: Building program with {} functions, {} classes",
-        functions.len(),
-        classes.len()
-    );
-    for (i, class) in classes.iter().enumerate() {
-        println!(
-            "DEBUG: Class {}: {} with {} methods",
-            i,
-            class.name,
-            class.methods.len()
-        );
-    }
+    // println!(
+    //     "DEBUG: Building program with {} functions, {} classes",
+    //     functions.len(),
+    //     classes.len()
+    // );
+    // for (i, class) in classes.iter().enumerate() {
+    //     println!(
+    //         "DEBUG: Class {}: {} with {} methods",
+    //         i,
+    //         class.name,
+    //         class.methods.len()
+    //     );
+    // }
     let program = Program {
         imports,
         statements: Vec::new(),
@@ -939,41 +890,21 @@ pub fn parse_functions_block_with_context(
     // Extract source text for preprocessing
     let source_text = functions_block.as_str();
 
-    println!(
-        "DEBUG: parse_functions_block_with_context called with class_context: {:?}",
-        class_context.as_ref().map(|c| &c.class_name)
-    );
 
     // Try preprocessing approach first for multi-function blocks
     let preprocessor = if let Some(context) = class_context {
-        println!(
-            "DEBUG: Creating preprocessor with class context: {}",
-            context.class_name
-        );
         super::preprocessor::FunctionPreprocessor::with_class_context(source_text, context)
     } else {
-        println!("DEBUG: Creating preprocessor without class context");
         super::preprocessor::FunctionPreprocessor::new(source_text)
     };
 
     match preprocessor.process_functions_block(source_text) {
         Ok(functions) => {
             if !functions.is_empty() {
-                println!(
-                    "DEBUG: Preprocessor succeeded, found {} functions",
-                    functions.len()
-                );
-                for (i, func) in functions.iter().enumerate() {
-                    println!(
-                        "DEBUG: Function {}: {} - description: {:?}",
-                        i, func.name, func.description
-                    );
-                }
                 return Ok(functions);
             }
         }
         Err(e) => {
-            println!("DEBUG: Preprocessor failed: {e}, falling back to traditional");
         }
     }
 
@@ -984,7 +915,6 @@ pub fn parse_functions_block_with_context(
 pub fn parse_functions_block_traditional(
     functions_block: Pair<Rule>,
 ) -> Result<Vec<Function>, CompilerError> {
-    println!("DEBUG: Using traditional functions block parsing (no class context)");
     let mut functions = Vec::new();
 
     for item in functions_block.into_inner() {

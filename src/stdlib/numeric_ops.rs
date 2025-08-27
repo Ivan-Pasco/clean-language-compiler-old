@@ -537,7 +537,7 @@ impl NumericOperations {
         // pow(base, exponent) - production-ready implementation
         // Parameters: base (f64), exponent (f64)
         // Returns: base^exponent (f64)
-        
+
         vec![
             // Handle exponent == 0 case first (any number^0 = 1)
             Instruction::LocalGet(1), // exponent
@@ -576,14 +576,14 @@ impl NumericOperations {
             // For other cases, default to base^3 for now (simplified implementation)
             // This handles the common case correctly while maintaining WASM validity
             Instruction::LocalGet(0), // base
-            Instruction::LocalGet(0), // base  
+            Instruction::LocalGet(0), // base
             Instruction::F64Mul,      // base^2
             Instruction::LocalGet(0), // base
             Instruction::F64Mul,      // base^3
-            Instruction::End,   // end else for exponent != 3
-            Instruction::End,   // end else for exponent != 2  
-            Instruction::End,   // end else for exponent != 1
-            Instruction::End,   // end else for exponent != 0
+            Instruction::End,         // end else for exponent != 3
+            Instruction::End,         // end else for exponent != 2
+            Instruction::End,         // end else for exponent != 1
+            Instruction::End,         // end else for exponent != 0
         ]
     }
 

@@ -1165,7 +1165,6 @@ impl SemanticAnalyzer {
                         .take_while(|p| p.default_value.is_none())
                         .count();
                     let qualified_name = format!("{module_name}.{func_name}");
-                    println!("DEBUG: Adding function '{qualified_name}' to function table");
                     self.function_table.insert(
                         qualified_name,
                         vec![(
@@ -1221,17 +1220,6 @@ impl SemanticAnalyzer {
         let mut analyzed_program = program.clone();
         analyzed_program.classes = self.class_table.values().cloned().collect();
 
-        println!(
-            "DEBUG: Semantic analyzer returning program with {} classes",
-            analyzed_program.classes.len()
-        );
-        for class in &analyzed_program.classes {
-            println!(
-                "DEBUG: Class: {} with {} fields",
-                class.name,
-                class.fields.len()
-            );
-        }
 
         Ok(analyzed_program)
     }
@@ -1450,10 +1438,6 @@ impl SemanticAnalyzer {
     }
 
     fn check_method(&mut self, method: &Function, class: &Class) -> Result<(), CompilerError> {
-        println!(
-            "DEBUG: check_method called for method {} in class {}",
-            method.name, class.name
-        );
         self.current_function = Some(method.name.clone());
         self.current_function_return_type = Some(method.return_type.clone());
 
@@ -1520,43 +1504,20 @@ impl SemanticAnalyzer {
         // Check if this function has class context from preprocessor
         let mut class_context_found = false;
         if let Some(ref description) = function.description {
-            println!(
-                "DEBUG: Function {} has description: {}",
-                function.name, description
-            );
             if let Some(class_name) = self.extract_class_context_from_description(description) {
-                println!(
-                    "DEBUG: Found class context for function {}: {}",
-                    function.name, class_name
-                );
                 self.inject_class_fields_into_scope(&class_name)?;
                 class_context_found = true;
             } else {
-                println!(
-                    "DEBUG: No class context found in description for function {}",
-                    function.name
-                );
             }
         } else {
-            println!("DEBUG: Function {} has no description", function.name);
         }
 
         // WORKAROUND: If no class context from preprocessor, try to infer it
         // This handles cases where functions are incorrectly parsed as standalone functions
         if !class_context_found {
-            println!("DEBUG: Attempting to infer class context for function {}. Class table has {} classes",
-                function.name, self.class_table.len());
             if let Some(inferred_class) = self.infer_class_context_for_function(&function.name) {
-                println!(
-                    "DEBUG: Inferred class context for function {}: {}",
-                    function.name, inferred_class
-                );
                 self.inject_class_fields_into_scope(&inferred_class)?;
             } else {
-                println!(
-                    "DEBUG: Could not infer class context for function {}",
-                    function.name
-                );
             }
         }
 
@@ -1792,10 +1753,6 @@ impl SemanticAnalyzer {
                 };
 
                 self.class_table.insert(class_name.to_string(), class);
-                println!(
-                    "DEBUG: Added reconstructed class {} to class table",
-                    class_name
-                );
             }
         }
 
@@ -1859,15 +1816,8 @@ impl SemanticAnalyzer {
 
     /// Inject class fields into current scope (similar to check_method logic)
     fn inject_class_fields_into_scope(&mut self, class_name: &str) -> Result<(), CompilerError> {
-        println!(
-            "DEBUG: inject_class_fields_into_scope called for class: {}",
-            class_name
-        );
-
         // Get class hierarchy to include inherited fields
         let hierarchy = self.get_class_hierarchy(class_name);
-        println!("DEBUG: Class hierarchy for {class_name}: {hierarchy:?}");
-
         for class_name_in_hierarchy in hierarchy {
             if let Some(class_def) = self.class_table.get(&class_name_in_hierarchy) {
                 println!(
@@ -1876,31 +1826,20 @@ impl SemanticAnalyzer {
                     class_def.fields.len()
                 );
                 for field in &class_def.fields {
-                    println!(
-                        "DEBUG: Processing field: {} of type {:?}",
-                        field.name, field.type_
-                    );
                     // Include public fields from any class in hierarchy, or any field from current class
                     if field.visibility == Visibility::Public
                         || class_name_in_hierarchy == class_name
                     {
                         // Only add if not already defined (parameters take precedence)
                         if self.current_scope.lookup_variable(&field.name).is_none() {
-                            println!("DEBUG: Adding field {} to scope", field.name);
                             self.current_scope
                                 .define_variable(field.name.clone(), field.type_.clone());
                         } else {
-                            println!("DEBUG: Field {} already defined in scope", field.name);
                         }
                     } else {
-                        println!("DEBUG: Skipping field {} due to visibility", field.name);
                     }
                 }
             } else {
-                println!(
-                    "DEBUG: Class {} not found in class table",
-                    class_name_in_hierarchy
-                );
             }
         }
 
@@ -2187,10 +2126,7 @@ impl SemanticAnalyzer {
                 value,
                 location,
             } => {
-                println!("DEBUG: Assignment - target: {target}, value: {value:?}");
                 let value_type = self.check_expression(value)?;
-                println!("DEBUG: Assignment - value_type: {value_type:?}");
-
                 if let Some(var_type) = self.current_scope.lookup_variable(target) {
                     if !self.types_compatible(&var_type, &value_type) {
                         return Err(CompilerError::type_error(
@@ -3221,25 +3157,13 @@ impl SemanticAnalyzer {
                     // Only treat as module call if it's NOT defined as a variable in current scope
                     if self.current_scope.lookup_variable(module_name).is_none() {
                         let qualified_name = format!("{module_name}.{method}");
-                        println!(
-                            "DEBUG: Checking for function '{}' in function table",
-                            qualified_name
-                        );
                         if self.function_table.contains_key(&qualified_name) {
-                            println!(
-                                "DEBUG: Found function '{}' in function table",
-                                qualified_name
-                            );
                             return self.check_function_call(
                                 &qualified_name,
                                 arguments,
                                 Some(location.clone()),
                             );
                         } else {
-                            println!(
-                                "DEBUG: Function '{}' not found in function table",
-                                qualified_name
-                            );
                             // Check if this looks like a module method call but function not found
                             if module_name.chars().next().unwrap_or('a').is_uppercase() {
                                 return Err(CompilerError::type_error(
@@ -3818,17 +3742,11 @@ impl SemanticAnalyzer {
     ) -> Result<Type, CompilerError> {
         // Check for imported modules first before trying to resolve the object
         if let Expression::Variable(module_name) = object {
-            println!("DEBUG: Object is variable: {}", module_name);
             if let Some(ref imports) = self.current_imports.clone() {
                 if imports.resolved_imports.contains_key(module_name) {
                     // This is an imported module, check if we have a qualified function
                     let qualified_name = format!("{}.{}", module_name, method);
-                    println!(
-                        "DEBUG: Checking imported qualified function: {}",
-                        qualified_name
-                    );
                     if self.function_table.contains_key(&qualified_name) {
-                        println!("DEBUG: Found imported function: {}", qualified_name);
                         return self.check_function_call(
                             &qualified_name,
                             args,
@@ -4802,16 +4720,10 @@ impl SemanticAnalyzer {
                 arg_types.len()
             );
             for (i, arg_type) in arg_types.iter().enumerate() {
-                eprintln!("DEBUG:   arg[{}]: {:?}", i, arg_type);
             }
-            eprintln!("DEBUG: Available overloads:");
             for (i, (param_types, return_type, required_param_count)) in
                 overloads.iter().enumerate()
             {
-                eprintln!(
-                    "DEBUG:   overload[{}]: {:?} -> {:?} (required: {})",
-                    i, param_types, return_type, required_param_count
-                );
             }
 
             for (param_types, return_type, required_param_count) in &overloads {
@@ -4871,11 +4783,6 @@ impl SemanticAnalyzer {
                         location,
                     )
                 })?;
-
-            eprintln!(
-                "DEBUG: Selected overload: {:?} -> {:?}",
-                param_types, return_type
-            );
             // Parameter validation is now handled in overload resolution above
 
             Ok(return_type)

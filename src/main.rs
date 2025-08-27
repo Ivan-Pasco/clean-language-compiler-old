@@ -273,19 +273,6 @@ async fn handle_compile(
 
     let (program, use_recovery) = match CleanParser::parse_program_with_file(&source, &input) {
         Ok(program) => {
-            println!(
-                "DEBUG: Parsed program with {} functions, {} classes",
-                program.functions.len(),
-                program.classes.len()
-            );
-            for (i, class) in program.classes.iter().enumerate() {
-                println!(
-                    "DEBUG: Class {}: {} with {} methods",
-                    i,
-                    class.name,
-                    class.methods.len()
-                );
-            }
             (program, false)
         }
         Err(_parse_error) => {

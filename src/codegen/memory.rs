@@ -520,7 +520,7 @@ impl MemoryUtils {
         let len = bytes.len();
 
         // Debug: Log what we're allocating
-        eprintln!("DEBUG: Allocating '{s}' (len={len}) at address {target_addr}");
+        // eprintln!("DEBUG: Allocating '{s}' (len={len}) at address {target_addr}");
 
         // Create data segment for the string length (4 bytes, little-endian)
         let len_bytes = (len as u32).to_le_bytes().to_vec();
@@ -530,7 +530,7 @@ impl MemoryUtils {
         self.add_data_segment(target_addr + 4, bytes);
 
         // Debug: Log the bytes being written
-        eprintln!("DEBUG: Length bytes: {len_bytes:?}, Content bytes: {bytes:?}");
+        // eprintln!("DEBUG: Length bytes: {len_bytes:?}, Content bytes: {bytes:?}");
 
         // Add to string pool for consistency
         self.string_pool.insert(s.to_string(), target_addr as usize);

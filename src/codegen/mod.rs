@@ -252,12 +252,9 @@ impl CodeGenerator {
         self.register_http_imports()?;
 
         // 1.4. Register type conversion imports - CRITICAL for runtime functionality
-        println!("DEBUG: About to register type conversion imports");
+        // DEBUG: About to register type conversion imports
         self.register_type_conversion_imports()?;
-        println!(
-            "DEBUG: Type conversion imports registered. Type manager now has {} function types",
-            self.type_manager.get_function_types().len()
-        );
+        // DEBUG: Type conversion imports registered
 
         // ------------------------------------------------------------------
         // 2. Register method-style functions as imports AFTER type conversion imports
@@ -278,10 +275,7 @@ impl CodeGenerator {
         // ------------------------------------------------------------------
         // 3. Store class information and setup field maps
         // ------------------------------------------------------------------
-        println!(
-            "DEBUG: PARSE Program has {count} classes",
-            count = program.classes.len()
-        );
+        // DEBUG: PARSE Program has classes
         for class in &program.classes {
             println!(
                 "DEBUG: PARSE Class '{}' has constructor: {}",
@@ -368,10 +362,7 @@ impl CodeGenerator {
         }
 
         // Also process the start function if it exists
-        println!(
-            "DEBUG: Checking if program has start_function: {}",
-            program.start_function.is_some()
-        );
+        // DEBUG: Checking if program has start_function
         if let Some(start_function) = &program.start_function {
             println!(
                 "DEBUG: Found start function '{}', preparing its type",
@@ -490,10 +481,7 @@ impl CodeGenerator {
         // 7. Export the start function (if it exists)
         // ------------------------------------------------------------------
         println!("DEBUG: Looking for start function in function_map...");
-        println!(
-            "DEBUG: function_map keys: {:?}",
-            self.function_map.keys().collect::<Vec<_>>()
-        );
+        // DEBUG: function_map keys
         if let Some(&start_index) = self.function_map.get("start") {
             println!(
                 "DEBUG: Found start function at index {}, exporting it",
@@ -896,11 +884,7 @@ impl CodeGenerator {
 
         // CRITICAL DEBUG: Show all instructions for the start function
         if function.name == "start" {
-            println!("🔥 CRITICAL DEBUG: Complete start function instruction sequence:");
-            for (i, instruction) in instructions.iter().enumerate() {
-                println!("  {i}: {instruction:?}");
-            }
-            println!("🔥 END start function instructions\n");
+            // Debug instruction sequence printing disabled
         }
 
         // Add to code section

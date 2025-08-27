@@ -704,19 +704,13 @@ fn parse_source(
 
 fn execute_wasm_file(wasm_file: &str) -> Result<(), CompilerError> {
     println!("⚡ Executing {wasm_file}");
-    println!("DEBUG: About to read WASM file...");
 
     // Read the WASM file
     let wasm_bytes = fs::read(wasm_file).map_err(|e| {
         CompilerError::io_error(format!("Failed to read WASM file: {e}"), None, None)
     })?;
-    println!(
-        "DEBUG: WASM file read successfully, {} bytes",
-        wasm_bytes.len()
-    );
 
     // Use synchronous execution with standardized wasmtime configuration
-    println!("DEBUG: Starting WASM execution...");
     run_wasm_sync(&wasm_bytes)
 }
 
@@ -724,7 +718,6 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
     use wasmtime::{Linker, Module, Store};
 
     // Use full Clean Language wasmtime configuration for execution
-    println!("DEBUG: Creating engine...");
     let engine =
         clean_language_compiler::runtime::wasmtime_config::CleanWasmtimeConfig::create_engine()?;
 
@@ -733,7 +726,6 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
 
     // Create linker and register host functions FIRST
     let mut linker = Linker::new(&engine);
-    println!("DEBUG: Registering host functions...");
     clean_language_compiler::runtime::host_functions::register_all_host_functions(&mut linker)
         .map_err(|e| {
             CompilerError::runtime_error(
@@ -742,23 +734,17 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
                 None,
             )
         })?;
-    println!("DEBUG: Host functions registered successfully");
 
     // Create a module from the bytes
-    println!("DEBUG: Creating module from WASM bytes...");
-    println!("DEBUG: WASM bytes length: {}", wasm_bytes.len());
     let module = Module::new(&engine, wasm_bytes).map_err(|e| {
-        println!("DEBUG: Module creation failed with error: {}", e);
         CompilerError::runtime_error(
             format!("Failed to create WebAssembly module: {e}"),
             None,
             None,
         )
     })?;
-    println!("DEBUG: Module created successfully");
 
     // Instantiate the module
-    println!("DEBUG: Instantiating module...");
     let instance = linker.instantiate(&mut store, &module).map_err(|e| {
         CompilerError::runtime_error(
             format!("Failed to instantiate WebAssembly module: {e}"),
@@ -766,7 +752,6 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
             None,
         )
     })?;
-    println!("DEBUG: Module instantiated successfully");
 
     // Call the start function
     if let Some(start_func) = instance.get_func(&mut store, "start") {

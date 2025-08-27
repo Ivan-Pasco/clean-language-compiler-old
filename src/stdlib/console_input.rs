@@ -492,9 +492,8 @@ impl ConsoleInputManager {
             Instruction::I32Const(0),
             Instruction::I32GtU, // str_len > 0
             Instruction::If(wasm_encoder::BlockType::Empty),
-            
             // Basic digit parsing for first character
-            Instruction::LocalGet(2), // first_char
+            Instruction::LocalGet(2),  // first_char
             Instruction::I32Const(48), // '0' ASCII
             Instruction::I32Sub,       // Convert ASCII digit to numeric value
             Instruction::LocalSet(1),  // Store as result (simplified single-digit parsing)

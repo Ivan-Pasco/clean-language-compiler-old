@@ -524,21 +524,18 @@ impl ListClass {
             // In a full implementation, this would check index < list.length
             Instruction::LocalGet(0), // list_ptr
             Instruction::LocalGet(1), // index
-            
             // Calculate element address: list_ptr + header_size + (index * element_size)
-            Instruction::I32Const(4), // element size (i32)
-            Instruction::I32Mul,      // index * element_size
+            Instruction::I32Const(4),  // element size (i32)
+            Instruction::I32Mul,       // index * element_size
             Instruction::I32Const(12), // list header size (length + capacity + element_size)
-            Instruction::I32Add,      // + header_size
-            Instruction::I32Add,      // + list_ptr
-            
+            Instruction::I32Add,       // + header_size
+            Instruction::I32Add,       // + list_ptr
             // Load the element value before removal
             Instruction::I32Load(MemArg {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
             }),
-            
             // TODO: Implement actual element removal (shifting remaining elements)
             // For now, just return the loaded value
         ]

@@ -38,12 +38,6 @@ fn allocate_string_in_memory(
     // Store string content
     data[offset + 4..offset + 4 + string_bytes.len()].copy_from_slice(string_bytes);
 
-    println!(
-        "📝 DEBUG: Allocated '{}' (len={}) at address {}",
-        string_value,
-        string_bytes.len(),
-        offset
-    );
 
     offset as i32
 }
@@ -78,7 +72,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "env",
         "print",
         |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-            println!("\n🔍 DEBUG: print() called with ptr={ptr}, len={len}");
 
             let mem = match caller.get_export("memory") {
                 Some(Extern::Memory(mem)) => mem,
@@ -96,11 +89,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            println!("🔍 DEBUG: Raw bytes at ptr {ptr}: {data:?}");
 
             match std::str::from_utf8(data) {
                 Ok(s) => {
-                    println!("🔍 DEBUG: Decoded string: '{s}'");
                     print!("{}", s);
                 }
                 Err(_) => print!("[invalid utf8: {} bytes]", len),
@@ -252,9 +243,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "env",
         "float_to_string",
         |mut caller: Caller<'_, ()>, value: f64| -> i32 {
-            println!("🔍 DEBUG: float_to_string called with value = {value}");
             let string_value = value.to_string();
-            println!("🔍 DEBUG: Converted to string: '{string_value}'");
 
             // CRITICAL DEBUG: Check if the function is even being called
             println!(
@@ -266,7 +255,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(memory) = caller.get_export("memory") {
                 if let Some(memory) = memory.into_memory() {
                     let result = allocate_string_in_memory(&memory, &mut caller, &string_value);
-                    println!("🔍 DEBUG: float_to_string returning address {result}");
                     return result;
                 }
             }
@@ -300,22 +288,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "memory_runtime",
         "mem_alloc",
         |type_id: i32, size: i32| -> i32 {
-            println!(
-                "🔍 DEBUG: mem_alloc called with type_id: {}, size: {}",
-                type_id, size
-            );
             // Return a mock pointer for allocation
             1024 + size // Simple mock allocation
         },
     )?;
 
     linker.func_wrap("memory_runtime", "mem_retain", |ptr: i32| {
-        println!("🔍 DEBUG: mem_retain called with ptr: {}", ptr);
         // Mock retain - does nothing
     })?;
 
     linker.func_wrap("memory_runtime", "mem_release", |ptr: i32| {
-        println!("🔍 DEBUG: mem_release called with ptr: {}", ptr);
         // Mock release - does nothing
     })?;
 
@@ -324,7 +306,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "env",
         "integer.toString",
         |mut caller: Caller<'_, ()>, value: i32| -> i32 {
-            println!("🔍 DEBUG: integer.toString called with value: {}", value);
             let string_value = value.to_string();
 
             // Get memory to store the string
@@ -355,7 +336,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "env",
         "number.toString",
         |mut caller: Caller<'_, ()>, value: f64| -> i32 {
-            println!("🔍 DEBUG: number.toString called with value: {}", value);
             let string_value = value.to_string();
 
             // Get memory to store the string
@@ -392,7 +372,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "env",
         "boolean.toString",
         |mut caller: Caller<'_, ()>, value: i32| -> i32 {
-            println!("🔍 DEBUG: boolean.toString called with value: {}", value);
             let string_value = if value != 0 { "true" } else { "false" };
 
             // Get memory to store the string
