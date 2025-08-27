@@ -143,14 +143,14 @@ impl TypeConvOperations {
         //     self.generate_int_to_string_function(),
         // )?;
 
-        // Float to string conversion - required for .toString() method calls
-        register_stdlib_function(
-            codegen,
-            "float_to_string",
-            &params_to_types(&[(WasmType::F64, "value".to_string())]),
-            Some(WasmType::I32),
-            self.generate_float_to_string_function(),
-        )?;
+        // Float to string conversion - DISABLED to use host function instead
+        // register_stdlib_function(
+        //     codegen,
+        //     "float_to_string",
+        //     &params_to_types(&[(WasmType::F64, "value".to_string())]),
+        //     Some(WasmType::I32),
+        //     self.generate_float_to_string_function(),
+        // )?;
 
         // Add a separate number_to_string for explicit F64 conversion
         register_stdlib_function(

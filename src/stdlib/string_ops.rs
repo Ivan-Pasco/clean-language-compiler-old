@@ -1047,9 +1047,8 @@ impl StringOperations {
             Instruction::I32Const(20), // header size + padding
             Instruction::I32Add,
             Instruction::I32Const(STRING_TYPE_ID.try_into().unwrap()), // type_id
-            // FIXED: Replaced problematic Call(0) with placeholder
-            // This needs proper mem_alloc function index
-            Instruction::I32Const(0), // PLACEHOLDER: Return null for now to prevent stack errors
+            // Proper memory allocation call for string creation
+            Instruction::Call(1), // mem_alloc function index for string allocation
             Instruction::LocalSet(2), // Store new string ptr
             // Copy length to new string header
             Instruction::LocalGet(2), // new string ptr
@@ -1140,9 +1139,8 @@ impl StringOperations {
             Instruction::I32Const(20), // header size + padding
             Instruction::I32Add,
             Instruction::I32Const(STRING_TYPE_ID.try_into().unwrap()), // type_id
-            // FIXED: Replaced problematic Call(0) with placeholder
-            // This needs proper mem_alloc function index
-            Instruction::I32Const(0), // PLACEHOLDER: Return null for now to prevent stack errors
+            // Proper memory allocation call for string creation
+            Instruction::Call(1), // mem_alloc function index for string allocation
             Instruction::LocalSet(2), // Store new string ptr
             // Copy length to new string header
             Instruction::LocalGet(2), // new string ptr

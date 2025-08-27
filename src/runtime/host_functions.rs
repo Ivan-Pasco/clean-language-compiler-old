@@ -265,12 +265,10 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
             "int_to_string",
             |mut caller: Caller<'_, ()>, value: i32| -> i32 {
                 let string_value = value.to_string();
-                eprintln!(
-                    "DEBUG: int_to_string called with value={}, string='{}'",
-                    value, string_value
-                );
+                // Debug logging disabled for production
+                // eprintln!("DEBUG: int_to_string called with value={}, string='{}'", value, string_value);
                 let ptr = allocate_string_in_memory(&mut caller, &string_value);
-                eprintln!("DEBUG: int_to_string returning ptr={}", ptr);
+                // eprintln!("DEBUG: int_to_string returning ptr={}", ptr);
                 ptr
             },
         )
@@ -289,12 +287,10 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
             "float_to_string",
             |mut caller: Caller<'_, ()>, value: f64| -> i32 {
                 let string_value = value.to_string();
-                eprintln!(
-                    "DEBUG: float_to_string called with value={}, string='{}'",
-                    value, string_value
-                );
+                // Debug logging disabled for production
+                // eprintln!("DEBUG: float_to_string called with value={}, string='{}'", value, string_value);
                 let ptr = allocate_string_in_memory(&mut caller, &string_value);
-                eprintln!("DEBUG: float_to_string returning ptr={}", ptr);
+                // eprintln!("DEBUG: float_to_string returning ptr={}", ptr);
                 ptr
             },
         )
@@ -1835,10 +1831,8 @@ fn allocate_string_in_memory(caller: &mut Caller<'_, ()>, string_value: &str) ->
     let string_bytes = string_value.as_bytes();
     let string_len = string_bytes.len() as i32;
 
-    eprintln!(
-        "DEBUG: allocate_string_in_memory called with string='{}', len={}",
-        string_value, string_len
-    );
+    // Debug logging disabled for production
+    // eprintln!("DEBUG: allocate_string_in_memory called with string='{}', len={}", string_value, string_len);
 
     // Allocate memory for the string (we'll store length + data)
     let total_size = 4 + string_len; // 4 bytes for length + string data
@@ -1851,7 +1845,7 @@ fn allocate_string_in_memory(caller: &mut Caller<'_, ()>, string_value: &str) ->
                 let ptr = NEXT_STRING_ALLOC;
                 NEXT_STRING_ALLOC += total_size + 4; // Add padding
 
-                eprintln!("DEBUG: Allocating {} bytes at ptr={}", total_size, ptr);
+                // eprintln!("DEBUG: Allocating {} bytes at ptr={}", total_size, ptr);
 
                 // Check if we need to grow memory first
                 let current_size = memory.data_size(&*caller) as usize;
@@ -1859,7 +1853,7 @@ fn allocate_string_in_memory(caller: &mut Caller<'_, ()>, string_value: &str) ->
 
                 if needed_size > current_size {
                     let pages_needed = ((needed_size - current_size) + 65535) / 65536;
-                    eprintln!("DEBUG: Growing memory by {} pages", pages_needed);
+                    // eprintln!("DEBUG: Growing memory by {} pages", pages_needed);
                     if memory.grow(&mut *caller, pages_needed as u64).is_err() {
                         eprintln!("ERROR: Memory growth failed");
                         return 0; // Growth failed
@@ -1877,10 +1871,7 @@ fn allocate_string_in_memory(caller: &mut Caller<'_, ()>, string_value: &str) ->
                 data[(ptr + 4) as usize..(ptr + 4 + string_len) as usize]
                     .copy_from_slice(string_bytes);
 
-                eprintln!(
-                    "DEBUG: Successfully allocated string at ptr={}, content written",
-                    ptr
-                );
+                // eprintln!("DEBUG: Successfully allocated string at ptr={}, content written", ptr);
                 return ptr;
             }
         }

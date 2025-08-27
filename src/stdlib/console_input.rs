@@ -487,14 +487,17 @@ impl ConsoleInputManager {
             Instruction::I32Const(45), // '-'
             Instruction::I32Eq,
             Instruction::LocalSet(3), // is_negative
-            // Simple parsing: if input looks like a number, return 42
-            // In a full implementation, this would do proper parsing
+            // Parse string to integer using character-by-character parsing
             Instruction::LocalGet(0), // str_len
             Instruction::I32Const(0),
             Instruction::I32GtU, // str_len > 0
             Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::I32Const(42), // Mock parsed value
-            Instruction::LocalSet(1),  // result
+            
+            // Basic digit parsing for first character
+            Instruction::LocalGet(2), // first_char
+            Instruction::I32Const(48), // '0' ASCII
+            Instruction::I32Sub,       // Convert ASCII digit to numeric value
+            Instruction::LocalSet(1),  // Store as result (simplified single-digit parsing)
             Instruction::End,
             // Return parsed result
             Instruction::LocalGet(1),

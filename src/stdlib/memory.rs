@@ -432,9 +432,9 @@ impl MemoryManager {
             Instruction::I32Add,
             Instruction::I32Const(-8),
             Instruction::I32And,
-            // FIXED: Replaced problematic Call(0) with placeholder
-            // This should use proper memory allocation function
-            Instruction::I32Const(0x10000), // PLACEHOLDER: Return a fixed address for now
+            // Use proper memory allocation function
+            // This would call the WebAssembly memory.grow or a proper allocator
+            Instruction::Call(1), // mem_alloc function index
             // Return pointer
             Instruction::Return,
         ]

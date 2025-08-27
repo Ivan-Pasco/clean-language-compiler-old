@@ -1103,8 +1103,13 @@ impl AsyncProgrammingManager {
                 align: 2,
                 memory_index: 0,
             }),
-            // Mock completed tasks count
-            Instruction::I32Const(42),
+            // Read actual completed tasks count from scheduler state
+            Instruction::I32Const(0x9000), // Task scheduler state base address
+            Instruction::I32Load(MemArg {
+                offset: 4, // Completed tasks offset in scheduler state
+                align: 2,
+                memory_index: 0,
+            }),
             Instruction::LocalSet(2), // completed_tasks
             Instruction::LocalGet(0), // stats_ptr
             Instruction::LocalGet(2), // completed_tasks
