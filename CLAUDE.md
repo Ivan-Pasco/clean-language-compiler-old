@@ -165,6 +165,32 @@ When implementing new features:
 
 3. **WORKING CODE ONLY**: All code must be production-ready and functional. If a feature cannot be fully implemented immediately, document it as a task rather than implementing a stub.
 
+### Version Management
+
+**MANDATORY SEMANTIC VERSIONING RULE**: All Clean Language compiler versions MUST follow strict semantic versioning (semver) format: `MAJOR.MINOR.PATCH`
+
+1. **Version Format**: `X.Y.Z` (e.g., `0.7.0`, `1.2.3`)
+   - **MAJOR**: Breaking changes, incompatible API changes
+   - **MINOR**: New features, backward compatible
+   - **PATCH**: Bug fixes, backward compatible
+
+2. **Forbidden Version Formats**:
+   - ❌ `0.7.0-production-wasm` (descriptive suffixes)
+   - ❌ `v0.7.0` (version prefixes)
+   - ❌ `0.7` (incomplete versioning)
+   - ❌ Any non-numeric suffixes or prefixes
+
+3. **Version Update Process**:
+   - Update `Cargo.toml` version field
+   - Ensure all references use semantic versioning
+   - Tag releases with exact version number (e.g., `0.7.0`)
+   - Update version in help text and CLI output
+
+4. **Release Naming**: Use only the semantic version number for:
+   - Git tags: `0.7.0`
+   - Binary releases: `cln-0.7.0`
+   - Documentation references: `Clean Language 0.7.0`
+
 ### Task Management
 
 1. **TASKS.md TRACKING**: When discovering any error, bug, or incomplete implementation:
