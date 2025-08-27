@@ -5,6 +5,14 @@ This document tracks the systematic elimination of all placeholder implementatio
 
 ## 🔴 CRITICAL PRIORITY - Core WASM Generation Infrastructure
 
+### Task 0.1: Fix Integer Printing Bug ✅
+**File**: `src/stdlib/type_conv.rs`  
+**Lines**: 137-144  
+**Issue**: `int_to_string` function was a broken placeholder that only handled hardcoded values (0,1,2,3,7,42) and returned "42" for all other integers, causing arithmetic programs to show incorrect results  
+**Status**: COMPLETED  
+**Assigned**: Completed 2025-08-27  
+**Solution**: Disabled the broken WASM stdlib `int_to_string` function registration and ensured the host import version from `register_type_conversion_imports()` is used instead. Host function properly converts any integer to string using Rust's `.to_string()`. All tests now pass: arithmetic expressions, integer literals, variables, and edge cases (large numbers) all print correctly.
+
 ### Task 1.1: Fix Type Section Generation ✅
 **File**: `src/codegen/wasm_generator.rs`  
 **Lines**: 136-138  

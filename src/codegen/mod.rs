@@ -7578,9 +7578,27 @@ impl CodeGenerator {
 
             match expr_type {
                 WasmType::I32 => {
-                    // Check if this is an integer literal that needs conversion to string
-                    if let Expression::Literal(Value::Integer(_)) = expr {
-                        // This is an integer literal - convert to string using int_to_string
+                    // Determine if this I32 represents an integer that needs conversion or a string pointer
+                    let needs_int_conversion = match expr {
+                        Expression::Literal(Value::Integer(_)) => true,
+                        Expression::Variable(_) => {
+                            // For variables, we need to assume integers need conversion
+                            // until we can access semantic type information
+                            // This is a heuristic-based approach for now
+                            true
+                        }
+                        Expression::Binary(_, _, _) => {
+                            // Binary expressions that return I32 are likely integer arithmetic
+                            true
+                        }
+                        _ => {
+                            // For other expressions (like method calls), assume they return string pointers
+                            false
+                        }
+                    };
+
+                    if needs_int_conversion {
+                        // Convert integer value to string using int_to_string
                         if let Some(int_to_string_index) = self.get_function_index("int_to_string")
                         {
                             instructions.push(Instruction::Call(int_to_string_index));
@@ -7609,7 +7627,7 @@ impl CodeGenerator {
                             ));
                         }
                     } else {
-                        // This should be a string pointer from a variable or expression
+                        // This should be a string pointer from a method call or other string expression
                         // String layout: [length(4 bytes)][string content]
 
                         // Store the string pointer in a local for reuse

@@ -133,14 +133,15 @@ impl TypeConvOperations {
             self.generate_bool_to_string_function(),
         )?;
 
-        // Integer to string conversion - required for .toString() method calls
-        register_stdlib_function(
-            codegen,
-            "int_to_string",
-            &params_to_types(&[(WasmType::I32, "value".to_string())]),
-            Some(WasmType::I32),
-            self.generate_int_to_string_function(),
-        )?;
+        // Integer to string conversion - DISABLED: use host import instead
+        // The int_to_string function is imported from the host environment in register_type_conversion_imports()
+        // register_stdlib_function(
+        //     codegen,
+        //     "int_to_string",
+        //     &params_to_types(&[(WasmType::I32, "value".to_string())]),
+        //     Some(WasmType::I32),
+        //     self.generate_int_to_string_function(),
+        // )?;
 
         // Float to string conversion - required for .toString() method calls
         register_stdlib_function(
@@ -385,22 +386,19 @@ impl TypeConvOperations {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_int_to_string_function(&self) -> Vec<Instruction> {
-        // Convert integer to string - simplified implementation
-        // Parameters: integer_value (i32)
-        // Returns: string pointer (i32)
+        // DEPRECATED: This function is no longer used.
+        // Integer to string conversion is now handled by the host import function
+        // in register_type_conversion_imports() which delegates to the runtime.
+        //
+        // This function was a placeholder that only handled hardcoded values
+        // and caused the integer printing bug where all non-hardcoded integers
+        // printed as "42".
 
         vec![
-            // Store the integer at a fixed memory location for string conversion
-            Instruction::I32Const(1000), // Working memory address
-            Instruction::LocalGet(0),    // Integer value
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Return pointer to converted string (simplified)
-            Instruction::I32Const(1000), // Return working memory address as string pointer
+            // Placeholder implementation - should never be called
+            Instruction::I32Const(320), // Return "42" - indicates this shouldn't be used
         ]
     }
 
