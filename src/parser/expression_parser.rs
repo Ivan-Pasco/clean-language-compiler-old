@@ -957,7 +957,7 @@ pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError
         let namespace = name[..dot_pos].to_string();
         let function = name[dot_pos + 1..].to_string();
 
-        println!("DEBUG: Parser converting function call '{}' to namespace call: namespace='{}', function='{}'", name, namespace, function);
+        // println!("DEBUG: Parser converting function call '{}' to namespace call: namespace='{}', function='{}'", name, namespace, function);
 
         Ok(Expression::NamespaceCall {
             namespace,

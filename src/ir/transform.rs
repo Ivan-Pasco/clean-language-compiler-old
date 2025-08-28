@@ -1141,15 +1141,15 @@ impl MIRToLIRTransformer {
                 // Store result if needed, or drop if unused
                 // For now, we'll check if this is a simple case where we should drop
                 let should_drop = self.should_drop_result(function_name);
-                eprintln!(
-                    "🔥 FUNCTION CALL DEBUG: '{}' -> should_drop: {}",
-                    function_name, should_drop
-                );
+                // eprintln!(
+                //     "🔥 FUNCTION CALL DEBUG: '{}' -> should_drop: {}",
+                //     function_name, should_drop
+                // );
                 if should_drop {
-                    eprintln!("🔥 ADDING DROP for function: {}", function_name);
+                    // eprintln!("🔥 ADDING DROP for function: {}", function_name);
                     instructions.push(LIRInstruction::Drop);
                 } else {
-                    eprintln!("🔥 ADDING LOCALSET for function: {}", function_name);
+                    // eprintln!("🔥 ADDING LOCALSET for function: {}", function_name);
                     instructions.push(LIRInstruction::LocalSet(*result as u32));
                 }
             }

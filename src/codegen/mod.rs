@@ -364,16 +364,16 @@ impl CodeGenerator {
         // Also process the start function if it exists
         // DEBUG: Checking if program has start_function
         if let Some(start_function) = &program.start_function {
-            println!(
-                "DEBUG: Found start function '{}', preparing its type",
-                start_function.name
-            );
+            // println!(
+            //     "DEBUG: Found start function '{}', preparing its type",
+            //     start_function.name
+            // );
             self.prepare_function_type(start_function)?;
             // Store start function definition for default parameter handling
             self.function_definitions
                 .insert(start_function.name.clone(), start_function.clone());
         } else {
-            println!("DEBUG: No start function in program");
+            // println!("DEBUG: No start function in program");
         }
 
         // ------------------------------------------------------------------
@@ -442,15 +442,15 @@ impl CodeGenerator {
         }
 
         // Also generate the start function if it exists
-        println!("DEBUG: About to generate start function if it exists");
+        // println!("DEBUG: About to generate start function if it exists");
         if let Some(start_function) = &program.start_function {
-            println!("DEBUG: Generating start function '{}'", start_function.name);
+            // println!("DEBUG: Generating start function '{}'", start_function.name);
             self.generate_function(start_function)?;
 
             // After generating start function, track its final result for get_result function
             self.track_start_function_result(start_function)?;
         } else {
-            println!("DEBUG: No start function to generate");
+            // println!("DEBUG: No start function to generate");
         }
 
         // ------------------------------------------------------------------
@@ -480,17 +480,17 @@ impl CodeGenerator {
         // ------------------------------------------------------------------
         // 7. Export the start function (if it exists)
         // ------------------------------------------------------------------
-        println!("DEBUG: Looking for start function in function_map...");
+        // println!("DEBUG: Looking for start function in function_map...");
         // DEBUG: function_map keys
         if let Some(&start_index) = self.function_map.get("start") {
-            println!(
-                "DEBUG: Found start function at index {}, exporting it",
-                start_index
-            );
+            // println!(
+            //     "DEBUG: Found start function at index {}, exporting it",
+            //     start_index
+            // );
             self.export_section
                 .export("start", ExportKind::Func, start_index);
         } else {
-            println!("DEBUG: No start function found in function_map");
+            // println!("DEBUG: No start function found in function_map");
         }
 
         // Always export memory for debugging/inspection
@@ -595,14 +595,14 @@ impl CodeGenerator {
         let mut module = Module::new();
 
         // Debug: Check what's in the type manager
-        println!(
-            "DEBUG: Type manager has {} function types",
-            self.type_manager.get_function_types().len()
-        );
-        println!(
-            "DEBUG: Type section function count: {}",
-            self.type_manager.get_type_section().len()
-        );
+        // println!(
+        //     "DEBUG: Type manager has {} function types",
+        //     self.type_manager.get_function_types().len()
+        // );
+        // println!(
+        //     "DEBUG: Type section function count: {}",
+        //     self.type_manager.get_type_section().len()
+        // );
 
         // Add sections in the correct order
         module.section(&self.type_manager.clone_type_section());
@@ -692,27 +692,27 @@ impl CodeGenerator {
 
     pub fn generate_function(&mut self, function: &AstFunction) -> Result<(), CompilerError> {
         // DEBUG: Print function name and index for stack validation debugging
-        if let Some(&func_index) = self.function_map.get(&function.name) {
-            println!(
-                "DEBUG: Generating function '{}' at index {}",
-                function.name, func_index
-            );
+        if let Some(&_func_index) = self.function_map.get(&function.name) {
+            // println!(
+            //     "DEBUG: Generating function '{}' at index {}",
+            //     function.name, func_index
+            // );
         }
 
         // WORKAROUND: Infer class context for functions that should be class methods
         // This handles cases where the parser incorrectly reconstructs class methods as standalone functions
         let inferred_class = self.infer_class_context_for_function(&function.name);
         if let Some(class_name) = inferred_class {
-            println!(
-                "DEBUG: CODEGEN Inferred class context '{}' for function '{}'",
-                class_name, function.name
-            );
+            // println!(
+            //     "DEBUG: CODEGEN Inferred class context '{}' for function '{}'",
+            //     class_name, function.name
+            // );
             self.current_class_context = Some(class_name);
         } else {
-            println!(
-                "DEBUG: CODEGEN No class context inferred for function '{}'",
-                function.name
-            );
+            // println!(
+            //     "DEBUG: CODEGEN No class context inferred for function '{}'",
+            //     function.name
+            // );
         }
 
         // Reset function state
@@ -1242,12 +1242,12 @@ impl CodeGenerator {
         location: &Option<SourceLocation>,
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
-        println!(
-            "DEBUG: generate_variable_decl_statement for '{}' with type {:?}",
-            name, type_
-        );
-        if let Some(init) = initializer {
-            println!("DEBUG: Variable '{}' has initializer: {:?}", name, init);
+        // println!(
+        //     "DEBUG: generate_variable_decl_statement for '{}' with type {:?}",
+        //     name, type_
+        // );
+        if let Some(_init) = initializer {
+            // println!("DEBUG: Variable '{}' has initializer: {:?}", name, init);
         }
         let specified_type = WasmType::from(type_);
 
@@ -1258,16 +1258,16 @@ impl CodeGenerator {
 
             let target_type = specified_type;
 
-            println!(
-                "DEBUG: Variable '{}' assignment - init_type: {:?}, target_type: {:?}",
-                name, init_type, target_type
-            );
+            // println!(
+            //     "DEBUG: Variable '{}' assignment - init_type: {:?}, target_type: {:?}",
+            //     name, init_type, target_type
+            // );
 
             if !self.types_compatible(&init_type, &target_type) {
-                println!(
-                    "DEBUG: Types not compatible! init_type: {:?}, target_type: {:?}",
-                    init_type, target_type
-                );
+                // println!(
+                //     "DEBUG: Types not compatible! init_type: {:?}, target_type: {:?}",
+                //     init_type, target_type
+                // );
                 return Err(CompilerError::type_error(
                     format!("Initializer type {init_type:?} does not match specified type {target_type:?} for variable '{name}'"),
                     None, location.clone()
@@ -2024,7 +2024,7 @@ impl CodeGenerator {
 
                 // Check if this is a type conversion method only if not a class method
                 if self.is_type_conversion_method(method) {
-                    println!("DEBUG: Processing type conversion method '{method}' via generate_type_conversion_method");
+                    // println!("DEBUG: Processing type conversion method '{method}' via generate_type_conversion_method");
                     return self.generate_type_conversion_method(object, method, instructions);
                 }
 
@@ -2176,11 +2176,11 @@ impl CodeGenerator {
                                 // Select the appropriate math.abs function based on argument type
                                 function_name = match arg_type {
                                     WasmType::I32 => {
-                                        println!("DEBUG: Selected math.abs.i32 for I32 argument in MethodCall");
+                                        // println!("DEBUG: Selected math.abs.i32 for I32 argument in MethodCall");
                                         "math.abs.i32".to_string()
                                     }
                                     WasmType::F64 => {
-                                        println!("DEBUG: Selected math.abs for F64 argument in MethodCall");
+                                        // println!("DEBUG: Selected math.abs for F64 argument in MethodCall");
                                         "math.abs".to_string()
                                     }
                                     WasmType::I64 => "math.abs".to_string(), // Use F64 version for I64
@@ -3581,18 +3581,18 @@ impl CodeGenerator {
                     // Select the appropriate math.abs function based on argument type
                     full_function_name = match arg_type {
                         WasmType::I32 => {
-                            println!("DEBUG: Selected math.abs.i32 for I32 argument");
+                            // println!("DEBUG: Selected math.abs.i32 for I32 argument");
                             "math.abs.i32".to_string()
                         }
                         WasmType::F64 => {
-                            println!("DEBUG: Selected math.abs for F64 argument");
+                            // println!("DEBUG: Selected math.abs for F64 argument");
                             "math.abs".to_string()
                         }
                         WasmType::I64 => "math.abs".to_string(), // Use F64 version for I64
                         WasmType::F32 => "math.abs".to_string(), // Use F64 version for F32
                         WasmType::V128 | WasmType::Unit => "math.abs".to_string(), // Default to F64 version
                     };
-                    println!("DEBUG: Final function name: {}", full_function_name);
+                    // println!("DEBUG: Final function name: {}", full_function_name);
                 }
 
                 let return_type = self.get_function_return_type_by_name(&full_function_name);
@@ -3631,10 +3631,10 @@ impl CodeGenerator {
         type_hint: Option<&Type>,
         instructions: &mut Vec<Instruction>,
     ) -> Result<WasmType, CompilerError> {
-        println!(
-            "DEBUG: generate_expression_with_type_hint called with expr: {:?}",
-            expr
-        );
+        // println!(
+        //     "DEBUG: generate_expression_with_type_hint called with expr: {:?}",
+        //     expr
+        // );
         match expr {
             Expression::Literal(value) => {
                 match value {
@@ -4250,7 +4250,7 @@ impl CodeGenerator {
     ) -> Result<WasmType, CompilerError> {
         match value {
             Value::Number(n) => {
-                println!("DEBUG: generate_value for Number: {n}");
+                // println!("DEBUG: generate_value for Number: {n}");
                 instructions.push(Instruction::F64Const(*n));
                 Ok(WasmType::F64)
             }
@@ -4396,9 +4396,9 @@ impl CodeGenerator {
         self.register_matrix_operations()?;
 
         // 6. Register numeric operations
-        eprintln!("DEBUG: About to register numeric operations");
+        // eprintln!("DEBUG: About to register numeric operations");
         self.register_numeric_operations()?;
-        eprintln!("DEBUG: Numeric operations registered successfully");
+        // eprintln!("DEBUG: Numeric operations registered successfully");
 
         // 7. Register array operations
         self.register_list_operations()?;
@@ -4426,36 +4426,36 @@ impl CodeGenerator {
         // self.register_math_operations()?;
 
         // 12. Register string class operations
-        eprintln!("DEBUG: About to register string class operations");
+        // eprintln!("DEBUG: About to register string class operations");
         self.register_string_class_operations()?;
-        eprintln!("DEBUG: String class operations registered successfully");
+        // eprintln!("DEBUG: String class operations registered successfully");
 
         // 13. Register method-style and list behavior operations
-        eprintln!("DEBUG: About to register method-style operations");
+        // eprintln!("DEBUG: About to register method-style operations");
         self.register_method_style_operations()?;
-        eprintln!("DEBUG: Method-style operations registered successfully");
+        // eprintln!("DEBUG: Method-style operations registered successfully");
 
         // 13. Register list class operations
         // self.register_list_class_operations()?;
 
         // 14. Register conditional operations
-        println!("DEBUG: About to register conditional operations");
+        // println!("DEBUG: About to register conditional operations");
         match self.register_conditional_operations() {
-            Ok(()) => println!("DEBUG: Conditional operations registered successfully"),
-            Err(e) => println!("DEBUG: Conditional operations registration failed: {:?}", e),
+            Ok(()) => {}, // println!("DEBUG: Conditional operations registered successfully"),
+            Err(_e) => {}, // println!("DEBUG: Conditional operations registration failed: {:?}", e),
         }
 
         // 15. Register HTTP operations
-        println!("DEBUG: About to register HTTP operations");
+        // println!("DEBUG: About to register HTTP operations");
         match self.register_http_operations() {
-            Ok(()) => println!("DEBUG: HTTP operations registered successfully"),
-            Err(e) => println!("DEBUG: HTTP operations registration failed: {:?}", e),
+            Ok(()) => {}, // println!("DEBUG: HTTP operations registered successfully"),
+            Err(_e) => {}, // println!("DEBUG: HTTP operations registration failed: {:?}", e),
         }
 
         // 11. Register math operations - TEST THIS ONE
-        println!("DEBUG: About to register math operations");
+        // println!("DEBUG: About to register math operations");
         self.register_math_operations()?;
-        println!("DEBUG: Math operations registered successfully");
+        // println!("DEBUG: Math operations registered successfully");
 
         Ok(())
     }
@@ -4925,12 +4925,12 @@ impl CodeGenerator {
     fn register_math_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::math_class::MathClass;
 
-        println!("DEBUG: Creating MathClass instance");
+        // println!("DEBUG: Creating MathClass instance");
         // Create a MathClass instance and register its functions
         let math_class = MathClass::new();
-        println!("DEBUG: Calling math_class.register_functions()");
+        // println!("DEBUG: Calling math_class.register_functions()");
         math_class.register_functions(self)?;
-        println!("DEBUG: MathClass registration completed");
+        // println!("DEBUG: MathClass registration completed");
 
         Ok(())
     }
@@ -4941,11 +4941,11 @@ impl CodeGenerator {
         use crate::stdlib::string_class::StringClass;
 
         // Create a StringClass instance and register its functions
-        eprintln!("DEBUG: Creating StringClass instance");
+        // eprintln!("DEBUG: Creating StringClass instance");
         let string_class = StringClass::new();
-        eprintln!("DEBUG: Calling string_class.register_functions()");
+        // eprintln!("DEBUG: Calling string_class.register_functions()");
         string_class.register_functions(self)?;
-        eprintln!("DEBUG: StringClass registration completed");
+        // eprintln!("DEBUG: StringClass registration completed");
 
         Ok(())
     }
@@ -5597,7 +5597,7 @@ impl CodeGenerator {
 
         // DEBUG: Print function registration info for function 75
         if function_index == 75 {
-            println!("DEBUG: Function index 75 is '{name}'");
+            // println!("DEBUG: Function index 75 is '{name}'");
         }
 
         // Register with instruction_generator for internal tracking
@@ -5660,68 +5660,68 @@ impl CodeGenerator {
 
         // DEBUG: Print function registration info for function 75
         if function_index == 75 {
-            println!("DEBUG: Function index 75 is '{name}'");
+            // println!("DEBUG: Function index 75 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 183
         if function_index == 183 {
-            println!("DEBUG: Function index 183 is '{name}'");
+            // println!("DEBUG: Function index 183 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 253
         if function_index == 253 {
-            println!("DEBUG: Function index 253 is '{name}'");
+            // println!("DEBUG: Function index 253 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 267
         if function_index == 267 {
-            println!("DEBUG: Function index 267 is '{name}'");
+            // println!("DEBUG: Function index 267 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 249
         if function_index == 249 {
-            println!("DEBUG: Function index 249 is '{name}' with params={params:?} return_type={return_type:?}");
-            println!("DEBUG: Function 249 instructions: {instructions:?}");
+            // println!("DEBUG: Function index 249 is '{name}' with params={params:?} return_type={return_type:?}");
+            // println!("DEBUG: Function 249 instructions: {instructions:?}");
         }
 
         // DEBUG: Print function registration info for function 268
         if function_index == 268 {
-            println!("DEBUG: Function index 268 is '{name}'");
+            // println!("DEBUG: Function index 268 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 269
         if function_index == 269 {
-            println!("DEBUG: Function index 269 is '{name}'");
+            // println!("DEBUG: Function index 269 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 272
         if function_index == 272 {
-            println!("DEBUG: Function index 272 is '{name}'");
+            // println!("DEBUG: Function index 272 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 277
         if function_index == 277 {
-            println!("DEBUG: Function index 277 is '{name}'");
+            // println!("DEBUG: Function index 277 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 278
         if function_index == 278 {
-            println!("DEBUG: Function index 278 is '{name}'");
+            // println!("DEBUG: Function index 278 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 284
         if function_index == 284 {
-            println!("DEBUG: Function index 284 is '{name}'");
+            // println!("DEBUG: Function index 284 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 286
         if function_index == 286 {
-            println!("DEBUG: Function index 286 is '{name}'");
+            // println!("DEBUG: Function index 286 is '{name}'");
         }
 
         // DEBUG: Print function registration info for function 295
         if function_index == 295 {
-            println!("DEBUG: Function index 295 is '{name}'");
+            // println!("DEBUG: Function index 295 is '{name}'");
         }
 
         // Register with instruction_generator for internal tracking
@@ -5781,7 +5781,7 @@ impl CodeGenerator {
         // Update other tracking data
         self.function_names.push(name.to_string());
         if name == "float_to_string" {
-            println!("DEBUG: Adding float_to_string to function_map at index {function_index} (potential DUPLICATE)");
+            // println!("DEBUG: Adding float_to_string to function_map at index {function_index} (potential DUPLICATE)");
         }
         self.function_map.insert(name.to_string(), function_index);
         self.function_count += 1;
@@ -6469,13 +6469,13 @@ impl CodeGenerator {
         instructions: &mut Vec<Instruction>,
     ) -> Result<WasmType, CompilerError> {
         // Generate the object expression first
-        println!("DEBUG: Generating object expression for toString()");
+        // println!("DEBUG: Generating object expression for toString()");
         println!(
             "DEBUG: Instructions before object generation: {} instructions",
             instructions.len()
         );
         let object_type = self.generate_expression(object, instructions)?;
-        println!("DEBUG: Object expression generated, type: {object_type:?}");
+        // println!("DEBUG: Object expression generated, type: {object_type:?}");
         println!(
             "DEBUG: Instructions after object generation: {} instructions",
             instructions.len()
@@ -6581,7 +6581,7 @@ impl CodeGenerator {
                                 .get_function_index("env.number.toString")
                                 .or_else(|| self.get_function_index("float_to_string"))
                             {
-                                println!("DEBUG: Found float_to_string at function index {float_to_string_index}");
+                                // println!("DEBUG: Found float_to_string at function index {float_to_string_index}");
 
                                 // Verify the function mapping
                                 if let Some(actual_name) = self
@@ -6599,13 +6599,13 @@ impl CodeGenerator {
                                     );
                                 }
 
-                                println!("DEBUG: About to call float_to_string - value should be 16.0 on stack");
+                                // println!("DEBUG: About to call float_to_string - value should be 16.0 on stack");
                                 println!(
                                     "DEBUG: Instructions before Call: {} instructions",
                                     instructions.len()
                                 );
                                 instructions.push(Instruction::Call(float_to_string_index));
-                                println!("DEBUG: Call instruction added to instructions");
+                                // println!("DEBUG: Call instruction added to instructions");
                                 println!(
                                     "DEBUG: Instructions after Call: {} instructions",
                                     instructions.len()
@@ -8215,10 +8215,10 @@ impl CodeGenerator {
             "float_to_string",
             wasm_encoder::EntityType::Function(float_to_string_type),
         );
-        println!(
-            "DEBUG: Importing float_to_string at function index {}",
-            self.function_count
-        );
+        // println!(
+        //     "Debug: {}",
+        //     self.function_count
+        // );
         self.function_map
             .insert("float_to_string".to_string(), self.function_count);
         self.imported_functions
@@ -8363,7 +8363,7 @@ impl CodeGenerator {
             Some(WasmType::I32),             // returns concatenated string pointer
         )?;
 
-        println!("DEBUG: Registered method-style imports for type-based method calls");
+        // println!("DEBUG: Registered method-style imports for type-based method calls");
         Ok(())
     }
 
@@ -9132,7 +9132,7 @@ impl CodeGenerator {
         // Variables will be handled by proper WASM runtime code generation
 
         self.start_function_variables.clear();
-        println!("DEBUG: Variable tracking disabled - using runtime code generation");
+        // println!("DEBUG: Variable tracking disabled - using runtime code generation");
 
         // Set minimal defaults for any legacy code that still expects these
         self.last_result_value = Some(0);

@@ -130,10 +130,10 @@ impl InstructionGenerator {
                         wasm_encoder::ValType::V128 => WasmType::V128,
                         _ => WasmType::I32,
                     };
-                    eprintln!("DEBUG: Variable '{name}' has type {wasm_type:?}");
+                    // eprintln!("DEBUG: Variable '{name}' has type {wasm_type:?}");
                     Ok(wasm_type)
                 } else {
-                    eprintln!("DEBUG: Variable '{name}' not found in locals, defaulting to I32");
+                    // eprintln!("DEBUG: Variable '{name}' not found in locals, defaulting to I32");
                     // Default to I32 if we can't determine the type
                     Ok(WasmType::I32)
                 }
@@ -1039,20 +1039,20 @@ impl InstructionGenerator {
                 }
 
                 // Try signature-based function resolution first
-                eprintln!("DEBUG: Function call '{func_name}' with arg types: {arg_types:?}");
+                // eprintln!("DEBUG: Function call '{func_name}' with arg types: {arg_types:?}");
                 let func_index = if let Some(index) =
                     self.get_function_index_by_signature(func_name, &arg_types)
                 {
-                    eprintln!("DEBUG: Found signature-based match: function[{index}]");
+                    // eprintln!("DEBUG: Found signature-based match: function[{index}]");
                     Some(index)
                 } else {
-                    eprintln!("DEBUG: No signature match, trying name-based lookup");
+                    // eprintln!("DEBUG: No signature match, trying name-based lookup");
                     // Fall back to name-based resolution for backwards compatibility
                     if let Some(index) = self.get_function_index(func_name) {
-                        eprintln!("DEBUG: Found name-based match: function[{index}]");
+                        // eprintln!("DEBUG: Found name-based match: function[{index}]");
                         Some(index)
                     } else {
-                        eprintln!("DEBUG: No function found for '{func_name}'");
+                        // eprintln!("DEBUG: No function found for '{func_name}'");
                         None
                     }
                 };
