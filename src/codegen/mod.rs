@@ -4441,15 +4441,15 @@ impl CodeGenerator {
         // 14. Register conditional operations
         // println!("DEBUG: About to register conditional operations");
         match self.register_conditional_operations() {
-            Ok(()) => {}, // println!("DEBUG: Conditional operations registered successfully"),
-            Err(_e) => {}, // println!("DEBUG: Conditional operations registration failed: {:?}", e),
+            Ok(()) => {}  // println!("DEBUG: Conditional operations registered successfully"),
+            Err(_e) => {} // println!("DEBUG: Conditional operations registration failed: {:?}", e),
         }
 
         // 15. Register HTTP operations
         // println!("DEBUG: About to register HTTP operations");
         match self.register_http_operations() {
-            Ok(()) => {}, // println!("DEBUG: HTTP operations registered successfully"),
-            Err(_e) => {}, // println!("DEBUG: HTTP operations registration failed: {:?}", e),
+            Ok(()) => {}  // println!("DEBUG: HTTP operations registered successfully"),
+            Err(_e) => {} // println!("DEBUG: HTTP operations registration failed: {:?}", e),
         }
 
         // 11. Register math operations - TEST THIS ONE

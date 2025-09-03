@@ -1,0 +1,40 @@
+// Test 79: Comprehensive HTTP Module Operations
+// Tests all HTTP methods: GET, POST, PUT, PATCH, DELETE
+
+start()
+	// Test GET request - fetch data from server
+	string getUserData = http.get("https://jsonplaceholder.typicode.com/users/1")
+	print "GET user data received: " ln
+	print getUserData ln
+	
+	// Test POST request - create new data
+	string newPostData = "{\"title\": \"Test Post\", \"body\": \"This is a test post\", \"userId\": 1}"
+	string postResponse = http.post("https://jsonplaceholder.typicode.com/posts", newPostData)
+	print "POST response: " ln
+	print postResponse ln
+	
+	// Test PUT request - update existing data
+	string updateData = "{\"id\": 1, \"title\": \"Updated Post\", \"body\": \"This post has been updated\", \"userId\": 1}"
+	string putResponse = http.put("https://jsonplaceholder.typicode.com/posts/1", updateData)
+	print "PUT response: " ln
+	print putResponse ln
+	
+	// Test PATCH request - partial update
+	string patchData = "{\"title\": \"Partially Updated Post\"}"
+	string patchResponse = http.patch("https://jsonplaceholder.typicode.com/posts/1", patchData)
+	print "PATCH response: " ln
+	print patchResponse ln
+	
+	// Test DELETE request - remove data
+	string deleteResponse = http.delete("https://jsonplaceholder.typicode.com/posts/1")
+	print "DELETE response: " ln
+	print deleteResponse ln
+	
+	// Test API endpoints
+	string allPosts = http.get("https://jsonplaceholder.typicode.com/posts")
+	print "All posts data size > 0: " + (string.length(allPosts) > 0).toString() ln
+	
+	// Test with JSON data
+	string userData = "{\"name\": \"John Doe\", \"email\": \"john@example.com\", \"username\": \"johndoe\"}"
+	string userResponse = http.post("https://jsonplaceholder.typicode.com/users", userData)
+	print "User creation response received: " + (string.length(userResponse) > 0).toString() ln

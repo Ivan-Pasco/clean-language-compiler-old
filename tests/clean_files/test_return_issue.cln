@@ -1,0 +1,7 @@
+functions:
+	integer power(integer base, integer exponent)
+		return base * exponent
+
+start()
+	integer result = power(5, 2)
+	print result.toString() ln

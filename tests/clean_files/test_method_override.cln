@@ -1,0 +1,29 @@
+class Vehicle
+    string name
+    
+    constructor(string vehicleName)
+        name = vehicleName
+    
+    functions:
+        string getInfo()
+            return name
+        
+        string startEngine()
+            return "Vehicle starting..."
+
+class Car is Vehicle
+    constructor(string carName)
+        base(carName)
+    
+    functions:
+        string startEngine()
+            return name + " car starting"
+
+functions:
+    void testVehicle(Vehicle vehicle)
+        print("Info: " + vehicle.getInfo()) ln
+        print("Starting: " + vehicle.startEngine()) ln
+
+start()
+    Car myCar = Car("Toyota")
+    testVehicle(myCar)

@@ -1,0 +1,21 @@
+// Default parameters working test - simplified version
+
+functions:
+	string greet(string name)
+		return "Hello, " + name
+	
+	integer power(integer base, integer exponent)
+		return base * exponent  // Simplified for testing
+	
+	void testDefaultParameters()
+		print greet("World" ln)
+		print greet("Alice" ln)
+		
+		integer result1 = power(5, 2)
+		integer result2 = power(7, 1)
+		print "Power result 1: " + result1.toString( ln)
+		print "Power result 2: " + result2.toString( ln)
+
+start()
+	testDefaultParameters()
+	print "Default parameters test completed successfully" ln

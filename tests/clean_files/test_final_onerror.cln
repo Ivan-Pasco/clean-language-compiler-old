@@ -1,0 +1,49 @@
+// Final comprehensive onError test demonstrating working implementation
+functions:
+	// Basic functions that can error
+	integer safeDivision(integer a, integer b)
+		if b == 0
+			error("Division by zero")
+		return a / b
+	
+	string getContent(string filename)
+		if filename == "missing"
+			error("File not found")
+		return "Content of " + filename
+	
+	// Test all major onError patterns
+	void testOnErrorFeatures()
+		print "=== OnError Implementation Test ===" ln
+		
+		// 1. Basic onError with integer fallback
+		print "1. Basic integer onError:" ln
+		integer result1 = safeDivision(10, 2) onError 0
+		print "   10 / 2 = " + result1.toString() ln
+		
+		integer result2 = safeDivision(10, 0) onError -1
+		print "   10 / 0 onError -1 = " + result2.toString() ln
+		
+		// 2. String onError
+		print "2. String onError:" ln
+		string content1 = getContent("test.txt") onError "default"
+		print "   Valid file: " + content1 ln
+		
+		string content2 = getContent("missing") onError "fallback content"
+		print "   Missing file: " + content2 ln
+		
+		// 3. Chained onError
+		print "3. Chained onError:" ln
+		integer chained = safeDivision(1, 0) onError safeDivision(2, 0) onError 999
+		print "   Chained fallback: " + chained.toString() ln
+		
+		// 4. OnError in expressions
+		print "4. OnError in expressions:" ln
+		integer computed = (safeDivision(8, 2) onError 5) + 10
+		print "   (8/2 onError 5) + 10 = " + computed.toString() ln
+		
+		integer computed2 = (safeDivision(8, 0) onError 5) + 10
+		print "   (8/0 onError 5) + 10 = " + computed2.toString() ln
+
+start()
+	testOnErrorFeatures()
+	print "OnError functionality test completed successfully!" ln

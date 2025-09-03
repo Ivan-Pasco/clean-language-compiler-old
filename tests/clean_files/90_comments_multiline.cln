@@ -1,0 +1,53 @@
+// Multi-line Comment Comprehensive Test
+// Tests multi-line comment syntax and placement rules
+
+/*
+This is a multi-line comment
+that spans multiple lines
+and should be properly ignored by the compiler
+*/
+
+functions:
+	void testMultilineComments()
+		print "Testing multi-line comments" ln
+		
+		/* Multi-line comment inside function */
+		integer value = 42
+		
+		/*
+		   Multi-line comment with indentation
+		   and multiple lines
+		   inside function body
+		*/
+		print "Value: " + value.toString() ln
+		
+		// Single line comment for comparison  
+		string text = "Hello" /* inline multi-line comment */ + " World"
+		print "Text: " + text ln
+		
+	void testCommentEdgeCases()
+		print "Testing comment edge cases" ln
+		
+		/* Comment at start of function */
+		integer x = 10
+		integer y = 20 /* Comment at end of line */
+		integer z = x + y
+		
+		print "Result: " + z.toString() ln
+		
+		/*
+		   Nested comment testing:
+		   /* This should not break parsing */
+		   Even with nested comment-like syntax
+		*/
+		
+		print "Comment edge cases completed" ln
+
+start()
+	print "Multi-line Comment Test" ln
+	print "======================" ln
+	testMultilineComments()
+	print "" ln
+	testCommentEdgeCases()
+	print "" ln
+	print "All multi-line comment tests passed" ln

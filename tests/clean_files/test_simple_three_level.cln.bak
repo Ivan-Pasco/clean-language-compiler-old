@@ -1,0 +1,8 @@
+// Simple test for three-level method calls
+
+start()
+	integer a = 10
+	integer b = 5
+	boolean result = compare.integer.greaterThan(a, b)
+	print "10 > 5: " ln
+	print bool_to_string(result ln)

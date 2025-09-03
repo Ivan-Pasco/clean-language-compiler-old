@@ -1,0 +1,8 @@
+// Simplest possible function test - no default parameters
+functions:
+    integer simple()
+        return 5
+
+start()
+    integer result = simple()
+    print result.toString() ln

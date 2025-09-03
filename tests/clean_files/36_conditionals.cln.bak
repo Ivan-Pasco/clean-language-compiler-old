@@ -1,0 +1,91 @@
+// Test conditional expressions and comparisons
+
+functions:
+
+	void testIntegerConditionals()
+
+		print "=== Testing Integer Conditionals ===" ln
+		integer a = 10
+		integer b = 5
+		
+		// Test basic conditional
+		boolean comparison = compare.integer.greaterThan(a, b)
+		integer result = conditional.integer(comparison, a, b)
+		print "Max of 10 and 5: " + result.toString( ln)
+		
+		// Test with equality
+		boolean isEqual = compare.integer.equal(a, a)
+		integer equal = conditional.integer(isEqual, 100, 200)
+		print "Equal test (should be 100 ln: " + equal.toString())
+		
+		// Test less than
+		boolean isLess = compare.integer.lessThan(b, a)
+		integer min = conditional.integer(isLess, b, a)
+		print "Min of 10 and 5: " + min.toString( ln)
+
+	void testNumberConditionals()
+
+		print "=== Testing Number Conditionals ===" ln
+		number x = 3.14
+		number y = 2.71
+		
+		// Test number conditional
+		boolean numComparison = compare.number.greaterThan(x, y)
+		number maxNum = conditional.number(numComparison, x, y)
+		print "Max of 3.14 and 2.71: " + maxNum.toString( ln)
+		
+		// Test number equality
+		boolean numEqual = compare.number.equal(x, x)
+		number equalNum = conditional.number(numEqual, 100.0, 200.0)
+		print "Equal test (should be 100.0 ln: " + equalNum.toString())
+
+	void testLogicalOperations()
+
+		print "=== Testing Logical Operations ===" ln
+		integer a = 10
+		integer b = 5
+		integer c = 15
+		
+		// Test logical AND
+		boolean greater = compare.integer.greaterThan(a, b)
+		boolean less = compare.integer.lessThan(a, c)
+		boolean andResult = logical.and(greater, less)
+		print "10 > 5 AND 10 < 15: " + andResult.toString( ln)
+		
+		// Test logical OR
+		boolean equal = compare.integer.equal(a, b)
+		boolean greaterOr = compare.integer.greaterThan(a, b)
+		boolean orResult = logical.or(equal, greaterOr)
+		print "10 == 5 OR 10 > 5: " + orResult.toString( ln)
+		
+		// Test logical NOT
+		boolean equalNot = compare.integer.equal(a, b)
+		boolean notResult = logical.not(equalNot)
+		print "NOT (10 == 5 ln: " + notResult.toString())
+
+	void testComplexConditionals()
+
+		print "=== Testing Complex Conditionals ===" ln
+		integer score = 85
+		
+		// Test nested conditionals for grade assignment
+		boolean gradeA = compare.integer.greaterEqual(score, 90)
+		boolean gradeB = compare.integer.greaterEqual(score, 80)
+		boolean gradeC = compare.integer.greaterEqual(score, 70)
+		
+		string grade = conditional.string(gradeA, "A", conditional.string(gradeB, "B", conditional.string(gradeC, "C", "F")))
+		print "Score " + score.toString( ln + " gets grade: " + grade)
+
+start()
+
+	print "Clean Language Conditional Expressions Test" ln
+	print "==========================================" ln
+	testIntegerConditionals()
+	print "" ln
+	testNumberConditionals()
+	print "" ln
+	testLogicalOperations()
+	print "" ln
+	testComplexConditionals()
+	print "" ln
+	print "All conditional tests completed!" ln

@@ -1,0 +1,113 @@
+// List behaviors comprehensive test - demonstrates list.type property modifiers
+// Tests the "line", "pile", "unique" behavior specifications
+
+functions:
+	void testQueueBehavior()
+		print "=== Queue Behavior (FIFO - First In, First Out ln ===")
+		list<string> tasks = []
+		tasks.type = "line"
+		
+		// Add tasks to the back
+		tasks.add("Task 1")
+		tasks.add("Task 2")
+		tasks.add("Task 3")
+		print "Added three tasks to queue" ln
+		
+		// Process tasks from the front
+		print "Processing tasks in FIFO order:" ln
+		print "Processing task from queue" ln
+	
+	void testStackBehavior()
+		print "=== Stack Behavior (LIFO - Last In, First Out ln ===")
+		list<string> actions = []
+		actions.type = "pile"
+		
+		// Perform actions (add to top)
+		actions.add("Create file")
+		actions.add("Edit text")
+		actions.add("Save file")
+		print "Performed three actions" ln
+		
+		// Undo actions (remove from top)
+		print "Undoing actions in LIFO order:" ln
+		print "Undoing action from stack" ln
+	
+	void testUniqueBehavior()
+		print "=== Unique Behavior (Set - No Duplicates ln ===")
+		list<string> visitors = []
+		visitors.type = "unique"
+		
+		// Add visitors (duplicates should be ignored)
+		visitors.add("Alice")     // Added
+		visitors.add("Bob")       // Added  
+		visitors.add("Alice")     // Ignored (duplicate)
+		visitors.add("Charlie")   // Added
+		visitors.add("Bob")       // Ignored (duplicate)
+		
+		print "Attempted to add: Alice, Bob, Alice, Charlie, Bob" ln
+		print "Unique visitors count: " + visitors.size( ln.toString())
+		
+		if visitors.contains("Alice")
+			print "Alice is in the visitor list" ln
+		if visitors.contains("David")
+			print "David is in the visitor list" ln
+		else
+			print "David is NOT in the visitor list" ln
+	
+	void testCombinedBehaviors()
+		print "=== Combined Behaviors ===" ln
+		
+		// Unique queue - FIFO with no duplicates
+		list<string> uniqueQueue = []
+		uniqueQueue.type = "line-unique"
+		uniqueQueue.add("First")
+		uniqueQueue.add("Second")
+		uniqueQueue.add("First")    // Should be ignored
+		uniqueQueue.add("Third")
+		print "Unique queue size: " + uniqueQueue.size( ln.toString())
+		
+		// Unique stack - LIFO with no duplicates  
+		list<integer> uniqueStack = []
+		uniqueStack.type = "pile-unique"
+		uniqueStack.add(10)
+		uniqueStack.add(20)
+		uniqueStack.add(10)         // Should be ignored
+		uniqueStack.add(30)
+		print "Unique stack size: " + uniqueStack.size( ln.toString())
+	
+	void testBehaviorSwitching()
+		print "=== Dynamic Behavior Switching ===" ln
+		list<integer> dynamicList = []
+		
+		// Start as default list
+		dynamicList.add(1)
+		dynamicList.add(2)
+		dynamicList.add(3)
+		print "Default list size: " + dynamicList.size( ln.toString())
+		
+		// Switch to unique behavior
+		dynamicList.type = "unique"
+		dynamicList.add(3)          // Should be ignored (duplicate)
+		dynamicList.add(4)          // Should be added
+		print "After switching to unique: " + dynamicList.size( ln.toString())
+		
+		// Switch to stack behavior
+		dynamicList.type = "pile"
+		dynamicList.add(5)
+		integer top = dynamicList.remove()  // Should get 5 (LIFO)
+		print "Removed from stack: " + top.toString( ln)
+
+start()
+	print "List Behaviors Comprehensive Test" ln
+	print "====================================" ln
+	testQueueBehavior()
+	print "" ln
+	testStackBehavior()
+	print "" ln
+	testUniqueBehavior()
+	print "" ln
+	testCombinedBehaviors()
+	print "" ln
+	testBehaviorSwitching()
+	print "" ln
+	print "List behaviors test completed successfully" ln

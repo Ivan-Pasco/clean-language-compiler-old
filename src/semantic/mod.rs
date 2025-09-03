@@ -1220,7 +1220,6 @@ impl SemanticAnalyzer {
         let mut analyzed_program = program.clone();
         analyzed_program.classes = self.class_table.values().cloned().collect();
 
-
         Ok(analyzed_program)
     }
 
@@ -4719,12 +4718,10 @@ impl SemanticAnalyzer {
                 name,
                 arg_types.len()
             );
-            for (i, arg_type) in arg_types.iter().enumerate() {
-            }
+            for (i, arg_type) in arg_types.iter().enumerate() {}
             for (i, (param_types, return_type, required_param_count)) in
                 overloads.iter().enumerate()
-            {
-            }
+            {}
 
             for (param_types, return_type, required_param_count) in &overloads {
                 // Check basic parameter count constraints

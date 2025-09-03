@@ -38,7 +38,6 @@ fn allocate_string_in_memory(
     // Store string content
     data[offset + 4..offset + 4 + string_bytes.len()].copy_from_slice(string_bytes);
 
-
     offset as i32
 }
 
@@ -72,7 +71,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "env",
         "print",
         |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-
             let mem = match caller.get_export("memory") {
                 Some(Extern::Memory(mem)) => mem,
                 _ => {
@@ -88,7 +86,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 }
             };
-
 
             match std::str::from_utf8(data) {
                 Ok(s) => {

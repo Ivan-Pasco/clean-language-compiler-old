@@ -1,0 +1,8 @@
+// Simple test for known working static method
+
+start()
+	number a = 5.0
+	number b = 3.0
+	number result = math.max(a, b)
+	print "Max of 5.0 and 3.0: " ln
+	print result.toString( ln)

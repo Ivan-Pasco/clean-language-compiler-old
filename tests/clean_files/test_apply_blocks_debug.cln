@@ -1,0 +1,16 @@
+// Simple apply-blocks debug test
+// Tests if apply-blocks are working at the most basic level
+
+functions:
+	void testSimpleApplyBlock()
+		print "Testing simple apply-block" ln
+		
+		// Simple type apply-block
+		integer:
+			x = 10
+		
+		print "x = " + x.toString() ln
+
+start()
+	testSimpleApplyBlock()
+	print "Apply-block debug test completed" ln

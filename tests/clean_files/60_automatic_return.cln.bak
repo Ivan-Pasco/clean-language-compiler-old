@@ -1,0 +1,50 @@
+// Automatic return comprehensive test
+// According to Clean Language Specification, functions automatically return the last expression
+
+functions:
+	integer addOne(integer x)
+		x + 1    // Automatically returned
+	
+	string greet(string name)
+		"Hello, " + name    // Automatically returned
+	
+	number calculateCircleArea(number radius)
+		3.14159 * radius * radius    // Automatically returned
+	
+	boolean isPositive(integer value)
+		value > 0    // Automatically returned
+	
+	string formatNumber(integer num)
+		"Number: " + num.toString()    // Automatically returned
+	
+	integer multiply(integer a, integer b)
+		a * b    // Automatically returned
+	
+	void testAutomaticReturn()
+		// Test integer automatic return
+		integer result1 = addOne(5)
+		print "Add one result: " + result1.toString( ln)
+		
+		// Test string automatic return
+		string greeting = greet("Clean Language")
+		print greeting ln
+		
+		// Test number automatic return
+		number area = calculateCircleArea(5.0)
+		print "Circle area: " + area.toString( ln)
+		
+		// Test boolean automatic return
+		boolean positive = isPositive(-3)
+		print "Is positive: " + positive.toString( ln)
+		
+		// Test formatted string automatic return
+		string formatted = formatNumber(42)
+		print formatted ln
+		
+		// Test multiplication automatic return
+		integer product = multiply(6, 7)
+		print "Product: " + product.toString( ln)
+
+start()
+	testAutomaticReturn()
+	print "Automatic return test completed successfully" ln

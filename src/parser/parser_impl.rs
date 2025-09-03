@@ -533,9 +533,7 @@ pub fn parse_with_file(source: &str, file_path: &str) -> Result<Program, Compile
 
             // Use recovery parsing which handles both classes and functions correctly
             match super::CleanParser::parse_program_with_recovery(source, file_path) {
-                Ok(program) => {
-                    Ok(program)
-                }
+                Ok(program) => Ok(program),
                 Err(errors) => {
                     // Return the first error from recovery parsing, or the original error if recovery had no errors
                     if let Some(first_error) = errors.first() {
@@ -554,12 +552,10 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
     // Check if this is a functions block and use preprocessing for consistency
     // Look for functions: anywhere in the source, potentially after comments
     if source.contains("functions:") {
-
         // Use direct preprocessing for all functions blocks to avoid grammar parsing issues
         let preprocessor = super::preprocessor::FunctionPreprocessor::new(source);
         match preprocessor.process_functions_block(source) {
             Ok(functions) => {
-
                 // Also look for start function in the source
                 let start_function = if let Some(start_match) = source.find("start()") {
                     // Extract the start function text
@@ -604,17 +600,11 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                     ) {
                         Ok(pairs) => {
                             match parse_start_function(pairs.into_iter().next().unwrap()) {
-                                Ok(func) => {
-                                    Some(func)
-                                }
-                                Err(e) => {
-                                    None
-                                }
+                                Ok(func) => Some(func),
+                                Err(e) => None,
                             }
                         }
-                        Err(e) => {
-                            None
-                        }
+                        Err(e) => None,
                     }
                 } else {
                     None
@@ -633,18 +623,14 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
 
                 return Ok(program);
             }
-            Err(preprocess_error) => {
-            }
+            Err(preprocess_error) => {}
         }
     }
 
     // For non-functions blocks, try traditional parsing
     match <CleanParser as Parser<Rule>>::parse(Rule::program, source) {
-        Ok(pairs) => {
-            parse_program_ast(pairs)
-        }
+        Ok(pairs) => parse_program_ast(pairs),
         Err(traditional_error) => {
-
             // If all else fails, return the original error
             Err(ErrorUtils::from_pest_error(
                 traditional_error,
@@ -890,7 +876,6 @@ pub fn parse_functions_block_with_context(
     // Extract source text for preprocessing
     let source_text = functions_block.as_str();
 
-
     // Try preprocessing approach first for multi-function blocks
     let preprocessor = if let Some(context) = class_context {
         super::preprocessor::FunctionPreprocessor::with_class_context(source_text, context)
@@ -904,8 +889,7 @@ pub fn parse_functions_block_with_context(
                 return Ok(functions);
             }
         }
-        Err(e) => {
-        }
+        Err(e) => {}
     }
 
     // Fall back to traditional parsing

@@ -1,0 +1,81 @@
+=== ERROR: 59_default_parameters_working.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: 64_default_parameters_spec.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: 74_file_module_comprehensive.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: 76_math_module_comprehensive.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: 77_string_module_comprehensive.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: 78_list_module_comprehensive.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: 79_http_module_comprehensive.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: 82_matrix_operations_comprehensive.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: 93_stdlib_math_comprehensive.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: 94_stdlib_string_comprehensive.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: 97_testing_framework_comprehensive.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: debug_list_push.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: debug_listlength_conflict.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: debug_namespace_parsing.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: test_args_comprehensive.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: test_chained_minimal.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: test_chained_property_method.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: test_complex_onerror.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: test_conditional_simple.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: test_debug_spacing.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: test_explicit_method_chained.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: test_grammar_debug.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: test_http_basic.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: test_return_issue.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: test_simple_chain.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: test_simple_default_params.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+
+=== ERROR: test_var_arith_return.cln ===
+./measure_impact.sh: line 48: timeout: command not found
+

@@ -1,0 +1,1099 @@
+FAILING TEST FILES ANALYSIS
+=========================
+
+FILE: 00_empty_start.cln
+ERROR:
+----------------------------------------
+
+FILE: 00_minimal_no_strings.cln
+ERROR:
+----------------------------------------
+
+FILE: 00_minimal_test.cln
+ERROR:
+----------------------------------------
+
+FILE: 00_minimal.cln
+ERROR:
+----------------------------------------
+
+FILE: 01_hello_world.cln
+ERROR:
+----------------------------------------
+
+FILE: 02_variables_basic.cln
+ERROR:
+----------------------------------------
+
+FILE: 03_arithmetic_operations.cln
+ERROR:
+----------------------------------------
+
+FILE: 04_comparison_operations.cln
+ERROR:
+----------------------------------------
+
+FILE: 05_logical_operations.cln
+ERROR:
+----------------------------------------
+
+FILE: 06_type_conversions.cln
+ERROR:
+----------------------------------------
+
+FILE: 07_lists_basic.cln
+ERROR:
+----------------------------------------
+
+FILE: 08_matrices.cln
+ERROR:
+----------------------------------------
+
+FILE: 09_type_inference.cln
+ERROR:
+----------------------------------------
+
+FILE: 10_functions_basic.cln
+ERROR:
+----------------------------------------
+
+FILE: 11_functions_overloading.cln
+ERROR:
+----------------------------------------
+
+FILE: 12_functions_recursion.cln
+ERROR:
+----------------------------------------
+
+FILE: 13_functions_generics.cln
+ERROR:
+----------------------------------------
+
+FILE: 14_classes_basic.cln
+ERROR:
+----------------------------------------
+
+FILE: 15_classes_inheritance.cln
+ERROR:
+----------------------------------------
+
+FILE: 16_classes_polymorphism_fixed.cln
+ERROR:
+----------------------------------------
+
+FILE: 16_classes_polymorphism_new.cln
+ERROR:
+----------------------------------------
+
+FILE: 16_classes_polymorphism_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 16_classes_polymorphism.cln
+ERROR:
+----------------------------------------
+
+FILE: 17_control_flow_if.cln
+ERROR:
+----------------------------------------
+
+FILE: 18_control_flow_loops.cln
+ERROR:
+----------------------------------------
+
+FILE: 19_async_basic.cln
+ERROR:
+----------------------------------------
+
+FILE: 20_async_parallel.cln
+ERROR:
+----------------------------------------
+
+FILE: 21_error_handling_try_catch.cln
+ERROR:
+----------------------------------------
+
+FILE: 22_error_handling_onerror.cln
+ERROR:
+----------------------------------------
+
+FILE: 23_error_handling_async.cln
+ERROR:
+----------------------------------------
+
+FILE: 24_memory_management.cln
+ERROR:
+----------------------------------------
+
+FILE: 25_stdlib_functions_original_modules.cln
+ERROR:
+----------------------------------------
+
+FILE: 25_stdlib_functions.cln
+ERROR:
+----------------------------------------
+
+FILE: 26_io_operations.cln
+ERROR:
+----------------------------------------
+
+FILE: 27_http_networking.cln
+ERROR:
+----------------------------------------
+
+FILE: 28_complex_example.cln
+ERROR:
+----------------------------------------
+
+FILE: 29_apply_blocks_fixed.cln
+ERROR:
+----------------------------------------
+
+FILE: 29_apply_blocks.cln
+ERROR:
+----------------------------------------
+
+FILE: 30_precision_modifiers.cln
+ERROR:
+----------------------------------------
+
+FILE: 31_testing_framework.cln
+ERROR:
+----------------------------------------
+
+FILE: 32_comprehensive_stdlib.cln
+ERROR:
+----------------------------------------
+
+FILE: 33_complex_integration.cln
+ERROR:
+----------------------------------------
+
+FILE: 34_list_behaviors_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 34_list_behaviors.cln
+ERROR:
+----------------------------------------
+
+FILE: 35_method_style_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 35_method_style.cln
+ERROR:
+----------------------------------------
+
+FILE: 36_conditionals_fixed.cln
+ERROR:
+----------------------------------------
+
+FILE: 36_conditionals_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 36_conditionals.cln
+ERROR:
+----------------------------------------
+
+FILE: 37_property_assignment_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 37_property_assignment.cln
+ERROR:
+----------------------------------------
+
+FILE: 38_method_calls_test.cln
+ERROR:
+----------------------------------------
+
+FILE: 39_conditional_expressions_test.cln
+ERROR:
+----------------------------------------
+
+FILE: 40_onerror_test.cln
+ERROR:
+----------------------------------------
+
+FILE: 41_static_methods_test.cln
+ERROR:
+----------------------------------------
+
+FILE: 42_test_framework.cln
+ERROR:
+----------------------------------------
+
+FILE: 43_string_interpolation.cln
+ERROR:
+----------------------------------------
+
+FILE: 44_type_precision_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 44_type_precision_working.cln
+ERROR:
+----------------------------------------
+
+FILE: 44_type_precision.cln
+ERROR:
+----------------------------------------
+
+FILE: 45_numeric_literals_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 45_numeric_literals.cln
+ERROR:
+----------------------------------------
+
+FILE: 46_matrix_literals_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 46_matrix_literals.cln
+ERROR:
+----------------------------------------
+
+FILE: 47_string_interpolation.cln
+ERROR:
+----------------------------------------
+
+FILE: 48_method_style_syntax_fixed.cln
+ERROR:
+----------------------------------------
+
+FILE: 48_method_style_syntax_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 48_method_style_syntax.cln
+ERROR:
+----------------------------------------
+
+FILE: 49_static_method_calls_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 49_static_method_calls.cln
+ERROR:
+----------------------------------------
+
+FILE: 50_input_method_syntax.cln
+ERROR:
+----------------------------------------
+
+FILE: 51_http_method_syntax.cln
+ERROR:
+----------------------------------------
+
+FILE: 52_async_keywords.cln
+ERROR:
+----------------------------------------
+
+FILE: 53_import_export_blocks.cln
+ERROR:
+----------------------------------------
+
+FILE: 54_integration_test.cln
+ERROR:
+----------------------------------------
+
+FILE: 55_error_handling_test.cln
+ERROR:
+----------------------------------------
+
+FILE: 56_apply_blocks_comprehensive.cln
+ERROR:
+----------------------------------------
+
+FILE: 56_apply_blocks_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 57_console_input_comprehensive.cln
+ERROR:
+----------------------------------------
+
+FILE: 57_console_input_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 58_error_handling_onerror.cln
+ERROR:
+----------------------------------------
+
+FILE: 58_error_handling_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 59_default_parameters_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 59_default_parameters_working.cln
+ERROR:
+----------------------------------------
+
+FILE: 59_default_parameters.cln
+ERROR:
+----------------------------------------
+
+FILE: 60_automatic_return.cln
+ERROR:
+----------------------------------------
+
+FILE: 61_multiline_expressions_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: 61_multiline_expressions.cln
+ERROR:
+----------------------------------------
+
+FILE: 62_apply_blocks_specification.cln
+ERROR:
+----------------------------------------
+
+FILE: 63_multiline_expressions_spec.cln
+ERROR:
+----------------------------------------
+
+FILE: 64_default_parameters_spec.cln
+ERROR:
+----------------------------------------
+
+FILE: 65_error_handling_onerror_spec.cln
+ERROR:
+----------------------------------------
+
+FILE: 66_type_precision_spec.cln
+ERROR:
+----------------------------------------
+
+FILE: 67_import_export_comprehensive.cln
+ERROR:
+----------------------------------------
+
+FILE: 68_list_behaviors_comprehensive.cln
+ERROR:
+----------------------------------------
+
+FILE: 69_string_interpolation_comprehensive.cln
+ERROR:
+----------------------------------------
+
+FILE: 70_type_precision_comprehensive.cln
+ERROR:
+----------------------------------------
+
+FILE: 71_error_handling_onerror_comprehensive.cln
+ERROR:
+----------------------------------------
+
+FILE: 72_default_parameters_comprehensive.cln
+ERROR:
+----------------------------------------
+
+FILE: 73_console_input_comprehensive.cln
+ERROR:
+----------------------------------------
+
+FILE: 75_parser_verification.cln
+ERROR:
+----------------------------------------
+
+FILE: 80_chained_method_calls.cln
+ERROR:
+----------------------------------------
+
+FILE: 80_host_functions_test.cln
+ERROR:
+----------------------------------------
+
+FILE: 99_spec_basic_features.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_args.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_both.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_compare.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_conditional.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_default_long.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_default_param.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_default_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_different_varname.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_direct_math.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_exponent_parsing.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_full_copy.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_greater_equal.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_integer_parsing.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_list_push.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_listlength_conflict.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_logical_function.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_logical_not.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_logical.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_math_namespace.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_method_1.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_method_2.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_method_call_empty.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_method_call_statement.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_method_call_test.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_method_chain.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_minimal_stack.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_multifunction_complex.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_multifunction.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_nested.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_polymorphism_minimal.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_regression_test.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_second_function.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_simple_class_method.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_simple_math.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_simple_param.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_simple_polymorphism.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_simple_static.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_standalone_function.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_test.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_three_functions.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_ultra_minimal.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_uppercase_math.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_variable_name.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_variables.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_void_proper.cln
+ERROR:
+----------------------------------------
+
+FILE: debug_with_comments.cln
+ERROR:
+----------------------------------------
+
+FILE: simple_test.cln
+ERROR:
+----------------------------------------
+
+FILE: static_method_args_test.cln
+ERROR:
+----------------------------------------
+
+FILE: super_minimal.cln
+ERROR:
+----------------------------------------
+
+FILE: test_apply_boolean.cln
+ERROR:
+----------------------------------------
+
+FILE: test_apply_multiple.cln
+ERROR:
+----------------------------------------
+
+FILE: test_apply_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: test_args_comprehensive.cln
+ERROR:
+----------------------------------------
+
+FILE: test_base_param.cln
+ERROR:
+----------------------------------------
+
+FILE: test_boolean_assignment.cln
+ERROR:
+----------------------------------------
+
+FILE: test_boundary_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_cat_only.cln
+ERROR:
+----------------------------------------
+
+FILE: test_chained_minimal.cln
+ERROR:
+----------------------------------------
+
+FILE: test_chained_property_method.cln
+ERROR:
+----------------------------------------
+
+FILE: test_chained_static.cln
+ERROR:
+----------------------------------------
+
+FILE: test_class_functions_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_combined_apply_blocks.cln
+ERROR:
+----------------------------------------
+
+FILE: test_comparison.cln
+ERROR:
+----------------------------------------
+
+FILE: test_complex_method_chain.cln
+ERROR:
+----------------------------------------
+
+FILE: test_constructor_assignment.cln
+ERROR:
+----------------------------------------
+
+FILE: test_constructor_base_minimal.cln
+ERROR:
+----------------------------------------
+
+FILE: test_constructor_complex_functions.cln
+ERROR:
+----------------------------------------
+
+FILE: test_constructor_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: test_constructor_with_base.cln
+ERROR:
+----------------------------------------
+
+FILE: test_debug_apply_blocks.cln
+ERROR:
+----------------------------------------
+
+FILE: test_debug_function_boundary.cln
+ERROR:
+----------------------------------------
+
+FILE: test_debug_property_method_call.cln
+ERROR:
+----------------------------------------
+
+FILE: test_debug_property_method.cln
+ERROR:
+----------------------------------------
+
+FILE: test_debug_spacing.cln
+ERROR:
+----------------------------------------
+
+FILE: test_debug_step_by_step.cln
+ERROR:
+----------------------------------------
+
+FILE: test_default_params.cln
+ERROR:
+----------------------------------------
+
+FILE: test_different_name.cln
+ERROR:
+----------------------------------------
+
+FILE: test_different_property_chain.cln
+ERROR:
+----------------------------------------
+
+FILE: test_empty_params_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_exact_68_structure.cln
+ERROR:
+----------------------------------------
+
+FILE: test_exact_comparison.cln
+ERROR:
+----------------------------------------
+
+FILE: test_exact_failing_pattern.cln
+ERROR:
+----------------------------------------
+
+FILE: test_existing_method_call.cln
+ERROR:
+----------------------------------------
+
+FILE: test_explicit_method_chained.cln
+ERROR:
+----------------------------------------
+
+FILE: test_exponent_pattern.cln
+ERROR:
+----------------------------------------
+
+FILE: test_function_apply_block.cln
+ERROR:
+----------------------------------------
+
+FILE: test_function_apply_only.cln
+ERROR:
+----------------------------------------
+
+FILE: test_function_body_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_function_decl_only.cln
+ERROR:
+----------------------------------------
+
+FILE: test_grammar_debug_1.cln
+ERROR:
+----------------------------------------
+
+FILE: test_grammar_debug_2.cln
+ERROR:
+----------------------------------------
+
+FILE: test_grammar_debug_3.cln
+ERROR:
+----------------------------------------
+
+FILE: test_grammar_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_http_basic.cln
+ERROR:
+----------------------------------------
+
+FILE: test_identifier_method_call.cln
+ERROR:
+----------------------------------------
+
+FILE: test_if_else_boundary_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_if_only_boundary.cln
+ERROR:
+----------------------------------------
+
+FILE: test_if_with_else.cln
+ERROR:
+----------------------------------------
+
+FILE: test_inheritance_fields_and_functions.cln
+ERROR:
+----------------------------------------
+
+FILE: test_inheritance_function_minimal.cln
+ERROR:
+----------------------------------------
+
+FILE: test_inheritance_minimal.cln
+ERROR:
+----------------------------------------
+
+FILE: test_inheritance_with_constructor.cln
+ERROR:
+----------------------------------------
+
+FILE: test_io_validation.cln
+ERROR:
+----------------------------------------
+
+FILE: test_is_prefix.cln
+ERROR:
+----------------------------------------
+
+FILE: test_list_type.cln
+ERROR:
+----------------------------------------
+
+FILE: test_literal_method_call.cln
+ERROR:
+----------------------------------------
+
+FILE: test_logical.cln
+ERROR:
+----------------------------------------
+
+FILE: test_match_59_structure.cln
+ERROR:
+----------------------------------------
+
+FILE: test_method_call_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_method_call_in_args.cln
+ERROR:
+----------------------------------------
+
+FILE: test_method_call_pattern.cln
+ERROR:
+----------------------------------------
+
+FILE: test_method_chaining.cln
+ERROR:
+----------------------------------------
+
+FILE: test_minimal_default.cln
+ERROR:
+----------------------------------------
+
+FILE: test_minimal_if_boundary.cln
+ERROR:
+----------------------------------------
+
+FILE: test_minimal_precision.cln
+ERROR:
+----------------------------------------
+
+FILE: test_minimal_two_functions.cln
+ERROR:
+----------------------------------------
+
+FILE: test_minimal_working_boundary.cln
+ERROR:
+----------------------------------------
+
+FILE: test_mixed_return_types_reverse.cln
+ERROR:
+----------------------------------------
+
+FILE: test_mixed_return_types.cln
+ERROR:
+----------------------------------------
+
+FILE: test_multi_function_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_multiple_functions_after_fix.cln
+ERROR:
+----------------------------------------
+
+FILE: test_multiple_functions_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_multiple_statements_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_nested_method_simple.cln
+ERROR:
+----------------------------------------
+
+FILE: test_no_if_else_baseline.cln
+ERROR:
+----------------------------------------
+
+FILE: test_no_return_type.cln
+ERROR:
+----------------------------------------
+
+FILE: test_no_static.cln
+ERROR:
+----------------------------------------
+
+FILE: test_number_method.cln
+ERROR:
+----------------------------------------
+
+FILE: test_parser_backtrack_issue.cln
+ERROR:
+----------------------------------------
+
+FILE: test_precision_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_precision_standalone.cln
+ERROR:
+----------------------------------------
+
+FILE: test_preprocessor_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_print_without_parens.cln
+ERROR:
+----------------------------------------
+
+FILE: test_priority_2_fixes.cln
+ERROR:
+----------------------------------------
+
+FILE: test_proper_indent.cln
+ERROR:
+----------------------------------------
+
+FILE: test_property_method_call_fixed.cln
+ERROR:
+----------------------------------------
+
+FILE: test_property_method_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_property_method_no_args.cln
+ERROR:
+----------------------------------------
+
+FILE: test_property_method_one_arg.cln
+ERROR:
+----------------------------------------
+
+FILE: test_regular_method_multiarg.cln
+ERROR:
+----------------------------------------
+
+FILE: test_simple_chain.cln
+ERROR:
+----------------------------------------
+
+FILE: test_simple_chained_property.cln
+ERROR:
+----------------------------------------
+
+FILE: test_simple_default_params.cln
+ERROR:
+----------------------------------------
+
+FILE: test_simple_function_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_simple_math.cln
+ERROR:
+----------------------------------------
+
+FILE: test_simple_method_multiarg.cln
+ERROR:
+----------------------------------------
+
+FILE: test_simple_method.cln
+ERROR:
+----------------------------------------
+
+FILE: test_simple_param_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_simple_property_method.cln
+ERROR:
+----------------------------------------
+
+FILE: test_simple_three_level.cln
+ERROR:
+----------------------------------------
+
+FILE: test_simplest_if.cln
+ERROR:
+----------------------------------------
+
+FILE: test_single_boolean.cln
+ERROR:
+----------------------------------------
+
+FILE: test_single_function_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_static_method.cln
+ERROR:
+----------------------------------------
+
+FILE: test_string_concat.cln
+ERROR:
+----------------------------------------
+
+FILE: test_tab_indentation.cln
+ERROR:
+----------------------------------------
+
+FILE: test_tab_with_two_statements.cln
+ERROR:
+----------------------------------------
+
+FILE: test_three_level.cln
+ERROR:
+----------------------------------------
+
+FILE: test_top_level_apply.cln
+ERROR:
+----------------------------------------
+
+FILE: test_two_statements_only.cln
+ERROR:
+----------------------------------------
+
+FILE: test_two_vars_only.cln
+ERROR:
+----------------------------------------
+
+FILE: test_type_apply_block.cln
+ERROR:
+----------------------------------------
+
+FILE: test_type_apply_only.cln
+ERROR:
+----------------------------------------
+
+FILE: test_type_only_apply.cln
+ERROR:
+----------------------------------------
+
+FILE: test_validation_only.cln
+ERROR:
+----------------------------------------
+
+FILE: test_variable_name.cln
+ERROR:
+----------------------------------------
+
+FILE: test_while_concat.cln
+ERROR:
+----------------------------------------
+
+FILE: test_whitespace_debug.cln
+ERROR:
+----------------------------------------
+
+FILE: test_without_method_call.cln
+ERROR:
+----------------------------------------
+
+FILE: test_working_method_call.cln
+ERROR:
+----------------------------------------
+

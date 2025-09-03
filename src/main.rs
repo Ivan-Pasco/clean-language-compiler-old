@@ -272,9 +272,7 @@ async fn handle_compile(
     use clean_language_compiler::parser::CleanParser;
 
     let (program, use_recovery) = match CleanParser::parse_program_with_file(&source, &input) {
-        Ok(program) => {
-            (program, false)
-        }
+        Ok(program) => (program, false),
         Err(_parse_error) => {
             // If regular parsing fails, try recovery parsing
             println!("🔄 Regular parsing failed, trying recovery compilation...");
