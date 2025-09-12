@@ -220,11 +220,14 @@ impl TypeInference {
     /// Infer types for a function
     fn infer_function(&mut self, function: &ResolvedHirFunction) -> Result<TastFunction, CompilerError> {
         self.current_function = Some(function.symbol_id);
-        self.current_return_type = Some(if let Some(ref return_type) = function.return_type {
-            self.hir_type_to_concrete(return_type)
+        
+        // Set current return type for constraint generation within the function
+        // We'll update this later if no explicit return type is declared
+        self.current_return_type = if let Some(ref return_type) = function.return_type {
+            Some(self.hir_type_to_concrete(return_type))
         } else {
-            ConcreteType::Undefined
-        });
+            None // Will be inferred from function body
+        };
         
         // Add parameters to type environment
         let mut tast_parameters = Vec::new();
@@ -254,16 +257,21 @@ impl TypeInference {
         // Check return type consistency
         let inferred_return_type = tast_body.return_type.clone();
         let declared_return_type = if let Some(ref return_type) = function.return_type {
-            self.hir_type_to_concrete(return_type)
+            // Explicit return type declared - enforce it
+            let concrete_return_type = self.hir_type_to_concrete(return_type);
+            self.add_constraint(TypeConstraint::Equality {
+                left: inferred_return_type.clone(),
+                right: concrete_return_type.clone(),
+                location: function.location.clone(),
+            });
+            concrete_return_type
         } else {
-            ConcreteType::Undefined
+            // No return type declared - use inferred type
+            // This allows functions to have their return type inferred from their body
+            // Update current return type for any remaining processing
+            self.current_return_type = Some(inferred_return_type.clone());
+            inferred_return_type.clone()
         };
-        
-        self.add_constraint(TypeConstraint::Equality {
-            left: inferred_return_type,
-            right: declared_return_type.clone(),
-            location: function.location.clone(),
-        });
         
         self.current_function = None;
         self.current_return_type = None;
