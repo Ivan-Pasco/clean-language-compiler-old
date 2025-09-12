@@ -1,0 +1,17 @@
+DEBUG: Found function 'number.toString' with 1 overloads
+DEBUG: Resolving function 'number.toString' with 1 args
+DEBUG: Found function 'number.toString' with 1 overloads
+DEBUG: Resolving function 'number.toString' with 1 args
+DEBUG: Found function 'pow' with 1 overloads
+DEBUG: Resolving function 'pow' with 2 args
+DEBUG: Found function 'number.toString' with 1 overloads
+DEBUG: Resolving function 'number.toString' with 1 args
+DEBUG: Found function 'integer.length' with 1 overloads
+DEBUG: Resolving function 'integer.length' with 1 args
+DEBUG: Found function 'integer.toString' with 1 overloads
+DEBUG: Resolving function 'integer.toString' with 1 args
+DEBUG: Found function 'number.length' with 1 overloads
+DEBUG: Resolving function 'number.length' with 1 args
+DEBUG: Found function 'integer.toString' with 1 overloads
+DEBUG: Resolving function 'integer.toString' with 1 args
+Error: Type { context: ErrorContext { message: "Function 'pow' called with wrong number of arguments\nExpected type: 1\nActual type: 2", help: Some("Function 'pow' expects 1 arguments, but 2 were provided"), error_type: Type, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E017"), related_errors: [] } }

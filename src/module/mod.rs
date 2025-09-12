@@ -213,32 +213,13 @@ impl ModuleResolver {
             )
         })?;
 
-        // Parse the module
-        let program =
-            parser::parse_with_file(&source, &module_path.to_string_lossy()).map_err(|e| {
-                CompilerError::module_error(
-                    format!("Failed to parse module '{module_name}': {e}"),
-                    Some("Check the syntax of the module file".to_string()),
-                    None,
-                )
-            })?;
-
-        // Extract exports
-        let exports = self.extract_exports(&program);
-
-        // Create module
-        let module = Module {
-            name: module_name.to_string(),
-            file_path: module_path,
-            program,
-            exports,
-        };
-
-        // Cache the module
-        self.module_cache
-            .insert(module_name.to_string(), module.clone());
-
-        Ok(module)
+        // Module parsing using 7-stage pipeline - simplified for cleanup
+        // TODO: Implement proper module resolution in the 7-stage pipeline
+        Err(CompilerError::module_error(
+            format!("Module resolution not yet implemented in 7-stage pipeline: '{module_name}'"),
+            Some("Module imports will be implemented in future version".to_string()),
+            None,
+        ))
     }
 
     /// Find a module file in the search paths

@@ -1,0 +1,513 @@
+//! Symbol Table Implementation for Name Resolution
+//!
+//! This module provides symbol table functionality for tracking and resolving
+//! symbols (variables, functions, classes, methods, fields) across different scopes.
+
+use crate::hir::*;
+use crate::ast::SourceLocation;
+use std::collections::{HashMap, HashSet};
+
+/// Unique identifier for symbols
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SymbolId(pub usize);
+
+/// Unique identifier for modules
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ModuleId(pub usize);
+
+/// Unique identifier for scopes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ScopeId(pub usize);
+
+/// Symbol kinds for type checking and usage validation
+#[derive(Debug, Clone, PartialEq)]
+pub enum SymbolKind {
+    Variable { var_type: HirType },
+    Parameter { param_type: HirType },
+    Function { 
+        parameters: Vec<HirType>,
+        return_type: Option<HirType>,
+    },
+    Class { 
+        fields: Vec<SymbolId>,
+        methods: Vec<SymbolId>,
+        parent: Option<SymbolId>,
+    },
+    Method { 
+        class_id: SymbolId,
+        parameters: Vec<HirType>,
+        return_type: HirType,
+    },
+    Field { 
+        class_id: SymbolId,
+        field_type: HirType,
+    },
+    Constructor {
+        class_id: SymbolId,
+        parameters: Vec<HirType>,
+    },
+    Module {
+        exported_symbols: Vec<SymbolId>,
+    },
+}
+
+/// Symbol information stored in the symbol table
+#[derive(Debug, Clone)]
+pub struct Symbol {
+    pub id: SymbolId,
+    pub name: String,
+    pub kind: SymbolKind,
+    pub scope_id: ScopeId,
+    pub location: SourceLocation,
+    pub is_exported: bool,
+    pub is_imported: bool,
+    pub module_id: Option<ModuleId>,
+}
+
+/// Scope information for nested scoping
+#[derive(Debug, Clone)]
+pub struct Scope {
+    pub id: ScopeId,
+    pub parent: Option<ScopeId>,
+    pub symbols: HashMap<String, SymbolId>,
+    pub scope_type: ScopeType,
+}
+
+/// Types of scopes in Clean Language
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScopeType {
+    Global,
+    Function { function_id: SymbolId },
+    Class { class_id: SymbolId },
+    Method { method_id: SymbolId, class_id: SymbolId },
+    Constructor { class_id: SymbolId },
+    Block,
+    Test,
+}
+
+/// Module information for import resolution
+#[derive(Debug, Clone)]
+pub struct Module {
+    pub id: ModuleId,
+    pub name: String,
+    pub file_path: String,
+    pub exported_symbols: HashMap<String, SymbolId>,
+    pub imported_modules: Vec<ModuleId>,
+}
+
+/// Global symbol table managing all symbols and scopes
+#[derive(Debug, Clone)]
+pub struct GlobalSymbolTable {
+    symbols: HashMap<SymbolId, Symbol>,
+    scopes: HashMap<ScopeId, Scope>,
+    modules: HashMap<ModuleId, Module>,
+    
+    // Generators for unique IDs
+    next_symbol_id: usize,
+    next_scope_id: usize,
+    next_module_id: usize,
+    
+    // Current context
+    current_scope: ScopeId,
+    current_module: Option<ModuleId>,
+    
+    // Built-in symbols (populated during initialization)
+    builtins: HashSet<SymbolId>,
+}
+
+impl GlobalSymbolTable {
+    /// Create a new global symbol table with built-in symbols
+    pub fn new() -> Self {
+        let mut table = Self {
+            symbols: HashMap::new(),
+            scopes: HashMap::new(),
+            modules: HashMap::new(),
+            next_symbol_id: 0,
+            next_scope_id: 0,
+            next_module_id: 0,
+            current_scope: ScopeId(0),
+            current_module: None,
+            builtins: HashSet::new(),
+        };
+        
+        // Create global scope
+        table.create_scope(None, ScopeType::Global);
+        
+        // Add built-in symbols
+        table.add_builtins();
+        
+        table
+    }
+    
+    /// Add built-in symbols to the global scope
+    fn add_builtins(&mut self) {
+        let global_scope = self.current_scope;
+        
+        // Built-in functions
+        let builtin_functions = vec![
+            ("print", vec![HirType::String], Some(HirType::Void)),
+            ("println", vec![HirType::String], Some(HirType::Void)),
+            ("abs", vec![HirType::Number], Some(HirType::Number)),
+            ("max", vec![HirType::Number, HirType::Number], Some(HirType::Number)),
+            ("min", vec![HirType::Number, HirType::Number], Some(HirType::Number)),
+            ("sqrt", vec![HirType::Number], Some(HirType::Number)),
+            ("pow", vec![HirType::Number, HirType::Number], Some(HirType::Number)),
+        ];
+        
+        for (name, params, return_type) in builtin_functions {
+            let symbol_id = self.create_symbol(
+                name.to_string(),
+                SymbolKind::Function {
+                    parameters: params,
+                    return_type,
+                },
+                global_scope,
+                SourceLocation {
+                    file: "<builtin>".to_string(),
+                    line: 0,
+                    column: 0,
+                },
+            );
+            
+            self.builtins.insert(symbol_id);
+        }
+        
+        // Built-in types are handled differently - they're part of HirType enum
+        // Built-in methods are resolved dynamically based on receiver type
+    }
+    
+    /// Generate a new unique symbol ID
+    fn next_symbol_id(&mut self) -> SymbolId {
+        let id = SymbolId(self.next_symbol_id);
+        self.next_symbol_id += 1;
+        id
+    }
+    
+    /// Generate a new unique scope ID
+    fn next_scope_id(&mut self) -> ScopeId {
+        let id = ScopeId(self.next_scope_id);
+        self.next_scope_id += 1;
+        id
+    }
+    
+    /// Generate a new unique module ID
+    fn next_module_id(&mut self) -> ModuleId {
+        let id = ModuleId(self.next_module_id);
+        self.next_module_id += 1;
+        id
+    }
+    
+    /// Create a new scope
+    pub fn create_scope(&mut self, parent: Option<ScopeId>, scope_type: ScopeType) -> ScopeId {
+        let scope_id = self.next_scope_id();
+        let scope = Scope {
+            id: scope_id,
+            parent: parent.or(Some(self.current_scope)),
+            symbols: HashMap::new(),
+            scope_type,
+        };
+        
+        self.scopes.insert(scope_id, scope);
+        scope_id
+    }
+    
+    /// Enter a scope (set as current)
+    pub fn enter_scope(&mut self, scope_id: ScopeId) {
+        self.current_scope = scope_id;
+    }
+    
+    /// Exit current scope (return to parent)
+    pub fn exit_scope(&mut self) {
+        if let Some(scope) = self.scopes.get(&self.current_scope) {
+            if let Some(parent_id) = scope.parent {
+                self.current_scope = parent_id;
+            }
+        }
+    }
+    
+    /// Create a new symbol and add it to the current scope
+    pub fn create_symbol(
+        &mut self,
+        name: String,
+        kind: SymbolKind,
+        scope_id: ScopeId,
+        location: SourceLocation,
+    ) -> SymbolId {
+        let symbol_id = self.next_symbol_id();
+        let symbol = Symbol {
+            id: symbol_id,
+            name: name.clone(),
+            kind,
+            scope_id,
+            location,
+            is_exported: false,
+            is_imported: false,
+            module_id: self.current_module,
+        };
+        
+        self.symbols.insert(symbol_id, symbol);
+        
+        // Add to scope
+        if let Some(scope) = self.scopes.get_mut(&scope_id) {
+            scope.symbols.insert(name, symbol_id);
+        }
+        
+        symbol_id
+    }
+    
+    /// Look up a symbol by name in the current scope and parent scopes
+    pub fn lookup_symbol(&self, name: &str) -> Option<SymbolId> {
+        self.lookup_symbol_in_scope(name, self.current_scope)
+    }
+    
+    /// Look up a symbol by name starting from a specific scope
+    pub fn lookup_symbol_in_scope(&self, name: &str, scope_id: ScopeId) -> Option<SymbolId> {
+        if let Some(scope) = self.scopes.get(&scope_id) {
+            // Check current scope
+            if let Some(&symbol_id) = scope.symbols.get(name) {
+                return Some(symbol_id);
+            }
+            
+            // Check parent scope
+            if let Some(parent_id) = scope.parent {
+                return self.lookup_symbol_in_scope(name, parent_id);
+            }
+        }
+        None
+    }
+    
+    /// Look up a symbol in a specific class scope (for method/field access)
+    pub fn lookup_class_member(&self, class_id: SymbolId, member_name: &str) -> Option<SymbolId> {
+        if let Some(symbol) = self.symbols.get(&class_id) {
+            if let SymbolKind::Class { fields, methods, .. } = &symbol.kind {
+                // Check fields
+                for &field_id in fields {
+                    if let Some(field_symbol) = self.symbols.get(&field_id) {
+                        if field_symbol.name == member_name {
+                            return Some(field_id);
+                        }
+                    }
+                }
+                
+                // Check methods
+                for &method_id in methods {
+                    if let Some(method_symbol) = self.symbols.get(&method_id) {
+                        if method_symbol.name == member_name {
+                            return Some(method_id);
+                        }
+                    }
+                }
+                
+                // Check parent class if exists
+                if let SymbolKind::Class { parent: Some(parent_id), .. } = &symbol.kind {
+                    return self.lookup_class_member(*parent_id, member_name);
+                }
+            }
+        }
+        None
+    }
+    
+    /// Get symbol by ID
+    pub fn get_symbol(&self, id: SymbolId) -> Option<&Symbol> {
+        self.symbols.get(&id)
+    }
+    
+    /// Get mutable symbol by ID
+    pub fn get_symbol_mut(&mut self, id: SymbolId) -> Option<&mut Symbol> {
+        self.symbols.get_mut(&id)
+    }
+    
+    /// Get scope by ID
+    pub fn get_scope(&self, id: ScopeId) -> Option<&Scope> {
+        self.scopes.get(&id)
+    }
+    
+    /// Check if a symbol is a built-in
+    pub fn is_builtin(&self, symbol_id: SymbolId) -> bool {
+        self.builtins.contains(&symbol_id)
+    }
+    
+    /// Create a new module
+    pub fn create_module(&mut self, name: String, file_path: String) -> ModuleId {
+        let module_id = self.next_module_id();
+        let module = Module {
+            id: module_id,
+            name: name.clone(),
+            file_path,
+            exported_symbols: HashMap::new(),
+            imported_modules: Vec::new(),
+        };
+        
+        self.modules.insert(module_id, module);
+        module_id
+    }
+    
+    /// Set current module
+    pub fn set_current_module(&mut self, module_id: ModuleId) {
+        self.current_module = Some(module_id);
+    }
+    
+    /// Get module by ID
+    pub fn get_module(&self, id: ModuleId) -> Option<&Module> {
+        self.modules.get(&id)
+    }
+    
+    /// Export a symbol from a module
+    pub fn export_symbol(&mut self, module_id: ModuleId, name: String, symbol_id: SymbolId) {
+        if let Some(module) = self.modules.get_mut(&module_id) {
+            module.exported_symbols.insert(name, symbol_id);
+        }
+        
+        if let Some(symbol) = self.symbols.get_mut(&symbol_id) {
+            symbol.is_exported = true;
+        }
+    }
+    
+    /// Import a symbol from a module
+    pub fn import_symbol(&mut self, from_module: ModuleId, symbol_name: &str) -> Option<SymbolId> {
+        if let Some(module) = self.modules.get(&from_module) {
+            if let Some(&symbol_id) = module.exported_symbols.get(symbol_name) {
+                // Mark symbol as imported
+                if let Some(symbol) = self.symbols.get_mut(&symbol_id) {
+                    symbol.is_imported = true;
+                }
+                return Some(symbol_id);
+            }
+        }
+        None
+    }
+    
+    /// Get all symbols in current scope
+    pub fn current_scope_symbols(&self) -> Vec<SymbolId> {
+        if let Some(scope) = self.scopes.get(&self.current_scope) {
+            scope.symbols.values().copied().collect()
+        } else {
+            Vec::new()
+        }
+    }
+    
+    /// Get current scope ID
+    pub fn current_scope_id(&self) -> ScopeId {
+        self.current_scope
+    }
+    
+    /// Check for symbol conflicts in current scope
+    pub fn has_symbol_in_current_scope(&self, name: &str) -> bool {
+        if let Some(scope) = self.scopes.get(&self.current_scope) {
+            scope.symbols.contains_key(name)
+        } else {
+            false
+        }
+    }
+    
+    /// Find all accessible symbols (for completion/suggestion purposes)
+    pub fn accessible_symbols(&self) -> Vec<SymbolId> {
+        let mut symbols = Vec::new();
+        let mut current_scope_id = Some(self.current_scope);
+        
+        while let Some(scope_id) = current_scope_id {
+            if let Some(scope) = self.scopes.get(&scope_id) {
+                symbols.extend(scope.symbols.values());
+                current_scope_id = scope.parent;
+            } else {
+                break;
+            }
+        }
+        
+        symbols
+    }
+}
+
+impl Default for GlobalSymbolTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_symbol_table_creation() {
+        let table = GlobalSymbolTable::new();
+        
+        // Should have global scope
+        assert!(table.scopes.contains_key(&ScopeId(0)));
+        
+        // Should have built-in functions
+        assert!(!table.builtins.is_empty());
+        
+        // Built-ins should be in global scope
+        let print_symbol = table.lookup_symbol("print");
+        assert!(print_symbol.is_some());
+        assert!(table.is_builtin(print_symbol.unwrap()));
+    }
+    
+    #[test]
+    fn test_scope_management() {
+        let mut table = GlobalSymbolTable::new();
+        
+        // Create function scope
+        let func_scope = table.create_scope(None, ScopeType::Function { 
+            function_id: SymbolId(999) 
+        });
+        table.enter_scope(func_scope);
+        
+        // Add parameter
+        let param_id = table.create_symbol(
+            "x".to_string(),
+            SymbolKind::Parameter { param_type: HirType::Integer },
+            func_scope,
+            SourceLocation { file: "test".to_string(), line: 1, column: 1 },
+        );
+        
+        // Should find parameter in function scope
+        assert_eq!(table.lookup_symbol("x"), Some(param_id));
+        
+        // Exit scope
+        table.exit_scope();
+        
+        // Should not find parameter in global scope
+        assert_eq!(table.lookup_symbol("x"), None);
+    }
+    
+    #[test]
+    fn test_class_member_lookup() {
+        let mut table = GlobalSymbolTable::new();
+        
+        // Create class
+        let class_id = table.create_symbol(
+            "TestClass".to_string(),
+            SymbolKind::Class {
+                fields: vec![],
+                methods: vec![],
+                parent: None,
+            },
+            table.current_scope_id(),
+            SourceLocation { file: "test".to_string(), line: 1, column: 1 },
+        );
+        
+        // Create field
+        let field_id = table.create_symbol(
+            "field".to_string(),
+            SymbolKind::Field {
+                class_id,
+                field_type: HirType::Integer,
+            },
+            table.current_scope_id(),
+            SourceLocation { file: "test".to_string(), line: 2, column: 1 },
+        );
+        
+        // Update class to include field
+        if let Some(symbol) = table.get_symbol_mut(class_id) {
+            if let SymbolKind::Class { fields, .. } = &mut symbol.kind {
+                fields.push(field_id);
+            }
+        }
+        
+        // Should find field in class
+        assert_eq!(table.lookup_class_member(class_id, "field"), Some(field_id));
+        assert_eq!(table.lookup_class_member(class_id, "nonexistent"), None);
+    }
+}

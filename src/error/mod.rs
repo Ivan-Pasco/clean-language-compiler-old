@@ -4,10 +4,12 @@ use std::fmt;
 use crate::ast::SourceLocation;
 
 pub mod diagnostics;
+pub mod enhanced_hierarchy;
 pub mod recovery;
 pub mod reporter;
 
 pub use diagnostics::*;
+pub use enhanced_hierarchy::*;
 pub use recovery::*;
 pub use reporter::*;
 
@@ -410,6 +412,8 @@ pub enum CompilerError {
     Runtime { context: Box<ErrorContext> },
     Validation { context: Box<ErrorContext> },
     Module { context: Box<ErrorContext> },
+    Testing { context: Box<ErrorContext> },
+    LexError(crate::lexer::specification_lexer::LexError),
 }
 
 impl CompilerError {
@@ -491,13 +495,25 @@ impl CompilerError {
 
     pub fn validation_error<T: Into<String>>(
         message: T,
-        help: Option<String>,
-        location: Option<SourceLocation>,
+        location: SourceLocation,
     ) -> Self {
         CompilerError::Validation {
             context: Box::new(
-                ErrorContext::new(message, help, ErrorType::Validation, location)
+                ErrorContext::new(message, None, ErrorType::Validation, Some(location))
                     .with_error_code("E010"),
+            ),
+        }
+    }
+
+    pub fn validation_warning<T: Into<String>>(
+        message: T,
+        location: SourceLocation,
+    ) -> Self {
+        CompilerError::Validation {
+            context: Box::new(
+                ErrorContext::new(message, None, ErrorType::Validation, Some(location))
+                    .with_severity(ErrorSeverity::Warning)
+                    .with_error_code("W010"),
             ),
         }
     }
@@ -757,6 +773,20 @@ impl CompilerError {
         }
     }
 
+    /// Testing-related error
+    pub fn testing_error<T: Into<String>>(
+        message: T,
+        help: Option<String>,
+        location: Option<SourceLocation>,
+    ) -> Self {
+        CompilerError::Testing {
+            context: Box::new(
+                ErrorContext::new(message, help, ErrorType::Validation, location)
+                    .with_error_code("E019"),
+            ),
+        }
+    }
+
     /// Import resolution error
     pub fn import_error<T: Into<String>>(
         message: T,
@@ -878,6 +908,22 @@ impl CompilerError {
             None,
         )
     }
+
+    /// Get the error message
+    pub fn message(&self) -> &str {
+        match self {
+            CompilerError::Syntax { context } => &context.message,
+            CompilerError::Type { context } => &context.message,
+            CompilerError::Memory { context } => &context.message,
+            CompilerError::Codegen { context } => &context.message,
+            CompilerError::IO { context } => &context.message,
+            CompilerError::Runtime { context } => &context.message,
+            CompilerError::Validation { context } => &context.message,
+            CompilerError::Module { context } => &context.message,
+            CompilerError::Testing { context } => &context.message,
+            CompilerError::LexError(lex_error) => "Lexical error",
+        }
+    }
 }
 
 fn levenshtein_distance(s1: &str, s2: &str) -> usize {
@@ -924,56 +970,68 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
 
 impl fmt::Display for CompilerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let context = match self {
-            CompilerError::Syntax { context } => {
-                write!(f, "Syntax error: {}", context.message)?;
-                context
+        match self {
+            CompilerError::LexError(lex_error) => {
+                write!(f, "Lexical error: {}", lex_error)
             }
-            CompilerError::Type { context } => {
-                write!(f, "Type error: {}", context.message)?;
-                context
-            }
-            CompilerError::Memory { context } => {
-                write!(f, "Memory error: {}", context.message)?;
-                context
-            }
-            CompilerError::Codegen { context } => {
-                write!(f, "Code generation error: {}", context.message)?;
-                context
-            }
-            CompilerError::IO { context } => {
-                write!(f, "IO error: {}", context.message)?;
-                context
-            }
-            CompilerError::Runtime { context } => {
-                write!(f, "Runtime error: {}", context.message)?;
-                context
-            }
-            CompilerError::Validation { context } => {
-                write!(f, "Validation error: {}", context.message)?;
-                context
-            }
-            CompilerError::Module { context } => {
-                write!(f, "Module error: {}", context.message)?;
-                context
-            }
-        };
+            _ => {
+                let context = match self {
+                    CompilerError::Syntax { context } => {
+                        write!(f, "Syntax error: {}", context.message)?;
+                        context
+                    }
+                    CompilerError::Type { context } => {
+                        write!(f, "Type error: {}", context.message)?;
+                        context
+                    }
+                    CompilerError::Memory { context } => {
+                        write!(f, "Memory error: {}", context.message)?;
+                        context
+                    }
+                    CompilerError::Codegen { context } => {
+                        write!(f, "Code generation error: {}", context.message)?;
+                        context
+                    }
+                    CompilerError::IO { context } => {
+                        write!(f, "IO error: {}", context.message)?;
+                        context
+                    }
+                    CompilerError::Runtime { context } => {
+                        write!(f, "Runtime error: {}", context.message)?;
+                        context
+                    }
+                    CompilerError::Validation { context } => {
+                        write!(f, "Validation error: {}", context.message)?;
+                        context
+                    }
+                    CompilerError::Module { context } => {
+                        write!(f, "Module error: {}", context.message)?;
+                        context
+                    }
+                    CompilerError::Testing { context } => {
+                        write!(f, "Testing error: {}", context.message)?;
+                        context
+                    }
+                    CompilerError::LexError(_) => unreachable!(),
+                };
 
-        if let Some(location) = &context.location {
-            if !location.file.is_empty() && location.file != "<unknown>" {
-                write!(
-                    f,
-                    "\n  at {}:{}:{}",
-                    location.file, location.line, location.column
-                )?;
+                if let Some(location) = &context.location {
+                    if !location.file.is_empty() && location.file != "<unknown>" {
+                        write!(
+                            f,
+                            "\n  at {}:{}:{}",
+                            location.file, location.line, location.column
+                        )?;
+                    }
+                }
+
+                if let Some(help) = &context.help {
+                    write!(f, "\n  Help: {help}")?;
+                }
+
+                Ok(())
             }
         }
-
-        if let Some(help) = &context.help {
-            write!(f, "\n  Help: {help}")?;
-        }
-
-        Ok(())
     }
 }
 
@@ -1189,7 +1247,8 @@ impl ErrorUtils {
         suggestions
     }
 
-    /// Convert a Pest parsing error to an enhanced CompilerError with detailed context
+    // TEMPORARILY DISABLED - needs parser Rule type fix
+    /*
     pub fn from_pest_error(
         pest_error: pest::error::Error<crate::parser::Rule>,
         source: &str,
@@ -1482,8 +1541,10 @@ impl ErrorUtils {
             format!("Error in: '{message}'")
         }
     }
+    */
 
-    /// Enhanced error message generation with context-aware suggestions
+    // TEMPORARILY DISABLED - needs parser Rule type fix
+    /*
     pub fn from_pest_error_with_recovery(
         pest_error: pest::error::Error<crate::parser::Rule>,
         source: &str,
@@ -1682,6 +1743,59 @@ impl ErrorUtils {
         }
 
         analysis
+    }
+    */
+
+    /// Simplified pest error conversion for parser compatibility
+    pub fn from_pest_error(
+        pest_error: pest::error::Error<crate::parser::Rule>,
+        source: &str,
+        file_path: &str,
+    ) -> CompilerError {
+        // Convert pest error to basic syntax error for now
+        let message = format!("Parse error: {}", pest_error);
+        
+        // Try to extract location if possible
+        let location = match pest_error.location {
+            pest::error::InputLocation::Pos(pos) => {
+                let (line, col) = Self::calculate_line_column(source, pos);
+                Some(SourceLocation {
+                    line,
+                    column: col,
+                    file: file_path.to_string(),
+                })
+            }
+            pest::error::InputLocation::Span((start_pos, _)) => {
+                let (line, col) = Self::calculate_line_column(source, start_pos);
+                Some(SourceLocation {
+                    line,
+                    column: col,
+                    file: file_path.to_string(),
+                })
+            }
+        };
+
+        CompilerError::syntax_error(message, None, location)
+    }
+
+    /// Calculate line and column from position
+    fn calculate_line_column(source: &str, pos: usize) -> (usize, usize) {
+        let mut line = 1;
+        let mut col = 1;
+
+        for (i, ch) in source.char_indices() {
+            if i >= pos {
+                break;
+            }
+            if ch == '\n' {
+                line += 1;
+                col = 1;
+            } else {
+                col += 1;
+            }
+        }
+
+        (line, col)
     }
 }
 

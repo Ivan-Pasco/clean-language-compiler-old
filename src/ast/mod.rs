@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct SourceLocation {
     pub line: usize,
     pub column: usize,
@@ -14,6 +14,12 @@ impl SourceLocation {
             column,
             file: file.to_string(),
         }
+    }
+}
+
+impl fmt::Display for SourceLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}:{}", self.file, self.line, self.column)
     }
 }
 
@@ -51,7 +57,7 @@ pub enum ListBehavior {
     LineUniquePile, // All three combined
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     // Core types from specification
     Boolean,
@@ -84,7 +90,7 @@ pub enum Type {
     Any,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BinaryOperator {
     Add,
     Subtract,
@@ -108,7 +114,7 @@ pub enum BinaryOperator {
     Or,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum UnaryOperator {
     Negate,
     Not,

@@ -544,11 +544,12 @@ impl CodeGenerator {
 
         // Try to get function index, fallback to implicit method call if in class context
         let func_index = match self.get_function_index(name) {
-            Some(index) => index,
+            Some(index) => {
+                index
+            },
             None => {
                 // If function not found and we're in a class context, try as implicit method call
                 if let Some(class_name) = &self.current_class_context {
-                    eprintln!("DEBUG: Function '{}' not found in codegen, trying implicit method call in class '{}'", name, class_name);
                     let class_name_clone = class_name.clone();
                     return self.generate_implicit_method_call(&class_name_clone, name, arguments, instructions);
                 } else {
@@ -1019,7 +1020,7 @@ impl CodeGenerator {
         
         loop {
             // Try to find the method in current class
-            let method_function_name = format!("{}.{}", current_class, method_name);
+            let method_function_name = format!("{}_{}", current_class, method_name);
             if self.get_function_index(&method_function_name).is_some() {
                 return Ok(method_function_name);
             }

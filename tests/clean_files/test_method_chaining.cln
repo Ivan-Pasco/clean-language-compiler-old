@@ -1,8 +1,8 @@
 functions:
-	test()
+	void test()
 		print("first statement")
 		integer:
 			x = 5
 
-start()
-	test()
+	void start()
+	void test()

@@ -1,0 +1,9 @@
+functions:
+	void testVariables()
+		print("=== Testing Variables ===")
+		integer a = 10
+		integer b = 5
+		print("a = " + a.toString())
+
+start()
+	testVariables()

@@ -42,7 +42,14 @@ functions:
         // Logging
         logUserAction("User registration attempted")
         
-        return confirmed and string.length(response) > 0
+        // Return simple boolean result
+        if confirmed
+            if string.length(response) > 0
+                return true
+            else
+                return false
+        else
+            return false
     
     // Function using method chaining (simplified without async for now)
     list<string> fetchAndProcessData()

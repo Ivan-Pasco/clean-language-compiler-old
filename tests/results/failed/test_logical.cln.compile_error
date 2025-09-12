@@ -1,0 +1,5 @@
+DEBUG: Found function 'logical.and' with 1 overloads
+DEBUG: Resolving function 'logical.and' with 2 args
+DEBUG: Found function 'bool_to_string' with 1 overloads
+DEBUG: Resolving function 'bool_to_string' with 1 args
+Error: Type { context: ErrorContext { message: "Function 'bool_to_string' called with wrong number of arguments\nExpected type: 2\nActual type: 1", help: Some("Function 'bool_to_string' expects 2 arguments, but 1 were provided"), error_type: Type, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E017"), related_errors: [] } }

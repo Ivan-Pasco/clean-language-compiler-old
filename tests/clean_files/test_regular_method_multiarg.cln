@@ -1,4 +1,4 @@
 functions:
 	void main()
-		s = "hello"
-		s.keepBetween(1, 3)
+		string s = "hello"
+		s.substring(1, 3)

@@ -218,6 +218,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "http_decode_url", |_: i32, _: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "http_build_query", |_: i32, _: i32| -> i32 { 0 })?;
 
+    // Conditional function imports - proper implementations
+    linker.func_wrap(
+        "env",
+        "conditional_integer",
+        |condition: i32, true_value: i32, false_value: i32| -> i32 {
+            if condition != 0 {
+                true_value
+            } else {
+                false_value
+            }
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "conditional_number",
+        |condition: i32, true_value: f64, false_value: f64| -> f64 {
+            if condition != 0 {
+                true_value
+            } else {
+                false_value
+            }
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "conditional_boolean",
+        |condition: i32, true_value: i32, false_value: i32| -> i32 {
+            if condition != 0 {
+                true_value
+            } else {
+                false_value
+            }
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "conditional_string",
+        |condition: i32, true_value: i32, false_value: i32| -> i32 {
+            if condition != 0 {
+                true_value
+            } else {
+                false_value
+            }
+        },
+    )?;
+
     // Type conversion imports - proper implementations
     linker.func_wrap(
         "env",
@@ -284,17 +333,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap(
         "memory_runtime",
         "mem_alloc",
-        |type_id: i32, size: i32| -> i32 {
+        |_type_id: i32, size: i32| -> i32 {
             // Return a mock pointer for allocation
             1024 + size // Simple mock allocation
         },
     )?;
 
-    linker.func_wrap("memory_runtime", "mem_retain", |ptr: i32| {
+    linker.func_wrap("memory_runtime", "mem_retain", |_ptr: i32| {
         // Mock retain - does nothing
     })?;
 
-    linker.func_wrap("memory_runtime", "mem_release", |ptr: i32| {
+    linker.func_wrap("memory_runtime", "mem_release", |_ptr: i32| {
         // Mock release - does nothing
     })?;
 
@@ -392,6 +441,71 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "string.toUpperCase", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "string.toLowerCase", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "string.concat", |_: i32, _: i32| -> i32 { 0 })?;
+
+    // Add array access function
+    linker.func_wrap(
+        "env",
+        "array_get",
+        |mut caller: Caller<'_, ()>, array_ptr: i32, index: i32| -> i32 {
+            let memory = match caller.get_export("memory") {
+                Some(Extern::Memory(mem)) => mem,
+                _ => {
+                    println!("[array_get: no memory export]");
+                    return 0; // Return 0 on error
+                }
+            };
+
+            let data = memory.data(&caller);
+            let ptr_usize = array_ptr as usize;
+
+            // Check bounds for reading header
+            if ptr_usize + 17 > data.len() {
+                println!("[array_get: invalid array pointer {}]", array_ptr);
+                return 0;
+            }
+
+            // Memory layout: [ref_count(4), type_id(4), size(4), gc_flags(1), length(4), data...]
+            let length_offset = ptr_usize + 13;
+            let data_offset = ptr_usize + 17;
+
+            // Read array length from offset 13-16
+            let length_bytes = &data[length_offset..length_offset + 4];
+            let length = u32::from_le_bytes([
+                length_bytes[0],
+                length_bytes[1],
+                length_bytes[2],
+                length_bytes[3],
+            ]) as i32;
+
+            // Bounds check
+            if index < 0 || index >= length {
+                println!(
+                    "[array_get: index {} out of bounds for array of length {}]",
+                    index, length
+                );
+                return 0; // Return 0 for out-of-bounds access
+            }
+
+            // Each element is 4 bytes (i32), calculate element offset
+            let element_offset = data_offset + (index as usize * 4);
+
+            if element_offset + 4 > data.len() {
+                println!("[array_get: element access out of memory bounds]");
+                return 0;
+            }
+
+            // Read the element value
+            let element_bytes = &data[element_offset..element_offset + 4];
+            let element_value = i32::from_le_bytes([
+                element_bytes[0],
+                element_bytes[1],
+                element_bytes[2],
+                element_bytes[3],
+            ]);
+
+            element_value
+        },
+    )?;
 
     // Instantiate the module
     let instance = linker.instantiate(&mut store, &module)?;

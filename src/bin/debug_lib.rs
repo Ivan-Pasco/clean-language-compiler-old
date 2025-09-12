@@ -26,7 +26,7 @@ start()
             binary
         }
         Err(e) => {
-            println!("✗ Compilation failed: {e}");
+            println!("✗ Compilation failed: {e:?}");
             return;
         }
     };

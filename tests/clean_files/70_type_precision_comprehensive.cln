@@ -1,7 +1,7 @@
 // Type precision comprehensive test - demonstrates precision modifiers
 
 functions:
-	testIntegerPrecisionModifiers()
+	void testIntegerPrecisionModifiers()
 		print("=== Integer Precision Modifiers ===")
 		
 		// Standard integer (32-bit)
@@ -32,7 +32,7 @@ functions:
 		print("16-bit unsigned max: " + mediumUnsigned.toString())
 		print("32-bit unsigned max: " + largeUnsigned.toString())
 	
-	testNumberPrecisionModifiers()
+	void testNumberPrecisionModifiers()
 		print("=== Number Precision Modifiers ===")
 		
 		// Standard number (64-bit double precision)
@@ -53,7 +53,7 @@ functions:
 		print("PI in 32-bit: " + pi32.toString())
 		print("PI in 64-bit: " + pi64.toString())
 	
-	testPrecisionUseScenarios()
+	void testPrecisionUseScenarios()
 		print("=== Precision Use Case Scenarios ===")
 		
 		// Large calculations requiring 64-bit integers
@@ -83,7 +83,7 @@ functions:
 		print("Screen resolution: " + screenX.toString() + "x" + screenY.toString())
 		print("Aspect ratio: " + aspectRatio.toString())
 	
-	testPrecisionCalculations()
+	void testPrecisionCalculations()
 		print("=== Precision-Specific Calculations ===")
 		
 		// Financial calculations requiring high precision
@@ -107,7 +107,7 @@ functions:
 		print("Array size: " + arraySize.toString())
 		print("Array index: " + index.toString())
 	
-	testPrecisionConversions()
+	void testPrecisionConversions()
 		print("=== Precision Conversions ===")
 		
 		// Converting between precisions
@@ -125,17 +125,17 @@ functions:
 		number:64 bigFloat = bigInt.toNumber()
 		print("Integer to number conversion: " + bigFloat.toString())
 
-start()
+	void start()
 	print("Type Precision Comprehensive Test")
 	print("=================================")
-	testIntegerPrecisionModifiers()
+	void testIntegerPrecisionModifiers()
 	print("")
-	testNumberPrecisionModifiers()
+	void testNumberPrecisionModifiers()
 	print("")
-	testPrecisionUseScenarios()
+	void testPrecisionUseScenarios()
 	print("")
-	testPrecisionCalculations()
+	void testPrecisionCalculations()
 	print("")
-	testPrecisionConversions()
+	void testPrecisionConversions()
 	print("")
 	print("Type precision test completed successfully")

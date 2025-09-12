@@ -1,5 +1,5 @@
 functions:
-	test(integer x=5)
+	integer test(integer x=5)
 		return x
 
 start()

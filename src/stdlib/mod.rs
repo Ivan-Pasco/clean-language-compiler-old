@@ -1,4 +1,9 @@
-// Core standard library modules
+// Plugin system (new modular architecture)
+pub mod modular;
+pub mod plugin;
+pub mod plugins;
+
+// Legacy modules (for backward compatibility)
 pub mod basic_ops;
 pub mod console_ops;
 pub mod error;
@@ -35,7 +40,11 @@ pub mod string_class;
 pub mod string_interpolation;
 pub mod test_framework;
 
-// Re-exports for convenience
+// New modular system exports
+pub use modular::{ModularStandardLibrary, StandardLibraryBuilder, StandardLibraryConfig};
+pub use plugin::{FunctionCategory, FunctionMetadata, PluginRegistry, StdlibPlugin};
+
+// Legacy re-exports for convenience
 pub use async_programming::AsyncProgrammingManager;
 pub use basic_ops::basic_ops::*;
 pub use conditional::ConditionalManager;

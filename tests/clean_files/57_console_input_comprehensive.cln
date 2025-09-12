@@ -2,7 +2,7 @@
 // Tests all console input functionality as defined in the specification
 
 functions:
-	demonstrateConsoleInput()
+	void demonstrateConsoleInput()
 		print("=== Console Input Features Demo ===")
 		print("Note: This demonstrates the syntax - actual input would require user interaction")
 		
@@ -26,7 +26,7 @@ functions:
 		boolean defaultConfirmed = true
 		print("Demo result: " + defaultConfirmed.toString())
 
-	testInputSyntaxPatterns()
+	void testInputSyntaxPatterns()
 		print("=== Input Syntax Patterns ===")
 		
 		// Test all specified input patterns
@@ -38,9 +38,9 @@ functions:
 		
 		print("All input patterns follow Clean Language Specification")
 
-start()
-	demonstrateConsoleInput()
+	void start()
+	void demonstrateConsoleInput()
 	print("")
-	testInputSyntaxPatterns()
+	void testInputSyntaxPatterns()
 	print("")
 	print("Console input specification compliance test completed")

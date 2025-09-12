@@ -1,0 +1,4 @@
+Error: WebAssembly translation error
+
+Caused by:
+    Invalid input WebAssembly code at offset 14188: type mismatch: expected a type but nothing on stack

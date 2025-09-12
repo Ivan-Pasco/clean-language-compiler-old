@@ -15,6 +15,7 @@
 
 use clap::{Parser, Subcommand};
 use clean_language_compiler::{compile_with_file, runtime::wasmtime_config::CleanWasmtimeConfig};
+use clean_language_compiler::debug::DebugUtils;
 use std::fs;
 use std::path::Path;
 
@@ -267,53 +268,25 @@ async fn handle_compile(
 
     let source = fs::read_to_string(&input)?;
 
-    // Try to parse the program to check for tests, with fallback to recovery parsing
-    use clean_language_compiler::compile_with_recovery;
-    use clean_language_compiler::parser::CleanParser;
+    eprintln!("DEBUG: About to call compile_with_file with {} characters of source", source.len());
+    eprintln!("DEBUG: Source content: {}", source);
 
-    let (program, use_recovery) = match CleanParser::parse_program_with_file(&source, &input) {
-        Ok(program) => (program, false),
-        Err(_parse_error) => {
-            // If regular parsing fails, try recovery parsing
-            println!("🔄 Regular parsing failed, trying recovery compilation...");
-            match CleanParser::parse_program_with_recovery(&source, &input) {
-                Ok(program) => (program, true),
-                Err(recovery_errors) => {
-                    eprintln!("❌ Both regular and recovery parsing failed.");
-                    eprintln!("Recovery errors: {:?}", recovery_errors);
-                    return Err("Parsing failed".into());
-                }
+    // Use the 7-stage pipeline for compilation
+    let wasm_binary = match compile_with_file(&source, &input) {
+        Ok(binary) => binary,
+        Err(errors) => {
+            eprintln!("❌ Compilation failed with {} errors:", errors.len());
+            for (i, error) in errors.iter().enumerate() {
+                eprintln!("Error {}: {}", i + 1, error);
             }
+            return Err("Compilation failed".into());
         }
     };
-
-    // Run tests if requested
-    if test && !program.tests.is_empty() {
-        println!("\n🧪 Running tests...");
-        run_tests(&program, &input)?;
-    } else if test && program.tests.is_empty() {
-        println!("⚠️  No tests found to run");
+    
+    // Note: Tests are not currently supported in the 7-stage pipeline
+    if test {
+        println!("⚠️  Test execution not yet implemented in 7-stage pipeline");
     }
-
-    // Use appropriate compilation method
-    let wasm_binary = if use_recovery {
-        println!("🔧 Using recovery compilation...");
-        match compile_with_recovery(&source, &input) {
-            Ok(binary) => binary,
-            Err(errors) => {
-                eprintln!(
-                    "❌ Recovery compilation failed with {} errors:",
-                    errors.len()
-                );
-                for (i, error) in errors.iter().enumerate() {
-                    eprintln!("Error {}: {}", i + 1, error);
-                }
-                return Err("Compilation failed".into());
-            }
-        }
-    } else {
-        compile_with_file(&source, &input)?
-    };
 
     if let Some(parent) = Path::new(&output).parent() {
         fs::create_dir_all(parent)?;
@@ -323,9 +296,7 @@ async fn handle_compile(
 
     println!("Successfully compiled to {output}");
 
-    if include_tests && !program.tests.is_empty() {
-        println!("📝 Tests included in binary (accessible via --run-tests flag)");
-    }
+    // Tests handling would be implemented here if needed
 
     Ok(())
 }
@@ -549,9 +520,12 @@ async fn handle_simple_test(verbose: bool) -> Result<(), Box<dyn std::error::Err
             );
             Ok(())
         }
-        Err(error) => {
-            eprintln!("✗ Simple test failed: {error}");
-            Err(error.into())
+        Err(errors) => {
+            eprintln!("✗ Simple test failed with {} errors:", errors.len());
+            for (i, error) in errors.iter().enumerate() {
+                eprintln!("Error {}: {}", i + 1, error);
+            }
+            Err("Simple test failed".into())
         }
     }
 }
@@ -584,8 +558,13 @@ async fn handle_comprehensive_test(verbose: bool) -> Result<(), Box<dyn std::err
                 println!("✓ {} bytes", wasm_binary.len());
                 passed += 1;
             }
-            Err(error) => {
-                println!("✗ {error}");
+            Err(errors) => {
+                println!("✗ {} errors", errors.len());
+                if verbose {
+                    for error in &errors {
+                        println!("  {error}");
+                    }
+                }
             }
         }
     }
@@ -616,28 +595,23 @@ async fn handle_debug(
         }
     };
 
-    use clean_language_compiler::debug::DebugUtils;
-    use clean_language_compiler::parser::CleanParser;
-
-    let parse_result = CleanParser::parse_program_with_file(&source, &input);
-    let warnings = Vec::new();
-
-    let debug_report = DebugUtils::create_debug_report(&source, &input, &parse_result, &warnings);
-    println!("{debug_report}");
-
-    match &parse_result {
-        Ok(program) => {
+    // Debug using the 7-stage pipeline compilation attempt
+    match compile_with_file(&source, &input) {
+        Ok(wasm_binary) => {
+            println!("✅ Compilation successful: {} bytes of WASM generated", wasm_binary.len());
             if show_ast {
-                println!("\n");
-                DebugUtils::print_ast(program);
+                println!("⚠️  AST display not available in 7-stage pipeline (use specification parser directly)");
             }
         }
-        Err(error) => {
+        Err(errors) => {
+            println!("❌ Compilation failed with {} errors:", errors.len());
+            for (i, error) in errors.iter().enumerate() {
+                println!("Error {}: {}", i + 1, error);
+            }
             if analyze_errors {
-                println!("\n");
-                let analysis = DebugUtils::analyze_errors(&[error.clone()]);
-                for line in analysis {
-                    println!("{line}");
+                println!("\n=== Error Analysis ===");
+                for error in &errors {
+                    println!("• {}", error);
                 }
             }
         }
@@ -692,10 +666,6 @@ async fn handle_lint(
         return Ok(());
     }
 
-    use clean_language_compiler::debug::DebugUtils;
-    use clean_language_compiler::parser::CleanParser;
-
-    let mut total_issues = 0;
     let mut total_errors = 0;
 
     for file_path in &files_to_lint {
@@ -709,35 +679,31 @@ async fn handle_lint(
             }
         };
 
-        let parse_result = CleanParser::parse_program_with_file(&source, file_path);
-        if let Err(error) = &parse_result {
-            total_errors += 1;
-            if !errors_only {
-                println!("  ❌ Compilation Error:");
-                println!("     {error}");
+        // Use 7-stage pipeline for linting
+        match compile_with_file(&source, file_path) {
+            Ok(_) => {
+                println!("  ✅ No compilation errors found");
             }
-        }
-
-        let style_issues = DebugUtils::validate_style(&source);
-        if !style_issues.is_empty() {
-            total_issues += style_issues.len();
-            if !errors_only {
-                println!("🎨 Style Issues Found:");
-                for issue in &style_issues {
-                    println!("  {issue}");
+            Err(errors) => {
+                total_errors += errors.len();
+                if !errors_only {
+                    println!("  ❌ Compilation Errors:");
+                    for error in &errors {
+                        println!("     {error}");
+                    }
                 }
             }
         }
-
-        if parse_result.is_ok() && style_issues.is_empty() {
-            println!("  ✅ No issues found");
+        
+        // Note: Style validation not available in 7-stage pipeline
+        if !errors_only {
+            println!("  ⚠️  Style validation not yet implemented in 7-stage pipeline");
         }
     }
 
     println!("\n=== Lint Summary ===");
     println!("Files checked: {}", files_to_lint.len());
     println!("Compilation errors: {total_errors}");
-    println!("Style issues: {total_issues}");
 
     if fix {
         println!("Note: Automatic fixing is not yet implemented");
@@ -760,101 +726,34 @@ async fn handle_parse(
         }
     };
 
-    use clean_language_compiler::debug::DebugUtils;
-    use clean_language_compiler::parser::CleanParser;
-
-    if recover_errors {
-        println!("🔄 Using enhanced error recovery mode...\n");
-
-        // Use the enhanced error recovery parser
-        let mut recovery_parser =
-            clean_language_compiler::parser::ErrorRecoveringParser::new(&source, &input);
-        recovery_parser = recovery_parser.with_max_errors(50); // Allow up to 50 errors
-
-        match recovery_parser.parse_with_recovery(&source) {
-            Ok(program) => {
-                println!("✅ Parsing succeeded with error recovery!");
-
-                if show_tree {
-                    println!("\n🌳 AST Structure:");
-                    println!("{}", "═".repeat(50));
-                    DebugUtils::print_ast(&program);
-                }
-
-                // Check if we collected any warnings during recovery
-                if !recovery_parser.warnings.is_empty() {
-                    println!("\n⚠️  Warnings collected during parsing:");
-                    for warning in &recovery_parser.warnings {
-                        println!("  • {warning}");
-                    }
-                }
-
-                println!("\n📊 Recovery Statistics:");
-                println!(
-                    "  • Recovery points identified: {}",
-                    recovery_parser.recovery_points.len()
-                );
-                println!("  • Warnings: {}", recovery_parser.warnings.len());
-                println!("  • Functions parsed: {}", program.functions.len());
-                if program.start_function.is_some() {
-                    println!("  • Start function: ✅");
-                }
-                println!("  • Classes parsed: {}", program.classes.len());
+    // Use 7-stage pipeline for parsing
+    println!("🔄 Using 7-stage compilation pipeline for parsing...\n");
+    
+    match compile_with_file(&source, &input) {
+        Ok(wasm_binary) => {
+            println!("✅ Parsing and compilation succeeded!");
+            println!("Generated {} bytes of WASM", wasm_binary.len());
+            
+            if show_tree {
+                println!("⚠️  AST display not available in 7-stage pipeline");
+                println!("    Use the specification parser directly for AST inspection");
             }
-            Err(errors) => {
-                println!("❌ Parsing failed with {} error(s):\n", errors.len());
-
-                // Generate comprehensive error report
-                let error_report = DebugUtils::create_error_report(&source, &errors);
-                println!("{error_report}");
-
-                // If partial parsing was successful, show what we recovered
-                if !recovery_parser.errors.is_empty() && errors.len() < 20 {
-                    println!("\n🔧 Attempting to show recovered partial AST...");
-
-                    // Try to create a minimal program from whatever we could parse
-                    let partial_program = clean_language_compiler::ast::Program {
-                        imports: Vec::new(),
-                        statements: Vec::new(),
-                        functions: Vec::new(),
-                        classes: Vec::new(),
-                        start_function: None,
-                        tests: Vec::new(),
-                        location: None,
-                    };
-
-                    if show_tree {
-                        DebugUtils::print_ast(&partial_program);
-                    }
-                }
+            
+            if recover_errors {
+                println!("ℹ️  Error recovery mode not needed - compilation succeeded");
             }
         }
-    } else {
-        println!("🔄 Using standard parsing mode...\n");
-
-        match CleanParser::parse_program_with_file(&source, &input) {
-            Ok(program) => {
-                println!("✅ Parsing succeeded!");
-                if show_tree {
-                    println!("\n");
-                    DebugUtils::print_ast(&program);
-                }
+        Err(errors) => {
+            println!("❌ Parsing/compilation failed with {} error(s):\n", errors.len());
+            
+            for (i, error) in errors.iter().enumerate() {
+                println!("Error {}: {}", i + 1, error);
             }
-            Err(error) => {
-                eprintln!("❌ Parsing failed:");
-                println!("{error}");
-
-                // Provide basic suggestions even in standard mode
-                println!("\n💡 Suggestions:");
-                println!("  • Try using --recover-errors for detailed error analysis");
-                println!("  • Check the Clean Language syntax documentation");
-
-                // Basic error analysis
-                let suggestions = DebugUtils::suggest_error_fixes(&source, &[error]);
-                for suggestion in suggestions {
-                    println!("  • {suggestion}");
-                }
-            }
+            
+            println!("\n💡 Suggestions:");
+            println!("  • Check the Clean Language syntax documentation");
+            println!("  • Ensure proper indentation (tabs, not spaces)");
+            println!("  • Verify function and variable declarations follow specification");
         }
     }
 
@@ -890,8 +789,11 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
                     binary
                 }
                 Err(compile_error) => {
-                    eprintln!("❌ Compilation failed: {compile_error}");
-                    return Err(compile_error.into());
+                    eprintln!("❌ Compilation failed: {} errors", compile_error.len());
+                    for error in &compile_error {
+                        eprintln!("  - {}", error);
+                    }
+                    return Err(format!("Compilation failed with {} errors", compile_error.len()).into());
                 }
             };
 
@@ -1601,85 +1503,5 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-fn run_tests(
-    program: &clean_language_compiler::ast::Program,
-    file_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut passed = 0;
-    let mut failed = 0;
-
-    println!("Running tests for {file_path}...\n");
-
-    for (i, test) in program.tests.iter().enumerate() {
-        let test_name = test
-            .description
-            .as_ref()
-            .map(|d| d.clone())
-            .unwrap_or_else(|| format!("Test #{}", i + 1));
-
-        // For now, we'll implement a basic test runner
-        // In a full implementation, this would compile and run the test expression
-        let test_result = evaluate_test_expression(&test.test_expression, &test.expected_value);
-
-        match test_result {
-            Ok(true) => {
-                println!("✅ {test_name}: PASS");
-                passed += 1;
-            }
-            Ok(false) => {
-                println!("❌ {test_name}: FAIL");
-                println!("   Expected: {:?}", test.expected_value);
-                println!("   Got: {:?}", test.test_expression);
-                failed += 1;
-            }
-            Err(e) => {
-                println!("❌ {test_name}: ERROR - {e}");
-                failed += 1;
-            }
-        }
-    }
-
-    println!(
-        "\nTest Results: {passed} passed, {failed} failed, {total} total",
-        total = passed + failed
-    );
-
-    if failed > 0 {
-        println!(
-            "Note: {} test(s) failed but not treating as critical error",
-            failed
-        );
-        // Don't return error for test failures - just report them
-    }
-
-    Ok(())
-}
-
-fn evaluate_test_expression(
-    test_expr: &clean_language_compiler::ast::Expression,
-    expected: &clean_language_compiler::ast::Expression,
-) -> Result<bool, String> {
-    use clean_language_compiler::ast::{Expression, Value};
-    // This is a simplified test evaluator
-    // In a full implementation, this would compile the expressions to WASM and execute them
-
-    match (test_expr, expected) {
-        (Expression::Literal(Value::Integer(a)), Expression::Literal(Value::Integer(b))) => {
-            Ok(a == b)
-        }
-        (Expression::Literal(Value::Number(a)), Expression::Literal(Value::Number(b))) => {
-            Ok((a - b).abs() < f64::EPSILON)
-        }
-        (Expression::Literal(Value::String(a)), Expression::Literal(Value::String(b))) => {
-            Ok(a == b)
-        }
-        (Expression::Literal(Value::Boolean(a)), Expression::Literal(Value::Boolean(b))) => {
-            Ok(a == b)
-        }
-        _ => {
-            // For complex expressions, we'd need to compile and execute
-            // For now, we'll just compare the AST structure
-            Ok(format!("{test_expr:?}") == format!("{expected:?}"))
-        }
-    }
-}
+// Test runner removed - not compatible with 7-stage pipeline
+// Tests should be implemented as separate .cln files and compiled individually

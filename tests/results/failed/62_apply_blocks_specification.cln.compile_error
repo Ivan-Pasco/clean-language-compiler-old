@@ -1,0 +1,3 @@
+DEBUG: Found function 'integer.toString' with 1 overloads
+DEBUG: Resolving function 'integer.toString' with 1 args
+Error: Type { context: ErrorContext { message: "Function 'print' expects type String, but got Void in apply-block", help: Some("Each expression in a function apply-block must match the function's single parameter type"), error_type: Type, location: None, suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E002"), related_errors: [] } }

@@ -833,21 +833,20 @@ obj.property = val  // Property assignment
 Clean Language supports two print syntaxes: simple inline syntax and block syntax with colon. Print functions automatically convert any value to a string representation, making output simple and intuitive.
 
 #### Simple Syntax
-The print statement does not require parentheses. Write `print value` for simple cases. Parentheses are optional for grouping expressions.
+The print statement supports a space-separated syntax. Use `print "message" ln` for newlines or `print "message"` without newlines.
 
 ```clean
-print "Hello"           // Print without newline (preferred syntax)
-println "Hello"         // Print with newline (preferred syntax)
-print variable          // Print variable
-println expression      // Print expression result
+print "Hello" ln        // Print with newline (preferred syntax)
+print "Hello"           // Print without newline
+print variable ln       // Print variable with newline
+print expression ln     // Print expression result with newline
 
 // Parentheses optional for expression grouping
-print (a + b * c)
-println (complex_expression)
+print (a + b * c) ln
+print (complex_expression)
 
 // Function call syntax also supported (backwards compatibility)
 print("Hello")          // Also valid
-println("Hello")        // Also valid
 print(variable)         // Also valid
 ```
 

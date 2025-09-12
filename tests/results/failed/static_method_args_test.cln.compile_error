@@ -1,0 +1,1 @@
+Error: Type { context: ErrorContext { message: "Cannot assign Number to variable of type Integer", help: Some("Change the initializer expression to match the variable type"), error_type: Type, location: Some(SourceLocation { line: 9, column: 34, file: "" }), suggestions: [], source_snippet: None, stack_trace: [], severity: Error, error_code: Some("E002"), related_errors: [] } }

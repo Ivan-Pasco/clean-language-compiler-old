@@ -197,6 +197,26 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
             // Parse function call directly
             parse_function_call(pair)
         }
+        Rule::method_call => {
+            // Parse method call directly
+            parse_method_call(pair)
+        }
+        Rule::chained_method_call => {
+            // Parse chained method call directly
+            parse_chained_method_call(pair)
+        }
+        Rule::three_level_method_call => {
+            // Parse three level method call directly
+            parse_three_level_method_call(pair)
+        }
+        Rule::property_method_call => {
+            // Parse property method call directly
+            parse_property_method_call(pair)
+        }
+        Rule::static_method_call => {
+            // Parse static method call directly
+            parse_static_method_call(pair)
+        }
         Rule::conditional_expr => {
             // Parse conditional expression directly
             parse_conditional_expression(pair)
@@ -206,11 +226,23 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
             let inner = pair.into_inner().next().unwrap();
             parse_expression(inner)
         }
+        Rule::argument_expression => {
+            // Parse argument expression directly
+            parse_argument_expression(pair)
+        }
+        Rule::argument_term => {
+            // Parse argument term directly
+            parse_argument_term(pair)
+        }
+        Rule::list_element => {
+            // Parse list element directly
+            parse_list_element(pair)
+        }
         _ => {
             Err(CompilerError::parse_error(
                 format!("Unsupported expression rule: {:?}", pair.as_rule()),
                 Some(convert_to_ast_location(&get_location(&pair))),
-                Some("Expected expression, on_error_expr, on_error_block, base_expression, start_expr, conditional_expr, or error_variable".to_string())
+                Some("Expected expression, on_error_expr, on_error_block, base_expression, start_expr, conditional_expr, argument_expression, list_element, or error_variable".to_string())
             ))
         }
     }
@@ -693,6 +725,10 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
             // Handle base constructor calls: base(args...)
             parse_base_call(inner)
         }
+        Rule::constructor_call => {
+            // Handle constructor calls: ClassName(args...)
+            parse_constructor_call(inner)
+        }
         Rule::start_expr => {
             // Handle start expressions: start expression
             parse_start_expression(inner)
@@ -846,7 +882,7 @@ pub fn parse_string(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
 /// This handles arithmetic expressions, function calls, property access, etc.
 fn parse_interpolation_expression(expr_str: &str) -> Result<Expression, CompilerError> {
     use crate::parser::grammar::Rule;
-    use crate::CleanParser;
+    use super::CleanParser;
     use pest::Parser;
 
     // Parse the expression string as a standalone expression
@@ -872,8 +908,8 @@ pub fn parse_list_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError>
     let mut elements = Vec::new();
 
     for element in pair.into_inner() {
-        if let Rule::expression = element.as_rule() {
-            elements.push(parse_expression(element)?);
+        if let Rule::list_element = element.as_rule() {
+            elements.push(parse_list_element(element)?);
         }
     }
 
@@ -882,6 +918,15 @@ pub fn parse_list_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError>
         .into_iter()
         .map(|expr| match expr {
             Expression::Literal(value) => Ok(value),
+            Expression::Variable(name) => {
+                // Allow variables in list literals for now
+                // TODO: Evaluate variables during compilation
+                Err(CompilerError::parse_error(
+                    format!("Variable '{}' cannot be used in list literal", name),
+                    None,
+                    Some("List literals must contain constant values only".to_string()),
+                ))
+            }
             _ => Err(CompilerError::parse_error(
                 "List literals can only contain literal values".to_string(),
                 None,
@@ -891,6 +936,67 @@ pub fn parse_list_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError>
         .collect();
 
     Ok(Expression::Literal(Value::List(values?)))
+}
+
+pub fn parse_list_element(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = get_location(&pair);
+    let inner = pair.into_inner().next().ok_or_else(|| {
+        CompilerError::parse_error(
+            "Empty list element".to_string(),
+            Some(convert_to_ast_location(&location)),
+            Some("Expected a value in the list element".to_string()),
+        )
+    })?;
+
+    match inner.as_rule() {
+        Rule::decimal_integer => {
+            parse_integer_literal(inner, &location)
+        }
+        Rule::float => {
+            let num_str = inner.as_str();
+            num_str
+                .parse::<f64>()
+                .map(Value::Number)
+                .map(Expression::Literal)
+                .map_err(|_| {
+                    CompilerError::parse_error(
+                        format!("Invalid float: {num_str}"),
+                        Some(convert_to_ast_location(&location)),
+                        Some("Check that the float is in a valid format".to_string()),
+                    )
+                })
+        }
+        Rule::boolean => {
+            let value = match inner.as_str() {
+                "true" => true,
+                "false" => false,
+                _ => {
+                    return Err(CompilerError::parse_error(
+                        format!("Invalid boolean: {}", inner.as_str()),
+                        Some(convert_to_ast_location(&location)),
+                        Some("Boolean values must be 'true' or 'false'".to_string()),
+                    ))
+                }
+            };
+            Ok(Expression::Literal(Value::Boolean(value)))
+        }
+        Rule::string => parse_string(inner),
+        Rule::identifier => {
+            let identifier = inner.as_str();
+            Ok(Expression::Variable(identifier.to_string()))
+        }
+        Rule::expression => {
+            // Parenthesized expression: (expression)
+            parse_expression(inner)
+        }
+        _ => {
+            Err(CompilerError::parse_error(
+                format!("Unexpected list element: {:?}", inner.as_rule()),
+                Some(convert_to_ast_location(&location)),
+                Some("Expected number, boolean, string, identifier, or parenthesized expression".to_string()),
+            ))
+        }
+    }
 }
 
 pub fn parse_matrix_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
@@ -936,9 +1042,8 @@ pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError
                 // Parse argument list - contains argument_expression items
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains base_expression
-                        let inner_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_base_expression(inner_expr)?);
+                        // Parse argument_expression directly
+                        arguments.push(parse_argument_expression(arg_expr)?);
                     }
                 }
             }
@@ -1030,9 +1135,8 @@ pub fn parse_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
                                 // Parse argument list - contains argument_expression items
                                 for arg_expr in arg.into_inner() {
                                     if let Rule::argument_expression = arg_expr.as_rule() {
-                                        // argument_expression contains base_expression
-                                        let base_expr = arg_expr.into_inner().next().unwrap();
-                                        arguments.push(parse_base_expression(base_expr)?);
+                                        // Parse argument_expression directly
+                                        arguments.push(parse_argument_expression(arg_expr)?);
                                     }
                                 }
                             }
@@ -1112,9 +1216,8 @@ pub fn parse_property_method_call(pair: Pair<Rule>) -> Result<Expression, Compil
                 // Parse argument list - contains argument_expression items
                 for arg_expr in child.clone().into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains base_expression
-                        let inner_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_base_expression(inner_expr)?);
+                        // Parse argument_expression directly
+                        arguments.push(parse_argument_expression(arg_expr)?);
                     }
                 }
             }
@@ -1211,9 +1314,8 @@ pub fn parse_base_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                 // Parse argument list - contains argument_expression items
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains base_expression
-                        let inner_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_base_expression(inner_expr)?);
+                        // Parse argument_expression directly
+                        arguments.push(parse_argument_expression(arg_expr)?);
                     }
                 }
             }
@@ -1230,6 +1332,47 @@ pub fn parse_base_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     }
 
     Ok(Expression::BaseCall {
+        arguments,
+        location: convert_to_ast_location(&location),
+    })
+}
+
+pub fn parse_constructor_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = get_location(&pair);
+    let mut class_name = String::new();
+    let mut arguments = Vec::new();
+    
+    // Parse the class name and argument list
+    for arg in pair.into_inner() {
+        match arg.as_rule() {
+            Rule::class_name => {
+                class_name = arg.as_str().to_string();
+            }
+            Rule::argument_list => {
+                // Parse argument list - contains argument_expression items
+                for arg_expr in arg.into_inner() {
+                    if let Rule::argument_expression = arg_expr.as_rule() {
+                        // Parse argument_expression directly
+                        arguments.push(parse_argument_expression(arg_expr)?);
+                    }
+                }
+            }
+            _ => {
+                // Skip other rules (like parentheses)
+            }
+        }
+    }
+
+    if class_name.is_empty() {
+        return Err(CompilerError::parse_error(
+            "Constructor call missing class name".to_string(),
+            Some(convert_to_ast_location(&location)),
+            Some("Constructor calls must have a class name".to_string()),
+        ));
+    }
+
+    Ok(Expression::ObjectCreation {
+        class_name,
         arguments,
         location: convert_to_ast_location(&location),
     })
@@ -1252,9 +1395,8 @@ pub fn parse_static_method_call(pair: Pair<Rule>) -> Result<Expression, Compiler
                 // Parse argument list - contains argument_expression items
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains base_expression
-                        let inner_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_base_expression(inner_expr)?);
+                        // Parse argument_expression directly
+                        arguments.push(parse_argument_expression(arg_expr)?);
                     }
                 }
             }
@@ -1293,9 +1435,8 @@ pub fn parse_three_level_method_call(pair: Pair<Rule>) -> Result<Expression, Com
                 // Parse argument list - contains argument_expression items
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
-                        // argument_expression contains base_expression
-                        let inner_expr = arg_expr.into_inner().next().unwrap();
-                        arguments.push(parse_base_expression(inner_expr)?);
+                        // Parse argument_expression directly
+                        arguments.push(parse_argument_expression(arg_expr)?);
                     }
                 }
             }
@@ -1356,9 +1497,8 @@ pub fn parse_chained_method_call(pair: Pair<Rule>) -> Result<Expression, Compile
                                 // Parse argument list - contains argument_expression items
                                 for arg_expr in arg.into_inner() {
                                     if let Rule::argument_expression = arg_expr.as_rule() {
-                                        // argument_expression contains base_expression
-                                        let base_expr = arg_expr.into_inner().next().unwrap();
-                                        arguments.push(parse_base_expression(base_expr)?);
+                                        // Parse argument_expression directly
+                                        arguments.push(parse_argument_expression(arg_expr)?);
                                     }
                                 }
                             }
@@ -1410,4 +1550,130 @@ pub fn parse_start_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
         expression: Box::new(expression),
         location: convert_to_ast_location(&location),
     })
+}
+
+pub fn parse_argument_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut expr_stack = Vec::new();
+    let mut op_stack = Vec::new();
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::argument_term => {
+                expr_stack.push(parse_argument_term(item)?);
+            }
+            rule if matches!(rule, Rule::additive_op | Rule::multiplicative_op | Rule::power_op) => {
+                let op = match item.as_str() {
+                    "+" => BinaryOperator::Add,
+                    "-" => BinaryOperator::Subtract,
+                    "*" => BinaryOperator::Multiply,
+                    "/" => BinaryOperator::Divide,
+                    "%" => BinaryOperator::Modulo,
+                    "^" => BinaryOperator::Power,
+                    _ => {
+                        return Err(CompilerError::parse_error(
+                            format!("Invalid argument expression operator: {}", item.as_str()),
+                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some("Valid operators are: +, -, *, /, %, ^".to_string()),
+                        ))
+                    }
+                };
+                op_stack.push(op);
+            }
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!("Unexpected rule in argument expression: {:?}", item.as_rule()),
+                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some("Expected argument term or operator".to_string()),
+                ))
+            }
+        }
+    }
+
+    // Build the expression tree (left-associative)
+    if expr_stack.is_empty() {
+        return Err(CompilerError::parse_error(
+            "Empty argument expression".to_string(),
+            None,
+            Some("Argument expression must contain at least one term".to_string()),
+        ));
+    }
+
+    let mut result = expr_stack.remove(0);
+    let mut i = 0;
+
+    while i < op_stack.len() && i < expr_stack.len() {
+        let right = expr_stack.remove(0);
+        result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
+        i += 1;
+    }
+
+    Ok(result)
+}
+
+pub fn parse_argument_term(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = get_location(&pair);
+    let inner = pair.into_inner().next().ok_or_else(|| {
+        CompilerError::parse_error(
+            "Empty argument term".to_string(),
+            Some(convert_to_ast_location(&location)),
+            Some("Expected a value in the argument term".to_string()),
+        )
+    })?;
+
+    match inner.as_rule() {
+        Rule::number => parse_number_literal(inner),
+        Rule::decimal_integer | Rule::hex_integer | Rule::binary_integer | Rule::octal_integer => {
+            // Handle specific integer types directly
+            parse_integer_literal(inner, &location)
+        }
+        Rule::integer => {
+            // Handle legacy integer rule (fallback)
+            let integer_inner = inner.into_inner().next().unwrap();
+            parse_integer_literal(integer_inner, &location)
+        }
+        Rule::float => {
+            let num_str = inner.as_str();
+            num_str
+                .parse::<f64>()
+                .map(Value::Number)
+                .map(Expression::Literal)
+                .map_err(|_| {
+                    CompilerError::parse_error(
+                        format!("Invalid float: {num_str}"),
+                        Some(convert_to_ast_location(&location)),
+                        Some("Check that the float is in a valid format".to_string()),
+                    )
+                })
+        }
+        Rule::boolean => {
+            let value = match inner.as_str() {
+                "true" => true,
+                "false" => false,
+                _ => {
+                    return Err(CompilerError::parse_error(
+                        format!("Invalid boolean: {}", inner.as_str()),
+                        Some(convert_to_ast_location(&location)),
+                        Some("Boolean values must be 'true' or 'false'".to_string()),
+                    ))
+                }
+            };
+            Ok(Expression::Literal(Value::Boolean(value)))
+        }
+        Rule::string => parse_string(inner),
+        Rule::identifier => {
+            let identifier = inner.as_str();
+            Ok(Expression::Variable(identifier.to_string()))
+        }
+        Rule::argument_expression => {
+            // Parenthesized argument expression: (argument_expression)
+            parse_argument_expression(inner)
+        }
+        _ => {
+            Err(CompilerError::parse_error(
+                format!("Unexpected argument term: {:?}", inner.as_rule()),
+                Some(convert_to_ast_location(&location)),
+                Some("Expected number, boolean, string, identifier, or parenthesized expression".to_string()),
+            ))
+        }
+    }
 }

@@ -1,3 +1,4 @@
 functions:
 	string getStringResult()
-		return compare.integer.greaterThan(5, 3).toString()
+		boolean result = compare.integer.greaterThan(5, 3)
+		return result.toString()

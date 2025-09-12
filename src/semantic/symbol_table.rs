@@ -339,27 +339,26 @@ impl SymbolTable {
         self.scopes[self.current_scope].symbols.contains_key(name)
     }
 
-    /// Get all symbols in scope for error suggestions
+    /// Get all symbols in scope for error suggestions - Optimized O(n) version
     pub fn get_all_symbol_names(&self) -> Vec<String> {
-        let mut names = Vec::new();
+        let mut seen_names = std::collections::HashSet::new();
+        let mut unique_names = Vec::new();
         let mut current_scope_id = self.current_scope;
 
         loop {
             let scope = &self.scopes[current_scope_id];
-            names.extend(scope.symbols.keys().cloned());
+
+            // Add symbols from current scope, checking duplicates in O(1)
+            for name in scope.symbols.keys() {
+                if seen_names.insert(name.clone()) {
+                    unique_names.push(name.clone());
+                }
+            }
 
             // Move to parent scope
             match scope.parent_scope {
                 Some(parent_id) => current_scope_id = parent_id,
                 None => break,
-            }
-        }
-
-        // Remove duplicates while preserving order (most recent first)
-        let mut unique_names = Vec::new();
-        for name in names {
-            if !unique_names.contains(&name) {
-                unique_names.push(name);
             }
         }
 

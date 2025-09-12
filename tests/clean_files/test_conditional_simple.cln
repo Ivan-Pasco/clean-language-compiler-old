@@ -1,6 +1,6 @@
 functions:
 	void test()
-		integer result = conditional.integer(1, 2, 3)
+		integer result = conditional.integer(true, 2, 3)
 
 start()
 	test()

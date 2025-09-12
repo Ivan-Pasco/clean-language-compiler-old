@@ -91,7 +91,6 @@ functions:
 		print("Max Speed: " + vehicle.getMaxSpeed().toString() + " km/h")
 		print("Stopping: " + vehicle.stopEngine())
 		print("")
-	
 	void testVehicleArray(list<Vehicle> vehicles)
 		print("Testing polymorphic behavior with vehicle array:")
 		iterate vehicle in vehicles

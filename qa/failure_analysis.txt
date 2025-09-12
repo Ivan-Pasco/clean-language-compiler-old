@@ -1,0 +1,17 @@
+ANALYZING FAILED TESTS:
+
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed
+  ❌ FAILURE: Compilation failed

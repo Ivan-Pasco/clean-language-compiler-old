@@ -1,7 +1,7 @@
 use crate::ast::{Expression, Function, Program, Statement, Type};
 use crate::error::CompilerError;
 use crate::error::CompilerWarning;
-use crate::parser::Rule;
+// Rule import removed - using only 7-stage pipeline
 use std::fmt::Write;
 
 /// Debug utilities for Clean Language development
@@ -438,47 +438,11 @@ impl DebugUtils {
         report
     }
 
-    /// Generate a parse tree visualization for debugging
-    pub fn visualize_parse_tree(source: &str, rule_name: &str) -> Result<String, String> {
-        use crate::parser::CleanParser;
-        use pest::Parser;
-
-        let rule = match rule_name {
-            "program" => Rule::program,
-            "function" => Rule::start_function,
-            "statement" => Rule::statement,
-            "expression" => Rule::expression,
-            "primary" => Rule::primary,
-            _ => return Err(format!("Unknown rule: {rule_name}")),
-        };
-
-        match <CleanParser as Parser<Rule>>::parse(rule, source) {
-            Ok(pairs) => {
-                let mut result = String::new();
-                for pair in pairs {
-                    Self::format_parse_tree(&mut result, &pair, 0);
-                }
-                Ok(result)
-            }
-            Err(e) => Err(format!("Parse error: {e}")),
-        }
-    }
-
-    /// Format a parse tree for visualization
-    fn format_parse_tree(output: &mut String, pair: &pest::iterators::Pair<Rule>, depth: usize) {
-        let indent = "  ".repeat(depth);
-        writeln!(
-            output,
-            "{}{:?}: \"{}\"",
-            indent,
-            pair.as_rule(),
-            pair.as_str().chars().take(50).collect::<String>()
-        )
-        .unwrap();
-
-        for inner_pair in pair.clone().into_inner() {
-            Self::format_parse_tree(output, &inner_pair, depth + 1);
-        }
+    /// Generate a parse tree visualization for debugging (simplified for 7-stage pipeline)
+    pub fn visualize_parse_tree(_source: &str, _rule_name: &str) -> Result<String, String> {
+        // Parse tree visualization not available in 7-stage pipeline
+        // Use the specification parser directly for AST inspection
+        Ok("Parse tree visualization not available in 7-stage pipeline.\nUse compile_with_file() and inspect the AST through HIR/TAST stages.".to_string())
     }
 
     /// Generate error recovery suggestions based on common patterns
@@ -572,11 +536,11 @@ impl DebugUtils {
             writeln!(report, "{}", "─".repeat(40)).unwrap();
         }
 
-        // Add analysis
-        let analysis = crate::error::ErrorUtils::analyze_multiple_errors(errors);
-        for line in analysis {
-            writeln!(report, "{line}").unwrap();
-        }
+        // Add analysis - TEMPORARILY DISABLED
+        // let analysis = crate::error::ErrorUtils::analyze_multiple_errors(errors);
+        // for line in analysis {
+        //     writeln!(report, "{line}").unwrap();
+        // }
 
         // Add fix suggestions
         let suggestions = Self::suggest_error_fixes(source, errors);

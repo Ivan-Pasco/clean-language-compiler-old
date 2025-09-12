@@ -14,6 +14,7 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
         Rule::variable_decl => parse_variable_declaration(inner, ast_location),
         Rule::assignment => parse_assignment_statement(inner, ast_location),
         Rule::print_stmt => parse_print_statement(inner, ast_location),
+        Rule::print_ln_stmt => parse_print_ln_statement(inner, ast_location),
         Rule::printl_stmt => parse_printl_statement(inner, ast_location),
         Rule::println_stmt => parse_println_statement(inner, ast_location),
         Rule::if_stmt => parse_if_statement(inner, ast_location),
@@ -41,6 +42,20 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
             })
         }
         Rule::function_call => {
+            let expr = parse_expression(inner)?;
+            Ok(Statement::Expression {
+                expr,
+                location: Some(ast_location),
+            })
+        }
+        Rule::method_call => {
+            let expr = parse_expression(inner)?;
+            Ok(Statement::Expression {
+                expr,
+                location: Some(ast_location),
+            })
+        }
+        Rule::chained_method_call => {
             let expr = parse_expression(inner)?;
             Ok(Statement::Expression {
                 expr,
@@ -130,6 +145,71 @@ fn parse_assignment_statement(
     })
 }
 
+fn parse_else_block_recursive(else_block: Pair<Rule>) -> Result<Vec<Statement>, CompilerError> {
+    let mut parts = else_block.into_inner();
+    
+    // Skip whitespace and INDENT tokens
+    while let Some(part) = parts.next() {
+        match part.as_rule() {
+            Rule::expression => {
+                // This is an "else if" - we have: "else" "if" expression indented_block else_block?
+                let ast_location = convert_to_ast_location(&get_location(&part));
+                let condition = parse_expression(part)?;
+                
+                // Get the indented block for this else if
+                let then_block = parts.next().unwrap(); // This should be the indented_block
+                let mut then_stmts = Vec::new();
+                parse_indented_block_statements(then_block, &mut then_stmts)?;
+                
+                // Check if there's another else block
+                let mut else_branch = None;
+                if let Some(next_else) = parts.next() {
+                    if next_else.as_rule() == Rule::else_block {
+                        else_branch = Some(parse_else_block_recursive(next_else)?);
+                    }
+                }
+                
+                // Return a single if statement representing the else if
+                return Ok(vec![Statement::If {
+                    condition,
+                    then_branch: then_stmts,
+                    else_branch,
+                    location: Some(ast_location),
+                }]);
+            }
+            Rule::indented_block => {
+                // This is a simple "else" block
+                let mut else_stmts = Vec::new();
+                parse_indented_block_statements(part, &mut else_stmts)?;
+                return Ok(else_stmts);
+            }
+            _ => continue, // Skip whitespace and other tokens
+        }
+    }
+    
+    Ok(Vec::new())
+}
+
+fn parse_indented_block_statements(block: Pair<Rule>, statements: &mut Vec<Statement>) -> Result<(), CompilerError> {
+    for stmt_pair in block.into_inner() {
+        match stmt_pair.as_rule() {
+            Rule::statement => {
+                statements.push(parse_statement(stmt_pair)?);
+            }
+            Rule::function_nested_block => {
+                // Handle statements within function_nested_block
+                for nested_stmt in stmt_pair.into_inner() {
+                    if nested_stmt.as_rule() == Rule::statement {
+                        statements.push(parse_statement(nested_stmt)?);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn parse_if_statement(
     pair: Pair<Rule>,
     ast_location: crate::ast::SourceLocation,
@@ -141,24 +221,31 @@ fn parse_if_statement(
     let mut else_branch = None;
 
     for part in parts {
-        if part.as_rule() == Rule::indented_block {
-            if then_branch.is_empty() {
-                // This is the then branch
+        match part.as_rule() {
+            Rule::indented_block => {
+                // This is the then branch (first indented block)
                 for stmt_pair in part.into_inner() {
-                    if stmt_pair.as_rule() == Rule::statement {
-                        then_branch.push(parse_statement(stmt_pair)?);
+                    match stmt_pair.as_rule() {
+                        Rule::statement => {
+                            then_branch.push(parse_statement(stmt_pair)?);
+                        }
+                        Rule::function_nested_block => {
+                            // Handle statements within function_nested_block
+                            for nested_stmt in stmt_pair.into_inner() {
+                                if nested_stmt.as_rule() == Rule::statement {
+                                    then_branch.push(parse_statement(nested_stmt)?);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
-            } else {
-                // This is the else branch
-                let mut else_stmts = Vec::new();
-                for stmt_pair in part.into_inner() {
-                    if stmt_pair.as_rule() == Rule::statement {
-                        else_stmts.push(parse_statement(stmt_pair)?);
-                    }
-                }
-                else_branch = Some(else_stmts);
             }
+            Rule::else_block => {
+                // Parse the else block recursively to handle else if chains
+                else_branch = Some(parse_else_block_recursive(part)?);
+            }
+            _ => {}
         }
     }
 
@@ -556,6 +643,20 @@ fn parse_print_statement(
     Ok(Statement::Print {
         expression,
         newline: false,
+        location: Some(ast_location),
+    })
+}
+
+fn parse_print_ln_statement(
+    pair: Pair<Rule>,
+    ast_location: crate::ast::SourceLocation,
+) -> Result<Statement, CompilerError> {
+    let mut parts = pair.into_inner();
+    let expression = parse_expression(parts.next().unwrap())?;
+
+    Ok(Statement::Print {
+        expression,
+        newline: true,
         location: Some(ast_location),
     })
 }

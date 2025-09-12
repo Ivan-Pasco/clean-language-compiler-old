@@ -47,12 +47,30 @@ impl LexicalAnalyzer {
         }
     }
 
-    /// Count the indentation level of a line (tabs and spaces)
-    fn count_indentation(&self, line: &str) -> usize {
-        let mut count = 0;
+    /// Convert tabs to spaces before indentation counting
+    fn detab(&self, line: &str) -> String {
+        let mut out = String::with_capacity(line.len());
+        let mut col = 0usize;
         for ch in line.chars() {
+            if ch == '\t' {
+                let next = ((col / 4) + 1) * 4;
+                let n = next - col;
+                for _ in 0..n { out.push(' '); }
+                col = next;
+            } else {
+                out.push(ch); 
+                col += 1;
+            }
+        }
+        out
+    }
+
+    /// Count the indentation level of a line (tabs normalized to spaces)
+    fn count_indentation(&self, line: &str) -> usize {
+        let detabbed = self.detab(line);
+        let mut count = 0;
+        for ch in detabbed.chars() {
             match ch {
-                '\t' => count += 1,
                 ' ' => count += 1,
                 _ => break,
             }

@@ -19,6 +19,7 @@ lazy_static = "1.5"
 wasm-encoder = "0.35"
 wasmparser = "0.121"
 wat = "1.0.71"
+wasm-opt = "0.116"  # Binaryen WebAssembly optimizations
 
 # WebAssembly Runtimes (feature-gated)  
 wasmtime = { version = "10.0", optional = true }
@@ -45,6 +46,8 @@ dirs = "5.0"
 # Utilities
 regex = "1.11"
 rand = "0.8"
+crossbeam-channel = "0.5"
+chrono = { version = "0.4", features = ["serde"] }
 
 # Logging and tracing
 env_logger = "0.10"
@@ -62,6 +65,7 @@ unicode-segmentation = "1.10"
 
 # Development tools
 num_cpus = "1.16"
+tempfile = "3.8"
 
 # HTTP client for real network requests (using native-tls for better macOS compatibility)
 reqwest = { version = "0.11", features = ["json", "native-tls"], default-features = false }
@@ -173,6 +177,7 @@ path = "src/bin/coverage_report.rs"
 [[bin]]
 name = "performance_benchmark"
 path = "src/bin/performance_benchmark.rs"
+
 
 
 [lib]

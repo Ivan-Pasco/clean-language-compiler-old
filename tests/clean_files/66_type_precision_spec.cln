@@ -2,7 +2,7 @@
 // Tests integer and number precision modifiers as defined in Clean Language Specification
 
 functions:
-	demonstrateIntegerPrecision()
+	void demonstrateIntegerPrecision()
 		print("=== Integer Precision Modifiers ===")
 		
 		// Standard integer (32-bit)
@@ -35,7 +35,7 @@ functions:
 		integer:32u largeUnsigned = 4294967295
 		print("32-bit unsigned: " + largeUnsigned.toString())
 	
-	demonstrateNumberPrecision()
+	void demonstrateNumberPrecision()
 		print("=== Number Precision Modifiers ===")
 		
 		// Standard number (64-bit double precision)
@@ -50,7 +50,7 @@ functions:
 		number:64 doublePrecision = 3.141592653589793
 		print("64-bit double precision: " + doublePrecision.toString())
 	
-	demonstratePracticalUsage()
+	void demonstratePracticalUsage()
 		print("=== Practical Usage Examples ===")
 		
 		// Large calculations
@@ -77,12 +77,12 @@ functions:
 		print("Screen X: " + screenX.toString())
 		print("Screen Y: " + screenY.toString())
 
-start()
+	void start()
 	print("=== Type Precision Specification Test ===")
-	demonstrateIntegerPrecision()
+	void demonstrateIntegerPrecision()
 	print("")
-	demonstrateNumberPrecision()  
+	void demonstrateNumberPrecision()
 	print("")
-	demonstratePracticalUsage()
+	void demonstratePracticalUsage()
 	print("")
 	print("Type precision modifiers specification compliance test completed")

@@ -98,8 +98,16 @@ impl FunctionPreprocessor {
                 continue;
             }
 
-            // Skip empty lines and comments within functions block
-            if trimmed.is_empty() || trimmed.starts_with("//") {
+            // Handle empty lines and comments within functions block
+            if trimmed.is_empty() {
+                if !current_function_lines.is_empty() {
+                    current_function_lines.push(line.to_string());
+                }
+                continue;
+            }
+            
+            // Preserve comments as part of function body - they are essential for proper parsing
+            if trimmed.starts_with("//") || trimmed.starts_with("/*") {
                 if !current_function_lines.is_empty() {
                     current_function_lines.push(line.to_string());
                 }

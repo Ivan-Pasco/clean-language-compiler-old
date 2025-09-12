@@ -38,11 +38,8 @@ impl FuncType {
 
 /// Generates WebAssembly instructions for various language constructs
 pub(crate) struct InstructionGenerator {
-    #[allow(dead_code)]
     type_manager: TypeManager,
-    #[allow(dead_code)]
     variable_map: std::collections::HashMap<String, LocalVarInfo>,
-    #[allow(dead_code)]
     current_locals: Vec<LocalVarInfo>,
     function_map: std::collections::HashMap<String, u32>, // Simple name -> primary index mapping
     function_signatures: std::collections::HashMap<String, u32>, // signature -> index mapping
@@ -1533,36 +1530,6 @@ impl InstructionGenerator {
         } else {
             false // If we can't determine, assume it's not void
         }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn get_array_get(&self) -> u32 {
-        // Return default array_get function index
-        self.get_function_index("array_get").unwrap_or(0)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn get_array_length(&self) -> u32 {
-        // Return default array_length function index
-        self.get_function_index("array_length").unwrap_or(0)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn get_matrix_get(&self) -> u32 {
-        // Return default matrix_get function index
-        self.get_function_index("matrix_get").unwrap_or(0)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn get_print_function_index(&self) -> u32 {
-        // Return default print function index
-        self.get_function_index("print").unwrap_or(0)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn get_printl_function_index(&self) -> u32 {
-        // Return default printl function index
-        self.get_function_index("printl").unwrap_or(0)
     }
 
     #[allow(dead_code)]

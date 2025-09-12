@@ -1,6 +1,6 @@
 functions:
-	power(integer value, integer exponent=2)
+	integer power(integer value, integer exponent=2)
 		return value
 
 start()
-	print("test")
+	print "test" ln

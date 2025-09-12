@@ -1,0 +1,601 @@
+//! Typed Abstract Syntax Tree (TAST) for Clean Language
+//!
+//! The TAST represents the program after type checking and inference.
+//! All expressions have concrete types and all symbols are fully resolved.
+
+use crate::ast::SourceLocation;
+use crate::resolver::{SymbolId, ScopeId};
+use std::collections::HashMap;
+
+/// Type-checked program representation
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastProgram {
+    pub functions: Vec<TastFunction>,
+    pub classes: Vec<TastClass>,
+    pub start_function: Option<TastFunction>,
+    pub imports: Vec<TastImport>,
+    pub tests: Vec<TastTest>,
+    pub type_env: HashMap<SymbolId, ConcreteType>,
+    pub location: SourceLocation,
+}
+
+/// Type-checked function with full type information
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastFunction {
+    pub symbol_id: SymbolId,
+    pub name: String,
+    pub parameters: Vec<TastParameter>,
+    pub return_type: ConcreteType,
+    pub body: TastBlock,
+    pub generic_params: Vec<TypeParameter>,
+    pub constraints: Vec<TypeConstraint>,
+    pub is_async: bool,
+    pub visibility: Visibility,
+    pub location: SourceLocation,
+}
+
+/// Type-checked function parameter
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastParameter {
+    pub symbol_id: SymbolId,
+    pub name: String,
+    pub param_type: ConcreteType,
+    pub default_value: Option<TastExpression>,
+    pub is_variadic: bool,
+    pub location: SourceLocation,
+}
+
+/// Type-checked class definition
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastClass {
+    pub symbol_id: SymbolId,
+    pub name: String,
+    pub fields: Vec<TastField>,
+    pub methods: Vec<TastFunction>,
+    pub constructors: Vec<TastFunction>,
+    pub parent_class: Option<SymbolId>,
+    pub interfaces: Vec<SymbolId>,
+    pub generic_params: Vec<TypeParameter>,
+    pub is_abstract: bool,
+    pub visibility: Visibility,
+    pub location: SourceLocation,
+}
+
+/// Type-checked class field
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastField {
+    pub symbol_id: SymbolId,
+    pub name: String,
+    pub field_type: ConcreteType,
+    pub default_value: Option<TastExpression>,
+    pub is_static: bool,
+    pub is_readonly: bool,
+    pub visibility: Visibility,
+    pub location: SourceLocation,
+}
+
+/// Type-checked block of statements
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastBlock {
+    pub statements: Vec<TastStatement>,
+    pub scope_id: ScopeId,
+    pub return_type: ConcreteType,
+    pub location: SourceLocation,
+}
+
+/// Type-checked statement
+#[derive(Debug, Clone, PartialEq)]
+pub enum TastStatement {
+    Expression {
+        expression: TastExpression,
+        location: SourceLocation,
+    },
+    VariableDeclaration {
+        symbol_id: SymbolId,
+        name: String,
+        var_type: ConcreteType,
+        initializer: Option<TastExpression>,
+        is_mutable: bool,
+        location: SourceLocation,
+    },
+    Assignment {
+        target: TastExpression,
+        value: TastExpression,
+        location: SourceLocation,
+    },
+    Return {
+        value: Option<TastExpression>,
+        return_type: ConcreteType,
+        location: SourceLocation,
+    },
+    If {
+        condition: TastExpression,
+        then_block: TastBlock,
+        else_block: Option<TastBlock>,
+        result_type: ConcreteType,
+        location: SourceLocation,
+    },
+    While {
+        condition: TastExpression,
+        body: TastBlock,
+        location: SourceLocation,
+    },
+    For {
+        iterator: SymbolId,
+        iterable: TastExpression,
+        body: TastBlock,
+        location: SourceLocation,
+    },
+    Try {
+        body: TastBlock,
+        catch_clause: Option<TastCatchClause>,
+        finally_clause: Option<TastBlock>,
+        location: SourceLocation,
+    },
+    Throw {
+        expression: TastExpression,
+        location: SourceLocation,
+    },
+    Break {
+        location: SourceLocation,
+    },
+    Continue {
+        location: SourceLocation,
+    },
+    Print {
+        expression: TastExpression,
+        newline: bool,
+        location: SourceLocation,
+    },
+}
+
+/// Type-checked expression with concrete type
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastExpression {
+    pub kind: TastExpressionKind,
+    pub expr_type: ConcreteType,
+    pub location: SourceLocation,
+}
+
+/// Type-checked expression kinds
+#[derive(Debug, Clone, PartialEq)]
+pub enum TastExpressionKind {
+    Literal {
+        value: TastLiteral,
+    },
+    Variable {
+        symbol_id: SymbolId,
+        name: String,
+    },
+    BinaryOperation {
+        operator: BinaryOperator,
+        left: Box<TastExpression>,
+        right: Box<TastExpression>,
+    },
+    UnaryOperation {
+        operator: UnaryOperator,
+        operand: Box<TastExpression>,
+    },
+    FunctionCall {
+        function: Box<TastExpression>,
+        arguments: Vec<TastExpression>,
+        type_args: Vec<ConcreteType>,
+    },
+    MethodCall {
+        receiver: Box<TastExpression>,
+        method_name: String,
+        method_symbol: SymbolId,
+        arguments: Vec<TastExpression>,
+        type_args: Vec<ConcreteType>,
+    },
+    PropertyAccess {
+        object: Box<TastExpression>,
+        property_name: String,
+        property_symbol: SymbolId,
+    },
+    ArrayLiteral {
+        elements: Vec<TastExpression>,
+        element_type: ConcreteType,
+    },
+    ArrayAccess {
+        array: Box<TastExpression>,
+        index: Box<TastExpression>,
+    },
+    ObjectLiteral {
+        fields: Vec<TastObjectField>,
+    },
+    Lambda {
+        parameters: Vec<TastParameter>,
+        body: TastBlock,
+        return_type: ConcreteType,
+        captures: Vec<SymbolId>,
+    },
+    Cast {
+        expression: Box<TastExpression>,
+        target_type: ConcreteType,
+        is_safe: bool,
+    },
+    TypeCheck {
+        expression: Box<TastExpression>,
+        check_type: ConcreteType,
+    },
+    Await {
+        expression: Box<TastExpression>,
+    },
+    AsyncBlock {
+        body: TastBlock,
+    },
+}
+
+/// Type-checked literal values
+#[derive(Debug, Clone, PartialEq)]
+pub enum TastLiteral {
+    Integer(i64),
+    Number(f64),
+    String(String),
+    Boolean(bool),
+    Null,
+    Undefined,
+}
+
+/// Type-checked object field
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastObjectField {
+    pub key: String,
+    pub value: TastExpression,
+    pub location: SourceLocation,
+}
+
+/// Type-checked catch clause
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastCatchClause {
+    pub exception_symbol: SymbolId,
+    pub exception_type: ConcreteType,
+    pub body: TastBlock,
+    pub location: SourceLocation,
+}
+
+/// Type-checked import statement
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastImport {
+    pub module_name: String,
+    pub imported_symbols: Vec<TastImportedSymbol>,
+    pub alias: Option<String>,
+    pub location: SourceLocation,
+}
+
+/// Type-checked imported symbol
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastImportedSymbol {
+    pub name: String,
+    pub alias: Option<String>,
+    pub symbol_id: SymbolId,
+    pub symbol_type: ConcreteType,
+}
+
+/// Type-checked test definition
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastTest {
+    pub name: String,
+    pub body: TastBlock,
+    pub is_async: bool,
+    pub location: SourceLocation,
+}
+
+/// Concrete type after type inference
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ConcreteType {
+    /// Built-in primitive types
+    Integer,
+    Number,
+    String,
+    Boolean,
+    Null,
+    Undefined,
+    
+    /// Array type with element type
+    Array(Box<ConcreteType>),
+    
+    /// Function type
+    Function {
+        parameters: Vec<ConcreteType>,
+        return_type: Box<ConcreteType>,
+        is_async: bool,
+    },
+    
+    /// Class type
+    Class {
+        symbol_id: SymbolId,
+        type_args: Vec<ConcreteType>,
+    },
+    
+    /// Interface type
+    Interface {
+        symbol_id: SymbolId,
+        type_args: Vec<ConcreteType>,
+    },
+    
+    /// Tuple type
+    Tuple(Vec<ConcreteType>),
+    
+    /// Union type (sum type)
+    Union(Vec<ConcreteType>),
+    
+    /// Intersection type
+    Intersection(Vec<ConcreteType>),
+    
+    /// Generic type parameter
+    Generic {
+        name: String,
+        bounds: Vec<ConcreteType>,
+    },
+    
+    /// Unknown type (for error recovery)
+    Unknown,
+    
+    /// Never type (for functions that never return)
+    Never,
+}
+
+/// Generic type parameter
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeParameter {
+    pub name: String,
+    pub bounds: Vec<ConcreteType>,
+    pub default: Option<ConcreteType>,
+    pub location: SourceLocation,
+}
+
+/// Type constraint for type inference
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeConstraint {
+    /// Two types must be equal
+    Equality {
+        left: ConcreteType,
+        right: ConcreteType,
+        location: SourceLocation,
+    },
+    
+    /// Left type must be subtype of right type
+    Subtype {
+        subtype: ConcreteType,
+        supertype: ConcreteType,
+        location: SourceLocation,
+    },
+    
+    /// Type must implement interface
+    Implements {
+        type_: ConcreteType,
+        interface: ConcreteType,
+        location: SourceLocation,
+    },
+    
+    /// Type must have specific member
+    HasMember {
+        type_: ConcreteType,
+        member_name: String,
+        member_type: ConcreteType,
+        location: SourceLocation,
+    },
+}
+
+/// Binary operators with type information
+#[derive(Debug, Clone, PartialEq)]
+pub enum BinaryOperator {
+    // Arithmetic
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
+    Power,
+    
+    // Comparison
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
+    
+    // Logical
+    And,
+    Or,
+    
+    // Bitwise
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    LeftShift,
+    RightShift,
+    
+    // String
+    Concatenate,
+}
+
+/// Unary operators with type information
+#[derive(Debug, Clone, PartialEq)]
+pub enum UnaryOperator {
+    Negate,
+    Not,
+    BitwiseNot,
+    Plus,
+    PreIncrement,
+    PostIncrement,
+    PreDecrement,
+    PostDecrement,
+}
+
+/// Visibility modifiers
+#[derive(Debug, Clone, PartialEq)]
+pub enum Visibility {
+    Public,
+    Private,
+    Protected,
+    Internal,
+}
+
+impl ConcreteType {
+    /// Check if this type is assignable to another type
+    pub fn is_assignable_to(&self, other: &ConcreteType) -> bool {
+        match (self, other) {
+            // Exact type match
+            (a, b) if a == b => true,
+            
+            // Integer can be assigned to Number
+            (ConcreteType::Integer, ConcreteType::Number) => true,
+            
+            // Null can be assigned to any type (nullable types)
+            (ConcreteType::Null, _) => true,
+            
+            // Array covariance (if element types are assignable)
+            (ConcreteType::Array(a), ConcreteType::Array(b)) => a.is_assignable_to(b),
+            
+            // Function type compatibility
+            (ConcreteType::Function { parameters: p1, return_type: r1, is_async: a1 },
+             ConcreteType::Function { parameters: p2, return_type: r2, is_async: a2 }) => {
+                a1 == a2 && 
+                p1.len() == p2.len() &&
+                p1.iter().zip(p2.iter()).all(|(t1, t2)| t2.is_assignable_to(t1)) && // contravariant
+                r1.is_assignable_to(r2) // covariant
+            }
+            
+            // Union types (can assign to union if assignable to any member)
+            (t, ConcreteType::Union(types)) => types.iter().any(|ut| t.is_assignable_to(ut)),
+            
+            // Intersection types (can assign from intersection if all members are assignable)
+            (ConcreteType::Intersection(types), t) => types.iter().all(|it| it.is_assignable_to(t)),
+            
+            // Unknown type is assignable to anything (for error recovery)
+            (ConcreteType::Unknown, _) | (_, ConcreteType::Unknown) => true,
+            
+            // Nothing else is assignable
+            _ => false,
+        }
+    }
+    
+    /// Get the common supertype of two types
+    pub fn common_supertype(&self, other: &ConcreteType) -> ConcreteType {
+        if self == other {
+            return self.clone();
+        }
+        
+        match (self, other) {
+            // Integer and Number -> Number
+            (ConcreteType::Integer, ConcreteType::Number) | 
+            (ConcreteType::Number, ConcreteType::Integer) => ConcreteType::Number,
+            
+            // Array types with compatible elements
+            (ConcreteType::Array(a), ConcreteType::Array(b)) => {
+                ConcreteType::Array(Box::new(a.common_supertype(b)))
+            }
+            
+            // Different types -> Union
+            _ => ConcreteType::Union(vec![self.clone(), other.clone()]),
+        }
+    }
+    
+    /// Check if this is a numeric type
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, ConcreteType::Integer | ConcreteType::Number)
+    }
+    
+    /// Check if this is a primitive type
+    pub fn is_primitive(&self) -> bool {
+        matches!(self, 
+            ConcreteType::Integer | 
+            ConcreteType::Number | 
+            ConcreteType::String | 
+            ConcreteType::Boolean
+        )
+    }
+    
+    /// Get the default value for this type
+    pub fn default_value(&self) -> TastLiteral {
+        match self {
+            ConcreteType::Integer => TastLiteral::Integer(0),
+            ConcreteType::Number => TastLiteral::Number(0.0),
+            ConcreteType::String => TastLiteral::String(String::new()),
+            ConcreteType::Boolean => TastLiteral::Boolean(false),
+            _ => TastLiteral::Null,
+        }
+    }
+}
+
+impl std::fmt::Display for ConcreteType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConcreteType::Integer => write!(f, "integer"),
+            ConcreteType::Number => write!(f, "number"),
+            ConcreteType::String => write!(f, "string"),
+            ConcreteType::Boolean => write!(f, "boolean"),
+            ConcreteType::Null => write!(f, "null"),
+            ConcreteType::Undefined => write!(f, "undefined"),
+            ConcreteType::Array(element_type) => write!(f, "Array<{}>", element_type),
+            ConcreteType::Function { parameters, return_type, is_async } => {
+                let async_str = if *is_async { "async " } else { "" };
+                let params = parameters.iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "{}({}) -> {}", async_str, params, return_type)
+            }
+            ConcreteType::Class { symbol_id, type_args } => {
+                if type_args.is_empty() {
+                    write!(f, "Class#{}", symbol_id.0)
+                } else {
+                    let args = type_args.iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    write!(f, "Class#{}<{}>", symbol_id.0, args)
+                }
+            }
+            ConcreteType::Interface { symbol_id, type_args } => {
+                if type_args.is_empty() {
+                    write!(f, "Interface#{}", symbol_id.0)
+                } else {
+                    let args = type_args.iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    write!(f, "Interface#{}<{}>", symbol_id.0, args)
+                }
+            }
+            ConcreteType::Tuple(types) => {
+                let types_str = types.iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "({})", types_str)
+            }
+            ConcreteType::Union(types) => {
+                let types_str = types.iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                write!(f, "{}", types_str)
+            }
+            ConcreteType::Intersection(types) => {
+                let types_str = types.iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" & ");
+                write!(f, "{}", types_str)
+            }
+            ConcreteType::Generic { name, bounds } => {
+                if bounds.is_empty() {
+                    write!(f, "{}", name)
+                } else {
+                    let bounds_str = bounds.iter()
+                        .map(|b| b.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" + ");
+                    write!(f, "{}: {}", name, bounds_str)
+                }
+            }
+            ConcreteType::Unknown => write!(f, "?"),
+            ConcreteType::Never => write!(f, "!"),
+        }
+    }
+}

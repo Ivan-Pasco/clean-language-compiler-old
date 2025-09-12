@@ -1,0 +1,4 @@
+Error: failed to parse WebAssembly module
+
+Caused by:
+    Invalid input WebAssembly code at offset 6138: duplicate export name `runTests` already defined
