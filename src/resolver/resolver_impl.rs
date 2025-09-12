@@ -628,14 +628,15 @@ impl NameResolver {
     /// Resolve an expression
     fn resolve_expression(&mut self, expression: &HirExpression) -> Result<ResolvedHirExpression, ()> {
         // Check recursion depth to prevent stack overflow
-        const MAX_EXPRESSION_RECURSION: usize = 5;
+        const MAX_EXPRESSION_RECURSION: usize = 50; // Increased from 5 to allow more complex expressions
         if self.expression_recursion_depth >= MAX_EXPRESSION_RECURSION {
             self.error(&format!("Maximum expression recursion depth exceeded ({})", MAX_EXPRESSION_RECURSION), 
                       expression.location().clone());
             return Err(());
         }
         
-        eprintln!("DEBUG RESOLVER: Resolving expression at depth {}: {:?}", self.expression_recursion_depth, expression);
+        // Debug output disabled for performance
+        // eprintln!("DEBUG RESOLVER: Resolving expression at depth {}: {:?}", self.expression_recursion_depth, expression);
         
         // Increment recursion depth
         self.expression_recursion_depth += 1;
