@@ -19,7 +19,7 @@ mod binary_operations;
 mod binaryen_optimizer;
 mod instruction_generator;
 mod memory;
-mod mir_codegen;
+pub mod mir_codegen;
 pub mod optimizations;
 mod stdlib_generator;
 mod type_conversion;
@@ -559,7 +559,12 @@ impl CodeGenerator {
         }
 
         // ------------------------------------------------------------------
-        // 7. Assemble the final module
+        // 7. Generate start function if "start" function exists
+        // ------------------------------------------------------------------
+        self.generate_start_function()?;
+
+        // ------------------------------------------------------------------
+        // 8. Assemble the final module
         // ------------------------------------------------------------------
         self.assemble_module()
     }
@@ -892,9 +897,16 @@ impl CodeGenerator {
                     Type::Integer => instructions.push(Instruction::I32Const(0)),
                     Type::Number => instructions.push(Instruction::F64Const(0.0)),
                     Type::Boolean => instructions.push(Instruction::I32Const(0)),
+                    Type::IntegerSized { bits: 8..=32, .. } => instructions.push(Instruction::I32Const(0)),
+                    Type::IntegerSized { bits: 64, .. } => instructions.push(Instruction::I64Const(0)),
+                    Type::NumberSized { bits: 32 } => instructions.push(Instruction::F32Const(0.0)),
+                    Type::NumberSized { bits: 64 } => instructions.push(Instruction::F64Const(0.0)),
                     Type::Object(_) => instructions.push(Instruction::I32Const(0)), // Object as pointer (0 = null for now)
                     Type::String => instructions.push(Instruction::I32Const(0)), // String as pointer
                     Type::List(_) => instructions.push(Instruction::I32Const(0)), // List as pointer
+                    Type::Pairs(_, _) => instructions.push(Instruction::I32Const(0)), // Pairs as pointer
+                    Type::Matrix(_) => instructions.push(Instruction::I32Const(0)), // Matrix as pointer
+                    Type::Any => instructions.push(Instruction::I32Const(0)), // Any as pointer
                     Type::Void => {} // No return value needed for void
                     _ => {
                         return Err(CompilerError::codegen_error(
@@ -1273,6 +1285,18 @@ impl CodeGenerator {
                 for item in items {
                     self.generate_statement(item, instructions)?;
                 }
+            }
+
+            Statement::StandaloneErrorHandler { body, .. } => {
+                // Standalone error handler - for now, generate the error handling statements
+                // TODO: Implement proper WebAssembly exception handling
+                let mut error_instructions = Vec::new();
+                for stmt in body {
+                    self.generate_statement(stmt, &mut error_instructions)?;
+                }
+                // For now, we append the error handling instructions
+                // In the future, this should be wrapped in proper exception handling
+                instructions.extend(error_instructions);
             }
 
             Statement::ClassDefinition { class, .. } => {
@@ -8859,12 +8883,18 @@ impl CodeGenerator {
         expressions: &[Expression],
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
-        for expr in expressions {
-            if let Some(func_index) = self.get_function_index(function_name) {
-                self.generate_expression(expr, instructions)?;
-                instructions.push(Instruction::Call(func_index));
+        for expression in expressions {
+            // Special case for print functions - treat them as print statements
+            if function_name == "print" || function_name == "println" || function_name == "printl" {
+                self.generate_print_statement(expression, false, instructions)?;
+            } else {
+                // Generate a function call for each expression
+                let call_expr = Expression::Call(function_name.to_string(), vec![expression.clone()]);
+                self.generate_expression(&call_expr, instructions)?;
 
-                if function_name != "print" && function_name != "printl" {
+                // Drop the result if the function returns something
+                let return_type = self.get_function_return_type_by_name(function_name);
+                if return_type != WasmType::Unit {
                     instructions.push(Instruction::Drop);
                 }
             }
@@ -9545,6 +9575,51 @@ impl CodeGenerator {
             }
         }
         None
+    }
+
+    /// Create _start function that calls the Clean Language start() function if it exists
+    pub fn generate_start_function(&mut self) -> Result<(), CompilerError> {
+        // Look for Clean Language entry point "start" function
+        if let Some(&start_index) = self.function_map.get("start") {
+            // CRITICAL FIX: Declare the _start function in the function section FIRST
+            // The _start function has no parameters and no return value
+            let type_index = self.type_manager.add_function_type(&[], None)?;
+            self.function_section.function(type_index);
+
+            let mut instructions = Vec::new();
+
+            // Call start function
+            instructions.push(Instruction::Call(start_index));
+
+            // Drop return value if any
+            instructions.push(Instruction::Drop);
+
+            // Create start function
+            let start_function = Function::new(vec![]);
+
+            // Add instructions
+            let mut wasm_function = start_function;
+            for instruction in instructions {
+                wasm_function.instruction(&instruction);
+            }
+
+            // CRITICAL FIX: Add 'end' instruction to properly terminate start function
+            wasm_function.instruction(&Instruction::End);
+
+            // Add to code section
+            self.code_section.function(&wasm_function);
+
+            // Export as start function - use correct index after all imports and existing functions
+            let start_func_index = self.imported_functions.len() as u32 + self.function_names.len() as u32;
+            // Start function exported with correct index
+            self.export_section.export("_start", wasm_encoder::ExportKind::Func, start_func_index);
+
+            // Update function tracking to keep counts consistent
+            self.function_names.push("_start".to_string());
+            self.function_count += 1;
+        }
+
+        Ok(())
     }
 }
 

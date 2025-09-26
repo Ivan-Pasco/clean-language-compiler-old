@@ -5,7 +5,7 @@
 //! used by optimization passes.
 
 use crate::mir::mir_types::{
-    MirProgram, MirFunction, MirBasicBlock, MirTerminator,
+    MirFunction, MirTerminator,
     BasicBlockId
 };
 use std::collections::{HashMap, HashSet, VecDeque};

@@ -285,7 +285,24 @@ impl FunctionPreprocessor {
                 for inner_pair in pair.into_inner() {
                     if inner_pair.as_rule() == Rule::indented_functions_block {
                         for func_pair in inner_pair.into_inner() {
-                            if func_pair.as_rule() == Rule::function_in_block {
+                            if func_pair.as_rule() == Rule::function_declaration_line {
+                                // Look inside function_declaration_line for function_in_block
+                                for inner_func_pair in func_pair.into_inner() {
+                                    if inner_func_pair.as_rule() == Rule::function_in_block {
+                                        let mut function =
+                                            super::parser_impl::parse_function_in_block(inner_func_pair)?;
+
+                                        // If we have class context, mark this as a class method
+                                        if let Some(ref class_ctx) = self.class_context {
+                                            function = self
+                                                .enhance_function_with_class_context(function, class_ctx)?;
+                                        }
+
+                                        return Ok(function);
+                                    }
+                                }
+                            } else if func_pair.as_rule() == Rule::function_in_block {
+                                // Direct function_in_block (for compatibility)
                                 let mut function =
                                     super::parser_impl::parse_function_in_block(func_pair)?;
 

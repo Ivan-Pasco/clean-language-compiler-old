@@ -8,7 +8,6 @@
 //! - Provides a clean interface for later stages
 
 use crate::ast::{SourceLocation, Value};
-use crate::parser::specification_parser::*;
 use crate::error::CompilerError;
 // HashMap import removed - not needed in HIR definitions
 

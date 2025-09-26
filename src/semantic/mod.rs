@@ -2675,6 +2675,14 @@ impl SemanticAnalyzer {
                 Ok(())
             }
 
+            Statement::StandaloneErrorHandler { body, .. } => {
+                // Check each statement in the error handler body
+                for stmt in body {
+                    self.check_statement(stmt)?;
+                }
+                Ok(())
+            }
+
             Statement::ClassDefinition { class, .. } => {
                 // Class definition - validate the class
                 self.check_class(class)?;
@@ -2684,6 +2692,9 @@ impl SemanticAnalyzer {
     }
 
     fn check_expression(&mut self, expr: &Expression) -> Result<Type, CompilerError> {
+        // Validate method parentheses according to Clean Language Specification
+        self.validate_method_parentheses(expr)?;
+
         // Debug output removed for cleaner logs
         match expr {
             Expression::Literal(value) => Ok(self.check_literal(value)),
@@ -3101,6 +3112,46 @@ impl SemanticAnalyzer {
                             "Property assignment is only supported on lists and objects"
                                 .to_string(),
                         ),
+                        None,
+                    )),
+                }
+            }
+
+            Expression::ListAssignment {
+                list,
+                index,
+                value,
+                location: _,
+            } => {
+                let list_type = self.check_expression(list)?;
+                let index_type = self.check_expression(index)?;
+                let value_type = self.check_expression(value)?;
+
+                // Check that list is actually a list/array type
+                match list_type {
+                    Type::List(element_type) => {
+                        // Check that index is an integer
+                        if index_type != Type::Integer {
+                            return Err(CompilerError::type_error(
+                                &format!("List index must be integer, found {:?}", index_type),
+                                Some("Use integer values for array indexing".to_string()),
+                                None
+                            ));
+                        }
+                        // Check that value type matches the list element type
+                        if !self.types_compatible(&element_type, &value_type) {
+                            return Err(CompilerError::type_error(
+                                &format!("Cannot assign {:?} to list element of type {:?}",
+                                    value_type, element_type),
+                                Some("Ensure the assignment value matches the list element type".to_string()),
+                                None
+                            ));
+                        }
+                        Ok(Type::Void) // Assignment returns void
+                    }
+                    _ => Err(CompilerError::type_error(
+                        &format!("Cannot index into type {:?} with assignment", list_type),
+                        Some("List assignment is only supported on list/array types".to_string()),
                         None,
                     )),
                 }
@@ -6319,6 +6370,75 @@ impl SemanticAnalyzer {
                 Some(help_message),
                 location,
             ))
+        }
+    }
+
+    /// Validate that helper methods requiring parentheses are properly called
+    /// According to Clean Language Specification - helper methods must use parentheses
+    fn validate_method_parentheses(&self, expr: &Expression) -> Result<(), CompilerError> {
+        match expr {
+            Expression::Variable(name) => {
+                // Check if this variable name matches a known helper method pattern
+                let helper_methods = [
+                    "isEmpty", "isNotEmpty", "length", "size", "count",
+                    "first", "last", "head", "tail", "toString", "valueOf",
+                    "clear", "reset", "dispose", "clone", "copy"
+                ];
+
+                if helper_methods.contains(&name.as_str()) {
+                    return Err(CompilerError::syntax_error(
+                        format!("Helper method '{}' requires parentheses: '{}()'", name, name),
+                        Some("Add parentheses to call the method properly".to_string()),
+                        None,
+                    ));
+                }
+                Ok(())
+            }
+            Expression::Call(_, args) => {
+                // Recursively validate arguments
+                for arg in args {
+                    self.validate_method_parentheses(arg)?;
+                }
+                Ok(())
+            }
+            Expression::Binary(left, _, right) => {
+                self.validate_method_parentheses(left)?;
+                self.validate_method_parentheses(right)?;
+                Ok(())
+            }
+            Expression::Unary(_, expr) => {
+                self.validate_method_parentheses(expr)?;
+                Ok(())
+            }
+            Expression::MethodCall { object, arguments, .. } => {
+                self.validate_method_parentheses(object)?;
+                for arg in arguments {
+                    self.validate_method_parentheses(arg)?;
+                }
+                Ok(())
+            }
+            Expression::PropertyAccess { object, .. } => {
+                self.validate_method_parentheses(object)?;
+                Ok(())
+            }
+            Expression::ListAccess(array, index) => {
+                self.validate_method_parentheses(array)?;
+                self.validate_method_parentheses(index)?;
+                Ok(())
+            }
+            Expression::MatrixAccess(array, row, col) => {
+                self.validate_method_parentheses(array)?;
+                self.validate_method_parentheses(row)?;
+                self.validate_method_parentheses(col)?;
+                Ok(())
+            }
+            Expression::Conditional { condition, then_expr, else_expr, .. } => {
+                self.validate_method_parentheses(condition)?;
+                self.validate_method_parentheses(then_expr)?;
+                self.validate_method_parentheses(else_expr)?;
+                Ok(())
+            }
+            _ => Ok(()), // Other expressions don't need validation
         }
     }
 }

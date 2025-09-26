@@ -1,6 +1,6 @@
-// Basic tokens - exclude tabs since they're used for indentation
+// Basic tokens - DISABLE AUTOMATIC WHITESPACE for indentation-sensitive parsing
 WHITESPACE = _{ " " | "\r" }
-COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ ("\n" | EOI) | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
+COMMENT = _{ ("#" | "//") ~ (!"\n" ~ ANY)* ~ ("\n" | EOI) | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 
 // Trivia rules for handling comments in indented contexts
 // LINE_TRIVIA handles single-line comments with proper indentation preservation
@@ -13,7 +13,7 @@ EMPTY_LINE_TRIVIA = _{ INDENT* ~ NEWLINE }
 TRIVIA = _{ LINE_TRIVIA | BLOCK_TRIVIA | EMPTY_LINE_TRIVIA }
 
 // Keywords and identifiers
-keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "while") ~ !(ASCII_ALPHANUMERIC | "_") }
+keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "while" | "print") ~ !(ASCII_ALPHANUMERIC | "_") }
 identifier = @{ !keyword ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Extended numeric literals
@@ -21,9 +21,10 @@ hex_integer = @{ "-"? ~ "0" ~ ("x" | "X") ~ ASCII_HEX_DIGIT+ }
 binary_integer = @{ "-"? ~ "0" ~ ("b" | "B") ~ ASCII_BIN_DIGIT+ }
 octal_integer = @{ "-"? ~ "0" ~ ("o" | "O") ~ ASCII_OCT_DIGIT+ }
 decimal_integer = @{ "-"? ~ ASCII_DIGIT+ }
+scientific_integer = @{ "-"? ~ ASCII_DIGIT+ ~ ("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+ }
 
-integer = _{ hex_integer | binary_integer | octal_integer | decimal_integer }
-float = @{ "-"? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+integer = _{ hex_integer | binary_integer | octal_integer | scientific_integer | decimal_integer }
+float = @{ "-"? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+)? }
 number = _{ float | integer }
 boolean = { "true" | "false" }
 
@@ -31,10 +32,10 @@ boolean = { "true" | "false" }
 size_specifier = { ":" ~ ASCII_DIGIT+ ~ ("u")? }
 
 // String interpolation with {} syntax and escaped quotes
-string_content = @{ (!("\"" | "{" | "}" | "\\") ~ ANY)+ }
+string_content = @{ (!("\"" | "\\") ~ ANY)+ }
 escaped_char = @{ "\\" ~ ("\"" | "{" | "}" | "\\" | "n" | "r" | "t") }
 string_interpolation = { "{" ~ logical_expression ~ "}" }
-string_part = { string_content | escaped_char | string_interpolation }
+string_part = { escaped_char | string_interpolation | string_content }
 string = { "\"" ~ string_part* ~ "\"" }
 
 // Core types from specification
@@ -48,12 +49,12 @@ core_type = {
 }
 
 // Advanced types with size specifiers
-sized_type = { core_type ~ size_specifier }
+sized_type = @{ core_type ~ size_specifier }
 
 // Composite types
-matrix_type = { "matrix" ~ "<" ~ type_ ~ ">" }
-list_type = { "list" ~ "<" ~ type_ ~ ">" }
-pairs_type = { "pairs" ~ "<" ~ type_ ~ "," ~ type_ ~ ">" }
+matrix_type = { "matrix" ~ "<" ~ " "* ~ type_ ~ " "* ~ ">" }
+list_type = { "list" ~ "<" ~ " "* ~ type_ ~ " "* ~ ">" }
+pairs_type = { "pairs" ~ "<" ~ " "* ~ type_ ~ " "* ~ "," ~ " "* ~ type_ ~ " "* ~ ">" }
 
 // Generic types
 generic_type = { identifier ~ "<" ~ type_arguments ~ ">" }
@@ -62,21 +63,24 @@ type_parameters = { "<" ~ type_parameter ~ ("," ~ type_parameter)* ~ ">" }
 type_arguments = { type_ ~ ("," ~ type_)* }
 
 // Type definition - Order matters: sized types before core types to prioritize precision modifiers
-type_ = { 
+type_ = {
     matrix_type |
     list_type |
     pairs_type |
     generic_type |
-    core_type |
     sized_type |
+    core_type |
     identifier |
     type_parameter
 }
 
 // Indentation-based blocks
-INDENT = _{ " " | "\t" }
+INDENT = _{ "\t" }
 NEWLINE = _{ "\n" | "\r\n" }
 empty_line = _{ INDENT* ~ NEWLINE }
+comment_line = _{ INDENT* ~ ("/*" ~ (!"*/" ~ ANY)* ~ "*/" | "//" ~ (!"\n" ~ ANY)*) ~ NEWLINE? }
+trivia_line = _{ empty_line | comment_line }
+// Comments in function bodies are handled by the global COMMENT rule automatically
 
 // Stack-based context-aware indentation for functions blocks
 indent_context = { PUSH(INDENT*) }
@@ -94,18 +98,16 @@ context_indented_block = {
 }
 
 // Smart indented block - uses different strategies based on context
-indented_block = { function_nested_block | simple_indented_block }
+indented_block = { simple_indented_block | function_nested_block }
 
 // Simple indented block for top-level contexts (start function, etc.)  
 // Fixed to handle tab-indented empty lines properly in function contexts
-simple_indented_block = { 
-    NEWLINE ~ 
-    (TRIVIA | NEWLINE | empty_line)* ~
-    (
-        (INDENT+ ~ statement ~ (NEWLINE ~ (TRIVIA | NEWLINE | empty_line)*)?)+
-        | (INDENT+ ~ (NEWLINE ~ (TRIVIA | NEWLINE | empty_line)*)?)+
-    )
+simple_indented_block = {
+    NEWLINE ~ (empty_line)* ~
+    indented_statement ~ (NEWLINE ~ (empty_line)* ~ indented_statement)*
 }
+
+indented_statement = { INDENT+ ~ statement }
 
 // Nested block within function bodies - flexible indentation pattern for nested contexts
 function_nested_block = { 
@@ -119,25 +121,26 @@ apply_block = { constant_apply_block | type_apply_block | method_apply_block | f
 
 // Constant apply-blocks: constant: integer MAX_SIZE = 100 (most specific first)
 constant_apply_block = { "constant" ~ ":" ~ indented_constant_assignments }
-indented_constant_assignments = { NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ constant_assignment ~ (NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ constant_assignment)* }
-constant_assignment = { type_ ~ identifier ~ "=" ~ expression }
+indented_constant_assignments = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ constant_assignment ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ constant_assignment)* }
+constant_assignment = { type_ ~ WHITESPACE* ~ identifier ~ WHITESPACE* ~ "=" ~ WHITESPACE* ~ single_line_expression }
 
 // Type apply-blocks: integer: count = 0, maxSize = 100 (types before generic identifiers)
-// Note: sized_type excluded to avoid conflict with precision modifiers like integer:8
-type_apply_block = { (core_type | matrix_type | list_type | pairs_type) ~ ":" ~ indented_variable_assignments }
+// Note: sized_type now included to support precision modifiers like integer:32
+type_apply_block = { (sized_type | core_type | matrix_type | list_type | pairs_type) ~ ":" ~ &(NEWLINE) ~ indented_variable_assignments }
 indented_variable_assignments = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ variable_assignment ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ variable_assignment)* }
-variable_assignment = { identifier ~ "=" ~ expression }
+variable_assignment = { identifier ~ WHITESPACE* ~ "=" ~ WHITESPACE* ~ single_line_expression }
 
 // Method apply-blocks: array.push: item1, item2, item3 (object.method before generic identifiers)
 method_apply_block = { method_call_chain ~ ":" ~ indented_expressions }
 method_call_chain = { identifier ~ ("." ~ identifier)+ }
 
-// Function apply-blocks: println: "Hello", "World" (catch-all for identifiers)
-function_apply_block = { !("functions" ~ ":") ~ identifier ~ ":" ~ indented_expressions }
-indented_expressions = { NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ expression ~ (NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ !apply_block_start ~ expression)* }
+// Function apply-blocks: println: "Hello", "World" (catch-all for identifiers and specific keywords)
+function_name_in_apply_block = { "println" | "printl" | "print" | identifier }
+function_apply_block = { !("functions" ~ ":") ~ function_name_in_apply_block ~ ":" ~ indented_expressions }
+indented_expressions = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ expression ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ !apply_block_start ~ expression)* }
 
 // Helper rule to detect the start of a new apply-block
-apply_block_start = { (core_type | matrix_type | list_type | pairs_type) ~ ":" | identifier ~ ("." ~ identifier)+ ~ ":" | "constant" ~ ":" | identifier ~ ":" }
+apply_block_start = { (sized_type | core_type | matrix_type | list_type | pairs_type) ~ ":" | identifier ~ ("." ~ identifier)+ ~ ":" | "constant" ~ ":" | function_name_in_apply_block ~ ":" }
 
 // Setup blocks for functions
 description_block = { "description" ~ string }
@@ -161,21 +164,28 @@ setup_block = { (description_block ~ NEWLINE ~ input_block) | (input_block ~ NEW
 // Object access and method calls
 builtin_class_name = { "list" | "file" | "http" | "math" | "input" | "logical" | "conditional" | "compare" | "Math" | "String" | "List" | "File" | "Http" | "Console" }
 // Basic static class identifiers
-static_class_identifier = { "Math" | "String" | "List" | "File" | "Http" | "Console" | "conditional" | "compare" | "logical" | "math" | "string" | "list" | "file" | "http" | "console" | "number" | "integer" | "boolean" }
+static_class_identifier = { "StringUtils" | "Math" | "String" | "List" | "File" | "Http" | "Console" | "conditional" | "compare" | "logical" | "math" | "string" | "list" | "file" | "http" | "console" | "number" | "integer" | "boolean" }
 
 // Multi-level namespace chain (e.g., compare.number, compare.integer)
 static_class_name = { static_class_identifier ~ ("." ~ static_class_identifier)* }
 
-// Argument expression - allows expressions in function/method arguments
-// Simple argument expressions to avoid circular dependency - basic literals and arithmetic
-argument_expression = { argument_term ~ (("+" | "-" | "*" | "/" | "%" | "^") ~ argument_term)* }
-argument_term = { number | boolean | string | identifier | "(" ~ argument_expression ~ ")" }
-argument_list = { argument_expression ~ ("," ~ WHITESPACE* ~ argument_expression)* }
+// Argument expression - bounded expression that allows arithmetic but stops at natural boundaries
+argument_expression = { argument_bounded_expression }
+
+// Bounded expressions for function arguments - allows arithmetic but no logical/comparison operations
+argument_bounded_expression = { argument_additive }
+argument_additive = { argument_multiplicative ~ (WHITESPACE* ~ additive_op ~ WHITESPACE* ~ argument_multiplicative)* }
+argument_multiplicative = { argument_power ~ (WHITESPACE* ~ multiplicative_op ~ WHITESPACE* ~ argument_power)* }
+argument_power = { argument_unary ~ (WHITESPACE* ~ power_op ~ WHITESPACE* ~ argument_unary)* }
+argument_unary = { unary_op* ~ primary }
+
+// Argument list pattern for comma-separated expressions
+argument_list = { argument_expression ~ ("," ~ argument_expression)* }
 
 function_call = { identifier ~ type_arguments? ~ "(" ~ argument_list? ~ ")" }
 
 // Method call syntax for value.method() patterns  
-method_call_base = { builtin_class_name | string | number | boolean | identifier | "(" ~ additive_expression ~ ")" }
+method_call_base = { builtin_class_name | string | number | boolean | identifier | "(" ~ single_line_expression ~ ")" }
 method_name = { identifier | "greaterThan" | "lessThan" | "equal" | "greaterEqual" | "lessEqual" | "number" | "integer" | "boolean" | "string" | "length" | "isDefined" | "isNotDefined" | "isEmpty" | "isNotEmpty" | "mustBeTrue" | "mustBeFalse" | "mustBeEqual" | "mustNotBeEqual" | "toString" | "toInteger" | "toNumber" | "toBoolean" | "keepBetween" | "yesNo" | "prompt" | "and" | "or" | "not" | "start" | "stop" }
 method_call_segment = { "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
 method_call = { method_call_base ~ method_call_segment+ }
@@ -194,18 +204,19 @@ static_method_call = { static_class_name ~ "." ~ method_name ~ "(" ~ argument_li
 
 // Property access and list access
 property_access = { identifier ~ ("." ~ identifier)+ }
-list_access = { identifier ~ "[" ~ additive_expression ~ "]" }
+list_access = { identifier ~ ("[" ~ additive_expression ~ "]")+ }
 
 // Primary expressions (basic terms without circular dependencies)
-primary = { 
+primary = {
     // Simple literals first - they can't partially match and fail
     number |
     boolean |
     string |
     matrix_literal |
     list_literal |
-    // Parenthesized expressions
-    "(" ~ NEWLINE* ~ INDENT* ~ parenthesized_expr ~ NEWLINE* ~ INDENT* ~ ")" |
+    pairs_literal |
+    // Parenthesized expressions - flexible indentation for multiline expressions
+    "(" ~ parenthesized_expr ~ ")" |
     // Complex patterns that might partially match - put after literals
     constructor_call |
     base_call |
@@ -242,25 +253,41 @@ conditional_expr = { "if" ~ comparison_expression ~ "then" ~ additive_expression
 // Error handling with onError
 on_error_expr = { base_expression ~ "onError" ~ base_expression }
 on_error_block = { base_expression ~ "onError" ~ ":" ~ indented_block }
+standalone_on_error = { "onError" ~ ":" ~ indented_block }
 
 // Expression with proper operator precedence (logical < comparison < arithmetic < unary)
-// Now supports optional newlines and indentation around operators for multi-line expressions
-logical_expression = { comparison_expression ~ (NEWLINE* ~ INDENT* ~ logical_op ~ NEWLINE* ~ INDENT* ~ comparison_expression)* }
-comparison_expression = { unary_expression ~ (NEWLINE* ~ INDENT* ~ comparison_op ~ NEWLINE* ~ INDENT* ~ unary_expression)* }
+// Now supports optional whitespace (spaces, newlines, and indentation) around operators for multi-line expressions
+logical_expression = { comparison_expression ~ (whitespace_around_op ~ logical_op ~ whitespace_around_op ~ comparison_expression)* }
+comparison_expression = { unary_expression ~ (whitespace_around_op ~ comparison_op ~ whitespace_around_op ~ unary_expression)* }
 unary_expression = { unary_op* ~ additive_expression }
 
 // Arithmetic expressions with proper precedence: power > multiplicative > additive
-additive_expression = { multiplicative_expression ~ (NEWLINE* ~ INDENT* ~ additive_op ~ NEWLINE* ~ INDENT* ~ multiplicative_expression)* }
-multiplicative_expression = { power_expression ~ (NEWLINE* ~ INDENT* ~ multiplicative_op ~ NEWLINE* ~ INDENT* ~ power_expression)* }
-power_expression = { primary ~ (NEWLINE* ~ INDENT* ~ power_op ~ NEWLINE* ~ INDENT* ~ primary)* }
+additive_expression = { multiplicative_expression ~ (whitespace_around_op ~ additive_op ~ whitespace_around_op ~ multiplicative_expression)* }
+multiplicative_expression = { power_expression ~ (whitespace_around_op ~ multiplicative_op ~ whitespace_around_op ~ power_expression)* }
+power_expression = { primary ~ (whitespace_around_op ~ power_op ~ whitespace_around_op ~ primary)* }
+
+// Whitespace handling for operators - supports spaces only within single line expressions
+// Removed NEWLINE and INDENT to prevent consuming next statement's indentation
+whitespace_around_op = _{ " "* }
+
+// Multiline expression rules for use within parentheses
+multiline_whitespace_around_op = _{ (WHITESPACE | NEWLINE | INDENT)* }
+multiline_logical_expression = { multiline_comparison_expression ~ (multiline_whitespace_around_op ~ logical_op ~ multiline_whitespace_around_op ~ multiline_comparison_expression)* }
+multiline_comparison_expression = { multiline_unary_expression ~ (multiline_whitespace_around_op ~ comparison_op ~ multiline_whitespace_around_op ~ multiline_unary_expression)* }
+multiline_unary_expression = { unary_op* ~ multiline_additive_expression }
+multiline_additive_expression = { multiline_multiplicative_expression ~ (multiline_whitespace_around_op ~ additive_op ~ multiline_whitespace_around_op ~ multiline_multiplicative_expression)* }
+multiline_multiplicative_expression = { multiline_power_expression ~ (multiline_whitespace_around_op ~ multiplicative_op ~ multiline_whitespace_around_op ~ multiline_power_expression)* }
+multiline_power_expression = { multiline_primary ~ (multiline_whitespace_around_op ~ power_op ~ multiline_whitespace_around_op ~ multiline_primary)* }
+multiline_primary = { primary }
 
 // Legacy arithmetic_expression for backward compatibility
 arithmetic_expression = { additive_expression }
 base_expression = { conditional_expr | logical_expression }
 expression = { on_error_block | on_error_expr | base_expression }
 
-// Parenthesized expression - uses additive expressions to avoid circular dependency
-parenthesized_expr = { additive_expression }
+// Parenthesized expression - uses logical expressions to support comparisons and logical ops
+// Fixed: Support multiline expressions within parentheses with flexible indentation
+parenthesized_expr = { (WHITESPACE | NEWLINE | INDENT)* ~ multiline_logical_expression ~ (WHITESPACE | NEWLINE | INDENT)* }
 
 // Operators with proper precedence levels
 logical_op = { "and" | "or" }
@@ -272,75 +299,124 @@ power_op = { "^" }
 // Legacy arithmetic_op for backward compatibility
 arithmetic_op = { additive_op | multiplicative_op | power_op }
 
-// Lists and Matrices
-list_literal = { "[" ~ (list_element ~ ("," ~ WHITESPACE* ~ list_element)*)? ~ "]" }
+// Lists, Matrices, and Pairs
+list_literal = { "[" ~ (list_element ~ ("," ~ " "* ~ list_element)*)? ~ "]" }
 
-// List element - simpler than full expression to avoid hierarchy issues  
-list_element = { decimal_integer | float | boolean | string | identifier | "(" ~ expression ~ ")" }
-matrix_row = { "[" ~ (expression ~ ("," ~ expression)*)? ~ "]" }
+// List element - simpler than full expression to avoid hierarchy issues
+list_element = { number | boolean | string | identifier | pairs_literal | "(" ~ single_line_expression ~ ")" }
+matrix_row = { "[" ~ (single_line_expression ~ ("," ~ single_line_expression)*)? ~ "]" }
 matrix_literal = { "[" ~ matrix_row ~ ("," ~ matrix_row)* ~ "]" }
 
-// Statements (removed - now defined below with async features)
+// Pairs literal - key-value syntax
+pairs_literal = { "{" ~ (pair_element ~ ("," ~ " "* ~ pair_element)*)? ~ "}" }
+pair_element = { (string | identifier | decimal_integer) ~ " "* ~ ":" ~ " "* ~ single_line_expression }
+
+// Single-line expressions for variable declarations (no newlines/indentation)
+single_line_expression = { single_line_logical_expression }
+single_line_logical_expression = { single_line_comparison_expression ~ (" "* ~ logical_op ~ " "* ~ single_line_comparison_expression)* }
+single_line_comparison_expression = { single_line_unary_expression ~ (" "* ~ comparison_op ~ " "* ~ single_line_unary_expression)* }
+single_line_unary_expression = { unary_op* ~ single_line_additive_expression }
+single_line_additive_expression = { single_line_multiplicative_expression ~ (" "* ~ additive_op ~ " "* ~ single_line_multiplicative_expression)* }
+single_line_multiplicative_expression = { single_line_power_expression ~ (" "* ~ multiplicative_op ~ " "* ~ single_line_power_expression)* }
+single_line_power_expression = { single_line_primary ~ (" "* ~ power_op ~ " "* ~ single_line_primary)* }
+
+// Single-line primary expression (no newlines/indentation)
+single_line_primary = {
+    number |
+    boolean |
+    string |
+    matrix_literal |
+    list_literal |
+    pairs_literal |
+    constructor_call |
+    base_call |
+    method_call |
+    function_call |
+    static_method_call |
+    list_access |
+    property_access |
+    "(" ~ single_line_expression ~ ")" |
+    error_variable |
+    identifier
+}
 
 // Type-first variable declarations (no let keyword)
 // More explicit matching to prevent ambiguity with expressions
 // Made atomic to prevent backtracking and incorrect splitting
-variable_decl = ${ (core_type | sized_type | matrix_type | list_type | pairs_type | identifier) ~ WHITESPACE+ ~ identifier ~ (WHITESPACE* ~ "=" ~ WHITESPACE* ~ expression)? }
+variable_decl_with_assignment = { variable_type ~ variable_name ~ "=" ~ expression }
+variable_decl_without_assignment = { !("print") ~ variable_type ~ variable_name }
+variable_type = { matrix_type | list_type | pairs_type | sized_type | core_type | identifier }
+variable_name = @{ identifier }
+variable_decl = { variable_decl_with_assignment | variable_decl_without_assignment }
 
-// Print statements (supporting multiple syntaxes: print expr, print(expr), print expr ln)
-print_ln_stmt = { "print" ~ (WHITESPACE+ ~ expression ~ WHITESPACE+ ~ "ln" | WHITESPACE* ~ "(" ~ expression ~ ")" ~ WHITESPACE* ~ "ln") }
-print_stmt = { "print" ~ (WHITESPACE* ~ "(" ~ expression ~ ")" | WHITESPACE+ ~ expression) ~ !("ln") }
-printl_stmt = { "printl" ~ (WHITESPACE* ~ "(" ~ expression ~ ")" | WHITESPACE+ ~ expression) }
-println_stmt = { "println" ~ (WHITESPACE* ~ "(" ~ expression ~ ")" | WHITESPACE+ ~ expression) }
+// Print statements (both parenthesized and bare forms)
+print_parenthesized_stmt = { "print" ~ "(" ~ argument_list ~ ")" }
+print_newline_stmt = { "print" ~ "(" ~ argument_list ~ ")" ~ WHITESPACE* ~ "+" }
+print_bare_stmt = { "print" ~ !(ASCII_ALPHANUMERIC | "_" | ":") ~ WHITESPACE* ~ single_line_expression }
+// Note: bare print using same pattern as return statement
 
 // Assignment
-assignment = { (property_access | identifier) ~ WHITESPACE* ~ "=" ~ WHITESPACE* ~ expression }
+assignment = { assignment_target ~ WHITESPACE* ~ "=" ~ WHITESPACE* ~ expression }
+assignment_target = {
+    identifier ~ (("[" ~ additive_expression ~ "]") | ("." ~ identifier)+)?
+}
 
 // Error statement (function call syntax)
 error_stmt = { "error" ~ "(" ~ expression ~ ")" }
 
 
 // Control flow with indentation
-if_stmt = { "if" ~ expression ~ indented_block ~ else_block? }
-else_block = { NEWLINE* ~ INDENT* ~ ("else" ~ "if" ~ expression ~ indented_block ~ else_block? | "else" ~ indented_block) }
+if_stmt = { "if" ~ WHITESPACE* ~ expression ~ indented_block ~ else_block? }
+else_block = { NEWLINE* ~ INDENT* ~ ("else" ~ WHITESPACE* ~ "if" ~ WHITESPACE* ~ expression ~ indented_block ~ else_block? | "else" ~ indented_block) }
 
 // Iteration
-iterate_stmt = { "iterate" ~ identifier ~ "in" ~ expression ~ indented_block }
-range_iterate_stmt = { "iterate" ~ identifier ~ "in" ~ expression ~ "to" ~ expression ~ ("step" ~ expression)? ~ indented_block }
+iterate_stmt = { "iterate" ~ WHITESPACE* ~ identifier ~ WHITESPACE* ~ "in" ~ WHITESPACE* ~ expression ~ indented_block }
+range_iterate_stmt = { "iterate" ~ WHITESPACE* ~ identifier ~ WHITESPACE* ~ "in" ~ WHITESPACE* ~ expression ~ WHITESPACE* ~ "to" ~ WHITESPACE* ~ expression ~ (WHITESPACE* ~ "step" ~ WHITESPACE* ~ expression)? ~ indented_block }
 
 // While loops
-while_stmt = { "while" ~ expression ~ indented_block }
+while_stmt = { "while" ~ WHITESPACE* ~ expression ~ indented_block }
 
 // Test
 test = { "test" ~ string ~ indented_block }
 
 // Return
-return_stmt = { "return" ~ expression? }
+return_stmt = { "return" ~ (WHITESPACE* ~ expression)? }
 
 // Function declarations - All functions must be in functions: blocks per specification
 
 // Parameter definitions for function declarations
-parameter_list = { parameter ~ ("," ~ parameter)* }
+parameter_list = { parameter ~ ("," ~ " "* ~ parameter)* }
 parameter_name = @{ !critical_keyword ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* | "base" }
 critical_keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "while") ~ !(ASCII_ALPHANUMERIC | "_") }
-parameter = { parameter_type? ~ parameter_name ~ (" "* ~ "=" ~ " "* ~ logical_expression)? }
-parameter_type = { 
-    core_type |
-    sized_type |
+parameter = { parameter_type? ~ " "* ~ parameter_name ~ (" "* ~ "=" ~ " "* ~ logical_expression)? }
+parameter_type = {
     matrix_type |
     list_type |
     pairs_type |
-    generic_type |
+    sized_type |
+    core_type |
     identifier
 }
 
 // Functions block (the main supported syntax for function declarations)  
 functions_block = { "functions" ~ ":" ~ indented_functions_block }
 class_functions_block = { "functions" ~ ":" ~ class_indented_functions_block }
-indented_functions_block = { 
-    NEWLINE ~ 
-    (function_line | empty_line)*
+indented_functions_block = {
+    NEWLINE ~
+    (empty_line)* ~
+    function_declaration_line ~
+    ((NEWLINE ~ (empty_line)*) ~ function_declaration_line)*
 }
+
+// Function declaration line - uses lookahead to distinguish from function body statements
+// Simplified to not handle empty lines internally (handled by parent rule)
+function_declaration_line = {
+    INDENT+ ~ &(function_signature) ~ function_in_block
+}
+
+// Function signature lookahead to distinguish function declarations from statements
+// Must include the opening parenthesis to avoid matching variable declarations
+function_signature = { function_type ~ " "* ~ function_name ~ " "* ~ "(" | "void" ~ " "* ~ function_name ~ " "* ~ "(" }
 
 class_indented_functions_block = { 
     NEWLINE ~ 
@@ -351,43 +427,56 @@ class_function_line = {
     INDENT+ ~ function_in_block ~ (NEWLINE ~ (empty_line)*)?
 }
 
+// Legacy function_line rule - maintained for backward compatibility
 function_line = {
-    INDENT+ ~ function_in_block ~ (NEWLINE ~ (empty_line)*)?
+    INDENT+ ~ function_in_block
 }
 
 
 
-// Function declaration inside functions block - Clean Language spec compliant  
-function_in_block = { function_type? ~ function_name ~ "(" ~ parameter_list? ~ ")" ~ function_body }
+// Function header (declaration without body) inside functions block
+function_header = { function_type? ~ " "* ~ function_name ~ " "* ~ "(" ~ parameter_list? ~ ")" ~ " "* }
+
+// Function declaration inside functions block - Clean Language spec compliant
+function_in_block = { function_type? ~ " "* ~ function_name ~ " "* ~ "(" ~ parameter_list? ~ ")" ~ " "* ~ function_body_in_block }
 
 // Function name - allows identifiers and certain contextual keywords that might be used as method names
-function_name = { identifier | "start" | "stop" | "toString" | "input" | "error" | "test" | "from" | "to" | "step" }
+function_name = { identifier | "stop" | "toString" | "input" | "error" | "test" | "from" | "to" | "step" }
 
 // Function body can have setup blocks (description and input) or just statements
 // Also supports single-line function bodies and empty functions
-function_body = { 
-    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block ~ (NEWLINE ~ (empty_line)*)* ~ function_statements) | 
-    (NEWLINE ~ (empty_line)* ~ function_statements) |
-    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block) |
-    (NEWLINE ~ (empty_line)*) | // Allow empty function body with newline
-    EOI // Allow empty function body at end of file
+function_body = {
+    (NEWLINE ~ function_body_statements ~ EOI) |
+    (NEWLINE ~ INDENT+ ~ setup_block ~ (NEWLINE)? ~ function_body_statements ~ EOI) |
+    (NEWLINE ~ INDENT+ ~ setup_block ~ EOI) |
+    (NEWLINE ~ EOI) // Allow empty function body with newline
 }
 
-// Function statements - statements inside function body  
-// Use negative lookahead to prevent function declarations but allow variable declarations and apply-blocks
-// Allow flexible empty lines and comments between statements
-function_statements = { 
-    function_body_statement ~ 
-    (NEWLINE ~ (empty_line | TRIVIA)* ~ function_body_statement?)* 
+// Function body for functions inside blocks (no EOI required)
+function_body_in_block = {
+    (NEWLINE ~ function_body_statements) |
+    (NEWLINE ~ INDENT+ ~ setup_block ~ (NEWLINE)? ~ function_body_statements) |
+    (NEWLINE ~ INDENT+ ~ setup_block) |
+    (NEWLINE) // Allow empty function body with newline
 }
 
-// Function body statements must be indented but allow flexible indentation
+// Function body statements - simplified to not consume trailing empty lines
+// This prevents conflicts with the parent functions block rule
+// Fixed: Handle empty lines after print_newline_stmt properly
+function_body_statements = {
+    function_body_statement ~ (NEWLINE+ ~ (empty_line)* ~ &(INDENT+ ~ !function_signature) ~ function_body_statement)*
+}
+
+// Function body statements must be indented relative to the function declaration
 function_body_statement = { INDENT+ ~ statement }
 
+// Helper rule to detect the start of a new function
+function_declaration_start = { INDENT ~ (function_type | "void") ~ " " }
+
 // Helper rule to detect the start of a new function in functions: blocks
-// Matches either: 1) function with return type, 2) function without return type
-// Excludes common function call patterns like print()
-function_start = { function_type ~ function_name ~ "(" }
+// Matches either: 1) function with return type, 2) void function
+// Uses lookahead to match function signature without consuming parameters
+function_start = { &function_signature }
 
 // Function return type (includes identifiers for custom class types)
 // Order matters: sized types before core types to prioritize precision modifiers  
@@ -411,46 +500,50 @@ named_test = { string ~ ":" ~ expression ~ "=" ~ expression }
 anonymous_test = { expression ~ "=" ~ expression }
 
 // Class definition with "is" inheritance
-class_field = { type_ ~ identifier ~ ("=" ~ expression)? }
+class_field = { type_ ~ WHITESPACE* ~ identifier ~ ("=" ~ expression)? }
 class_body_item = { class_functions_block | constructor | class_field }
 indented_class_body = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ class_body_item ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ !end_of_class ~ class_body_item)* ~ (NEWLINE ~ (empty_line)*)? }
 
 // Helper to detect end of class context
 end_of_class = { "class" | "start(" | EOI }
 
-class_decl = { 
-    "class" ~ identifier ~ 
-    ("is" ~ type_)? ~ 
+class_decl = {
+    "class" ~ WHITESPACE* ~ identifier ~
+    (WHITESPACE* ~ "is" ~ WHITESPACE* ~ type_)? ~
     indented_class_body?
 }
 
 constructor = { "constructor" ~ "(" ~ constructor_parameter_list? ~ ")" ~ constructor_block? }
 constructor_block = { NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ statement ~ (NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ statement)* }
-constructor_parameter_list = { constructor_parameter ~ ("," ~ constructor_parameter)* }
-constructor_parameter = { type_? ~ parameter_name }
+constructor_parameter_list = { constructor_parameter ~ ("," ~ " "* ~ constructor_parameter)* }
+constructor_parameter = { type_? ~ WHITESPACE* ~ parameter_name }
 
 // Import statements - supports both specification and simple syntax
 // import Math                    # simple module import
 // import: Math                   # whole module (specification)
-// import: Math.sqrt              # single symbol  
+// import: Math.sqrt              # single symbol
 // import: Utils as U             # module alias
 // import: Json.decode as jd      # symbol alias
-import_item = { 
-    (identifier ~ "." ~ identifier ~ "as" ~ identifier) |  // Math.sqrt as msqrt
-    (identifier ~ "." ~ identifier) |                      // Math.sqrt
-    (identifier ~ "as" ~ identifier) |                     // Utils as U
-    identifier                                             // Math
-}
-import_list = { import_item ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ import_item)* }
-import_stmt = { ("import" ~ ":" ~ NEWLINE ~ (empty_line)* ~ INDENT+ ~ import_list) | ("import" ~ identifier) | ("import" ~ ":" ~ import_item) }
 
-// Async expressions and statements  
-start_expr = { "start" ~ expression }
-later_assignment = { "later" ~ identifier ~ "=" ~ start_expr }
-background_stmt = { "background" ~ expression }
+// Module name allows keywords in import context (math, string, list, etc.)
+module_name = @{ (ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")*) | ("string" | "integer" | "number" | "boolean" | "list" | "matrix" | "void" | "any") }
+
+import_item = {
+    (module_name ~ "." ~ module_name ~ "as" ~ module_name) |  // Math.sqrt as msqrt
+    (module_name ~ "." ~ module_name) |                      // Math.sqrt
+    (module_name ~ "as" ~ module_name) |                     // Utils as U
+    module_name                                              // Math
+}
+import_list = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ import_item ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ import_item)* }
+import_stmt = { ("import" ~ identifier) | ("import" ~ ":" ~ import_item) }
+
+// Async expressions and statements
+start_expr = { "start" ~ WHITESPACE* ~ expression }
+background_stmt = { "background" ~ WHITESPACE* ~ expression }
+later_assignment = { "later" ~ WHITESPACE* ~ identifier ~ WHITESPACE* ~ "=" ~ WHITESPACE* ~ expression }
 
 // Import and export blocks (consolidate with import_stmt)
-import_block = { "import" ~ ":" ~ NEWLINE ~ (empty_line)* ~ INDENT+ ~ import_list }
+import_block = { "import" ~ ":" ~ import_list }
 private_block = { "private" ~ ":" ~ indented_private_list }
 indented_private_list = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ private_item ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ private_item)* }
 private_item = { identifier | function_in_block }
@@ -459,8 +552,15 @@ private_item = { identifier | function_in_block }
 // Critical fix: Add function_call before expression to prevent parameter parsing confusion
 // Method calls must come before assignment to avoid grammar ambiguity with property_access
 statement = {
-    !function_start ~
-    (variable_decl |
+    (print_newline_stmt |
+    print_parenthesized_stmt |
+    print_bare_stmt |
+    apply_block |
+    standalone_on_error |
+    on_error_block |
+    function_call |
+    method_call |
+    assignment |
     return_stmt |
     error_stmt |
     if_stmt |
@@ -468,22 +568,17 @@ statement = {
     iterate_stmt |
     range_iterate_stmt |
     test |
-    later_assignment |
     background_stmt |
+    later_assignment |
     standalone_input_declaration |
-    apply_block |
-    println_stmt |
-    printl_stmt |
-    print_ln_stmt |
-    print_stmt |
-    assignment |
+    base_call |
     start_expr |
-    expression)
+    variable_decl)
 }
 
 // Program with proper newline handling
-program_item = { import_stmt | import_block | private_block | start_function | implicit_start_function | functions_block | tests_block | class_decl | apply_block | statement }
-program = { SOI ~ NEWLINE* ~ (program_item ~ NEWLINE*)* ~ EOI }
+program_item = { import_block | import_stmt | private_block | start_function | implicit_start_function | functions_block | tests_block | class_decl | apply_block }
+program = { SOI ~ (empty_line)* ~ (program_item ~ (empty_line)*)* ~ EOI }
 
 // Start function - the entry point of a Clean Language program
 start_function = { "start" ~ "(" ~ ")" ~ indented_block }

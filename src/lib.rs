@@ -49,12 +49,12 @@ pub fn compile(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
 /// Compiles Clean Language source code to WebAssembly with file path for better error reporting
 pub fn compile_with_file(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
     use crate::lexer::specification_lexer::SpecificationLexer;
-    use crate::parser::specification_parser::SpecificationParser;
+    
     // use crate::hir::hir_builder::HirBuilder; // Temporarily disabled
     use crate::resolver::Resolver;
     use crate::typechecker::TypeChecker;
     use crate::mir::lower_tast_to_mir_with_opt_level;
-    use crate::codegen::generate_wasm_from_mir;
+    
     
     // Stage 1: Lexical Analysis - specification-compliant tokenization
     eprintln!("DEBUG: Starting Stage 1 - Lexical Analysis");
@@ -71,32 +71,45 @@ pub fn compile_with_file(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<C
     
     // Stage 3: AST to HIR - validation and desugaring per specification
     eprintln!("DEBUG: Starting Stage 3 - AST to HIR");
+    eprintln!("DEBUG: AST has {} functions, {} statements, {} classes", ast.functions.len(), ast.statements.len(), ast.classes.len());
+    // Note: AST start function parsing is working correctly
+    for (i, func) in ast.functions.iter().enumerate() {
+        eprintln!("DEBUG: AST Function {}: {} with {} statements", i, func.name, func.body.len());
+    }
     use crate::hir::hir_builder::HirBuilder;
     let mut hir_builder = HirBuilder::new();
-    let hir_result = hir_builder.build_hir(ast).map_err(|e| vec![e])?;
-    eprintln!("DEBUG: Stage 3 Complete - HIR created");
+    let hir_result = hir_builder.build_hir(ast.clone()).map_err(|e| vec![e])?;
+    eprintln!("DEBUG: Stage 3 Complete - HIR created with {} functions", hir_result.hir.functions.len());
+    // Note: HIR start function conversion is working correctly
     
     // Stage 4: Name and Module Resolution - symbol resolution per specification
     eprintln!("DEBUG: Starting Stage 4 - Resolver");
+    eprintln!("DEBUG: HIR before resolution has {} functions", hir_result.hir.functions.len());
     let resolution_result = Resolver::resolve(hir_result.hir)?;
     let resolved_hir = resolution_result.resolved_hir;
-    eprintln!("DEBUG: Stage 4 Complete - Resolution finished");
+    eprintln!("DEBUG: Stage 4 Complete - Resolution finished with {} functions", resolved_hir.functions.len());
+    // Note: Resolver start function processing is working correctly
     
     // Stage 5: Type Inference and Checking to TAST - constraint-based type inference
     eprintln!("DEBUG: Starting Stage 5 - TypeChecker");
     let type_result = TypeChecker::check(resolved_hir)?;
-    eprintln!("DEBUG: Stage 5 Complete - Type checking finished");
+    eprintln!("DEBUG: Stage 5 Complete - Type checking finished with {} functions", type_result.tast.functions.len());
     
     // Stage 6: TAST to MIR Lowering and Optimization - SSA form with optimizations
     eprintln!("DEBUG: Starting Stage 6 - TAST to MIR");
     let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, 2)?;
     eprintln!("DEBUG: Stage 6 Complete - MIR created");
-    
-    // Stage 7: MIR to WASM Code Generation - efficient bytecode generation
-    eprintln!("DEBUG: Starting Stage 7 - MIR to WASM");
-    let wasm_bytes = generate_wasm_from_mir(mir_result.program).map_err(|e| vec![e])?;
+
+    // Stage 7: WASM Code Generation - use MIR-based generator with fixes
+    eprintln!("DEBUG: Starting Stage 7 - WASM generation using MIR approach");
+
+    // Use the MIR codegen pipeline which now has proper entry point handling
+    use crate::codegen::mir_codegen::MirCodeGenerator;
+    let mut mir_codegen = MirCodeGenerator::default();
+    let codegen_result = mir_codegen.generate(mir_result.program).map_err(|errors| errors)?;
+    let wasm_bytes = codegen_result.wasm_bytes;
     eprintln!("DEBUG: Stage 7 Complete - WASM generated ({} bytes)", wasm_bytes.len());
-    
+
     Ok(wasm_bytes)
 }
 

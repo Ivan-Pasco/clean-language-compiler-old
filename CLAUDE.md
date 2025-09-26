@@ -49,6 +49,46 @@ cargo run --bin cleanc -- input.clean output.wasm
 make run INPUT=examples/hello.cln OUTPUT=examples/hello.wasm
 ```
 
+## 🧪 **UNIFIED TESTING STRATEGY**
+
+### **Automatic Testing Command**
+When the user types **"test"**, automatically execute the unified testing strategy defined in `tests/UNIFIED_TESTING_STRATEGY.md`. This proven methodology combines:
+
+1. **Existing Test Priority**: Always search existing tests in `tests/cln/` FIRST before creating new ones (353+ organized files)
+2. **Proven QA Methodology**: Phase-based approach with **proven effectiveness in achieving 100% success rates**
+3. **Intelligent Problem Resolution**: Automatic agent selection based on proven error classification:
+   - **QA Agent**: For systematic failures (5+ similar errors), regression analysis, comprehensive quality assurance
+   - **Debug Agent**: For specific compilation errors, parser issues, semantic analysis problems
+   - **Context7 MCP**: For Rust compiler internals, WebAssembly generation, best practices
+   - **Internet Search**: For complex problems requiring external research and similar compiler solutions
+   - **Deep Thinking**: For particularly challenging architectural issues with systematic analysis
+
+### **Proven Error Classification System**
+- **🔴 CRITICAL**: Blocks all tests (compiler compilation failures, core AST issues) → Debug Agent + Context7 MCP
+- **🟡 HIGH**: Affects 20-50 tests (missing language features, undefined variables) → Debug Agent + QA Agent
+- **🟢 MEDIUM**: Affects 1-10 tests (syntax edge cases, advanced features) → Debug Agent
+
+### **Testing Quality Standards**
+- **100% Compilation Rate REQUIRED**: All .cln files must compile successfully
+- **100% Execution Rate REQUIRED**: All compiled programs must execute without errors
+- **NO Placeholders**: Production-grade code only, no `todo!()` or dummy implementations
+- **Specification Compliance**: All tests must align with Clean Language Specification
+- **Proven Fix Patterns**: Use established templates for AST, semantic, and codegen fixes
+
+### **Problem Resolution Escalation (Proven Framework)**
+1. **Level 1**: Use specialized agents based on error classification and impact analysis
+2. **Level 2**: Add Context7 MCP for Rust/WebAssembly technical expertise
+3. **Level 3**: Internet search for similar compiler problems and implementation patterns
+4. **Level 4**: Deep thinking with architectural consideration and proven debugging procedures
+
+### **Testing Infrastructure**
+- **Test Files**: All located in `tests/cln/` organized by category (353+ files)
+- **Test Outputs**: All compiled .wasm files go to `tests/output/` directory
+- **Quality Assurance**: Proven QA procedures in `tests/qa/` with automation scripts
+- **Documentation**: Complete unified methodology in `tests/UNIFIED_TESTING_STRATEGY.md`
+
+**📋 TRIGGER**: When user writes "test", automatically execute the unified testing strategy combining proven QA methodology with intelligent agent integration for systematic problem resolution.**
+
 ### Debugging Tools
 ```bash
 # Debug parsing with AST display
@@ -221,3 +261,4 @@ Do what has been asked; nothing more, nothing less.
 NEVER create files unless they're absolutely necessary for achieving your goal.
 ALWAYS prefer editing an existing file to creating a new one.
 NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
+- we dont need backwards compatibility, the Clean Language Specification and the intermediate representations are the main and only source of truth

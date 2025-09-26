@@ -561,17 +561,22 @@ impl CodeGenerator {
     pub fn generate_start_function(&mut self) -> Result<(), CompilerError> {
         // Look for Clean Language entry point "start" function
         if let Some(&start_index) = self.function_map.get("start") {
+            // CRITICAL FIX: Declare the _start function in the function section FIRST
+            // The _start function has no parameters and no return value
+            let type_index = self.type_manager.add_function_type(&[], None)?;
+            self.function_section.function(type_index);
+
             let mut instructions = Vec::new();
-            
+
             // Call start function
             instructions.push(Instruction::Call(start_index));
-            
+
             // Drop return value if any
             instructions.push(Instruction::Drop);
 
             // Create start function
             let start_function = Function::new(vec![]);
-            
+
             // Add instructions
             let mut wasm_function = start_function;
             for instruction in instructions {
@@ -585,9 +590,12 @@ impl CodeGenerator {
             self.code_section.function(&wasm_function);
 
             // Export as start function - use correct index after all imports and existing functions
-            let start_index = self.imported_functions.len() as u32 + self.function_names.len() as u32;
+            let start_func_index = self.imported_functions.len() as u32 + self.function_names.len() as u32;
             // Start function exported with correct index
-            self.export_section.export("_start", wasm_encoder::ExportKind::Func, start_index);
+            self.export_section.export("_start", wasm_encoder::ExportKind::Func, start_func_index);
+
+            // Update function tracking to keep counts consistent
+            self.function_names.push("_start".to_string());
         }
 
         Ok(())

@@ -4,9 +4,7 @@
 //! into Resolved HIR by resolving all symbol references.
 
 use super::*;
-use crate::hir::*;
 use crate::error::CompilerError;
-use std::collections::{HashMap, HashSet};
 
 /// Name resolver that transforms HIR to Resolved HIR
 pub struct NameResolver {
@@ -222,12 +220,17 @@ impl NameResolver {
             })?;
         
         // Resolve parent class if exists
+        eprintln!("DEBUG RESOLVER: Class '{}' parent in HIR: {:?}", class.name, class.parent);
         let parent_symbol_id = if let Some(parent_name) = &class.parent {
-            Some(self.symbol_table.lookup_symbol(parent_name)
+            eprintln!("DEBUG RESOLVER: Looking up parent class '{}'", parent_name);
+            let parent_id = self.symbol_table.lookup_symbol(parent_name)
                 .ok_or_else(|| {
                     self.error(&format!("Parent class '{}' not found", parent_name), class.location.clone());
-                })?)
+                })?;
+            eprintln!("DEBUG RESOLVER: Found parent class '{}' with ID {:?}", parent_name, parent_id);
+            Some(parent_id)
         } else {
+            eprintln!("DEBUG RESOLVER: Class '{}' has no parent", class.name);
             None
         };
         
@@ -242,8 +245,11 @@ impl NameResolver {
         // Resolve fields
         let mut resolved_fields = Vec::new();
         let mut field_symbol_ids = Vec::new();
-        
+
+        eprintln!("DEBUG RESOLVER: Resolving {} fields for class '{}'", class.fields.len(), class.name);
+
         for field in &class.fields {
+            eprintln!("DEBUG RESOLVER: Creating field symbol for '{}' in class '{}'", field.name, class.name);
             let field_symbol_id = self.symbol_table.create_symbol(
                 field.name.clone(),
                 SymbolKind::Field {
@@ -253,15 +259,16 @@ impl NameResolver {
                 class_scope,
                 field.location.clone(),
             );
-            
+
             field_symbol_ids.push(field_symbol_id);
-            
+            eprintln!("DEBUG RESOLVER: Added field '{}' with symbol ID {:?}", field.name, field_symbol_id);
+
             let resolved_initializer = if let Some(init) = &field.initializer {
                 Some(self.resolve_expression(init)?)
             } else {
                 None
             };
-            
+
             resolved_fields.push(ResolvedHirField {
                 name: field.name.clone(),
                 symbol_id: field_symbol_id,
@@ -269,6 +276,17 @@ impl NameResolver {
                 initializer: resolved_initializer,
                 location: field.location.clone(),
             });
+        }
+
+        // Update class symbol with fields and parent immediately after creating them
+        eprintln!("DEBUG RESOLVER: Updating class '{}' symbol with {} fields and parent {:?} (immediate update)", class.name, field_symbol_ids.len(), parent_symbol_id);
+        if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_symbol_id) {
+            if let SymbolKind::Class { fields, parent, .. } = &mut class_symbol.kind {
+                eprintln!("DEBUG RESOLVER: Before immediate update - fields: {:?}, parent: {:?}", fields, parent);
+                *fields = field_symbol_ids.clone();
+                *parent = parent_symbol_id;
+                eprintln!("DEBUG RESOLVER: After immediate update - fields: {:?}, parent: {:?}", fields, parent);
+            }
         }
         
         // Resolve constructor
@@ -303,11 +321,14 @@ impl NameResolver {
         }
         
         // Update class symbol with fields and methods
+        eprintln!("DEBUG RESOLVER: Updating class '{}' symbol with {} fields and {} methods", class.name, field_symbol_ids.len(), method_symbol_ids.len());
         if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_symbol_id) {
             if let SymbolKind::Class { fields, methods, parent } = &mut class_symbol.kind {
-                *fields = field_symbol_ids;
+                eprintln!("DEBUG RESOLVER: Before update - fields: {:?}", fields);
+                *fields = field_symbol_ids.clone();
                 *methods = method_symbol_ids;
                 *parent = parent_symbol_id;
+                eprintln!("DEBUG RESOLVER: After update - fields: {:?}", fields);
             }
         }
         
@@ -334,7 +355,11 @@ impl NameResolver {
             ScopeType::Constructor { class_id }
         );
         self.symbol_table.enter_scope(constructor_scope);
-        
+
+        // Set current class for implicit field access
+        let previous_class = self.current_class;
+        self.current_class = Some(class_id);
+
         // Resolve parameters
         let mut resolved_parameters = Vec::new();
         for param in &constructor.parameters {
@@ -344,7 +369,7 @@ impl NameResolver {
                 constructor_scope,
                 param.location.clone(),
             );
-            
+
             resolved_parameters.push(ResolvedHirParameter {
                 name: param.name.clone(),
                 symbol_id: param_symbol_id,
@@ -354,13 +379,14 @@ impl NameResolver {
                 location: param.location.clone(),
             });
         }
-        
+
         // Resolve body
         let resolved_body = self.resolve_block(&constructor.body)?;
-        
-        // Exit constructor scope
+
+        // Exit constructor scope and restore previous class context
         self.symbol_table.exit_scope();
-        
+        self.current_class = previous_class;
+
         Ok(ResolvedHirConstructor {
             parameters: resolved_parameters,
             body: resolved_body,
@@ -377,7 +403,11 @@ impl NameResolver {
         );
         self.symbol_table.enter_scope(method_scope);
         self.current_function = Some(method_id);
-        
+
+        // Set current class for implicit field access
+        let previous_class = self.current_class;
+        self.current_class = Some(class_id);
+
         // Resolve parameters
         let mut resolved_parameters = Vec::new();
         for param in &method.parameters {
@@ -387,7 +417,7 @@ impl NameResolver {
                 method_scope,
                 param.location.clone(),
             );
-            
+
             resolved_parameters.push(ResolvedHirParameter {
                 name: param.name.clone(),
                 symbol_id: param_symbol_id,
@@ -397,14 +427,15 @@ impl NameResolver {
                 location: param.location.clone(),
             });
         }
-        
+
         // Resolve body
         let resolved_body = self.resolve_block(&method.body)?;
-        
-        // Exit method scope
+
+        // Exit method scope and restore previous class context
         self.symbol_table.exit_scope();
         self.current_function = None;
-        
+        self.current_class = previous_class;
+
         Ok(ResolvedHirMethod {
             name: method.name,
             symbol_id: method_id,
@@ -660,16 +691,84 @@ impl NameResolver {
             }
             
             HirExpression::Variable { name, location } => {
-                let symbol_id = self.symbol_table.lookup_symbol(name)
-                    .ok_or_else(|| {
-                        self.error(&format!("Variable '{}' not found", name), location.clone());
-                    })?;
-                
-                Ok(ResolvedHirExpression::Variable {
-                    name: name.clone(),
-                    symbol_id,
-                    location: location.clone(),
-                })
+                eprintln!("DEBUG RESOLVER: Looking up variable '{}', current_class: {:?}", name, self.current_class);
+
+                // If we're in a class method, check for class fields first (implicit field access)
+                if let Some(current_class_id) = self.current_class {
+                    if let Some(class_symbol) = self.symbol_table.get_symbol(current_class_id) {
+                        if let SymbolKind::Class { fields, parent, .. } = &class_symbol.kind {
+                            eprintln!("DEBUG RESOLVER: Checking fields in class '{}', fields: {:?}", class_symbol.name, fields);
+
+                            // Check current class fields
+                            for &field_id in fields {
+                                if let Some(field_symbol) = self.symbol_table.get_symbol(field_id) {
+                                    eprintln!("DEBUG RESOLVER: Checking field '{}' against '{}'", field_symbol.name, name);
+                                    if field_symbol.name == *name {
+                                        eprintln!("DEBUG RESOLVER: Found field '{}' - converting to field access", name);
+                                        // Convert variable access to field access
+                                        return Ok(ResolvedHirExpression::FieldAccess {
+                                            object: Box::new(ResolvedHirExpression::This {
+                                                class_symbol_id: current_class_id,
+                                                location: location.clone(),
+                                            }),
+                                            field: name.clone(),
+                                            field_symbol_id: field_id,
+                                            location: location.clone(),
+                                        });
+                                    }
+                                }
+                            }
+
+                            // Check parent class fields if inheritance is involved
+                            eprintln!("DEBUG RESOLVER: Parent class for '{}': {:?}", class_symbol.name, parent);
+                            if let Some(parent_class_id) = parent {
+                                eprintln!("DEBUG RESOLVER: Checking parent class fields for '{}'", name);
+                                if let Some(parent_symbol) = self.symbol_table.get_symbol(*parent_class_id) {
+                                    if let SymbolKind::Class { fields: parent_fields, .. } = &parent_symbol.kind {
+                                        eprintln!("DEBUG RESOLVER: Parent class '{}' has fields: {:?}", parent_symbol.name, parent_fields);
+                                        for &parent_field_id in parent_fields {
+                                            if let Some(parent_field_symbol) = self.symbol_table.get_symbol(parent_field_id) {
+                                                eprintln!("DEBUG RESOLVER: Checking parent field '{}' against '{}'", parent_field_symbol.name, name);
+                                                if parent_field_symbol.name == *name {
+                                                    eprintln!("DEBUG RESOLVER: Found inherited field '{}' - converting to field access", name);
+                                                    // Convert variable access to inherited field access
+                                                    return Ok(ResolvedHirExpression::FieldAccess {
+                                                        object: Box::new(ResolvedHirExpression::This {
+                                                            class_symbol_id: current_class_id,
+                                                            location: location.clone(),
+                                                        }),
+                                                        field: name.clone(),
+                                                        field_symbol_id: parent_field_id,
+                                                        location: location.clone(),
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    eprintln!("DEBUG RESOLVER: Parent symbol not found for parent_class_id: {:?}", parent_class_id);
+                                }
+                            } else {
+                                eprintln!("DEBUG RESOLVER: No parent class for '{}'", class_symbol.name);
+                            }
+                        }
+                    }
+                }
+
+                eprintln!("DEBUG RESOLVER: Not found as field, trying normal symbol lookup for '{}'", name);
+
+                // If not a field, try to find the variable in normal scope
+                if let Some(symbol_id) = self.symbol_table.lookup_symbol(name) {
+                    return Ok(ResolvedHirExpression::Variable {
+                        name: name.clone(),
+                        symbol_id,
+                        location: location.clone(),
+                    });
+                }
+
+                // If still not found, report error
+                self.error(&format!("Variable '{}' not found", name), location.clone());
+                Err(())
             }
             
             HirExpression::BinaryOp { left, op, right, location } => {
@@ -830,16 +929,67 @@ impl NameResolver {
     fn resolve_lvalue(&mut self, lvalue: &HirLValue) -> Result<ResolvedHirLValue, ()> {
         match lvalue {
             HirLValue::Variable { name, location } => {
-                let symbol_id = self.symbol_table.lookup_symbol(name)
-                    .ok_or_else(|| {
-                        self.error(&format!("Variable '{}' not found", name), location.clone());
-                    })?;
-                
-                Ok(ResolvedHirLValue::Variable {
-                    name: name.clone(),
-                    symbol_id,
-                    location: location.clone(),
-                })
+                // If we're in a class method, check for class fields first (implicit field access)
+                if let Some(current_class_id) = self.current_class {
+                    if let Some(class_symbol) = self.symbol_table.get_symbol(current_class_id) {
+                        if let SymbolKind::Class { fields, parent, .. } = &class_symbol.kind {
+                            // Check current class fields
+                            for &field_id in fields {
+                                if let Some(field_symbol) = self.symbol_table.get_symbol(field_id) {
+                                    if field_symbol.name == *name {
+                                        // Convert variable assignment to field assignment
+                                        return Ok(ResolvedHirLValue::FieldAccess {
+                                            object: Box::new(ResolvedHirExpression::This {
+                                                class_symbol_id: current_class_id,
+                                                location: location.clone(),
+                                            }),
+                                            field: name.clone(),
+                                            field_symbol_id: field_id,
+                                            location: location.clone(),
+                                        });
+                                    }
+                                }
+                            }
+
+                            // Check parent class fields if inheritance is involved
+                            if let Some(parent_class_id) = parent {
+                                if let Some(parent_symbol) = self.symbol_table.get_symbol(*parent_class_id) {
+                                    if let SymbolKind::Class { fields: parent_fields, .. } = &parent_symbol.kind {
+                                        for &parent_field_id in parent_fields {
+                                            if let Some(parent_field_symbol) = self.symbol_table.get_symbol(parent_field_id) {
+                                                if parent_field_symbol.name == *name {
+                                                    // Convert variable assignment to inherited field assignment
+                                                    return Ok(ResolvedHirLValue::FieldAccess {
+                                                        object: Box::new(ResolvedHirExpression::This {
+                                                            class_symbol_id: current_class_id,
+                                                            location: location.clone(),
+                                                        }),
+                                                        field: name.clone(),
+                                                        field_symbol_id: parent_field_id,
+                                                        location: location.clone(),
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // If not a field, try to find the variable in normal scope
+                if let Some(symbol_id) = self.symbol_table.lookup_symbol(name) {
+                    return Ok(ResolvedHirLValue::Variable {
+                        name: name.clone(),
+                        symbol_id,
+                        location: location.clone(),
+                    });
+                }
+
+                // If still not found, report error
+                self.error(&format!("Variable '{}' not found", name), location.clone());
+                Err(())
             }
             
             HirLValue::FieldAccess { object, field, location } => {

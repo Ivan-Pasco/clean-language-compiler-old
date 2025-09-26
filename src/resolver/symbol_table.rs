@@ -262,15 +262,26 @@ impl GlobalSymbolTable {
     
     /// Look up a symbol by name starting from a specific scope
     pub fn lookup_symbol_in_scope(&self, name: &str, scope_id: ScopeId) -> Option<SymbolId> {
+        self.lookup_symbol_in_scope_with_depth(name, scope_id, 0)
+    }
+
+    fn lookup_symbol_in_scope_with_depth(&self, name: &str, scope_id: ScopeId, depth: usize) -> Option<SymbolId> {
+        const MAX_SCOPE_DEPTH: usize = 50; // Prevent infinite recursion in scope chains
+
+        if depth > MAX_SCOPE_DEPTH {
+            eprintln!("WARNING: Maximum scope depth exceeded looking up symbol '{}'", name);
+            return None;
+        }
+
         if let Some(scope) = self.scopes.get(&scope_id) {
             // Check current scope
             if let Some(&symbol_id) = scope.symbols.get(name) {
                 return Some(symbol_id);
             }
-            
+
             // Check parent scope
             if let Some(parent_id) = scope.parent {
-                return self.lookup_symbol_in_scope(name, parent_id);
+                return self.lookup_symbol_in_scope_with_depth(name, parent_id, depth + 1);
             }
         }
         None

@@ -204,6 +204,10 @@ impl CodeGenerator {
     }
 
     fn register_console_operations(&mut self) -> Result<(), CompilerError> {
+        // Core print/println functions - these match the host function signatures
+        self.register_import_function("env", "print", vec![ValType::I32, ValType::I32], vec![]);
+        self.register_import_function("env", "printl", vec![ValType::I32, ValType::I32], vec![]);
+
         // Console operations - these need host environment support for actual I/O
         self.register_import_function("env", "print_string", vec![ValType::I32], vec![]);
         self.register_import_function("env", "print_integer", vec![ValType::I32], vec![]);
@@ -213,16 +217,16 @@ impl CodeGenerator {
         self.register_import_function("env", "console_error", vec![ValType::I32], vec![]);
         self.register_import_function("env", "console_warn", vec![ValType::I32], vec![]);
         self.register_import_function("env", "console_input", vec![ValType::I32], vec![ValType::I32]);
-        
+
         // Direct input function (alias for console_input)
-        self.register_import_function("env", "input", vec![ValType::I32], vec![ValType::I32]);
-        
+        self.register_import_function("env", "input", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+
         // Input namespace methods - require host support
-        self.register_import_function("env", "input.integer", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "input.number", vec![ValType::I32], vec![ValType::F64]);
-        self.register_import_function("env", "input.boolean", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "input.yesNo", vec![ValType::I32], vec![ValType::I32]);
-        
+        self.register_import_function("env", "input_integer", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "input_float", vec![ValType::I32, ValType::I32], vec![ValType::F64]);
+        self.register_import_function("env", "input_yesno", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "input_range", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
+
         Ok(())
     }
 

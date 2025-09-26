@@ -1,4 +1,4 @@
-use super::expression_parser::parse_expression;
+use super::expression_parser::{parse_expression, parse_start_expression};
 use super::type_parser::parse_type;
 use super::Rule;
 use super::{convert_to_ast_location, get_location};
@@ -13,10 +13,9 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
     match inner.as_rule() {
         Rule::variable_decl => parse_variable_declaration(inner, ast_location),
         Rule::assignment => parse_assignment_statement(inner, ast_location),
-        Rule::print_stmt => parse_print_statement(inner, ast_location),
-        Rule::print_ln_stmt => parse_print_ln_statement(inner, ast_location),
-        Rule::printl_stmt => parse_printl_statement(inner, ast_location),
-        Rule::println_stmt => parse_println_statement(inner, ast_location),
+        Rule::print_parenthesized_stmt => parse_print_parenthesized_statement(inner, ast_location),
+        Rule::print_newline_stmt => parse_print_newline_statement(inner, ast_location),
+        Rule::print_bare_stmt => parse_print_bare_statement(inner, ast_location),
         Rule::if_stmt => parse_if_statement(inner, ast_location),
         Rule::while_stmt => parse_while_statement(inner, ast_location),
         Rule::iterate_stmt => parse_iterate_statement(inner, ast_location),
@@ -25,17 +24,18 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
         Rule::return_stmt => parse_return_statement(inner, ast_location),
         Rule::error_stmt => parse_error_statement(inner, ast_location),
         Rule::on_error_block => parse_on_error_block_statement(inner, ast_location),
+        Rule::standalone_on_error => parse_standalone_on_error_statement(inner, ast_location),
         Rule::apply_block => parse_apply_block_statement(inner, ast_location),
         Rule::type_apply_block => parse_type_apply_block_statement(inner, ast_location),
         Rule::function_apply_block => parse_function_apply_block_statement(inner, ast_location),
         Rule::method_apply_block => parse_method_apply_block_statement(inner, ast_location),
         Rule::constant_apply_block => parse_constant_apply_block_statement(inner, ast_location),
-        Rule::later_assignment => parse_later_assignment_statement(inner, ast_location),
         Rule::background_stmt => parse_background_statement(inner, ast_location),
+        Rule::later_assignment => parse_later_assignment_statement(inner, ast_location),
         Rule::import_block => parse_import_block_statement(inner, ast_location),
         Rule::private_block => parse_private_block_statement(inner, ast_location),
         Rule::start_expr => {
-            let expr = parse_expression(inner)?;
+            let expr = parse_start_expression(inner)?;
             Ok(Statement::Expression {
                 expr,
                 location: Some(ast_location),
@@ -69,6 +69,13 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
                 location: Some(ast_location),
             })
         }
+        Rule::base_call => {
+            let expr = parse_expression(inner)?;
+            Ok(Statement::Expression {
+                expr,
+                location: Some(ast_location),
+            })
+        }
         _ => Err(CompilerError::parse_error(
             format!("Unexpected statement: {:?}", inner.as_rule()),
             Some(ast_location),
@@ -82,12 +89,43 @@ fn parse_variable_declaration(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     let mut parts = pair.into_inner();
-    let type_part = parts.next().unwrap();
-    let name_part = parts.next().unwrap();
-    let initializer = parts
-        .next()
-        .map(|expr_part| parse_expression(expr_part))
-        .transpose()?;
+
+    // Handle the case where we get a nested rule
+    let (type_part, name_part, initializer) = if parts.len() == 1 {
+        let inner = parts.next().unwrap();
+        match inner.as_rule() {
+            Rule::variable_decl_without_assignment => {
+                let mut inner_parts = inner.into_inner();
+                let type_part = inner_parts.next().unwrap();
+                let name_part = inner_parts.next().unwrap();
+                (type_part, name_part, None)
+            }
+            Rule::variable_decl_with_assignment => {
+                let mut inner_parts = inner.into_inner();
+                let type_part = inner_parts.next().unwrap();
+                let name_part = inner_parts.next().unwrap();
+                let initializer_part = inner_parts.next().unwrap();
+                let initializer = Some(parse_expression(initializer_part)?);
+                (type_part, name_part, initializer)
+            }
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!("Unexpected variable declaration rule: {:?}", inner.as_rule()),
+                    Some(ast_location),
+                    None,
+                ));
+            }
+        }
+    } else {
+        // Direct parts case
+        let type_part = parts.next().unwrap();
+        let name_part = parts.next().unwrap();
+        let initializer = parts
+            .next()
+            .map(|expr_part| parse_expression(expr_part))
+            .transpose()?;
+        (type_part, name_part, initializer)
+    };
 
     let type_ = parse_type(type_part)?;
     let name = name_part.as_str().to_string();
@@ -136,8 +174,31 @@ fn parse_assignment_statement(
         ));
     }
 
+    // Check if this is a list assignment (e.g., numbers[0] = 99)
+    if target_part.as_rule() == Rule::list_access {
+        // Parse as list assignment expression
+        let list_expr = super::expression_parser::parse_list_access(target_part)?;
+        if let Expression::ListAccess(list, index) = list_expr {
+            return Ok(Statement::Expression {
+                expr: Expression::ListAssignment {
+                    list,
+                    index,
+                    value: Box::new(value),
+                    location: ast_location.clone(),
+                },
+                location: Some(ast_location),
+            });
+        }
+        // If we get here, something went wrong with list access parsing
+        return Err(CompilerError::parse_error(
+            "Failed to parse list assignment".to_string(),
+            Some(ast_location),
+            Some("List assignment parsing failed".to_string()),
+        ));
+    }
+
     // Regular variable assignment
-    let target = target_part.as_str().to_string();
+    let target = target_part.as_str().trim().to_string();
     Ok(Statement::Assignment {
         target,
         value,
@@ -190,7 +251,7 @@ fn parse_else_block_recursive(else_block: Pair<Rule>) -> Result<Vec<Statement>, 
     Ok(Vec::new())
 }
 
-fn parse_indented_block_statements(block: Pair<Rule>, statements: &mut Vec<Statement>) -> Result<(), CompilerError> {
+pub fn parse_indented_block_statements(block: Pair<Rule>, statements: &mut Vec<Statement>) -> Result<(), CompilerError> {
     for stmt_pair in block.into_inner() {
         match stmt_pair.as_rule() {
             Rule::statement => {
@@ -425,6 +486,42 @@ fn parse_on_error_block_statement(
     })
 }
 
+fn parse_standalone_on_error_statement(
+    pair: Pair<Rule>,
+    ast_location: crate::ast::SourceLocation,
+) -> Result<Statement, CompilerError> {
+    let mut inner = pair.into_inner();
+
+    // Skip "onError" and ":" tokens
+    inner.next(); // "onError"
+    inner.next(); // ":"
+
+    // Parse the indented block
+    let block_pair = inner.next()
+        .ok_or_else(|| CompilerError::Syntax {
+            context: Box::new(crate::error::ErrorContext {
+                message: "Expected block after onError:".to_string(),
+                location: Some(ast_location.clone()),
+                help: Some("Add indented statements after onError:".to_string()),
+                error_type: crate::error::ErrorType::Syntax,
+                suggestions: vec!["Add indented statements after onError:".to_string()],
+                source_snippet: None,
+                stack_trace: Vec::new(),
+                severity: crate::error::ErrorSeverity::Error,
+                error_code: Some("P001".to_string()),
+                related_errors: Vec::new(),
+            })
+        })?;
+
+    let mut block = Vec::new();
+    parse_indented_block_statements(block_pair, &mut block)?;
+
+    Ok(Statement::StandaloneErrorHandler {
+        body: block,
+        location: Some(ast_location),
+    })
+}
+
 fn parse_apply_block_statement(
     pair: Pair<Rule>,
     ast_location: crate::ast::SourceLocation,
@@ -605,6 +702,20 @@ fn parse_constant_apply_block_statement(
     })
 }
 
+
+fn parse_background_statement(
+    pair: Pair<Rule>,
+    ast_location: crate::ast::SourceLocation,
+) -> Result<Statement, CompilerError> {
+    let mut parts = pair.into_inner();
+    let expression = parse_expression(parts.next().unwrap())?;
+
+    Ok(Statement::Background {
+        expression,
+        location: Some(ast_location),
+    })
+}
+
 fn parse_later_assignment_statement(
     pair: Pair<Rule>,
     ast_location: crate::ast::SourceLocation,
@@ -615,19 +726,6 @@ fn parse_later_assignment_statement(
 
     Ok(Statement::LaterAssignment {
         variable,
-        expression,
-        location: Some(ast_location),
-    })
-}
-
-fn parse_background_statement(
-    pair: Pair<Rule>,
-    ast_location: crate::ast::SourceLocation,
-) -> Result<Statement, CompilerError> {
-    let mut parts = pair.into_inner();
-    let expression = parse_expression(parts.next().unwrap())?;
-
-    Ok(Statement::Background {
         expression,
         location: Some(ast_location),
     })
@@ -647,7 +745,43 @@ fn parse_print_statement(
     })
 }
 
-fn parse_print_ln_statement(
+fn parse_print_newline_statement(
+    pair: Pair<Rule>,
+    ast_location: crate::ast::SourceLocation,
+) -> Result<Statement, CompilerError> {
+    use super::expression_parser::parse_argument_expression;
+
+    let mut expressions = Vec::new();
+
+    // Parse argument_list (print(...) + syntax)
+    for inner in pair.into_inner() {
+        if inner.as_rule() == Rule::argument_list {
+            for arg_expr in inner.into_inner() {
+                if arg_expr.as_rule() == Rule::argument_expression {
+                    expressions.push(parse_argument_expression(arg_expr)?);
+                }
+            }
+        }
+    }
+
+    if expressions.len() == 1 {
+        // Single argument - use Print
+        Ok(Statement::Print {
+            expression: expressions.into_iter().next().unwrap(),
+            newline: true, // print(...) + explicitly adds newline
+            location: Some(ast_location),
+        })
+    } else {
+        // Multiple arguments - use PrintBlock
+        Ok(Statement::PrintBlock {
+            expressions,
+            newline: true,
+            location: Some(ast_location),
+        })
+    }
+}
+
+fn parse_print_bare_statement(
     pair: Pair<Rule>,
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
@@ -656,9 +790,45 @@ fn parse_print_ln_statement(
 
     Ok(Statement::Print {
         expression,
-        newline: true,
+        newline: false, // bare print doesn't add newline by default
         location: Some(ast_location),
     })
+}
+
+fn parse_print_parenthesized_statement(
+    pair: Pair<Rule>,
+    ast_location: crate::ast::SourceLocation,
+) -> Result<Statement, CompilerError> {
+    use super::expression_parser::parse_argument_expression;
+
+    let mut expressions = Vec::new();
+
+    // Parse argument_list
+    for inner in pair.into_inner() {
+        if inner.as_rule() == Rule::argument_list {
+            for arg_expr in inner.into_inner() {
+                if arg_expr.as_rule() == Rule::argument_expression {
+                    expressions.push(parse_argument_expression(arg_expr)?);
+                }
+            }
+        }
+    }
+
+    if expressions.len() == 1 {
+        // Single argument - use Print
+        Ok(Statement::Print {
+            expression: expressions.into_iter().next().unwrap(),
+            newline: true, // print(...) acts like print(...) + without explicit +
+            location: Some(ast_location),
+        })
+    } else {
+        // Multiple arguments - use PrintBlock
+        Ok(Statement::PrintBlock {
+            expressions,
+            newline: true,
+            location: Some(ast_location),
+        })
+    }
 }
 
 fn parse_printl_statement(

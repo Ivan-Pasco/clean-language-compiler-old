@@ -896,6 +896,7 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
     Ok(program)
 }
 
+
 pub fn parse_start_function(pair: Pair<Rule>) -> Result<Function, CompilerError> {
     let name = "start".to_string();
     let mut body = Vec::new();
@@ -906,8 +907,21 @@ pub fn parse_start_function(pair: Pair<Rule>) -> Result<Function, CompilerError>
             // indented_block contains either function_nested_block or simple_indented_block
             for block_pair in inner.into_inner() {
                 match block_pair.as_rule() {
-                    Rule::simple_indented_block | Rule::function_nested_block => {
-                        // Now look for statements within the block
+                    Rule::simple_indented_block => {
+                        // simple_indented_block contains indented_statement rules
+                        for stmt_pair in block_pair.into_inner() {
+                            if stmt_pair.as_rule() == Rule::indented_statement {
+                                // indented_statement contains the actual statement
+                                for inner_stmt in stmt_pair.into_inner() {
+                                    if inner_stmt.as_rule() == Rule::statement {
+                                        body.push(parse_statement(inner_stmt)?);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Rule::function_nested_block => {
+                        // function_nested_block contains statements directly
                         for stmt_pair in block_pair.into_inner() {
                             if stmt_pair.as_rule() == Rule::statement {
                                 body.push(parse_statement(stmt_pair)?);
@@ -1575,6 +1589,7 @@ fn parse_parameter_list(param_list_pair: Pair<Rule>) -> Result<Vec<Parameter>, C
     Ok(parameters)
 }
 
+
 pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, CompilerError> {
     let mut func_name = String::new();
     let mut return_type: Option<Type> = None;
@@ -1606,7 +1621,7 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
                 let params = parse_parameter_list(item)?;
                 parameters.extend(params);
             }
-            Rule::function_body => {
+            Rule::function_body | Rule::function_body_in_block => {
                 // function_body = (setup_block ~ indented_block) | indented_block | empty
                 let mut found_body = false;
                 let mut _found_setup = false;
@@ -1655,7 +1670,7 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
                                 }
                             }
                         }
-                        Rule::function_statements => {
+                        Rule::function_body_statements => {
                             found_body = true;
                             // Process statements, handling input_declaration specially
                             for stmt_pair in body_item.into_inner() {

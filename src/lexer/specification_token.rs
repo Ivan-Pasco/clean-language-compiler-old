@@ -28,6 +28,7 @@ pub enum TokenKind {
     
     // Keywords (all from Clean Language Specification - complete list)
     And,          // and
+    Background,   // background
     Class,        // class
     Constructor,  // constructor
     Else,         // else
@@ -139,6 +140,7 @@ impl fmt::Display for TokenKind {
             
             // Keywords
             TokenKind::And => write!(f, "and"),
+            TokenKind::Background => write!(f, "background"),
             TokenKind::Class => write!(f, "class"),
             TokenKind::Constructor => write!(f, "constructor"),
             TokenKind::Else => write!(f, "else"),
@@ -312,6 +314,7 @@ impl Keywords {
         match identifier {
             // All keywords from Clean Language Specification
             "and" => Some(TokenKind::And),
+            "background" => Some(TokenKind::Background),
             "class" => Some(TokenKind::Class),
             "constructor" => Some(TokenKind::Constructor),
             "else" => Some(TokenKind::Else),

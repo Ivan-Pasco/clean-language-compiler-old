@@ -189,7 +189,10 @@ impl<'a> SpecificationLexer<'a> {
                 '<' => self.handle_less_than(),
                 '>' => self.handle_greater_than(),
                 '.' => self.handle_dot(),
-                
+
+                // Hash-style comments
+                '#' => self.handle_hash_comment(),
+
                 // Invalid character
                 _ => {
                     let invalid_char = self.advance().unwrap();
@@ -232,6 +235,12 @@ impl<'a> SpecificationLexer<'a> {
                     return self.handle_slash();
                 }
             }
+        }
+
+        if let Some(&'#') = self.peek() {
+            // Hash-style comment line - handle the comment normally without recursion
+            self.at_line_start = false;
+            return self.handle_hash_comment();
         }
         
         self.at_line_start = false;
@@ -357,7 +366,10 @@ impl<'a> SpecificationLexer<'a> {
                 '<' => self.handle_less_than(),
                 '>' => self.handle_greater_than(),
                 '!' => self.handle_exclamation(),
-                
+
+                // Hash-style comments
+                '#' => self.handle_hash_comment(),
+
                 // Invalid character
                 _ => {
                     let invalid_char = self.advance().unwrap();
@@ -450,10 +462,50 @@ impl<'a> SpecificationLexer<'a> {
     fn read_number_literal(&mut self) -> Result<Token, LexError> {
         let start_location = self.current_location();
         let start_pos = self.current_pos;
-        
+
         let mut number_text = String::new();
         let mut is_float = false;
-        
+
+        // Base-prefixed integer detection: 0x..., 0b..., 0o...
+        if let Some(&'0') = self.peek() {
+            if let Some(chars) = self.peek_chars(2) {
+                match chars.as_slice() {
+                    ['0', 'x'] | ['0', 'X'] => {
+                        // consume 0x
+                        self.advance(); self.advance();
+                        let mut digits = String::new();
+                        while let Some(&ch) = self.peek() {
+                            if ch.is_ascii_hexdigit() { digits.push(ch); self.advance(); } else { break; }
+                        }
+                        let text = self.source_text_range(start_pos, self.current_pos);
+                        let value = i64::from_str_radix(&digits, 16).map_err(|_| LexError::InvalidNumber { text: text.clone(), location: start_location.clone() })?;
+                        return Ok(Token::new(TokenKind::IntegerLiteral(value), start_location, text));
+                    }
+                    ['0', 'b'] | ['0', 'B'] => {
+                        self.advance(); self.advance();
+                        let mut digits = String::new();
+                        while let Some(&ch) = self.peek() {
+                            if ch == '0' || ch == '1' { digits.push(ch); self.advance(); } else { break; }
+                        }
+                        let text = self.source_text_range(start_pos, self.current_pos);
+                        let value = i64::from_str_radix(&digits, 2).map_err(|_| LexError::InvalidNumber { text: text.clone(), location: start_location.clone() })?;
+                        return Ok(Token::new(TokenKind::IntegerLiteral(value), start_location, text));
+                    }
+                    ['0', 'o'] | ['0', 'O'] => {
+                        self.advance(); self.advance();
+                        let mut digits = String::new();
+                        while let Some(&ch) = self.peek() {
+                            if ch >= '0' && ch <= '7' { digits.push(ch); self.advance(); } else { break; }
+                        }
+                        let text = self.source_text_range(start_pos, self.current_pos);
+                        let value = i64::from_str_radix(&digits, 8).map_err(|_| LexError::InvalidNumber { text: text.clone(), location: start_location.clone() })?;
+                        return Ok(Token::new(TokenKind::IntegerLiteral(value), start_location, text));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // Read integer part
         while let Some(&ch) = self.peek() {
             if ch.is_ascii_digit() {
@@ -513,12 +565,14 @@ impl<'a> SpecificationLexer<'a> {
             }
         }
         
-        // Check for precision modifier
+        // Check for precision modifier - only if followed by valid digits
         if let Some(&':') = self.peek() {
-            self.advance(); // Skip ':'
-            let precision = self.read_precision_modifier()?;
-            
-            let text = self.source_text_range(start_pos, self.current_pos);
+            // Look ahead to see if this is actually a precision modifier
+            if self.is_valid_precision_modifier_ahead() {
+                self.advance(); // Skip ':'
+                let precision = self.read_precision_modifier()?;
+
+                let text = self.source_text_range(start_pos, self.current_pos);
             
             // Create precision-specific token
             if is_float {
@@ -612,6 +666,26 @@ impl<'a> SpecificationLexer<'a> {
                     }
                 }
             }
+            } else {
+                // Colon found but not a precision modifier - treat as default number
+                let text = self.source_text_range(start_pos, self.current_pos);
+
+                if is_float {
+                    let value: f64 = number_text.parse()
+                        .map_err(|_| LexError::InvalidNumber {
+                            text: text.clone(),
+                            location: start_location.clone(),
+                        })?;
+                    Ok(Token::new(TokenKind::NumberLiteral(value), start_location, text))
+                } else {
+                    let value: i64 = number_text.parse()
+                        .map_err(|_| LexError::InvalidNumber {
+                            text: text.clone(),
+                            location: start_location.clone(),
+                        })?;
+                    Ok(Token::new(TokenKind::IntegerLiteral(value), start_location, text))
+                }
+            }
         } else {
             // Default precision
             let text = self.source_text_range(start_pos, self.current_pos);
@@ -635,6 +709,52 @@ impl<'a> SpecificationLexer<'a> {
     }
     
     /// Read precision modifier (8, 8u, 16, 16u, 32, 64)
+    /// Check if what follows the current ':' looks like a valid precision modifier
+    fn is_valid_precision_modifier_ahead(&self) -> bool {
+        let mut pos = 1; // Start after the ':'
+        let mut has_digits = false;
+
+        // Look ahead to see if we have a valid precision modifier pattern
+        while let Some(ch) = self.peek_at_offset(pos) {
+            if ch.is_ascii_digit() {
+                has_digits = true;
+                pos += 1;
+            } else if ch == 'u' && has_digits {
+                pos += 1;
+                break; // 'u' can only be at the end
+            } else {
+                break;
+            }
+        }
+
+        if !has_digits {
+            return false;
+        }
+
+        // Collect the potential modifier string and check if it's valid
+        let mut modifier = String::new();
+        let mut check_pos = 1;
+        while let Some(ch) = self.peek_at_offset(check_pos) {
+            if ch.is_ascii_digit() || ch == 'u' {
+                modifier.push(ch);
+                check_pos += 1;
+            } else {
+                break;
+            }
+        }
+
+        // Check if it matches known precision modifiers
+        matches!(modifier.as_str(), "8" | "8u" | "16" | "16u" | "32" | "64")
+    }
+
+    fn peek_at_offset(&self, offset: usize) -> Option<char> {
+        if self.current_pos + offset < self.source_content.len() {
+            self.source_content.chars().nth(self.current_pos + offset)
+        } else {
+            None
+        }
+    }
+
     fn read_precision_modifier(&mut self) -> Result<PrecisionModifier, LexError> {
         let mut modifier = String::new();
         
@@ -754,7 +874,29 @@ impl<'a> SpecificationLexer<'a> {
             }
         }
     }
-    
+
+    /// Handle hash-style comment (#)
+    fn handle_hash_comment(&mut self) -> Result<Token, LexError> {
+        let start_location = self.current_location();
+        self.advance(); // Skip '#'
+
+        let mut comment = String::new();
+
+        while let Some(&ch) = self.peek() {
+            if ch == '\n' {
+                break;
+            }
+            comment.push(ch);
+            self.advance();
+        }
+
+        Ok(Token::new(
+            TokenKind::Comment(comment.clone()),
+            start_location,
+            format!("#{}", comment),
+        ))
+    }
+
     /// Handle equals (= or ==)
     fn handle_equals(&mut self) -> Result<Token, LexError> {
         let start_location = self.current_location();

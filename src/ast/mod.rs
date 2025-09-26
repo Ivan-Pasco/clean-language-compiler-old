@@ -175,6 +175,14 @@ pub enum Expression {
         value: Box<Expression>,
         location: SourceLocation,
     },
+
+    // List assignment (for list[index] = value)
+    ListAssignment {
+        list: Box<Expression>,
+        index: Box<Expression>,
+        value: Box<Expression>,
+        location: SourceLocation,
+    },
     MethodCall {
         object: Box<Expression>,
         method: String,
@@ -494,6 +502,12 @@ pub enum Statement {
     // Private declaration block
     PrivateBlock {
         items: Vec<Statement>,
+        location: Option<SourceLocation>,
+    },
+
+    // Standalone error handler (global error handling for previous statements)
+    StandaloneErrorHandler {
+        body: Vec<Statement>,
         location: Option<SourceLocation>,
     },
 

@@ -3,7 +3,7 @@
 //! Implements a constraint-based type inference system using unification
 //! and substitution to solve type constraints generated during type checking.
 
-use super::tast::{ConcreteType, TypeConstraint, TypeParameter};
+use super::tast::{ConcreteType, TypeConstraint};
 use crate::error::CompilerError;
 use crate::ast::SourceLocation;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -345,7 +345,7 @@ impl ConstraintSolver {
                 }
             }
             
-            ConcreteType::Class { symbol_id, .. } => {
+            ConcreteType::Class {  .. } => {
                 // Would look up class definition and check members
                 // For now, assume all member accesses are valid
                 Ok(())

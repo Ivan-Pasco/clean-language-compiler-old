@@ -32,7 +32,7 @@ impl HirBuilder {
         let mut classes = Vec::new();
         let mut start_function = None;
         let mut imports = Vec::new();
-        let mut tests = Vec::new();
+        let tests = Vec::new();
 
         // Process top-level statements
         for statement in &program.statements {

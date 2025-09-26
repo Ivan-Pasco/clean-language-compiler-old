@@ -103,6 +103,7 @@ These are essential implementation rules that must be followed by the Clean Lang
 5. **Use lowercase namespace functions**
    - ✅ Use `math.sqrt()`, `string.concat()`, `list.sort()` — not `Math.sqrt()`, `String.concat()`
    - ❌ No capitalized namespace names
+   - Policy clarification: Uppercase namespace “synonyms” (e.g., `Math`, `String`, `List`, `File`, `Http`, `Console`) are not supported and must be treated as errors by the compiler. Previous drafts or tooling that accepted uppercase variants are deprecated. The grammar and semantic layers must enforce lowercase-only namespaces and emit a clear diagnostic when uppercase is used (e.g., “Use lowercase namespace ‘math.sqrt()’ instead of ‘Math.sqrt()’”).
 
 6. **Use natural generic container syntax**
    - ✅ `list<item>`, `matrix<type>`
@@ -830,25 +831,32 @@ obj.property = val  // Property assignment
 
 ### Print Statements
 
-Clean Language supports two print syntaxes: simple inline syntax and block syntax with colon. Print functions automatically convert any value to a string representation, making output simple and intuitive.
+Clean Language provides an intuitive and clean print syntax that distinguishes between output with and without newlines. The syntax uses a simple pattern: bare `print` for no newline, and `print() +` for adding a newline.
 
 #### Simple Syntax
-The print statement supports a space-separated syntax. Use `print "message" ln` for newlines or `print "message"` without newlines.
+The print statement uses two distinct forms based on whether you want a newline:
 
+**Print without newline:**
 ```clean
-print "Hello" ln        // Print with newline (preferred syntax)
-print "Hello"           // Print without newline
-print variable ln       // Print variable with newline
-print expression ln     // Print expression result with newline
-
-// Parentheses optional for expression grouping
-print (a + b * c) ln
-print (complex_expression)
-
-// Function call syntax also supported (backwards compatibility)
-print("Hello")          // Also valid
-print(variable)         // Also valid
+print "Hello"           // Prints "Hello" (no newline)
+print variable          // Prints variable content (no newline)
+print expression        // Prints expression result (no newline)
+print 42                // Prints "42" (no newline)
 ```
+
+**Print with newline:**
+```clean
+print("Hello") +        // Prints "Hello" and adds newline
+print(variable) +       // Prints variable content and adds newline
+print(expression) +     // Prints expression result and adds newline
+print(42) +             // Prints "42" and adds newline
+```
+
+**Key Design Principles:**
+- **Intuitive**: Parentheses + plus sign clearly indicate "adding" a newline
+- **Clean**: Simple distinction between the two behaviors
+- **Readable**: The `+` visually represents adding the newline functionality
+- **Consistent**: Follows Clean Language's principle of clear, unambiguous syntax
 
 #### Automatic String Conversion
 

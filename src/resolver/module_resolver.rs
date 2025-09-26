@@ -4,7 +4,6 @@
 //! It provides functionality to discover, load, and resolve symbols from imported modules.
 
 use super::*;
-use crate::hir::*;
 use crate::error::CompilerError;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

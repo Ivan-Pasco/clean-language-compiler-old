@@ -136,6 +136,11 @@ impl FunctionParser {
                     statements = parsed_body.statements;
                     syntax = parsed_body.syntax;
                 }
+                Rule::function_body_in_block => {
+                    let parsed_body = self.parse_function_body(inner_pair)?;
+                    statements = parsed_body.statements;
+                    syntax = parsed_body.syntax;
+                }
                 _ => {}
             }
         }
@@ -215,9 +220,13 @@ impl FunctionParser {
                     let content_statements = self.parse_function_content(inner_pair)?;
                     statements.extend(content_statements);
                 }
-                Rule::function_statements => {
+                Rule::function_body_statements => {
                     let content_statements = self.parse_limited_statements(inner_pair)?;
                     statements.extend(content_statements);
+                }
+                // Skip whitespace/formatting tokens
+                Rule::NEWLINE | Rule::INDENT => {
+                    // These are just formatting, skip them
                 }
                 _ => {}
             }
@@ -232,10 +241,20 @@ impl FunctionParser {
 
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
-                Rule::function_body_statement | Rule::statement => {
+                Rule::function_body_statement => {
+                    // function_body_statement = { INDENT+ ~ statement }
+                    // We need to extract the actual statement from the indented wrapper
+                    for statement_pair in inner_pair.into_inner() {
+                        if statement_pair.as_rule() == Rule::statement {
+                            statements.push(parse_statement(statement_pair)?);
+                            break; // There should only be one statement per function_body_statement
+                        }
+                    }
+                }
+                Rule::statement => {
                     statements.push(parse_statement(inner_pair)?);
                 }
-                Rule::function_statements => {
+                Rule::function_body_statements => {
                     let nested_statements = self.parse_limited_statements(inner_pair)?;
                     statements.extend(nested_statements);
                 }
@@ -252,7 +271,14 @@ impl FunctionParser {
 
         for inner_pair in pair.into_inner() {
             if inner_pair.as_rule() == Rule::function_body_statement {
-                statements.push(parse_statement(inner_pair)?);
+                // function_body_statement = { INDENT+ ~ statement }
+                // We need to extract the actual statement from the indented wrapper
+                for statement_pair in inner_pair.into_inner() {
+                    if statement_pair.as_rule() == Rule::statement {
+                        statements.push(parse_statement(statement_pair)?);
+                        break; // There should only be one statement per function_body_statement
+                    }
+                }
             }
         }
 

@@ -8,9 +8,8 @@
 //! - Peephole optimizations
 
 use crate::mir::mir_types::{
-    MirProgram, MirFunction, MirBasicBlock, MirInstruction, MirOperation, MirTerminator,
-    MirOperand, MirConstant, MirType, MirBinaryOp, MirUnaryOp,
-    BasicBlockId, ValueId
+    MirProgram, MirFunction, MirOperation, MirTerminator,
+    MirOperand, MirConstant, MirBinaryOp, MirUnaryOp, ValueId
 };
 use crate::mir::MirConfig;
 use crate::error::CompilerError;
@@ -249,7 +248,7 @@ impl OptimizationPass for ConstantFoldingPass {
         
         // Track constants through the function
         for block in function.blocks.values_mut() {
-            let mut instructions_to_remove: Vec<usize> = Vec::new();
+            let instructions_to_remove: Vec<usize> = Vec::new();
             
             for (i, instruction) in block.instructions.iter_mut().enumerate() {
                 match &mut instruction.operation {
@@ -434,6 +433,8 @@ impl OptimizationPass for DeadCodeEliminationPass {
                         if let Some(dest_id) = instruction.dest {
                             self.mark_live(dest_id, function);
                         }
+                        // CRITICAL FIX: Mark all operands (function and arguments) as live
+                        self.mark_operands_live(&instruction.operation, function);
                     }
                     _ => {}
                 }
@@ -478,7 +479,7 @@ impl OptimizationPass for ControlFlowSimplificationPass {
     }
     
     fn optimize_function(&mut self, function: &mut MirFunction) -> Result<PassStats, CompilerError> {
-        let mut stats = PassStats::default();
+        let stats = PassStats::default();
         
         // TODO: Implement control flow simplification
         // - Remove unreachable blocks
@@ -509,7 +510,7 @@ impl OptimizationPass for PeepholeOptimizationPass {
     }
     
     fn optimize_function(&mut self, function: &mut MirFunction) -> Result<PassStats, CompilerError> {
-        let mut stats = PassStats::default();
+        let stats = PassStats::default();
         
         // TODO: Implement peephole optimizations
         // - Strength reduction (x * 2 -> x << 1)
@@ -545,7 +546,7 @@ impl OptimizationPass for FunctionInliningPass {
     }
     
     fn optimize_function(&mut self, function: &mut MirFunction) -> Result<PassStats, CompilerError> {
-        let mut stats = PassStats::default();
+        let stats = PassStats::default();
         
         // TODO: Implement function inlining
         // - Identify small functions suitable for inlining

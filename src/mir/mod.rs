@@ -120,8 +120,15 @@ impl MirPipeline {
     
     /// Lower TAST to optimized MIR
     pub fn lower(&mut self, tast: TastProgram) -> Result<MirResult, Vec<CompilerError>> {
+        println!("DEBUG MIR Pipeline: Starting TAST to MIR lowering with {} functions", tast.functions.len());
+        for function in &tast.functions {
+            println!("DEBUG MIR Pipeline: TAST function '{}' has {} statements", function.name, function.body.statements.len());
+        }
+
         // Phase 1: Lower TAST to unoptimized MIR
         let build_result = self.builder.build(tast)?;
+
+        println!("DEBUG MIR Pipeline: Build completed with {} functions", build_result.program.functions.len());
         
         // Phase 2: Apply optimization passes if enabled
         let (optimized_program, stats) = if self.config.optimize {

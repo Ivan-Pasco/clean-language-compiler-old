@@ -15,11 +15,12 @@
 use crate::hir::*;
 use crate::error::CompilerError;
 use crate::ast::SourceLocation;
-use std::collections::{HashMap, HashSet};
 
 pub mod symbol_table;
 pub mod resolver_impl;
 pub mod module_resolver;
+// pub mod passthrough_resolver;
+// pub mod passthrough_resolver; // Temporarily disabled due to compilation errors
 
 pub use symbol_table::*;
 pub use resolver_impl::*;
@@ -240,7 +241,17 @@ pub enum ResolvedHirExpression {
         arguments: Vec<ResolvedHirExpression>,
         location: SourceLocation,
     },
-    
+
+    /// Static method call with resolved class and method symbol
+    StaticMethodCall {
+        class_name: String,
+        class_symbol_id: SymbolId,
+        method: String,
+        method_symbol_id: SymbolId,
+        arguments: Vec<ResolvedHirExpression>,
+        location: SourceLocation,
+    },
+
     /// Field access with resolved object and field symbol
     FieldAccess {
         object: Box<ResolvedHirExpression>,

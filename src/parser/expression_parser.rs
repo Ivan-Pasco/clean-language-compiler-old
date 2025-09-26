@@ -227,16 +227,37 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
             parse_expression(inner)
         }
         Rule::argument_expression => {
-            // Parse argument expression directly
+            // Parse argument value directly
             parse_argument_expression(pair)
         }
-        Rule::argument_term => {
-            // Parse argument term directly
-            parse_argument_term(pair)
+        // Argument-specific bounded expression rules
+        Rule::argument_bounded_expression => {
+            parse_argument_bounded_expression(pair)
         }
+        Rule::argument_additive => {
+            parse_argument_additive(pair)
+        }
+        Rule::argument_multiplicative => {
+            parse_argument_multiplicative(pair)
+        }
+        Rule::argument_power => {
+            parse_argument_power(pair)
+        }
+        Rule::argument_unary => {
+            parse_argument_unary(pair)
+        }
+        // argument_term rule removed - now using argument_expression directly
         Rule::list_element => {
             // Parse list element directly
             parse_list_element(pair)
+        }
+        Rule::single_line_expression => {
+            // Parse single line expression directly
+            parse_single_line_expression(pair)
+        }
+        Rule::base_call => {
+            // Parse base constructor call directly
+            parse_base_call(pair)
         }
         _ => {
             Err(CompilerError::parse_error(
@@ -685,6 +706,11 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::string => parse_string(inner),
         Rule::list_literal => parse_list_literal(inner),
         Rule::matrix_literal => parse_matrix_literal(inner),
+        Rule::pairs_literal => {
+            // For now, create an empty pairs literal as a simple object representation
+            // TODO: Implement proper pairs literal parsing with key-value pairs
+            Ok(Expression::Literal(Value::List(vec![])))
+        }
         Rule::function_call => parse_function_call(inner),
         Rule::property_method_call => parse_property_method_call(inner),
         Rule::method_call => parse_method_call(inner),
@@ -818,6 +844,21 @@ pub fn parse_string(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                                     }
                                 }
                             }
+                        }
+                        Rule::escaped_char => {
+                            // Handle escaped characters like \", \\, \{, \}, \n, \r, \t
+                            let escaped_text = inner_part.as_str();
+                            let unescaped = match escaped_text {
+                                "\\\"" => "\"",
+                                "\\\\" => "\\",
+                                "\\{" => "{",
+                                "\\}" => "}",
+                                "\\n" => "\n",
+                                "\\r" => "\r",
+                                "\\t" => "\t",
+                                _ => escaped_text, // fallback to original if not recognized
+                            };
+                            parts.push(StringPart::Text(unescaped.to_string()));
                         }
                         _ => {}
                     }
@@ -1319,6 +1360,15 @@ pub fn parse_base_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                     }
                 }
             }
+            Rule::argument_list => {
+                // Legacy: Parse argument list - contains argument_expression items (shouldn't occur with silent rule)
+                for arg_expr in arg.into_inner() {
+                    if let Rule::argument_expression = arg_expr.as_rule() {
+                        // Parse argument_expression directly
+                        arguments.push(parse_argument_expression(arg_expr)?);
+                    }
+                }
+            }
             Rule::logical_expression => {
                 arguments.push(parse_logical_expression(arg)?);
             }
@@ -1350,6 +1400,15 @@ pub fn parse_constructor_call(pair: Pair<Rule>) -> Result<Expression, CompilerEr
             }
             Rule::argument_list => {
                 // Parse argument list - contains argument_expression items
+                for arg_expr in arg.into_inner() {
+                    if let Rule::argument_expression = arg_expr.as_rule() {
+                        // Parse argument_expression directly
+                        arguments.push(parse_argument_expression(arg_expr)?);
+                    }
+                }
+            }
+            Rule::argument_list => {
+                // Legacy: Parse argument list - contains argument_expression items (shouldn't occur with silent rule)
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
                         // Parse argument_expression directly
@@ -1400,6 +1459,15 @@ pub fn parse_static_method_call(pair: Pair<Rule>) -> Result<Expression, Compiler
                     }
                 }
             }
+            Rule::argument_list => {
+                // Legacy: Parse argument list - contains argument_expression items (shouldn't occur with silent rule)
+                for arg_expr in arg.into_inner() {
+                    if let Rule::argument_expression = arg_expr.as_rule() {
+                        // Parse argument_expression directly
+                        arguments.push(parse_argument_expression(arg_expr)?);
+                    }
+                }
+            }
             Rule::logical_expression => {
                 // Fallback for direct logical expressions (if any)
                 arguments.push(parse_logical_expression(arg)?);
@@ -1433,6 +1501,15 @@ pub fn parse_three_level_method_call(pair: Pair<Rule>) -> Result<Expression, Com
         match arg.as_rule() {
             Rule::argument_list => {
                 // Parse argument list - contains argument_expression items
+                for arg_expr in arg.into_inner() {
+                    if let Rule::argument_expression = arg_expr.as_rule() {
+                        // Parse argument_expression directly
+                        arguments.push(parse_argument_expression(arg_expr)?);
+                    }
+                }
+            }
+            Rule::argument_list => {
+                // Legacy: Parse argument list - contains argument_expression items (shouldn't occur with silent rule)
                 for arg_expr in arg.into_inner() {
                     if let Rule::argument_expression = arg_expr.as_rule() {
                         // Parse argument_expression directly
@@ -1553,27 +1630,225 @@ pub fn parse_start_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
 }
 
 pub fn parse_argument_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    // argument_expression now contains argument_bounded_expression
+    let location = get_location(&pair);
+    let inner = pair.into_inner().next().ok_or_else(|| {
+        CompilerError::parse_error(
+            "Empty argument expression".to_string(),
+            Some(convert_to_ast_location(&location)),
+            Some("Argument expression should contain an argument_bounded_expression".to_string()),
+        )
+    })?;
+
+    match inner.as_rule() {
+        Rule::argument_bounded_expression => parse_argument_bounded_expression(inner),
+        _ => {
+            let location = get_location(&inner);
+            Err(CompilerError::parse_error(
+                format!("Unexpected rule in argument expression: {:?}", inner.as_rule()),
+                Some(convert_to_ast_location(&location)),
+                Some("Expected argument_bounded_expression".to_string()),
+            ))
+        }
+    }
+}
+
+// Argument-specific bounded expression parsing functions
+pub fn parse_argument_bounded_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = get_location(&pair);
+    let inner = pair.into_inner().next().ok_or_else(|| {
+        CompilerError::parse_error(
+            "Empty argument bounded expression".to_string(),
+            Some(convert_to_ast_location(&location)),
+            Some("Argument bounded expression should contain argument_additive".to_string()),
+        )
+    })?;
+
+    match inner.as_rule() {
+        Rule::argument_additive => parse_argument_additive(inner),
+        _ => {
+            let location = get_location(&inner);
+            Err(CompilerError::parse_error(
+                format!("Unexpected rule in argument bounded expression: {:?}", inner.as_rule()),
+                Some(convert_to_ast_location(&location)),
+                Some("Expected argument_additive".to_string()),
+            ))
+        }
+    }
+}
+
+pub fn parse_argument_additive(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = get_location(&pair);
+    let mut pairs = pair.into_inner();
+    let first = pairs.next().unwrap();
+
+    let mut left = parse_argument_multiplicative(first)?;
+
+    while let (Some(op_pair), Some(right_pair)) = (pairs.next(), pairs.next()) {
+        let op = op_pair.as_str();
+        let right = parse_argument_multiplicative(right_pair)?;
+
+        let binary_op = match op {
+            "+" => BinaryOperator::Add,
+            "-" => BinaryOperator::Subtract,
+            _ => return Err(CompilerError::parse_error(
+                format!("Unknown additive operator: {}", op),
+                Some(convert_to_ast_location(&location)),
+                Some("Expected + or -".to_string()),
+            )),
+        };
+        left = Expression::Binary(Box::new(left), binary_op, Box::new(right));
+    }
+
+    Ok(left)
+}
+
+pub fn parse_argument_multiplicative(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = get_location(&pair);
+    let mut pairs = pair.into_inner();
+    let first = pairs.next().unwrap();
+
+    let mut left = parse_argument_power(first)?;
+
+    while let (Some(op_pair), Some(right_pair)) = (pairs.next(), pairs.next()) {
+        let op = op_pair.as_str();
+        let right = parse_argument_power(right_pair)?;
+
+        let binary_op = match op {
+            "*" => BinaryOperator::Multiply,
+            "/" => BinaryOperator::Divide,
+            "%" => BinaryOperator::Modulo,
+            _ => return Err(CompilerError::parse_error(
+                format!("Unknown multiplicative operator: {}", op),
+                Some(convert_to_ast_location(&location)),
+                Some("Expected *, /, or %".to_string()),
+            )),
+        };
+        left = Expression::Binary(Box::new(left), binary_op, Box::new(right));
+    }
+
+    Ok(left)
+}
+
+pub fn parse_argument_power(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = get_location(&pair);
+    let mut pairs = pair.into_inner();
+    let first = pairs.next().unwrap();
+
+    let mut left = parse_argument_unary(first)?;
+
+    while let (Some(op_pair), Some(right_pair)) = (pairs.next(), pairs.next()) {
+        let op = op_pair.as_str();
+        let right = parse_argument_unary(right_pair)?;
+
+        let binary_op = match op {
+            "^" => BinaryOperator::Power,
+            _ => return Err(CompilerError::parse_error(
+                format!("Unknown power operator: {}", op),
+                Some(convert_to_ast_location(&location)),
+                Some("Expected ^".to_string()),
+            )),
+        };
+        left = Expression::Binary(Box::new(left), binary_op, Box::new(right));
+    }
+
+    Ok(left)
+}
+
+pub fn parse_argument_unary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = get_location(&pair);
+    let mut inner = pair.into_inner();
+
+    // Collect unary operators
+    let mut operators = Vec::new();
+    let mut primary_pair = None;
+
+    for child in inner {
+        match child.as_rule() {
+            Rule::unary_op => operators.push(child.as_str().to_string()),
+            Rule::primary => {
+                primary_pair = Some(child);
+                break;
+            }
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!("Unexpected rule in argument unary: {:?}", child.as_rule()),
+                    Some(convert_to_ast_location(&location)),
+                    Some("Expected unary_op or primary".to_string()),
+                ));
+            }
+        }
+    }
+
+    let primary_pair = primary_pair.ok_or_else(|| {
+        CompilerError::parse_error(
+            "Missing primary in argument unary expression".to_string(),
+            Some(convert_to_ast_location(&location)),
+            Some("Argument unary should contain primary".to_string()),
+        )
+    })?;
+
+    let mut expr = parse_primary(primary_pair)?;
+
+    // Apply unary operators from right to left
+    for op in operators.into_iter().rev() {
+        let unary_op = match op.as_str() {
+            "-" => UnaryOperator::Negate,
+            "!" => UnaryOperator::Not,
+            _ => return Err(CompilerError::parse_error(
+                format!("Unknown unary operator: {}", op),
+                Some(convert_to_ast_location(&location)),
+                Some("Expected - or !".to_string()),
+            )),
+        };
+        expr = Expression::Unary(unary_op, Box::new(expr));
+    }
+
+    Ok(expr)
+}
+
+/// Parse single-line expressions (no newlines/indentation allowed)
+pub fn parse_single_line_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = get_location(&pair);
+    let inner = pair.into_inner().next().ok_or_else(|| {
+        CompilerError::parse_error(
+            "Empty single_line_expression".to_string(),
+            Some(convert_to_ast_location(&location)),
+            None,
+        )
+    })?;
+
+    match inner.as_rule() {
+        Rule::single_line_logical_expression => parse_single_line_logical_expression(inner),
+        _ => {
+            Err(CompilerError::parse_error(
+                format!("Unexpected rule in single_line_expression: {:?}", inner.as_rule()),
+                Some(convert_to_ast_location(&get_location(&inner))),
+                None,
+            ))
+        }
+    }
+}
+
+/// Parse single-line logical expressions (logical operations without newlines)
+pub fn parse_single_line_logical_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let mut expr_stack = Vec::new();
     let mut op_stack = Vec::new();
 
     for item in pair.into_inner() {
         match item.as_rule() {
-            Rule::argument_term => {
-                expr_stack.push(parse_argument_term(item)?);
+            Rule::single_line_comparison_expression => {
+                expr_stack.push(parse_single_line_comparison_expression(item)?);
             }
-            rule if matches!(rule, Rule::additive_op | Rule::multiplicative_op | Rule::power_op) => {
+            Rule::logical_op => {
                 let op = match item.as_str() {
-                    "+" => BinaryOperator::Add,
-                    "-" => BinaryOperator::Subtract,
-                    "*" => BinaryOperator::Multiply,
-                    "/" => BinaryOperator::Divide,
-                    "%" => BinaryOperator::Modulo,
-                    "^" => BinaryOperator::Power,
+                    "and" => BinaryOperator::And,
+                    "or" => BinaryOperator::Or,
                     _ => {
                         return Err(CompilerError::parse_error(
-                            format!("Invalid argument expression operator: {}", item.as_str()),
+                            format!("Invalid logical operator: {}", item.as_str()),
                             Some(convert_to_ast_location(&get_location(&item))),
-                            Some("Valid operators are: +, -, *, /, %, ^".to_string()),
+                            Some("Valid logical operators are: and, or".to_string()),
                         ))
                     }
                 };
@@ -1581,99 +1856,328 @@ pub fn parse_argument_expression(pair: Pair<Rule>) -> Result<Expression, Compile
             }
             _ => {
                 return Err(CompilerError::parse_error(
-                    format!("Unexpected rule in argument expression: {:?}", item.as_rule()),
+                    format!("Unexpected element in logical expression: {:?}", item.as_rule()),
                     Some(convert_to_ast_location(&get_location(&item))),
-                    Some("Expected argument term or operator".to_string()),
+                    None,
                 ))
             }
         }
     }
 
-    // Build the expression tree (left-associative)
+    // Build the expression tree from left to right
     if expr_stack.is_empty() {
         return Err(CompilerError::parse_error(
-            "Empty argument expression".to_string(),
+            "Empty logical expression".to_string(),
             None,
-            Some("Argument expression must contain at least one term".to_string()),
+            None,
         ));
     }
 
     let mut result = expr_stack.remove(0);
-    let mut i = 0;
-
-    while i < op_stack.len() && i < expr_stack.len() {
-        let right = expr_stack.remove(0);
-        result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
-        i += 1;
+    for (i, op) in op_stack.into_iter().enumerate() {
+        if i < expr_stack.len() {
+            let right = expr_stack.remove(0);
+            result = Expression::Binary(
+                Box::new(result),
+                op,
+                Box::new(right),
+            );
+        }
     }
 
     Ok(result)
 }
 
-pub fn parse_argument_term(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+/// Parse single-line comparison expressions (comparisons without newlines)
+pub fn parse_single_line_comparison_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut expr_stack = Vec::new();
+    let mut op_stack = Vec::new();
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::single_line_unary_expression => {
+                expr_stack.push(parse_single_line_unary_expression(item)?);
+            }
+            Rule::comparison_op => {
+                let op = match item.as_str() {
+                    "=" => BinaryOperator::Equal,
+                    "!=" => BinaryOperator::NotEqual,
+                    "<" => BinaryOperator::Less,
+                    ">" => BinaryOperator::Greater,
+                    "<=" => BinaryOperator::LessEqual,
+                    ">=" => BinaryOperator::GreaterEqual,
+                    _ => {
+                        return Err(CompilerError::parse_error(
+                            format!("Invalid comparison operator: {}", item.as_str()),
+                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some("Valid comparison operators are: =, !=, <, >, <=, >=".to_string()),
+                        ))
+                    }
+                };
+                op_stack.push(op);
+            }
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!("Unexpected element in comparison expression: {:?}", item.as_rule()),
+                    Some(convert_to_ast_location(&get_location(&item))),
+                    None,
+                ))
+            }
+        }
+    }
+
+    // Build the expression tree from left to right
+    if expr_stack.is_empty() {
+        return Err(CompilerError::parse_error(
+            "Empty comparison expression".to_string(),
+            None,
+            None,
+        ));
+    }
+
+    let mut result = expr_stack.remove(0);
+    for (i, op) in op_stack.into_iter().enumerate() {
+        if i < expr_stack.len() {
+            let right = expr_stack.remove(0);
+            result = Expression::Binary(
+                Box::new(result),
+                op,
+                Box::new(right),
+            );
+        }
+    }
+
+    Ok(result)
+}
+
+/// Parse single-line unary expressions (unary operations without newlines)
+pub fn parse_single_line_unary_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let location = get_location(&pair);
-    let inner = pair.into_inner().next().ok_or_else(|| {
+    let mut inner_iter = pair.into_inner();
+    let inner = inner_iter.next().ok_or_else(|| {
         CompilerError::parse_error(
-            "Empty argument term".to_string(),
+            "Empty single_line_unary_expression".to_string(),
             Some(convert_to_ast_location(&location)),
-            Some("Expected a value in the argument term".to_string()),
+            None,
         )
     })?;
 
     match inner.as_rule() {
-        Rule::number => parse_number_literal(inner),
-        Rule::decimal_integer | Rule::hex_integer | Rule::binary_integer | Rule::octal_integer => {
-            // Handle specific integer types directly
-            parse_integer_literal(inner, &location)
-        }
-        Rule::integer => {
-            // Handle legacy integer rule (fallback)
-            let integer_inner = inner.into_inner().next().unwrap();
-            parse_integer_literal(integer_inner, &location)
-        }
-        Rule::float => {
-            let num_str = inner.as_str();
-            num_str
-                .parse::<f64>()
-                .map(Value::Number)
-                .map(Expression::Literal)
-                .map_err(|_| {
-                    CompilerError::parse_error(
-                        format!("Invalid float: {num_str}"),
-                        Some(convert_to_ast_location(&location)),
-                        Some("Check that the float is in a valid format".to_string()),
-                    )
-                })
-        }
-        Rule::boolean => {
-            let value = match inner.as_str() {
-                "true" => true,
-                "false" => false,
+        Rule::single_line_additive_expression => parse_single_line_additive_expression(inner),
+        Rule::unary_op => {
+            let op = match inner.as_str() {
+                "not" => UnaryOperator::Not,
+                "-" => UnaryOperator::Negate,
                 _ => {
                     return Err(CompilerError::parse_error(
-                        format!("Invalid boolean: {}", inner.as_str()),
-                        Some(convert_to_ast_location(&location)),
-                        Some("Boolean values must be 'true' or 'false'".to_string()),
+                        format!("Invalid unary operator: {}", inner.as_str()),
+                        Some(convert_to_ast_location(&get_location(&inner))),
+                        Some("Valid unary operators are: not, -".to_string()),
                     ))
                 }
             };
-            Ok(Expression::Literal(Value::Boolean(value)))
-        }
-        Rule::string => parse_string(inner),
-        Rule::identifier => {
-            let identifier = inner.as_str();
-            Ok(Expression::Variable(identifier.to_string()))
-        }
-        Rule::argument_expression => {
-            // Parenthesized argument expression: (argument_expression)
-            parse_argument_expression(inner)
+
+            // Get the next item which should be the expression
+            let expr_inner = inner_iter.next().ok_or_else(|| {
+                CompilerError::parse_error(
+                    "Missing expression after unary operator".to_string(),
+                    Some(convert_to_ast_location(&location)),
+                    None,
+                )
+            })?;
+
+            let operand = parse_single_line_unary_expression(expr_inner)?;
+            Ok(Expression::Unary(op, Box::new(operand)))
         }
         _ => {
             Err(CompilerError::parse_error(
-                format!("Unexpected argument term: {:?}", inner.as_rule()),
-                Some(convert_to_ast_location(&location)),
-                Some("Expected number, boolean, string, identifier, or parenthesized expression".to_string()),
+                format!("Unexpected rule in single_line_unary_expression: {:?}", inner.as_rule()),
+                Some(convert_to_ast_location(&get_location(&inner))),
+                None,
             ))
         }
     }
 }
+
+/// Parse single-line additive expressions (addition/subtraction without newlines)
+pub fn parse_single_line_additive_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut expr_stack = Vec::new();
+    let mut op_stack = Vec::new();
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::single_line_multiplicative_expression => {
+                expr_stack.push(parse_single_line_multiplicative_expression(item)?);
+            }
+            Rule::additive_op => {
+                let op = match item.as_str() {
+                    "+" => BinaryOperator::Add,
+                    "-" => BinaryOperator::Subtract,
+                    _ => {
+                        return Err(CompilerError::parse_error(
+                            format!("Invalid additive operator: {}", item.as_str()),
+                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some("Valid additive operators are: +, -".to_string()),
+                        ))
+                    }
+                };
+                op_stack.push(op);
+            }
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!("Unexpected element in additive expression: {:?}", item.as_rule()),
+                    Some(convert_to_ast_location(&get_location(&item))),
+                    None,
+                ))
+            }
+        }
+    }
+
+    // Build the expression tree from left to right
+    if expr_stack.is_empty() {
+        return Err(CompilerError::parse_error(
+            "Empty additive expression".to_string(),
+            None,
+            None,
+        ));
+    }
+
+    let mut result = expr_stack.remove(0);
+    for (i, op) in op_stack.into_iter().enumerate() {
+        if i < expr_stack.len() {
+            let right = expr_stack.remove(0);
+            result = Expression::Binary(
+                Box::new(result),
+                op,
+                Box::new(right),
+            );
+        }
+    }
+
+    Ok(result)
+}
+
+/// Parse single-line multiplicative expressions (multiplication/division without newlines)
+pub fn parse_single_line_multiplicative_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut expr_stack = Vec::new();
+    let mut op_stack = Vec::new();
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::single_line_power_expression => {
+                expr_stack.push(parse_single_line_power_expression(item)?);
+            }
+            Rule::multiplicative_op => {
+                let op = match item.as_str() {
+                    "*" => BinaryOperator::Multiply,
+                    "/" => BinaryOperator::Divide,
+                    "%" => BinaryOperator::Modulo,
+                    _ => {
+                        return Err(CompilerError::parse_error(
+                            format!("Invalid multiplicative operator: {}", item.as_str()),
+                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some("Valid multiplicative operators are: *, /, %".to_string()),
+                        ))
+                    }
+                };
+                op_stack.push(op);
+            }
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!("Unexpected element in multiplicative expression: {:?}", item.as_rule()),
+                    Some(convert_to_ast_location(&get_location(&item))),
+                    None,
+                ))
+            }
+        }
+    }
+
+    // Build the expression tree from left to right
+    if expr_stack.is_empty() {
+        return Err(CompilerError::parse_error(
+            "Empty multiplicative expression".to_string(),
+            None,
+            None,
+        ));
+    }
+
+    let mut result = expr_stack.remove(0);
+    for (i, op) in op_stack.into_iter().enumerate() {
+        if i < expr_stack.len() {
+            let right = expr_stack.remove(0);
+            result = Expression::Binary(
+                Box::new(result),
+                op,
+                Box::new(right),
+            );
+        }
+    }
+
+    Ok(result)
+}
+
+/// Parse single-line power expressions (exponentiation without newlines)
+pub fn parse_single_line_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut expr_stack = Vec::new();
+    let mut op_stack = Vec::new();
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::single_line_primary => {
+                expr_stack.push(parse_single_line_primary(item)?);
+            }
+            Rule::power_op => {
+                let op = match item.as_str() {
+                    "^" => BinaryOperator::Power,
+                    _ => {
+                        return Err(CompilerError::parse_error(
+                            format!("Invalid power operator: {}", item.as_str()),
+                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some("Valid power operator is: ^".to_string()),
+                        ))
+                    }
+                };
+                op_stack.push(op);
+            }
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!("Unexpected element in power expression: {:?}", item.as_rule()),
+                    Some(convert_to_ast_location(&get_location(&item))),
+                    None,
+                ))
+            }
+        }
+    }
+
+    // Build the expression tree from left to right
+    if expr_stack.is_empty() {
+        return Err(CompilerError::parse_error(
+            "Empty power expression".to_string(),
+            None,
+            None,
+        ));
+    }
+
+    let mut result = expr_stack.remove(0);
+    for (i, op) in op_stack.into_iter().enumerate() {
+        if i < expr_stack.len() {
+            let right = expr_stack.remove(0);
+            result = Expression::Binary(
+                Box::new(result),
+                op,
+                Box::new(right),
+            );
+        }
+    }
+
+    Ok(result)
+}
+
+/// Parse single-line primary expressions (base values and parenthesized expressions without newlines)
+pub fn parse_single_line_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    // For single-line primary expressions, delegate to existing primary expression parser
+    // since primary expressions (literals, identifiers, etc.) are inherently single-line
+    parse_primary(pair)
+}
+
+// parse_argument_term function removed - now using single_line_expression in argument_expression

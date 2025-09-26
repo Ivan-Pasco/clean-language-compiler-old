@@ -10,12 +10,12 @@ use crate::typechecker::tast::{
 };
 use crate::mir::mir_types::{
     MirProgram, MirFunction, MirBasicBlock, MirInstruction, MirOperation, MirTerminator,
-    MirOperand, MirConstant, MirType, MirParameter, MirLocal, MirGlobal,
-    MirBinaryOp, MirUnaryOp, MirFunctionAttributes, MirDebugInfo,
-    BasicBlockId, ValueId, RegisterId
+    MirOperand, MirConstant, MirType, MirParameter, MirLocal,
+    MirBinaryOp, MirFunctionAttributes,
+    BasicBlockId, ValueId
 };
 use crate::resolver::SymbolId;
-use crate::ast::{SourceLocation, Value};
+use crate::ast::SourceLocation;
 use crate::error::CompilerError;
 use std::collections::{HashMap, HashSet};
 
@@ -83,6 +83,9 @@ pub struct MirBuilder {
     
     /// Build statistics
     stats: MirBuildStats,
+
+    /// All classes in the program for inheritance lookups
+    all_classes: Vec<TastClass>,
 }
 
 /// Context for building a single function
@@ -90,15 +93,21 @@ pub struct MirBuilder {
 struct FunctionBuildContext {
     /// Function being built
     function: MirFunction,
-    
+
     /// Stack of scopes for variable resolution
     scope_stack: Vec<HashMap<String, ValueId>>,
-    
+
     /// Pending phi nodes to resolve
     pending_phis: Vec<PendingPhi>,
-    
+
     /// Loop context stack for break/continue
     loop_stack: Vec<LoopContext>,
+
+    /// Class context for field access (if this is a class method)
+    class_context: Option<TastClass>,
+
+    /// All classes in the program for inheritance lookups
+    all_classes: Vec<TastClass>,
 }
 
 /// Pending phi node that needs to be resolved
@@ -141,13 +150,17 @@ impl MirBuilder {
             string_indices: HashMap::new(),
             warnings: Vec::new(),
             stats: MirBuildStats::default(),
+            all_classes: Vec::new(),
         }
     }
     
     /// Build MIR from TAST program
     pub fn build(&mut self, tast: TastProgram) -> Result<MirBuildResult, Vec<CompilerError>> {
         let start_time = std::time::Instant::now();
-        
+
+        // Store all classes for inheritance lookups
+        self.all_classes = tast.classes.clone();
+
         // Initialize program structure
         let mut mir_program = MirProgram {
             functions: HashMap::new(),
@@ -164,6 +177,21 @@ impl MirBuilder {
                     if mir_function.attributes.entry_point {
                         mir_program.entry_point = Some(mir_function.symbol_id);
                     }
+                    mir_program.functions.insert(mir_function.symbol_id, mir_function);
+                    self.stats.functions_lowered += 1;
+                }
+                Err(errors) => {
+                    self.warnings.extend(errors);
+                }
+            }
+        }
+
+        // CRITICAL FIX: Lower the start function if it exists
+        if let Some(start_function) = tast.start_function {
+            match self.build_function(start_function) {
+                Ok(mir_function) => {
+                    // Mark the start function as the entry point
+                    mir_program.entry_point = Some(mir_function.symbol_id);
                     mir_program.functions.insert(mir_function.symbol_id, mir_function);
                     self.stats.functions_lowered += 1;
                 }
@@ -213,8 +241,13 @@ impl MirBuilder {
     
     /// Build MIR function from TAST function
     fn build_function(&mut self, tast_function: TastFunction) -> Result<MirFunction, Vec<CompilerError>> {
+        self.build_function_with_class_context(tast_function, None)
+    }
+
+    /// Build MIR function from TAST function with optional class context for field access
+    fn build_function_with_class_context(&mut self, tast_function: TastFunction, class_context: Option<&TastClass>) -> Result<MirFunction, Vec<CompilerError>> {
         // Create function structure
-        let mut mir_function = MirFunction {
+        let mir_function = MirFunction {
             symbol_id: tast_function.symbol_id,
             name: tast_function.name.clone(),
             parameters: Vec::new(),
@@ -239,6 +272,8 @@ impl MirBuilder {
             scope_stack: vec![HashMap::new()],
             pending_phis: Vec::new(),
             loop_stack: Vec::new(),
+            class_context: class_context.cloned(),
+            all_classes: self.all_classes.clone(),
         };
         
         // Process parameters
@@ -295,7 +330,10 @@ impl MirBuilder {
     fn build_class(&mut self, tast_class: TastClass) -> Result<Vec<MirFunction>, Vec<CompilerError>> {
         let mut functions = Vec::new();
         let mut errors = Vec::new();
-        
+
+        // Clone class for passing to methods (needed to avoid borrow checker issues)
+        let class_for_methods = tast_class.clone();
+
         // Build all constructors
         for constructor in tast_class.constructors {
             match self.build_function(constructor) {
@@ -303,10 +341,10 @@ impl MirBuilder {
                 Err(ctor_errors) => errors.extend(ctor_errors),
             }
         }
-        
-        // Build all methods
+
+        // Build all methods with class context
         for method in tast_class.methods {
-            match self.build_function(method) {
+            match self.build_function_with_class_context(method, Some(&class_for_methods)) {
                 Ok(method_function) => functions.push(method_function),
                 Err(method_errors) => errors.extend(method_errors),
             }
@@ -417,23 +455,111 @@ impl MirBuilder {
                 self.set_block_terminator(context, terminator);
             }
             
-            TastStatement::Print { expression, newline: _, location } => {
+            TastStatement::Print { expression, newline, location } => {
                 // Build the expression to print
                 let value_id = self.build_expression(context, expression)?;
-                
-                // For now, treat print as a built-in operation
-                // TODO: Implement proper function calls to built-in functions
+
+                // CRITICAL FIX: Generate proper function call to print/printl
+                let function_name = if *newline { "printl" } else { "print" };
+                let function_symbol = SymbolId(0); // Use fixed symbol IDs for built-in functions
+
                 let instruction = MirInstruction {
                     dest: None, // Print doesn't return a value
-                    operation: MirOperation::Copy {
-                        source: MirOperand::Value(value_id), // Just copy the value for now
+                    operation: MirOperation::Call {
+                        function: MirOperand::Function(function_symbol),
+                        arguments: vec![MirOperand::Value(value_id)],
                     },
                     location: location.clone(),
                 };
-                
+
                 self.add_instruction(context, instruction);
             }
-            
+
+            TastStatement::If { condition, then_block, else_block, result_type: _, location } => {
+                // Build condition expression
+                let condition_id = self.build_expression(context, condition)?;
+
+                // Create basic blocks for then, else (if present), and continuation
+                let then_block_id = BasicBlockId(context.function.blocks.len());
+                let else_block_id = if else_block.is_some() {
+                    Some(BasicBlockId(context.function.blocks.len() + 1))
+                } else {
+                    None
+                };
+                let continue_block_id = BasicBlockId(context.function.blocks.len() + if else_block.is_some() { 2 } else { 1 });
+
+                // Create conditional branch in current block
+                let branch = if let Some(else_id) = else_block_id {
+                    MirTerminator::Branch {
+                        condition: MirOperand::Value(condition_id),
+                        true_block: then_block_id,
+                        false_block: else_id,
+                    }
+                } else {
+                    MirTerminator::Branch {
+                        condition: MirOperand::Value(condition_id),
+                        true_block: then_block_id,
+                        false_block: continue_block_id,
+                    }
+                };
+                self.set_block_terminator(context, branch);
+
+                // Build then block
+                context.function.blocks.insert(then_block_id, MirBasicBlock {
+                    id: then_block_id,
+                    label: Some("then".to_string()),
+                    instructions: Vec::new(),
+                    terminator: MirTerminator::Unreachable, // Will be replaced
+                    predecessors: HashSet::new(),
+                    successors: HashSet::new(),
+                    location: location.clone(),
+                });
+                self.current_block = Some(then_block_id);
+
+                // Process then block statements
+                for stmt in &then_block.statements {
+                    self.build_statement(context, stmt)?;
+                }
+
+                // Jump to continue block from then
+                self.set_block_terminator(context, MirTerminator::Jump { target: continue_block_id });
+
+                // Build else block if present
+                if let Some(else_stmt_block) = else_block {
+                    let else_id = else_block_id.unwrap();
+                    context.function.blocks.insert(else_id, MirBasicBlock {
+                        id: else_id,
+                        label: Some("else".to_string()),
+                        instructions: Vec::new(),
+                        terminator: MirTerminator::Unreachable, // Will be replaced
+                        predecessors: HashSet::new(),
+                        successors: HashSet::new(),
+                        location: location.clone(),
+                    });
+                    self.current_block = Some(else_id);
+
+                    // Process else block statements
+                    for stmt in &else_stmt_block.statements {
+                        self.build_statement(context, stmt)?;
+                    }
+
+                    // Jump to continue block from else
+                    self.set_block_terminator(context, MirTerminator::Jump { target: continue_block_id });
+                }
+
+                // Create continue block
+                context.function.blocks.insert(continue_block_id, MirBasicBlock {
+                    id: continue_block_id,
+                    label: Some("continue".to_string()),
+                    instructions: Vec::new(),
+                    terminator: MirTerminator::Unreachable, // Will be replaced
+                    predecessors: HashSet::new(),
+                    successors: HashSet::new(),
+                    location: location.clone(),
+                });
+                self.current_block = Some(continue_block_id);
+            }
+
             _ => {
                 // TODO: Implement other statement types
                 return Err(vec![CompilerError::validation_error(
@@ -453,7 +579,11 @@ impl MirBuilder {
                 let constant = self.convert_literal(value);
                 let value_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
-                
+
+                // Register the ValueId as a temporary local for codegen
+                let mir_type = self.convert_literal_type(value);
+                self.register_temp_local(context, value_id, mir_type, expression.location.clone());
+
                 let instruction = MirInstruction {
                     dest: Some(value_id),
                     operation: MirOperation::Copy {
@@ -461,19 +591,91 @@ impl MirBuilder {
                     },
                     location: expression.location.clone(),
                 };
-                
+
                 self.add_instruction(context, instruction);
                 Ok(value_id)
             }
             
             TastExpressionKind::Variable { symbol_id, name } => {
+                // Special case for 'this' - in class methods, 'this' refers to the first parameter
+                if name == "this" && context.class_context.is_some() {
+                    // In class methods, 'this' is the first parameter (parameter 0)
+                    // Create a value ID that refers to the first parameter
+                    let value_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    // For now, create a copy instruction that loads 'this' from parameter 0
+                    let instruction = MirInstruction {
+                        dest: Some(value_id),
+                        operation: MirOperation::Copy {
+                            source: MirOperand::Value(ValueId(0)), // Parameter 0 is 'this'
+                        },
+                        location: expression.location.clone(),
+                    };
+
+                    self.add_instruction(context, instruction);
+                    return Ok(value_id);
+                }
+
                 // Look up variable in scope stack
                 for scope in context.scope_stack.iter().rev() {
                     if let Some(&value_id) = scope.get(name) {
                         return Ok(value_id);
                     }
                 }
-                
+
+                // If not found in scope and we're in a class method, check class fields
+                if let Some(ref class) = context.class_context {
+                    // Check current class fields
+                    if let Some(_field) = class.fields.iter().find(|f| f.name == *name) {
+                        // This is an implicit field access - treat as self.field
+                        // For now, we'll create a simple variable access to the field
+                        // TODO: Implement proper self.field access with object context
+
+                        // Create a temporary value for the field access
+                        let value_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+
+                        return Ok(value_id);
+                    }
+
+                    // Check parent class fields if inheritance is involved
+                    if let Some(parent_symbol_id) = class.parent_class {
+                        // Look up parent class in all classes
+                        if let Some(parent_class) = context.all_classes.iter().find(|c| c.symbol_id == parent_symbol_id) {
+                            // Check if field exists in parent class
+                            if let Some(_parent_field) = parent_class.fields.iter().find(|f| f.name == *name) {
+                                // Found field in parent class - treat as self.field access to inherited field
+                                // Create a temporary value for the field access
+                                let value_id = ValueId(context.function.next_value_id);
+                                context.function.next_value_id += 1;
+
+                                return Ok(value_id);
+                            }
+
+                            // Recursively check grandparent classes
+                            let mut current_class = parent_class;
+                            loop {
+                                if let Some(grandparent_symbol_id) = current_class.parent_class {
+                                    if let Some(grandparent_class) = context.all_classes.iter().find(|c| c.symbol_id == grandparent_symbol_id) {
+                                        if let Some(_grandparent_field) = grandparent_class.fields.iter().find(|f| f.name == *name) {
+                                            // Found field in ancestor class
+                                            let value_id = ValueId(context.function.next_value_id);
+                                            context.function.next_value_id += 1;
+                                            return Ok(value_id);
+                                        }
+                                        current_class = grandparent_class;
+                                    } else {
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Err(vec![CompilerError::type_error(
                     &format!("Undefined variable: {}", name),
                     None,
@@ -486,7 +688,11 @@ impl MirBuilder {
                 let right_id = self.build_expression(context, right)?;
                 let result_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
-                
+
+                // Register the result as a temporary local for codegen
+                let result_type = self.infer_binary_operation_type(&left.expr_type, &right.expr_type);
+                self.register_temp_local(context, result_id, result_type, expression.location.clone());
+
                 let mir_op = self.convert_binary_op(operator);
                 let instruction = MirInstruction {
                     dest: Some(result_id),
@@ -497,7 +703,7 @@ impl MirBuilder {
                     },
                     location: expression.location.clone(),
                 };
-                
+
                 self.add_instruction(context, instruction);
                 Ok(result_id)
             }
@@ -537,7 +743,112 @@ impl MirBuilder {
                 self.add_instruction(context, instruction);
                 Ok(result_id)
             }
-            
+
+            TastExpressionKind::MethodCall { receiver, method_name, method_symbol, arguments, type_args: _ } => {
+                // Build the receiver (object) first
+                let receiver_id = self.build_expression(context, receiver)?;
+
+                // Build argument operands
+                let mut mir_arguments = Vec::new();
+                // For instance methods, the receiver becomes the first argument
+                mir_arguments.push(MirOperand::Value(receiver_id));
+
+                // Add the rest of the arguments
+                for arg in arguments {
+                    let arg_id = self.build_expression(context, arg)?;
+                    mir_arguments.push(MirOperand::Value(arg_id));
+                }
+
+                let result_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+
+                let instruction = MirInstruction {
+                    dest: Some(result_id),
+                    operation: MirOperation::Call {
+                        function: MirOperand::Function(*method_symbol),
+                        arguments: mir_arguments,
+                    },
+                    location: expression.location.clone(),
+                };
+
+                self.add_instruction(context, instruction);
+                Ok(result_id)
+            }
+
+            TastExpressionKind::PropertyAccess { object, property_name, property_symbol } => {
+                // Build the object expression first
+                let object_id = self.build_expression(context, object)?;
+
+                // Use GetElementPtr for field access - this will be handled by codegen
+                let result_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+
+                // Create a field access using GetElementPtr with field index
+                // For simplicity, use symbol ID as field index
+                let field_index = MirOperand::Constant(MirConstant::Integer(property_symbol.0 as i64));
+                let instruction = MirInstruction {
+                    dest: Some(result_id),
+                    operation: MirOperation::GetElementPtr {
+                        base: MirOperand::Value(object_id),
+                        indices: vec![field_index],
+                    },
+                    location: expression.location.clone(),
+                };
+
+                self.add_instruction(context, instruction);
+
+                // Now load the value from the field pointer
+                let load_result_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+
+                let load_instruction = MirInstruction {
+                    dest: Some(load_result_id),
+                    operation: MirOperation::Load {
+                        source: MirOperand::Value(result_id),
+                    },
+                    location: expression.location.clone(),
+                };
+
+                self.add_instruction(context, load_instruction);
+                Ok(load_result_id)
+            }
+
+            TastExpressionKind::ArrayAccess { array, index } => {
+                // Build array and index expressions
+                let array_id = self.build_expression(context, array)?;
+                let index_id = self.build_expression(context, index)?;
+
+                // Use GetElementPtr for array access
+                let result_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+
+                let instruction = MirInstruction {
+                    dest: Some(result_id),
+                    operation: MirOperation::GetElementPtr {
+                        base: MirOperand::Value(array_id),
+                        indices: vec![MirOperand::Value(index_id)],
+                    },
+                    location: expression.location.clone(),
+                };
+
+                self.add_instruction(context, instruction);
+
+                // Load the value from the array element pointer
+                let load_result_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+
+                let load_instruction = MirInstruction {
+                    dest: Some(load_result_id),
+                    operation: MirOperation::Load {
+                        source: MirOperand::Value(result_id),
+                    },
+                    location: expression.location.clone(),
+                };
+
+                self.add_instruction(context, load_instruction);
+                Ok(load_result_id)
+            }
+
             _ => {
                 // TODO: Implement other expression types
                 Err(vec![CompilerError::validation_error(
@@ -567,7 +878,42 @@ impl MirBuilder {
             TastLiteral::Undefined => MirConstant::Undefined,
         }
     }
-    
+
+    /// Convert TAST literal to its corresponding MIR type
+    fn convert_literal_type(&self, literal: &TastLiteral) -> MirType {
+        match literal {
+            TastLiteral::Integer(_) => MirType::I32, // Default integer type
+            TastLiteral::Number(_) => MirType::F64,  // Default float type
+            TastLiteral::String(_) => MirType::Ptr(Box::new(MirType::I8)), // String as i8 pointer
+            TastLiteral::Boolean(_) => MirType::Bool,
+            TastLiteral::Null => MirType::Ptr(Box::new(MirType::Void)),
+            TastLiteral::Undefined => MirType::Void,
+        }
+    }
+
+    /// Register a ValueId as a temporary local for codegen
+    fn register_temp_local(&self, context: &mut FunctionBuildContext, value_id: ValueId, mir_type: MirType, location: SourceLocation) {
+        let local = MirLocal {
+            name: None, // Temporary values don't need names
+            local_type: mir_type,
+            is_mutable: false, // Temporary results are immutable
+            location,
+        };
+        context.function.locals.insert(value_id, local);
+    }
+
+    /// Infer the result type of a binary operation
+    fn infer_binary_operation_type(&self, left_type: &ConcreteType, right_type: &ConcreteType) -> MirType {
+        match (left_type, right_type) {
+            (ConcreteType::Integer, ConcreteType::Integer) => MirType::I32,
+            (ConcreteType::Number, ConcreteType::Number) => MirType::F64,
+            (ConcreteType::Number, ConcreteType::Integer) => MirType::F64,
+            (ConcreteType::Integer, ConcreteType::Number) => MirType::F64,
+            (ConcreteType::Boolean, ConcreteType::Boolean) => MirType::Bool,
+            _ => MirType::I32, // Default fallback
+        }
+    }
+
     /// Convert TAST binary operator to MIR binary operator
     fn convert_binary_op(&self, op: &BinaryOperator) -> MirBinaryOp {
         match op {

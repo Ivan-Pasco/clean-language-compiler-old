@@ -1,6 +1,5 @@
 use crate::ast::{Class, Function, Program, Type, Visibility};
 use crate::error::CompilerError;
-use crate::parser;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
