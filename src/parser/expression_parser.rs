@@ -259,6 +259,10 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
             // Parse base constructor call directly
             parse_base_call(pair)
         }
+        Rule::pairs_literal => {
+            // Parse pairs literal directly
+            parse_pairs_literal(pair)
+        }
         _ => {
             Err(CompilerError::parse_error(
                 format!("Unsupported expression rule: {:?}", pair.as_rule()),
@@ -707,9 +711,7 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::list_literal => parse_list_literal(inner),
         Rule::matrix_literal => parse_matrix_literal(inner),
         Rule::pairs_literal => {
-            // For now, create an empty pairs literal as a simple object representation
-            // TODO: Implement proper pairs literal parsing with key-value pairs
-            Ok(Expression::Literal(Value::List(vec![])))
+            parse_pairs_literal(inner)
         }
         Rule::function_call => parse_function_call(inner),
         Rule::namespace_function_call => parse_namespace_function_call(inner),
@@ -923,8 +925,8 @@ pub fn parse_string(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
 /// Parse expression within string interpolation braces
 /// This handles arithmetic expressions, function calls, property access, etc.
 fn parse_interpolation_expression(expr_str: &str) -> Result<Expression, CompilerError> {
-    use crate::parser::grammar::Rule;
     use super::CleanParser;
+    use crate::parser::grammar::Rule;
     use pest::Parser;
 
     // Parse the expression string as a standalone expression
@@ -991,9 +993,7 @@ pub fn parse_list_element(pair: Pair<Rule>) -> Result<Expression, CompilerError>
     })?;
 
     match inner.as_rule() {
-        Rule::decimal_integer => {
-            parse_integer_literal(inner, &location)
-        }
+        Rule::decimal_integer => parse_integer_literal(inner, &location),
         Rule::float => {
             let num_str = inner.as_str();
             num_str
@@ -1031,13 +1031,18 @@ pub fn parse_list_element(pair: Pair<Rule>) -> Result<Expression, CompilerError>
             // Parenthesized expression: (expression)
             parse_expression(inner)
         }
-        _ => {
-            Err(CompilerError::parse_error(
-                format!("Unexpected list element: {:?}", inner.as_rule()),
-                Some(convert_to_ast_location(&location)),
-                Some("Expected number, boolean, string, identifier, or parenthesized expression".to_string()),
-            ))
+        Rule::pairs_literal => {
+            // Delegate to main expression parser for pairs literal
+            parse_expression(inner)
         }
+        _ => Err(CompilerError::parse_error(
+            format!("Unexpected list element: {:?}", inner.as_rule()),
+            Some(convert_to_ast_location(&location)),
+            Some(
+                "Expected number, boolean, string, identifier, pairs literal, or parenthesized expression"
+                    .to_string(),
+            ),
+        )),
     }
 }
 
@@ -1070,6 +1075,68 @@ pub fn parse_matrix_literal(pair: Pair<Rule>) -> Result<Expression, CompilerErro
     }
 
     Ok(Expression::Literal(Value::Matrix(rows)))
+}
+
+pub fn parse_pairs_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut pairs = Vec::new();
+
+    for pair_element in pair.into_inner() {
+        if let Rule::pair_element = pair_element.as_rule() {
+            let mut pair_parts = pair_element.into_inner();
+
+            // Parse the key (string, identifier, or decimal_integer)
+            let key_part = pair_parts.next().unwrap();
+            let key_value = match key_part.as_rule() {
+                Rule::string => {
+                    // Parse string and extract the inner value
+                    match parse_string(key_part)? {
+                        Expression::Literal(Value::String(s)) => Value::String(s),
+                        _ => return Err(CompilerError::parse_error(
+                            "Invalid string key in pairs literal".to_string(),
+                            None,
+                            None,
+                        )),
+                    }
+                }
+                Rule::identifier => Value::String(key_part.as_str().to_string()),
+                Rule::decimal_integer => {
+                    let num_str = key_part.as_str();
+                    let num = num_str.parse::<i64>().map_err(|_| {
+                        CompilerError::parse_error(
+                            format!("Invalid integer key: {num_str}"),
+                            None,
+                            None,
+                        )
+                    })?;
+                    Value::Integer(num)
+                }
+                _ => return Err(CompilerError::parse_error(
+                    format!("Unexpected key type in pairs literal: {:?}", key_part.as_rule()),
+                    None,
+                    None,
+                )),
+            };
+
+            // Parse the value (single_line_expression)
+            let value_part = pair_parts.next().unwrap();
+            let value_expr = parse_expression(value_part)?;
+            let value_value = match value_expr {
+                Expression::Literal(v) => v,
+                _ => {
+                    // For non-literal expressions, we'll need to handle them differently
+                    // For now, convert to a string representation
+                    Value::String(format!("{:?}", value_expr))
+                }
+            };
+
+            // Create a 2-element list representing the key-value pair
+            let pair_list = Value::List(vec![key_value, value_value]);
+            pairs.push(pair_list);
+        }
+    }
+
+    // Return the pairs as a list of 2-element lists
+    Ok(Expression::Literal(Value::List(pairs)))
 }
 
 pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
@@ -1428,7 +1495,7 @@ pub fn parse_constructor_call(pair: Pair<Rule>) -> Result<Expression, CompilerEr
     let location = get_location(&pair);
     let mut class_name = String::new();
     let mut arguments = Vec::new();
-    
+
     // Parse the class name and argument list
     for arg in pair.into_inner() {
         match arg.as_rule() {
@@ -1682,7 +1749,10 @@ pub fn parse_argument_expression(pair: Pair<Rule>) -> Result<Expression, Compile
         _ => {
             let location = get_location(&inner);
             Err(CompilerError::parse_error(
-                format!("Unexpected rule in argument expression: {:?}", inner.as_rule()),
+                format!(
+                    "Unexpected rule in argument expression: {:?}",
+                    inner.as_rule()
+                ),
                 Some(convert_to_ast_location(&location)),
                 Some("Expected argument_bounded_expression".to_string()),
             ))
@@ -1706,7 +1776,10 @@ pub fn parse_argument_bounded_expression(pair: Pair<Rule>) -> Result<Expression,
         _ => {
             let location = get_location(&inner);
             Err(CompilerError::parse_error(
-                format!("Unexpected rule in argument bounded expression: {:?}", inner.as_rule()),
+                format!(
+                    "Unexpected rule in argument bounded expression: {:?}",
+                    inner.as_rule()
+                ),
                 Some(convert_to_ast_location(&location)),
                 Some("Expected argument_additive".to_string()),
             ))
@@ -1728,11 +1801,13 @@ pub fn parse_argument_additive(pair: Pair<Rule>) -> Result<Expression, CompilerE
         let binary_op = match op {
             "+" => BinaryOperator::Add,
             "-" => BinaryOperator::Subtract,
-            _ => return Err(CompilerError::parse_error(
-                format!("Unknown additive operator: {}", op),
-                Some(convert_to_ast_location(&location)),
-                Some("Expected + or -".to_string()),
-            )),
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!("Unknown additive operator: {}", op),
+                    Some(convert_to_ast_location(&location)),
+                    Some("Expected + or -".to_string()),
+                ))
+            }
         };
         left = Expression::Binary(Box::new(left), binary_op, Box::new(right));
     }
@@ -1755,11 +1830,13 @@ pub fn parse_argument_multiplicative(pair: Pair<Rule>) -> Result<Expression, Com
             "*" => BinaryOperator::Multiply,
             "/" => BinaryOperator::Divide,
             "%" => BinaryOperator::Modulo,
-            _ => return Err(CompilerError::parse_error(
-                format!("Unknown multiplicative operator: {}", op),
-                Some(convert_to_ast_location(&location)),
-                Some("Expected *, /, or %".to_string()),
-            )),
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!("Unknown multiplicative operator: {}", op),
+                    Some(convert_to_ast_location(&location)),
+                    Some("Expected *, /, or %".to_string()),
+                ))
+            }
         };
         left = Expression::Binary(Box::new(left), binary_op, Box::new(right));
     }
@@ -1780,11 +1857,13 @@ pub fn parse_argument_power(pair: Pair<Rule>) -> Result<Expression, CompilerErro
 
         let binary_op = match op {
             "^" => BinaryOperator::Power,
-            _ => return Err(CompilerError::parse_error(
-                format!("Unknown power operator: {}", op),
-                Some(convert_to_ast_location(&location)),
-                Some("Expected ^".to_string()),
-            )),
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!("Unknown power operator: {}", op),
+                    Some(convert_to_ast_location(&location)),
+                    Some("Expected ^".to_string()),
+                ))
+            }
         };
         left = Expression::Binary(Box::new(left), binary_op, Box::new(right));
     }
@@ -1832,11 +1911,13 @@ pub fn parse_argument_unary(pair: Pair<Rule>) -> Result<Expression, CompilerErro
         let unary_op = match op.as_str() {
             "-" => UnaryOperator::Negate,
             "!" => UnaryOperator::Not,
-            _ => return Err(CompilerError::parse_error(
-                format!("Unknown unary operator: {}", op),
-                Some(convert_to_ast_location(&location)),
-                Some("Expected - or !".to_string()),
-            )),
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!("Unknown unary operator: {}", op),
+                    Some(convert_to_ast_location(&location)),
+                    Some("Expected - or !".to_string()),
+                ))
+            }
         };
         expr = Expression::Unary(unary_op, Box::new(expr));
     }
@@ -1857,13 +1938,14 @@ pub fn parse_single_line_expression(pair: Pair<Rule>) -> Result<Expression, Comp
 
     match inner.as_rule() {
         Rule::single_line_logical_expression => parse_single_line_logical_expression(inner),
-        _ => {
-            Err(CompilerError::parse_error(
-                format!("Unexpected rule in single_line_expression: {:?}", inner.as_rule()),
-                Some(convert_to_ast_location(&get_location(&inner))),
-                None,
-            ))
-        }
+        _ => Err(CompilerError::parse_error(
+            format!(
+                "Unexpected rule in single_line_expression: {:?}",
+                inner.as_rule()
+            ),
+            Some(convert_to_ast_location(&get_location(&inner))),
+            None,
+        )),
     }
 }
 
@@ -1893,7 +1975,10 @@ pub fn parse_single_line_logical_expression(pair: Pair<Rule>) -> Result<Expressi
             }
             _ => {
                 return Err(CompilerError::parse_error(
-                    format!("Unexpected element in logical expression: {:?}", item.as_rule()),
+                    format!(
+                        "Unexpected element in logical expression: {:?}",
+                        item.as_rule()
+                    ),
                     Some(convert_to_ast_location(&get_location(&item))),
                     None,
                 ))
@@ -1914,11 +1999,7 @@ pub fn parse_single_line_logical_expression(pair: Pair<Rule>) -> Result<Expressi
     for (i, op) in op_stack.into_iter().enumerate() {
         if i < expr_stack.len() {
             let right = expr_stack.remove(0);
-            result = Expression::Binary(
-                Box::new(result),
-                op,
-                Box::new(right),
-            );
+            result = Expression::Binary(Box::new(result), op, Box::new(right));
         }
     }
 
@@ -1926,7 +2007,9 @@ pub fn parse_single_line_logical_expression(pair: Pair<Rule>) -> Result<Expressi
 }
 
 /// Parse single-line comparison expressions (comparisons without newlines)
-pub fn parse_single_line_comparison_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+pub fn parse_single_line_comparison_expression(
+    pair: Pair<Rule>,
+) -> Result<Expression, CompilerError> {
     let mut expr_stack = Vec::new();
     let mut op_stack = Vec::new();
 
@@ -1955,7 +2038,10 @@ pub fn parse_single_line_comparison_expression(pair: Pair<Rule>) -> Result<Expre
             }
             _ => {
                 return Err(CompilerError::parse_error(
-                    format!("Unexpected element in comparison expression: {:?}", item.as_rule()),
+                    format!(
+                        "Unexpected element in comparison expression: {:?}",
+                        item.as_rule()
+                    ),
                     Some(convert_to_ast_location(&get_location(&item))),
                     None,
                 ))
@@ -1976,11 +2062,7 @@ pub fn parse_single_line_comparison_expression(pair: Pair<Rule>) -> Result<Expre
     for (i, op) in op_stack.into_iter().enumerate() {
         if i < expr_stack.len() {
             let right = expr_stack.remove(0);
-            result = Expression::Binary(
-                Box::new(result),
-                op,
-                Box::new(right),
-            );
+            result = Expression::Binary(Box::new(result), op, Box::new(right));
         }
     }
 
@@ -2026,18 +2108,21 @@ pub fn parse_single_line_unary_expression(pair: Pair<Rule>) -> Result<Expression
             let operand = parse_single_line_unary_expression(expr_inner)?;
             Ok(Expression::Unary(op, Box::new(operand)))
         }
-        _ => {
-            Err(CompilerError::parse_error(
-                format!("Unexpected rule in single_line_unary_expression: {:?}", inner.as_rule()),
-                Some(convert_to_ast_location(&get_location(&inner))),
-                None,
-            ))
-        }
+        _ => Err(CompilerError::parse_error(
+            format!(
+                "Unexpected rule in single_line_unary_expression: {:?}",
+                inner.as_rule()
+            ),
+            Some(convert_to_ast_location(&get_location(&inner))),
+            None,
+        )),
     }
 }
 
 /// Parse single-line additive expressions (addition/subtraction without newlines)
-pub fn parse_single_line_additive_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+pub fn parse_single_line_additive_expression(
+    pair: Pair<Rule>,
+) -> Result<Expression, CompilerError> {
     let mut expr_stack = Vec::new();
     let mut op_stack = Vec::new();
 
@@ -2062,7 +2147,10 @@ pub fn parse_single_line_additive_expression(pair: Pair<Rule>) -> Result<Express
             }
             _ => {
                 return Err(CompilerError::parse_error(
-                    format!("Unexpected element in additive expression: {:?}", item.as_rule()),
+                    format!(
+                        "Unexpected element in additive expression: {:?}",
+                        item.as_rule()
+                    ),
                     Some(convert_to_ast_location(&get_location(&item))),
                     None,
                 ))
@@ -2083,11 +2171,7 @@ pub fn parse_single_line_additive_expression(pair: Pair<Rule>) -> Result<Express
     for (i, op) in op_stack.into_iter().enumerate() {
         if i < expr_stack.len() {
             let right = expr_stack.remove(0);
-            result = Expression::Binary(
-                Box::new(result),
-                op,
-                Box::new(right),
-            );
+            result = Expression::Binary(Box::new(result), op, Box::new(right));
         }
     }
 
@@ -2095,7 +2179,9 @@ pub fn parse_single_line_additive_expression(pair: Pair<Rule>) -> Result<Express
 }
 
 /// Parse single-line multiplicative expressions (multiplication/division without newlines)
-pub fn parse_single_line_multiplicative_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+pub fn parse_single_line_multiplicative_expression(
+    pair: Pair<Rule>,
+) -> Result<Expression, CompilerError> {
     let mut expr_stack = Vec::new();
     let mut op_stack = Vec::new();
 
@@ -2121,7 +2207,10 @@ pub fn parse_single_line_multiplicative_expression(pair: Pair<Rule>) -> Result<E
             }
             _ => {
                 return Err(CompilerError::parse_error(
-                    format!("Unexpected element in multiplicative expression: {:?}", item.as_rule()),
+                    format!(
+                        "Unexpected element in multiplicative expression: {:?}",
+                        item.as_rule()
+                    ),
                     Some(convert_to_ast_location(&get_location(&item))),
                     None,
                 ))
@@ -2142,11 +2231,7 @@ pub fn parse_single_line_multiplicative_expression(pair: Pair<Rule>) -> Result<E
     for (i, op) in op_stack.into_iter().enumerate() {
         if i < expr_stack.len() {
             let right = expr_stack.remove(0);
-            result = Expression::Binary(
-                Box::new(result),
-                op,
-                Box::new(right),
-            );
+            result = Expression::Binary(Box::new(result), op, Box::new(right));
         }
     }
 
@@ -2178,7 +2263,10 @@ pub fn parse_single_line_power_expression(pair: Pair<Rule>) -> Result<Expression
             }
             _ => {
                 return Err(CompilerError::parse_error(
-                    format!("Unexpected element in power expression: {:?}", item.as_rule()),
+                    format!(
+                        "Unexpected element in power expression: {:?}",
+                        item.as_rule()
+                    ),
                     Some(convert_to_ast_location(&get_location(&item))),
                     None,
                 ))
@@ -2199,11 +2287,7 @@ pub fn parse_single_line_power_expression(pair: Pair<Rule>) -> Result<Expression
     for (i, op) in op_stack.into_iter().enumerate() {
         if i < expr_stack.len() {
             let right = expr_stack.remove(0);
-            result = Expression::Binary(
-                Box::new(result),
-                op,
-                Box::new(right),
-            );
+            result = Expression::Binary(Box::new(result), op, Box::new(right));
         }
     }
 
