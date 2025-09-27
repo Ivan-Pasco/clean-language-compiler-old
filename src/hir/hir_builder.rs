@@ -511,6 +511,19 @@ impl HirBuilder {
                 })
             }
 
+            Expression::NamespaceCall { namespace, function, arguments, location } => {
+                let hir_args = arguments.iter()
+                    .map(|arg| self.build_expression(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                Ok(HirExpression::NamespaceCall {
+                    namespace: namespace.clone(),
+                    function: function.clone(),
+                    arguments: hir_args,
+                    location: location.clone(),
+                })
+            }
+
             _ => {
                 // For unsupported expressions, create a void literal
                 Ok(HirExpression::Literal {

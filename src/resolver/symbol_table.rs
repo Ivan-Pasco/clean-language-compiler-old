@@ -142,18 +142,21 @@ impl GlobalSymbolTable {
     /// Add built-in symbols to the global scope
     fn add_builtins(&mut self) {
         let global_scope = self.current_scope;
-        
+
         // Built-in functions
         let builtin_functions = vec![
             ("print", vec![HirType::String], Some(HirType::Void)),
             ("println", vec![HirType::String], Some(HirType::Void)),
+            ("printl", vec![HirType::String], Some(HirType::Void)),
             ("abs", vec![HirType::Number], Some(HirType::Number)),
             ("max", vec![HirType::Number, HirType::Number], Some(HirType::Number)),
             ("min", vec![HirType::Number, HirType::Number], Some(HirType::Number)),
             ("sqrt", vec![HirType::Number], Some(HirType::Number)),
             ("pow", vec![HirType::Number, HirType::Number], Some(HirType::Number)),
+            ("toString", vec![HirType::Integer], Some(HirType::String)),
+            ("toInteger", vec![HirType::String], Some(HirType::Integer)),
         ];
-        
+
         for (name, params, return_type) in builtin_functions {
             let symbol_id = self.create_symbol(
                 name.to_string(),
@@ -168,12 +171,230 @@ impl GlobalSymbolTable {
                     column: 0,
                 },
             );
-            
+
             self.builtins.insert(symbol_id);
         }
-        
+
+        // Built-in static classes with methods
+        self.add_builtin_static_classes(global_scope);
+
+        // Built-in namespace functions (e.g., math_sin for math.sin())
+        self.add_builtin_namespace_functions(global_scope);
+
         // Built-in types are handled differently - they're part of HirType enum
         // Built-in methods are resolved dynamically based on receiver type
+    }
+
+    /// Add built-in static classes (Math, StringUtils, etc.)
+    fn add_builtin_static_classes(&mut self, global_scope: ScopeId) {
+        // Math class with static methods
+        let math_class_id = self.create_symbol(
+            "Math".to_string(),
+            SymbolKind::Class {
+                fields: Vec::new(),
+                methods: Vec::new(),
+                parent: None,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+            },
+        );
+
+        let math_methods = vec![
+            ("abs", vec![HirType::Number], HirType::Number),
+            ("floor", vec![HirType::Number], HirType::Integer),
+            ("ceil", vec![HirType::Number], HirType::Integer),
+            ("round", vec![HirType::Number], HirType::Integer),
+            ("sqrt", vec![HirType::Number], HirType::Number),
+            ("pow", vec![HirType::Number, HirType::Number], HirType::Number),
+            ("sin", vec![HirType::Number], HirType::Number),
+            ("cos", vec![HirType::Number], HirType::Number),
+            ("tan", vec![HirType::Number], HirType::Number),
+            ("max", vec![HirType::Number, HirType::Number], HirType::Number),
+            ("min", vec![HirType::Number, HirType::Number], HirType::Number),
+        ];
+
+        let mut math_method_ids = Vec::new();
+        for (method_name, params, return_type) in math_methods {
+            let method_id = self.create_symbol(
+                method_name.to_string(),
+                SymbolKind::Method {
+                    class_id: math_class_id,
+                    parameters: params,
+                    return_type,
+                },
+                global_scope,
+                SourceLocation {
+                    file: "<builtin>".to_string(),
+                    line: 0,
+                    column: 0,
+                },
+            );
+            math_method_ids.push(method_id);
+            self.builtins.insert(method_id);
+        }
+
+        // Update Math class with methods
+        if let Some(math_symbol) = self.symbols.get_mut(&math_class_id) {
+            if let SymbolKind::Class { methods, .. } = &mut math_symbol.kind {
+                *methods = math_method_ids;
+            }
+        }
+        self.builtins.insert(math_class_id);
+
+        // StringUtils class with static methods
+        let stringutils_class_id = self.create_symbol(
+            "StringUtils".to_string(),
+            SymbolKind::Class {
+                fields: Vec::new(),
+                methods: Vec::new(),
+                parent: None,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+            },
+        );
+
+        let stringutils_methods = vec![
+            ("length", vec![HirType::String], HirType::Integer),
+            ("concat", vec![HirType::String, HirType::String], HirType::String),
+            ("substring", vec![HirType::String, HirType::Integer, HirType::Integer], HirType::String),
+            ("indexOf", vec![HirType::String, HirType::String], HirType::Integer),
+            ("replace", vec![HirType::String, HirType::String, HirType::String], HirType::String),
+            ("toUpperCase", vec![HirType::String], HirType::String),
+            ("toLowerCase", vec![HirType::String], HirType::String),
+        ];
+
+        let mut stringutils_method_ids = Vec::new();
+        for (method_name, params, return_type) in stringutils_methods {
+            let method_id = self.create_symbol(
+                method_name.to_string(),
+                SymbolKind::Method {
+                    class_id: stringutils_class_id,
+                    parameters: params,
+                    return_type,
+                },
+                global_scope,
+                SourceLocation {
+                    file: "<builtin>".to_string(),
+                    line: 0,
+                    column: 0,
+                },
+            );
+            stringutils_method_ids.push(method_id);
+            self.builtins.insert(method_id);
+        }
+
+        // Update StringUtils class with methods
+        if let Some(stringutils_symbol) = self.symbols.get_mut(&stringutils_class_id) {
+            if let SymbolKind::Class { methods, .. } = &mut stringutils_symbol.kind {
+                *methods = stringutils_method_ids;
+            }
+        }
+        self.builtins.insert(stringutils_class_id);
+
+        // String class with static methods
+        let string_class_id = self.create_symbol(
+            "String".to_string(),
+            SymbolKind::Class {
+                fields: Vec::new(),
+                methods: Vec::new(),
+                parent: None,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+            },
+        );
+
+        let string_methods = vec![
+            ("fromCharCode", vec![HirType::Integer], HirType::String),
+            ("isEmpty", vec![HirType::String], HirType::Boolean),
+        ];
+
+        let mut string_method_ids = Vec::new();
+        for (method_name, params, return_type) in string_methods {
+            let method_id = self.create_symbol(
+                method_name.to_string(),
+                SymbolKind::Method {
+                    class_id: string_class_id,
+                    parameters: params,
+                    return_type,
+                },
+                global_scope,
+                SourceLocation {
+                    file: "<builtin>".to_string(),
+                    line: 0,
+                    column: 0,
+                },
+            );
+            string_method_ids.push(method_id);
+            self.builtins.insert(method_id);
+        }
+
+        // Update String class with methods
+        if let Some(string_symbol) = self.symbols.get_mut(&string_class_id) {
+            if let SymbolKind::Class { methods, .. } = &mut string_symbol.kind {
+                *methods = string_method_ids;
+            }
+        }
+        self.builtins.insert(string_class_id);
+
+        // Integer class with static methods
+        let integer_class_id = self.create_symbol(
+            "Integer".to_string(),
+            SymbolKind::Class {
+                fields: Vec::new(),
+                methods: Vec::new(),
+                parent: None,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+            },
+        );
+
+        let integer_methods = vec![
+            ("parse", vec![HirType::String], HirType::Integer),
+        ];
+
+        let mut integer_method_ids = Vec::new();
+        for (method_name, params, return_type) in integer_methods {
+            let method_id = self.create_symbol(
+                method_name.to_string(),
+                SymbolKind::Method {
+                    class_id: integer_class_id,
+                    parameters: params,
+                    return_type,
+                },
+                global_scope,
+                SourceLocation {
+                    file: "<builtin>".to_string(),
+                    line: 0,
+                    column: 0,
+                },
+            );
+            integer_method_ids.push(method_id);
+            self.builtins.insert(method_id);
+        }
+
+        // Update Integer class with methods
+        if let Some(integer_symbol) = self.symbols.get_mut(&integer_class_id) {
+            if let SymbolKind::Class { methods, .. } = &mut integer_symbol.kind {
+                *methods = integer_method_ids;
+            }
+        }
+        self.builtins.insert(integer_class_id);
     }
     
     /// Generate a new unique symbol ID
@@ -200,13 +421,34 @@ impl GlobalSymbolTable {
     /// Create a new scope
     pub fn create_scope(&mut self, parent: Option<ScopeId>, scope_type: ScopeType) -> ScopeId {
         let scope_id = self.next_scope_id();
+
+        // Prevent circular reference: scope should never be its own parent
+        let parent_scope = match parent {
+            Some(p) => {
+                // Ensure parent is not the same as the new scope (should be impossible but safety check)
+                if p != scope_id {
+                    Some(p)
+                } else {
+                    None
+                }
+            },
+            None => {
+                // Use current scope as parent unless it would create a circular reference
+                if self.current_scope != scope_id {
+                    Some(self.current_scope)
+                } else {
+                    None
+                }
+            }
+        };
+
         let scope = Scope {
             id: scope_id,
-            parent: parent.or(Some(self.current_scope)),
+            parent: parent_scope,
             symbols: HashMap::new(),
             scope_type,
         };
-        
+
         self.scopes.insert(scope_id, scope);
         scope_id
     }
@@ -426,6 +668,54 @@ impl GlobalSymbolTable {
         }
         
         symbols
+    }
+
+    /// Add built-in namespace functions (e.g., math_sin for math.sin calls)
+    fn add_builtin_namespace_functions(&mut self, global_scope: ScopeId) {
+        let namespace_functions = vec![
+            // Math namespace functions
+            ("math_sin", vec![HirType::Number], HirType::Number),
+            ("math_cos", vec![HirType::Number], HirType::Number),
+            ("math_tan", vec![HirType::Number], HirType::Number),
+            ("math_abs", vec![HirType::Number], HirType::Number),
+            ("math_floor", vec![HirType::Number], HirType::Number),
+            ("math_ceil", vec![HirType::Number], HirType::Number),
+            ("math_round", vec![HirType::Number], HirType::Number),
+            ("math_sqrt", vec![HirType::Number], HirType::Number),
+            ("math_pow", vec![HirType::Number, HirType::Number], HirType::Number),
+            ("math_max", vec![HirType::Number, HirType::Number], HirType::Number),
+            ("math_min", vec![HirType::Number, HirType::Number], HirType::Number),
+
+            // String namespace functions
+            ("string_length", vec![HirType::String], HirType::Integer),
+            ("string_substring", vec![HirType::String, HirType::Integer, HirType::Integer], HirType::String),
+            ("string_toUpperCase", vec![HirType::String], HirType::String),
+            ("string_toLowerCase", vec![HirType::String], HirType::String),
+            ("string_contains", vec![HirType::String, HirType::String], HirType::Boolean),
+            // StringUtils namespace functions (for StringUtils.length() syntax)
+            ("StringUtils_length", vec![HirType::String], HirType::Integer),
+            ("StringUtils_concat", vec![HirType::String, HirType::String], HirType::String),
+            ("StringUtils_substring", vec![HirType::String, HirType::Integer, HirType::Integer], HirType::String),
+            ("StringUtils_indexOf", vec![HirType::String, HirType::String], HirType::Integer),
+            ("StringUtils_replace", vec![HirType::String, HirType::String, HirType::String], HirType::String),
+        ];
+
+        for (name, params, return_type) in namespace_functions {
+            let symbol_id = self.create_symbol(
+                name.to_string(),
+                SymbolKind::Function {
+                    parameters: params,
+                    return_type: Some(return_type),
+                },
+                global_scope,
+                SourceLocation {
+                    file: "<builtin>".to_string(),
+                    line: 0,
+                    column: 0,
+                },
+            );
+            self.builtins.insert(symbol_id);
+        }
     }
 }
 

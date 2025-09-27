@@ -712,6 +712,7 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
             Ok(Expression::Literal(Value::List(vec![])))
         }
         Rule::function_call => parse_function_call(inner),
+        Rule::namespace_function_call => parse_namespace_function_call(inner),
         Rule::property_method_call => parse_property_method_call(inner),
         Rule::method_call => parse_method_call(inner),
         Rule::chained_method_call => parse_chained_method_call(inner),
@@ -1114,6 +1115,42 @@ pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError
     } else {
         Ok(Expression::Call(name, arguments))
     }
+}
+
+pub fn parse_namespace_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = convert_to_ast_location(&get_location(&pair));
+    let mut inner = pair.into_inner();
+
+    // First child is namespace_identifier
+    let namespace = inner.next().unwrap().as_str().to_string();
+
+    // Second child is the function identifier
+    let function = inner.next().unwrap().as_str().to_string();
+
+    let mut arguments = Vec::new();
+
+    // Parse remaining arguments
+    for arg in inner {
+        match arg.as_rule() {
+            Rule::argument_list => {
+                for arg_expr in arg.into_inner() {
+                    if let Rule::argument_expression = arg_expr.as_rule() {
+                        arguments.push(parse_argument_expression(arg_expr)?);
+                    }
+                }
+            }
+            _ => {
+                // Skip other rules (like parentheses)
+            }
+        }
+    }
+
+    Ok(Expression::NamespaceCall {
+        namespace,
+        function,
+        arguments,
+        location,
+    })
 }
 
 pub fn parse_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {

@@ -581,6 +581,12 @@ impl HirValidator {
                 Self::validate_lvalue(context, target);
                 Self::validate_expression(context, value);
             }
+
+            HirExpression::NamespaceCall { arguments, .. } => {
+                for arg in arguments {
+                    Self::validate_expression(context, arg);
+                }
+            }
         }
     }
     

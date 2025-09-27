@@ -9,7 +9,7 @@ use super::tast::{
     TastField, BinaryOperator, UnaryOperator, Visibility
 };
 use super::constraint_solver::{ConstraintSolver, SolverResult};
-use crate::resolver::{ResolvedHirProgram, ResolvedHirFunction, ResolvedHirMethod, ResolvedHirClass, ResolvedHirExpression, ResolvedHirStatement, ResolvedHirBlock, ResolvedHirLValue, SymbolId, GlobalSymbolTable};
+use crate::resolver::{ResolvedHirProgram, ResolvedHirFunction, ResolvedHirMethod, ResolvedHirClass, ResolvedHirExpression, ResolvedHirStatement, ResolvedHirBlock, ResolvedHirLValue, SymbolId, GlobalSymbolTable, SymbolKind};
 use crate::hir::{HirType, HirBinaryOp, HirUnaryOp};
 use crate::error::CompilerError;
 use crate::ast::SourceLocation;
@@ -155,6 +155,52 @@ impl TypeInference {
         // Find toInteger function
         if let Some(symbol_id) = self.symbol_table.lookup_symbol_in_scope("toInteger", crate::resolver::ScopeId(0)) {
             self.type_env.insert(symbol_id, ConcreteType::Integer);
+        }
+
+        // Find abs function
+        if let Some(symbol_id) = self.symbol_table.lookup_symbol_in_scope("abs", crate::resolver::ScopeId(0)) {
+            self.type_env.insert(symbol_id, ConcreteType::Function {
+                parameters: vec![ConcreteType::Number],
+                return_type: Box::new(ConcreteType::Number),
+                is_async: false,
+            });
+        }
+
+        // Find StringUtils namespace functions
+        if let Some(symbol_id) = self.symbol_table.lookup_symbol_in_scope("StringUtils_length", crate::resolver::ScopeId(0)) {
+            self.type_env.insert(symbol_id, ConcreteType::Function {
+                parameters: vec![ConcreteType::String],
+                return_type: Box::new(ConcreteType::Integer),
+                is_async: false,
+            });
+        }
+        if let Some(symbol_id) = self.symbol_table.lookup_symbol_in_scope("StringUtils_concat", crate::resolver::ScopeId(0)) {
+            self.type_env.insert(symbol_id, ConcreteType::Function {
+                parameters: vec![ConcreteType::String, ConcreteType::String],
+                return_type: Box::new(ConcreteType::String),
+                is_async: false,
+            });
+        }
+        if let Some(symbol_id) = self.symbol_table.lookup_symbol_in_scope("StringUtils_substring", crate::resolver::ScopeId(0)) {
+            self.type_env.insert(symbol_id, ConcreteType::Function {
+                parameters: vec![ConcreteType::String, ConcreteType::Integer, ConcreteType::Integer],
+                return_type: Box::new(ConcreteType::String),
+                is_async: false,
+            });
+        }
+        if let Some(symbol_id) = self.symbol_table.lookup_symbol_in_scope("StringUtils_indexOf", crate::resolver::ScopeId(0)) {
+            self.type_env.insert(symbol_id, ConcreteType::Function {
+                parameters: vec![ConcreteType::String, ConcreteType::String],
+                return_type: Box::new(ConcreteType::Integer),
+                is_async: false,
+            });
+        }
+        if let Some(symbol_id) = self.symbol_table.lookup_symbol_in_scope("StringUtils_replace", crate::resolver::ScopeId(0)) {
+            self.type_env.insert(symbol_id, ConcreteType::Function {
+                parameters: vec![ConcreteType::String, ConcreteType::String, ConcreteType::String],
+                return_type: Box::new(ConcreteType::String),
+                is_async: false,
+            });
         }
     }
 
@@ -703,6 +749,96 @@ impl TypeInference {
                 })
             }
 
+            ResolvedHirStatement::Assignment { target, value, location } => {
+                // Infer the value expression first
+                let tast_value = self.infer_expression(value)?;
+
+                // For now, handle simple variable assignments (most common case)
+                // TODO: Implement field access assignments (obj.field = value)
+                let tast_target = match target {
+                    ResolvedHirLValue::Variable { name, symbol_id, location: var_location } => {
+                        // Look up the variable's declared type from our type environment
+                        let target_type = self.type_env.get(symbol_id)
+                            .cloned()
+                            .unwrap_or(ConcreteType::Unknown);
+
+                        // Add constraint that value type matches target type
+                        self.add_constraint(TypeConstraint::Equality {
+                            left: tast_value.expr_type.clone(),
+                            right: target_type.clone(),
+                            location: location.clone(),
+                        });
+
+                        TastExpression {
+                            kind: TastExpressionKind::Variable {
+                                symbol_id: *symbol_id,
+                                name: name.clone(),
+                            },
+                            expr_type: target_type,
+                            location: var_location.clone(),
+                        }
+                    }
+                    ResolvedHirLValue::FieldAccess { object, field, field_symbol_id, location: field_location } => {
+                        // Handle field assignments like obj.field = value
+                        let tast_object = self.infer_expression(object)?;
+
+                        // For field access, we need to determine the field type
+                        // This is complex and depends on the object's type
+                        let field_type = ConcreteType::Unknown; // TODO: Look up field type from class
+
+                        // Add constraint that value type matches field type
+                        self.add_constraint(TypeConstraint::Equality {
+                            left: tast_value.expr_type.clone(),
+                            right: field_type.clone(),
+                            location: location.clone(),
+                        });
+
+                        TastExpression {
+                            kind: TastExpressionKind::PropertyAccess {
+                                object: Box::new(tast_object),
+                                property_name: field.clone(),
+                                property_symbol: *field_symbol_id,
+                            },
+                            expr_type: field_type,
+                            location: field_location.clone(),
+                        }
+                    }
+                    ResolvedHirLValue::Index { array, index, location: index_location } => {
+                        // Handle array index assignments like arr[i] = value
+                        let tast_array = self.infer_expression(array)?;
+                        let tast_index = self.infer_expression(index)?;
+
+                        // For array index assignment, the element type should match the value type
+                        let element_type = match &tast_array.expr_type {
+                            ConcreteType::Array(elem_type) => (**elem_type).clone(),
+                            _ => ConcreteType::Unknown, // Not an array, but we'll handle this as unknown
+                        };
+
+                        // Add constraint that value type matches element type
+                        self.add_constraint(TypeConstraint::Equality {
+                            left: tast_value.expr_type.clone(),
+                            right: element_type.clone(),
+                            location: location.clone(),
+                        });
+
+                        TastExpression {
+                            kind: TastExpressionKind::ArrayAccess {
+                                array: Box::new(tast_array),
+                                index: Box::new(tast_index),
+                            },
+                            expr_type: element_type,
+                            location: index_location.clone(),
+                        }
+                    }
+                };
+
+                Ok(TastStatement::Assignment {
+                    target: tast_target,
+                    value: tast_value,
+                    location: location.clone(),
+                })
+            }
+
             // Handle any remaining unimplemented statement types
             _ => {
                 self.errors.push(CompilerError::type_error(
@@ -710,7 +846,7 @@ impl TypeInference {
                     None,
                     Some(statement.location().clone()),
                 ));
-                
+
                 Ok(TastStatement::Expression {
                     expression: TastExpression {
                         kind: TastExpressionKind::Literal {
@@ -1220,7 +1356,7 @@ impl TypeInference {
     }
     
     /// Get function return type from symbol table
-    fn infer_function_return_type(&self, function_symbol_id: SymbolId, _arguments: &[TastExpression]) -> Result<ConcreteType, CompilerError> {
+    fn infer_function_return_type(&self, function_symbol_id: SymbolId, arguments: &[TastExpression]) -> Result<ConcreteType, CompilerError> {
         // Look up function type from symbol table
         if let Some(function_type) = self.type_env.get(&function_symbol_id) {
             match function_type {
@@ -1234,6 +1370,21 @@ impl TypeInference {
                 ))
             }
         } else {
+            // FALLBACK: Check if this might be a static method call that wasn't resolved properly
+            // Look up the symbol in the symbol table to get its name
+            if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
+                let function_name = &symbol.name;
+                // Check if the function name follows the static method pattern Class.method
+                if let Some(dot_pos) = function_name.find('.') {
+                    let class_name = &function_name[..dot_pos];
+                    let method_name = &function_name[dot_pos + 1..];
+                    // Try to infer as static method
+                    if let Ok(static_return_type) = self.infer_static_method_return_type(class_name, method_name, arguments) {
+                        return Ok(static_return_type);
+                    }
+                }
+            }
+
             Err(CompilerError::type_error(
                 &format!("Function symbol {:?} not found in type environment", function_symbol_id),
                 None,
@@ -1299,6 +1450,15 @@ impl TypeInference {
             // String static methods
             ("String", "fromCharCode") => Ok(ConcreteType::String),
             ("String", "isEmpty") => Ok(ConcreteType::Boolean),
+
+            // StringUtils static methods
+            ("StringUtils", "length") => Ok(ConcreteType::Integer),
+            ("StringUtils", "concat") => Ok(ConcreteType::String),
+            ("StringUtils", "substring") => Ok(ConcreteType::String),
+            ("StringUtils", "indexOf") => Ok(ConcreteType::Integer),
+            ("StringUtils", "replace") => Ok(ConcreteType::String),
+            ("StringUtils", "toUpperCase") => Ok(ConcreteType::String),
+            ("StringUtils", "toLowerCase") => Ok(ConcreteType::String),
 
             // Integer static methods
             ("Integer", "parse") => Ok(ConcreteType::Integer),
@@ -1382,10 +1542,36 @@ impl TypeInference {
                 // Matrix is a specialized form of nested arrays
                 ConcreteType::Array(Box::new(ConcreteType::Array(Box::new(self.hir_type_to_concrete(element_type)))))
             }
-            HirType::Named {  .. } => {
-                // For user-defined types, we need to look them up in the symbol table
-                // For now, we'll treat them as unknown types that will be resolved later
-                ConcreteType::Undefined
+            HirType::Named { name, .. } => {
+                // Look up the named type in the symbol table
+                if let Some(symbol_id) = self.symbol_table.lookup_symbol(name) {
+                    if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
+                        match &symbol.kind {
+                            SymbolKind::Class { .. } => {
+                                ConcreteType::Class {
+                                    symbol_id,
+                                    type_args: Vec::new(), // TODO: Handle generics
+                                }
+                            }
+                            _ => {
+                                // For other named types (functions, variables), treat as unknown for now
+                                ConcreteType::Unknown
+                            }
+                        }
+                    } else {
+                        ConcreteType::Unknown
+                    }
+                } else {
+                    // If not found in symbol table, could be a built-in type
+                    match name.as_str() {
+                        "integer" => ConcreteType::Integer,
+                        "number" => ConcreteType::Number,
+                        "string" => ConcreteType::String,
+                        "boolean" => ConcreteType::Boolean,
+                        "void" => ConcreteType::Undefined,
+                        _ => ConcreteType::Unknown,
+                    }
+                }
             }
             HirType::Inferred { .. } => {
                 // Type inference placeholders are handled by the constraint solver

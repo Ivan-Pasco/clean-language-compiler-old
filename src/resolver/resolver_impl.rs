@@ -813,17 +813,62 @@ impl NameResolver {
             }
             
             HirExpression::MethodCall { receiver, method, arguments, location } => {
+                // Check if the receiver is a class name (for static method calls)
+                if let HirExpression::Variable { name: class_name, .. } = receiver.as_ref() {
+                    eprintln!("DEBUG RESOLVER: Checking if '{}' is a class for static method call '{}'", class_name, method);
+                    // Check if this variable name is actually a class symbol
+                    if let Some(class_symbol_id) = self.symbol_table.lookup_symbol(class_name) {
+                        if let Some(class_symbol) = self.symbol_table.get_symbol(class_symbol_id) {
+                            eprintln!("DEBUG RESOLVER: Found symbol '{}' with kind: {:?}", class_name, class_symbol.kind);
+                            if let SymbolKind::Class { methods, .. } = &class_symbol.kind {
+                                eprintln!("DEBUG RESOLVER: '{}' is a class! Converting to static method call", class_name);
+                                // This is a static method call on a class
+                                let mut resolved_arguments = Vec::new();
+                                for arg in arguments {
+                                    resolved_arguments.push(self.resolve_expression(arg)?);
+                                }
+
+                                // Look up the static method in the class
+                                let method_symbol_id = self.symbol_table.lookup_class_member(class_symbol_id, method)
+                                    .unwrap_or_else(|| {
+                                        eprintln!("DEBUG RESOLVER: Method '{}' not found in class '{}', using placeholder", method, class_name);
+                                        // Create a placeholder symbol for built-in static methods if not found
+                                        // This allows built-in static methods to work even if not explicitly defined
+                                        SymbolId(0)
+                                    });
+
+                                eprintln!("DEBUG RESOLVER: Created StaticMethodCall for {}.{}", class_name, method);
+                                return Ok(ResolvedHirExpression::StaticMethodCall {
+                                    class_name: class_name.clone(),
+                                    class_symbol_id,
+                                    method: method.clone(),
+                                    method_symbol_id,
+                                    arguments: resolved_arguments,
+                                    location: location.clone(),
+                                });
+                            } else {
+                                eprintln!("DEBUG RESOLVER: '{}' is not a class, it's: {:?}", class_name, class_symbol.kind);
+                            }
+                        } else {
+                            eprintln!("DEBUG RESOLVER: Symbol '{}' found but no symbol data", class_name);
+                        }
+                    } else {
+                        eprintln!("DEBUG RESOLVER: Symbol '{}' not found in symbol table", class_name);
+                    }
+                }
+
+                // Regular instance method call
                 let resolved_receiver = self.resolve_expression(receiver)?;
-                
+
                 let mut resolved_arguments = Vec::new();
                 for arg in arguments {
                     resolved_arguments.push(self.resolve_expression(arg)?);
                 }
-                
+
                 // Method resolution is complex and depends on receiver type
                 // For now, we'll resolve it as None (built-in method)
                 let method_symbol_id = None;
-                
+
                 Ok(ResolvedHirExpression::MethodCall {
                     receiver: Box::new(resolved_receiver),
                     method: method.clone(),
@@ -919,6 +964,68 @@ impl NameResolver {
                 Ok(ResolvedHirExpression::Assignment {
                     target: resolved_target,
                     value: Box::new(resolved_value),
+                    location: location.clone(),
+                })
+            }
+
+            HirExpression::NamespaceCall { namespace, function, arguments, location } => {
+                // CRITICAL FIX: Check if the "namespace" is actually a variable (method call)
+                // This handles cases like value.toString() where 'value' is a variable, not a namespace
+                // However, do NOT convert if it's a known namespace like StringUtils, math, etc.
+                if let Some(symbol_id) = self.symbol_table.lookup_symbol(namespace) {
+                    // Check if this is a known namespace that should NOT be converted to method call
+                    if namespace == "StringUtils" || namespace == "math" || namespace == "Math" {
+                        // This is a legitimate namespace call, continue with normal namespace processing
+                        eprintln!("DEBUG RESOLVER: Keeping NamespaceCall '{}::{}' as namespace - '{}' is a known namespace", namespace, function, namespace);
+                        // Continue to normal namespace processing below
+                    } else {
+                        // This is actually a method call on a variable, not a namespace call
+                        eprintln!("DEBUG RESOLVER: Converting NamespaceCall '{}::{}' to MethodCall - '{}' is a variable", namespace, function, namespace);
+
+                        // Create a variable expression for the receiver
+                        let receiver = ResolvedHirExpression::Variable {
+                            name: namespace.clone(),
+                            symbol_id,
+                            location: location.clone(),
+                        };
+
+                        // Resolve arguments
+                        let mut resolved_arguments = Vec::new();
+                        for arg in arguments {
+                            resolved_arguments.push(self.resolve_expression(arg)?);
+                        }
+
+                        // Return as a method call
+                        return Ok(ResolvedHirExpression::MethodCall {
+                            receiver: Box::new(receiver),
+                            method: function.clone(),
+                            method_symbol_id: None, // Will be resolved based on receiver type
+                            arguments: resolved_arguments,
+                            location: location.clone(),
+                        });
+                    }
+                }
+
+                // Original namespace call logic for true namespaces (like math.sin)
+                let qualified_name = format!("{}_{}", namespace, function);
+
+                // Look up the qualified function name in the symbol table
+                let function_symbol_id = self.symbol_table.lookup_symbol(&qualified_name)
+                    .ok_or_else(|| {
+                        self.error(&format!("Namespace function '{}::{}' not found", namespace, function), location.clone());
+                    })?;
+
+                // Resolve all arguments
+                let mut resolved_arguments = Vec::new();
+                for arg in arguments {
+                    resolved_arguments.push(self.resolve_expression(arg)?);
+                }
+
+                // Return as a regular function call
+                Ok(ResolvedHirExpression::Call {
+                    function: qualified_name,
+                    function_symbol_id,
+                    arguments: resolved_arguments,
                     location: location.clone(),
                 })
             }

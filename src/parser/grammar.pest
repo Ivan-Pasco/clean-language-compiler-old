@@ -163,8 +163,9 @@ setup_block = { (description_block ~ NEWLINE ~ input_block) | (input_block ~ NEW
 
 // Object access and method calls
 builtin_class_name = { "list" | "file" | "http" | "math" | "input" | "logical" | "conditional" | "compare" | "Math" | "String" | "List" | "File" | "Http" | "Console" }
-// Basic static class identifiers
+// Basic static class identifiers and namespace identifiers
 static_class_identifier = { "StringUtils" | "Math" | "String" | "List" | "File" | "Http" | "Console" | "conditional" | "compare" | "logical" | "math" | "string" | "list" | "file" | "http" | "console" | "number" | "integer" | "boolean" }
+namespace_identifier = { identifier }
 
 // Multi-level namespace chain (e.g., compare.number, compare.integer)
 static_class_name = { static_class_identifier ~ ("." ~ static_class_identifier)* }
@@ -177,7 +178,7 @@ argument_bounded_expression = { argument_additive }
 argument_additive = { argument_multiplicative ~ (WHITESPACE* ~ additive_op ~ WHITESPACE* ~ argument_multiplicative)* }
 argument_multiplicative = { argument_power ~ (WHITESPACE* ~ multiplicative_op ~ WHITESPACE* ~ argument_power)* }
 argument_power = { argument_unary ~ (WHITESPACE* ~ power_op ~ WHITESPACE* ~ argument_unary)* }
-argument_unary = { unary_op* ~ primary }
+argument_unary = { (unary_op ~ WHITESPACE*)* ~ primary }
 
 // Argument list pattern for comma-separated expressions
 argument_list = { argument_expression ~ ("," ~ argument_expression)* }
@@ -202,6 +203,9 @@ property_method_call = { identifier ~ ("." ~ identifier) ~ ("." ~ identifier)+ ~
 // Static method call syntax for ClassName.method() patterns (single level)
 static_method_call = { static_class_name ~ "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
 
+// Namespace function call syntax for namespace.function() patterns (e.g., math.sin)
+namespace_function_call = { namespace_identifier ~ "." ~ identifier ~ "(" ~ argument_list? ~ ")" }
+
 // Property access and list access
 property_access = { identifier ~ ("." ~ identifier)+ }
 list_access = { identifier ~ ("[" ~ additive_expression ~ "]")+ }
@@ -220,6 +224,8 @@ primary = {
     // Complex patterns that might partially match - put after literals
     constructor_call |
     base_call |
+    // Namespace calls must come before method calls to prevent 'math.sin()' being parsed as method on 'math' variable
+    namespace_function_call |
     three_level_method_call |
     property_method_call |
     chained_method_call |
@@ -259,7 +265,7 @@ standalone_on_error = { "onError" ~ ":" ~ indented_block }
 // Now supports optional whitespace (spaces, newlines, and indentation) around operators for multi-line expressions
 logical_expression = { comparison_expression ~ (whitespace_around_op ~ logical_op ~ whitespace_around_op ~ comparison_expression)* }
 comparison_expression = { unary_expression ~ (whitespace_around_op ~ comparison_op ~ whitespace_around_op ~ unary_expression)* }
-unary_expression = { unary_op* ~ additive_expression }
+unary_expression = { (unary_op ~ WHITESPACE*)* ~ additive_expression }
 
 // Arithmetic expressions with proper precedence: power > multiplicative > additive
 additive_expression = { multiplicative_expression ~ (whitespace_around_op ~ additive_op ~ whitespace_around_op ~ multiplicative_expression)* }
@@ -274,7 +280,7 @@ whitespace_around_op = _{ " "* }
 multiline_whitespace_around_op = _{ (WHITESPACE | NEWLINE | INDENT)* }
 multiline_logical_expression = { multiline_comparison_expression ~ (multiline_whitespace_around_op ~ logical_op ~ multiline_whitespace_around_op ~ multiline_comparison_expression)* }
 multiline_comparison_expression = { multiline_unary_expression ~ (multiline_whitespace_around_op ~ comparison_op ~ multiline_whitespace_around_op ~ multiline_unary_expression)* }
-multiline_unary_expression = { unary_op* ~ multiline_additive_expression }
+multiline_unary_expression = { (unary_op ~ (WHITESPACE | NEWLINE | INDENT)*)* ~ multiline_additive_expression }
 multiline_additive_expression = { multiline_multiplicative_expression ~ (multiline_whitespace_around_op ~ additive_op ~ multiline_whitespace_around_op ~ multiline_multiplicative_expression)* }
 multiline_multiplicative_expression = { multiline_power_expression ~ (multiline_whitespace_around_op ~ multiplicative_op ~ multiline_whitespace_around_op ~ multiline_power_expression)* }
 multiline_power_expression = { multiline_primary ~ (multiline_whitespace_around_op ~ power_op ~ multiline_whitespace_around_op ~ multiline_primary)* }
@@ -292,7 +298,7 @@ parenthesized_expr = { (WHITESPACE | NEWLINE | INDENT)* ~ multiline_logical_expr
 // Operators with proper precedence levels
 logical_op = { "and" | "or" }
 comparison_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" | ("is" ~ !(ASCII_ALPHANUMERIC | "_")) }
-unary_op = { ("not" ~ !(ASCII_ALPHANUMERIC | "_")) | "-" }
+unary_op = { "not" | "-" }
 additive_op = { "+" | "-" }
 multiplicative_op = { "*" | "/" | "%" }
 power_op = { "^" }
@@ -315,7 +321,7 @@ pair_element = { (string | identifier | decimal_integer) ~ " "* ~ ":" ~ " "* ~ s
 single_line_expression = { single_line_logical_expression }
 single_line_logical_expression = { single_line_comparison_expression ~ (" "* ~ logical_op ~ " "* ~ single_line_comparison_expression)* }
 single_line_comparison_expression = { single_line_unary_expression ~ (" "* ~ comparison_op ~ " "* ~ single_line_unary_expression)* }
-single_line_unary_expression = { unary_op* ~ single_line_additive_expression }
+single_line_unary_expression = { (unary_op ~ " "*)* ~ single_line_additive_expression }
 single_line_additive_expression = { single_line_multiplicative_expression ~ (" "* ~ additive_op ~ " "* ~ single_line_multiplicative_expression)* }
 single_line_multiplicative_expression = { single_line_power_expression ~ (" "* ~ multiplicative_op ~ " "* ~ single_line_power_expression)* }
 single_line_power_expression = { single_line_primary ~ (" "* ~ power_op ~ " "* ~ single_line_primary)* }
@@ -330,6 +336,8 @@ single_line_primary = {
     pairs_literal |
     constructor_call |
     base_call |
+    // Namespace calls must come before method calls to prevent 'math.sin()' being parsed as method on 'math' variable
+    namespace_function_call |
     method_call |
     function_call |
     static_method_call |

@@ -1,2 +1,2 @@
-function start()
+start()
 	abs(-42) 

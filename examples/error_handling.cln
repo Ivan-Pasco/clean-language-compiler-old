@@ -1,47 +1,40 @@
 // Error Handling Example in Clean Language
 
 start()
-  // Example 1: Simple error handling
-  print "Starting error handling example"
-  
-  // Trying to divide by zero will cause an error
-  number result = 10
-  number divisor = 0
-  
-  result = 10 / divisor
-  onError:
-    print "Error: Division by zero"
-    result = -1
-  
-  print "Result after error handling: " + result
-  
-  // Example 2: Function call with error handling
-  loadData()
-  onError:
-    print "Failed to load data"
-    print "Please check your connection and try again"
-  
-  // Example 3: Using the error variable
-  complexOperation()
-  onError:
-    print "Operation failed with error code: " + error
-    logError(error)
-  
-  print "Error handling example completed"
+	// Example 1: Simple error handling
+	print("Starting error handling example")
+	
+	// Trying to divide by zero will cause an error
+	number result = 10
+	number divisor = 0
+	
+	result = 10 / divisor
+	onError:
+	print("Error: Division by zero")
+	result = -1
+	
+	print("Result after error handling: " + result)
+	
+	// Example 2: Function call with error handling
+	loadData()
+	onError:
+	print("Failed to load data")
+	print("Please check your connection and try again")
+	
+	// Example 3: Using the error variable
+	complexOperation()
+	onError:
+	print("Operation failed with error code: " + error)
+	logError("500")
+	
+	print("Error handling example completed")
 
-loadData()
-  // Simulating an error condition
-  if true
-    // This will trigger the error handler
-    throw 404
-  
-  print "Data loaded successfully"
+functions:
+	void loadData()
+		error("404")
 
-complexOperation()
-  // Simulate a more complex error
-  throw 500
-  
-  print "Operation completed successfully"
+	void complexOperation()
+		error("500")
 
-logError(error)
-  print "Logging error: " + error 
+	void logError(string errorMsg)
+		print("Logging error: " + errorMsg) 

@@ -298,6 +298,14 @@ pub enum HirExpression {
         value: Box<HirExpression>,
         location: SourceLocation,
     },
+
+    /// Namespace function call (e.g., math.sin, string.length)
+    NamespaceCall {
+        namespace: String,
+        function: String,
+        arguments: Vec<HirExpression>,
+        location: SourceLocation,
+    },
 }
 
 /// HIR L-value (left-hand side of assignment)
@@ -359,6 +367,7 @@ impl HirExpression {
             HirExpression::This { location, .. } => location,
             HirExpression::Cast { location, .. } => location,
             HirExpression::Assignment { location, .. } => location,
+            HirExpression::NamespaceCall { location, .. } => location,
         }
     }
 }
