@@ -56,27 +56,29 @@ pub enum HirType {
     String,
     Boolean,
     Void,
-    
+
     /// Precision types (from lexer precision modifiers)
     Integer8,
     Integer8u,
     Integer16,
     Integer16u,
     Integer32,
+    Integer32u,
     Integer64,
+    Integer64u,
     Number32,
     Number64,
-    
+
     /// Generic types
     List(Box<HirType>),
     Matrix(Box<HirType>),
-    
+
     /// User-defined types (resolved in Stage 4)
     Named {
         name: String,
         location: SourceLocation,
     },
-    
+
     /// Type inference placeholder (resolved in Stage 5)
     Inferred {
         id: usize,
@@ -156,26 +158,26 @@ pub enum HirStatement {
         initializer: Option<HirExpression>,
         location: SourceLocation,
     },
-    
+
     /// Assignment (separate from declaration)
     Assignment {
         target: HirLValue,
         value: HirExpression,
         location: SourceLocation,
     },
-    
+
     /// Expression statement (function calls, etc.)
     Expression {
         expression: HirExpression,
         location: SourceLocation,
     },
-    
+
     /// Return statement
     Return {
         value: Option<HirExpression>,
         location: SourceLocation,
     },
-    
+
     /// Conditional statement
     If {
         condition: HirExpression,
@@ -183,14 +185,14 @@ pub enum HirStatement {
         else_branch: Option<HirBlock>,
         location: SourceLocation,
     },
-    
+
     /// While loop
     While {
         condition: HirExpression,
         body: HirBlock,
         location: SourceLocation,
     },
-    
+
     /// For loop - desugared to while loop with iterator
     For {
         variable: String,
@@ -198,11 +200,18 @@ pub enum HirStatement {
         body: HirBlock,
         location: SourceLocation,
     },
-    
+
     /// Print statement
     Print {
         expression: HirExpression,
         newline: bool,
+        location: SourceLocation,
+    },
+
+    /// Later assignment (async variable declaration)
+    LaterAssignment {
+        variable: String,
+        expression: HirExpression,
         location: SourceLocation,
     },
 }
@@ -215,13 +224,13 @@ pub enum HirExpression {
         value: Value,
         location: SourceLocation,
     },
-    
+
     /// Variable reference
     Variable {
         name: String,
         location: SourceLocation,
     },
-    
+
     /// Binary operation
     BinaryOp {
         left: Box<HirExpression>,
@@ -229,21 +238,21 @@ pub enum HirExpression {
         right: Box<HirExpression>,
         location: SourceLocation,
     },
-    
+
     /// Unary operation
     UnaryOp {
         op: HirUnaryOp,
         operand: Box<HirExpression>,
         location: SourceLocation,
     },
-    
+
     /// Function call
     Call {
         function: String,
         arguments: Vec<HirExpression>,
         location: SourceLocation,
     },
-    
+
     /// Method call - always explicit with receiver
     MethodCall {
         receiver: Box<HirExpression>,
@@ -251,47 +260,45 @@ pub enum HirExpression {
         arguments: Vec<HirExpression>,
         location: SourceLocation,
     },
-    
+
     /// Field access
     FieldAccess {
         object: Box<HirExpression>,
         field: String,
         location: SourceLocation,
     },
-    
+
     /// Array/list indexing
     Index {
         array: Box<HirExpression>,
         index: Box<HirExpression>,
         location: SourceLocation,
     },
-    
+
     /// Array literal
     Array {
         elements: Vec<HirExpression>,
         element_type: HirType, // Inferred or explicit
         location: SourceLocation,
     },
-    
+
     /// Constructor call (explicit)
     Constructor {
         class_name: String,
         arguments: Vec<HirExpression>,
         location: SourceLocation,
     },
-    
+
     /// This reference (in methods)
-    This {
-        location: SourceLocation,
-    },
-    
+    This { location: SourceLocation },
+
     /// Type cast (explicit type conversion)
     Cast {
         expression: Box<HirExpression>,
         target_type: HirType,
         location: SourceLocation,
     },
-    
+
     /// Assignment expression (returns the assigned value)
     Assignment {
         target: HirLValue,
@@ -331,14 +338,25 @@ pub enum HirLValue {
 #[derive(Debug, Clone, PartialEq)]
 pub enum HirBinaryOp {
     // Arithmetic
-    Add, Subtract, Multiply, Divide, Modulo, Power,
-    
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
+    Power,
+
     // Comparison
-    Equal, NotEqual, Less, Greater, LessEqual, GreaterEqual,
-    
+    Equal,
+    NotEqual,
+    Less,
+    Greater,
+    LessEqual,
+    GreaterEqual,
+
     // Logical
-    And, Or,
-    
+    And,
+    Or,
+
     // String operations (desugared)
     StringConcat,
 }
@@ -375,25 +393,41 @@ impl HirExpression {
 impl HirType {
     /// Check if this is a primitive type
     pub fn is_primitive(&self) -> bool {
-        matches!(self, 
-            HirType::Integer | HirType::Number | HirType::String | 
-            HirType::Boolean | HirType::Void |
-            HirType::Integer8 | HirType::Integer8u | HirType::Integer16 | 
-            HirType::Integer16u | HirType::Integer32 | HirType::Integer64 |
-            HirType::Number32 | HirType::Number64
+        matches!(
+            self,
+            HirType::Integer
+                | HirType::Number
+                | HirType::String
+                | HirType::Boolean
+                | HirType::Void
+                | HirType::Integer8
+                | HirType::Integer8u
+                | HirType::Integer16
+                | HirType::Integer16u
+                | HirType::Integer32
+                | HirType::Integer64
+                | HirType::Number32
+                | HirType::Number64
         )
     }
-    
+
     /// Check if this is a numeric type
     pub fn is_numeric(&self) -> bool {
-        matches!(self,
-            HirType::Integer | HirType::Number |
-            HirType::Integer8 | HirType::Integer8u | HirType::Integer16 |
-            HirType::Integer16u | HirType::Integer32 | HirType::Integer64 |
-            HirType::Number32 | HirType::Number64
+        matches!(
+            self,
+            HirType::Integer
+                | HirType::Number
+                | HirType::Integer8
+                | HirType::Integer8u
+                | HirType::Integer16
+                | HirType::Integer16u
+                | HirType::Integer32
+                | HirType::Integer64
+                | HirType::Number32
+                | HirType::Number64
         )
     }
-    
+
     /// Get the default type for a literal value
     pub fn from_value(value: &Value) -> Self {
         match value {
@@ -401,6 +435,7 @@ impl HirType {
             Value::Number(_) => HirType::Number,
             Value::String(_) => HirType::String,
             Value::Boolean(_) => HirType::Boolean,
+            Value::Null => HirType::Void, // Null uses void type semantics
             Value::Void => HirType::Void,
             Value::Integer8(_) => HirType::Integer8,
             Value::Integer8u(_) => HirType::Integer8u,
@@ -410,9 +445,9 @@ impl HirType {
             Value::Integer64(_) => HirType::Integer64,
             Value::Number32(_) => HirType::Number32,
             Value::Number64(_) => HirType::Number64,
-            Value::List(_) => HirType::List(Box::new(HirType::Inferred { 
-                id: 0, 
-                location: SourceLocation::default() 
+            Value::List(_) => HirType::List(Box::new(HirType::Inferred {
+                id: 0,
+                location: SourceLocation::default(),
             })),
             Value::Matrix(_) => HirType::Matrix(Box::new(HirType::Number)),
         }
@@ -435,26 +470,26 @@ pub enum HirError {
         message: String,
         location: SourceLocation,
     },
-    
+
     /// Missing required construct
     MissingConstruct {
         construct: String,
         location: SourceLocation,
     },
-    
+
     /// Duplicate definition
     DuplicateDefinition {
         name: String,
         first_location: SourceLocation,
         second_location: SourceLocation,
     },
-    
+
     /// Invalid type annotation
     InvalidType {
         type_name: String,
         location: SourceLocation,
     },
-    
+
     /// Unsupported language feature
     UnsupportedFeature {
         feature: String,

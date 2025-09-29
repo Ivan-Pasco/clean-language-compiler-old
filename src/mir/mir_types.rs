@@ -3,9 +3,9 @@
 //! Defines the core types and structures for the Medium-level Intermediate Representation.
 //! MIR is designed to be optimization-friendly while maintaining type safety.
 
-use crate::typechecker::tast::ConcreteType;
-use crate::resolver::SymbolId;
 use crate::ast::SourceLocation;
+use crate::resolver::SymbolId;
+use crate::typechecker::tast::ConcreteType;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
@@ -26,16 +26,16 @@ pub struct RegisterId(pub usize);
 pub struct MirProgram {
     /// All functions in the program
     pub functions: HashMap<SymbolId, MirFunction>,
-    
+
     /// Global variables and constants
     pub globals: HashMap<SymbolId, MirGlobal>,
-    
+
     /// String literals pool
     pub string_pool: Vec<String>,
-    
+
     /// Entry point function (start function)
     pub entry_point: Option<SymbolId>,
-    
+
     /// Debug information if enabled
     pub debug_info: Option<MirDebugInfo>,
 }
@@ -45,34 +45,34 @@ pub struct MirProgram {
 pub struct MirFunction {
     /// Original symbol ID from TAST
     pub symbol_id: SymbolId,
-    
+
     /// Function name
     pub name: String,
-    
+
     /// Function parameters
     pub parameters: Vec<MirParameter>,
-    
+
     /// Return type
     pub return_type: MirType,
-    
+
     /// Basic blocks that make up this function
     pub blocks: HashMap<BasicBlockId, MirBasicBlock>,
-    
+
     /// Entry basic block
     pub entry_block: BasicBlockId,
-    
+
     /// Local variables (including temporaries)
     pub locals: HashMap<ValueId, MirLocal>,
-    
+
     /// Next value ID for SSA form
     pub next_value_id: usize,
-    
+
     /// Next basic block ID
     pub next_block_id: usize,
-    
+
     /// Function attributes
     pub attributes: MirFunctionAttributes,
-    
+
     /// Source location for debugging
     pub location: SourceLocation,
 }
@@ -82,13 +82,13 @@ pub struct MirFunction {
 pub struct MirParameter {
     /// Parameter value ID
     pub value_id: ValueId,
-    
+
     /// Parameter name
     pub name: String,
-    
+
     /// Parameter type
     pub param_type: MirType,
-    
+
     /// Source location
     pub location: SourceLocation,
 }
@@ -98,13 +98,13 @@ pub struct MirParameter {
 pub struct MirLocal {
     /// Variable name (for debugging)
     pub name: Option<String>,
-    
+
     /// Variable type
     pub local_type: MirType,
-    
+
     /// Whether this local is mutable
     pub is_mutable: bool,
-    
+
     /// Source location
     pub location: SourceLocation,
 }
@@ -114,19 +114,19 @@ pub struct MirLocal {
 pub struct MirGlobal {
     /// Global symbol ID
     pub symbol_id: SymbolId,
-    
+
     /// Global name
     pub name: String,
-    
+
     /// Global type
     pub global_type: MirType,
-    
+
     /// Initial value (for constants)
     pub initializer: Option<MirConstant>,
-    
+
     /// Whether this global is mutable
     pub is_mutable: bool,
-    
+
     /// Source location
     pub location: SourceLocation,
 }
@@ -136,22 +136,22 @@ pub struct MirGlobal {
 pub struct MirBasicBlock {
     /// Unique block identifier
     pub id: BasicBlockId,
-    
+
     /// Block label (for debugging)
     pub label: Option<String>,
-    
+
     /// Instructions in this block
     pub instructions: Vec<MirInstruction>,
-    
+
     /// Block terminator instruction
     pub terminator: MirTerminator,
-    
+
     /// Predecessors in control flow graph
     pub predecessors: HashSet<BasicBlockId>,
-    
+
     /// Successors in control flow graph
     pub successors: HashSet<BasicBlockId>,
-    
+
     /// Source location
     pub location: SourceLocation,
 }
@@ -161,10 +161,10 @@ pub struct MirBasicBlock {
 pub struct MirInstruction {
     /// Destination value (None for side-effect only instructions)
     pub dest: Option<ValueId>,
-    
+
     /// Instruction operation
     pub operation: MirOperation,
-    
+
     /// Source location for debugging
     pub location: SourceLocation,
 }
@@ -173,89 +173,76 @@ pub struct MirInstruction {
 #[derive(Debug, Clone)]
 pub enum MirOperation {
     /// Load from memory: dest = *src
-    Load {
-        source: MirOperand,
-    },
-    
+    Load { source: MirOperand },
+
     /// Store to memory: *dest = src
     Store {
         destination: MirOperand,
         value: MirOperand,
     },
-    
+
     /// Binary arithmetic/logical operation
     BinaryOp {
         op: MirBinaryOp,
         left: MirOperand,
         right: MirOperand,
     },
-    
+
     /// Unary operation
-    UnaryOp {
-        op: MirUnaryOp,
-        operand: MirOperand,
-    },
-    
+    UnaryOp { op: MirUnaryOp, operand: MirOperand },
+
     /// Type conversion/cast
     Cast {
         value: MirOperand,
         target_type: MirType,
     },
-    
+
     /// Function call
     Call {
         function: MirOperand,
         arguments: Vec<MirOperand>,
     },
-    
+
     /// Array/structure element access
     GetElementPtr {
         base: MirOperand,
         indices: Vec<MirOperand>,
     },
-    
+
     /// Allocate local memory
-    Alloca {
-        size: MirOperand,
-        alignment: u32,
-    },
-    
+    Alloca { size: MirOperand, alignment: u32 },
+
     /// Copy value
-    Copy {
-        source: MirOperand,
-    },
-    
+    Copy { source: MirOperand },
+
     /// Move value (for move semantics)
-    Move {
-        source: MirOperand,
-    },
-    
+    Move { source: MirOperand },
+
     /// Phi node for SSA form
     Phi {
         incoming: Vec<(BasicBlockId, MirOperand)>,
     },
+
+    /// Async assignment for later variables
+    AsyncAssign { source: MirOperand },
 }
 
 /// MIR terminator instructions (end basic blocks)
 #[derive(Debug, Clone)]
 pub enum MirTerminator {
     /// Unconditional jump
-    Jump {
-        target: BasicBlockId,
-    },
-    
+    Jump { target: BasicBlockId },
+
     /// Conditional branch
     Branch {
         condition: MirOperand,
         true_block: BasicBlockId,
         false_block: BasicBlockId,
     },
-    
+
     /// Return from function
-    Return {
-        value: Option<MirOperand>,
-    },
-    
+    Return { value: Option<MirOperand> },
+
     /// Unreachable code
     Unreachable,
 }
@@ -265,13 +252,13 @@ pub enum MirTerminator {
 pub enum MirOperand {
     /// SSA value reference
     Value(ValueId),
-    
+
     /// Constant value
     Constant(MirConstant),
-    
+
     /// Function reference
     Function(SymbolId),
-    
+
     /// Global variable reference
     Global(SymbolId),
 }
@@ -281,25 +268,25 @@ pub enum MirOperand {
 pub enum MirConstant {
     /// Integer constant
     Integer(i64),
-    
+
     /// Floating point constant
     Float(f64),
-    
+
     /// Boolean constant
     Boolean(bool),
-    
+
     /// String constant (index into string pool)
     String(usize),
-    
+
     /// Null pointer
     Null,
-    
+
     /// Undefined value
     Undefined,
-    
+
     /// Array constant
     Array(Vec<MirConstant>),
-    
+
     /// Structure constant
     Struct(Vec<MirConstant>),
 }
@@ -309,31 +296,38 @@ pub enum MirConstant {
 pub enum MirType {
     /// Void type (no value)
     Void,
-    
+
     /// Integer types with explicit bit width
-    I8, I16, I32, I64,
-    
+    I8,
+    I16,
+    I32,
+    I64,
+
     /// Unsigned integer types
-    U8, U16, U32, U64,
-    
+    U8,
+    U16,
+    U32,
+    U64,
+
     /// Floating point types
-    F32, F64,
-    
+    F32,
+    F64,
+
     /// Boolean type
     Bool,
-    
+
     /// Pointer type
     Ptr(Box<MirType>),
-    
+
     /// Array type with size
     Array(Box<MirType>, usize),
-    
+
     /// Function type
     Function {
         parameters: Vec<MirType>,
         return_type: Box<MirType>,
     },
-    
+
     /// Structure type
     Struct(Vec<MirType>),
 }
@@ -342,13 +336,26 @@ pub enum MirType {
 #[derive(Debug, Clone, PartialEq)]
 pub enum MirBinaryOp {
     // Arithmetic
-    Add, Sub, Mul, Div, Rem,
-    
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+
     // Bitwise
-    And, Or, Xor, Shl, Shr,
-    
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
+
     // Comparison (produce boolean)
-    Eq, Ne, Lt, Le, Gt, Ge,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
 }
 
 /// Unary operations in MIR
@@ -356,10 +363,10 @@ pub enum MirBinaryOp {
 pub enum MirUnaryOp {
     /// Arithmetic negation
     Neg,
-    
+
     /// Logical negation
     Not,
-    
+
     /// Bitwise complement
     BitNot,
 }
@@ -369,13 +376,13 @@ pub enum MirUnaryOp {
 pub struct MirFunctionAttributes {
     /// Function is marked as inline
     pub inline: bool,
-    
+
     /// Function is pure (no side effects)
     pub pure: bool,
-    
+
     /// Function is the entry point
     pub entry_point: bool,
-    
+
     /// Function is exported
     pub exported: bool,
 }
@@ -385,10 +392,10 @@ pub struct MirFunctionAttributes {
 pub struct MirDebugInfo {
     /// Source file names
     pub source_files: Vec<String>,
-    
+
     /// Line number information for instructions
     pub line_info: HashMap<ValueId, (usize, u32)>, // (file_index, line_number)
-    
+
     /// Variable names for debugging
     pub variable_names: HashMap<ValueId, String>,
 }
@@ -407,7 +414,7 @@ impl MirType {
             MirType::Struct(fields) => fields.iter().map(|f| f.size_bytes()).sum(),
         }
     }
-    
+
     /// Get the alignment requirement for this type
     pub fn alignment(&self) -> usize {
         match self {
@@ -421,16 +428,25 @@ impl MirType {
             MirType::Struct(fields) => fields.iter().map(|f| f.alignment()).max().unwrap_or(1),
         }
     }
-    
+
     /// Check if this type is a primitive type
     pub fn is_primitive(&self) -> bool {
-        matches!(self, 
-            MirType::I8 | MirType::I16 | MirType::I32 | MirType::I64 |
-            MirType::U8 | MirType::U16 | MirType::U32 | MirType::U64 |
-            MirType::F32 | MirType::F64 | MirType::Bool
+        matches!(
+            self,
+            MirType::I8
+                | MirType::I16
+                | MirType::I32
+                | MirType::I64
+                | MirType::U8
+                | MirType::U16
+                | MirType::U32
+                | MirType::U64
+                | MirType::F32
+                | MirType::F64
+                | MirType::Bool
         )
     }
-    
+
     /// Convert from TAST ConcreteType to MIR type
     pub fn from_concrete_type(concrete_type: &ConcreteType) -> Self {
         match concrete_type {
@@ -444,12 +460,14 @@ impl MirType {
                 // Dynamic arrays as pointer to elements
                 MirType::Ptr(Box::new(Self::from_concrete_type(element_type)))
             }
-            ConcreteType::Function { parameters, return_type, .. } => {
-                MirType::Function {
-                    parameters: parameters.iter().map(Self::from_concrete_type).collect(),
-                    return_type: Box::new(Self::from_concrete_type(return_type)),
-                }
-            }
+            ConcreteType::Function {
+                parameters,
+                return_type,
+                ..
+            } => MirType::Function {
+                parameters: parameters.iter().map(Self::from_concrete_type).collect(),
+                return_type: Box::new(Self::from_concrete_type(return_type)),
+            },
             ConcreteType::Class { .. } => {
                 // Classes as opaque pointers for now
                 MirType::Ptr(Box::new(MirType::Void))
@@ -476,15 +494,20 @@ impl fmt::Display for MirType {
             MirType::Bool => write!(f, "bool"),
             MirType::Ptr(inner) => write!(f, "{}*", inner),
             MirType::Array(element, size) => write!(f, "[{} x {}]", element, size),
-            MirType::Function { parameters, return_type } => {
-                let params = parameters.iter()
+            MirType::Function {
+                parameters,
+                return_type,
+            } => {
+                let params = parameters
+                    .iter()
                     .map(|p| p.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, "({}) -> {}", params, return_type)
             }
             MirType::Struct(fields) => {
-                let field_types = fields.iter()
+                let field_types = fields
+                    .iter()
                     .map(|f| f.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");

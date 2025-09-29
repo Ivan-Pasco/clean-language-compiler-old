@@ -294,7 +294,7 @@ impl MirBuilder {
         };
 
         // Process parameters
-        for (i, param) in tast_function.parameters.iter().enumerate() {
+        for (_i, param) in tast_function.parameters.iter().enumerate() {
             let value_id = ValueId(context.function.next_value_id);
             context.function.next_value_id += 1;
 
@@ -405,11 +405,11 @@ impl MirBuilder {
     ) -> Result<(), Vec<CompilerError>> {
         match statement {
             TastStatement::VariableDeclaration {
-                symbol_id,
+                symbol_id: _,
                 name,
                 var_type,
                 initializer,
-                is_mutable,
+                is_mutable: _,
                 location,
             } => {
                 let value_id = if let Some(init_expr) = initializer {
@@ -452,14 +452,14 @@ impl MirBuilder {
             TastStatement::Assignment {
                 target,
                 value,
-                location,
+                location: _,
             } => {
                 // Build value expression
                 let value_id = self.build_expression(context, value)?;
 
                 // Handle assignment target - for now, only support simple variable assignments
                 match &target.kind {
-                    TastExpressionKind::Variable { symbol_id, name } => {
+                    TastExpressionKind::Variable { symbol_id: _, name } => {
                         // Update variable in current scope
                         if let Some(current_scope) = context.scope_stack.last_mut() {
                             current_scope.insert(name.clone(), value_id);
@@ -468,7 +468,7 @@ impl MirBuilder {
                     TastExpressionKind::PropertyAccess {
                         object,
                         property_name,
-                        property_symbol,
+                        property_symbol: _,
                     } => {
                         // Handle field assignments like obj.field = value or this.field = value
                         let _object_value = self.build_expression(context, object)?;
@@ -535,7 +535,7 @@ impl MirBuilder {
                 let value_id = self.build_expression(context, expression)?;
 
                 // CRITICAL FIX: Generate proper function call to print/printl
-                let function_name = if *newline { "printl" } else { "print" };
+                let _function_name = if *newline { "printl" } else { "print" };
                 let function_symbol = SymbolId(0); // Use fixed symbol IDs for built-in functions
 
                 let instruction = MirInstruction {
@@ -708,7 +708,10 @@ impl MirBuilder {
                     is_mutable: false,
                     location: location.clone(),
                 };
-                context.function.locals.insert(iterator_value_id, iterator_local);
+                context
+                    .function
+                    .locals
+                    .insert(iterator_value_id, iterator_local);
 
                 // Jump to header block
                 self.set_block_terminator(
@@ -848,6 +851,130 @@ impl MirBuilder {
                 self.current_block = Some(exit_block_id);
             }
 
+            TastStatement::While {
+                condition,
+                body,
+                location,
+            } => {
+                // Create basic blocks for loop header, body, and exit
+                let header_block_id = BasicBlockId(context.function.blocks.len());
+                let body_block_id = BasicBlockId(context.function.blocks.len() + 1);
+                let exit_block_id = BasicBlockId(context.function.blocks.len() + 2);
+
+                // Jump to header from current block
+                self.set_block_terminator(
+                    context,
+                    MirTerminator::Jump {
+                        target: header_block_id,
+                    },
+                );
+
+                // Create header block - evaluates condition
+                context.function.blocks.insert(
+                    header_block_id,
+                    MirBasicBlock {
+                        id: header_block_id,
+                        label: Some("while_header".to_string()),
+                        instructions: Vec::new(),
+                        terminator: MirTerminator::Unreachable, // Will be replaced
+                        predecessors: HashSet::new(),
+                        successors: HashSet::new(),
+                        location: location.clone(),
+                    },
+                );
+                self.current_block = Some(header_block_id);
+
+                // Build condition expression in header block
+                let condition_id = self.build_expression(context, condition)?;
+
+                // Create conditional branch: if condition then body else exit
+                self.set_block_terminator(
+                    context,
+                    MirTerminator::Branch {
+                        condition: MirOperand::Value(condition_id),
+                        true_block: body_block_id,
+                        false_block: exit_block_id,
+                    },
+                );
+
+                // Create body block
+                context.function.blocks.insert(
+                    body_block_id,
+                    MirBasicBlock {
+                        id: body_block_id,
+                        label: Some("while_body".to_string()),
+                        instructions: Vec::new(),
+                        terminator: MirTerminator::Unreachable, // Will be replaced
+                        predecessors: HashSet::new(),
+                        successors: HashSet::new(),
+                        location: location.clone(),
+                    },
+                );
+                self.current_block = Some(body_block_id);
+
+                // Process body statements
+                for stmt in &body.statements {
+                    self.build_statement(context, stmt)?;
+                }
+
+                // Jump back to header at end of body (creating the loop)
+                self.set_block_terminator(
+                    context,
+                    MirTerminator::Jump {
+                        target: header_block_id,
+                    },
+                );
+
+                // Create exit block
+                context.function.blocks.insert(
+                    exit_block_id,
+                    MirBasicBlock {
+                        id: exit_block_id,
+                        label: Some("while_exit".to_string()),
+                        instructions: Vec::new(),
+                        terminator: MirTerminator::Unreachable, // Will be replaced later
+                        predecessors: HashSet::new(),
+                        successors: HashSet::new(),
+                        location: location.clone(),
+                    },
+                );
+                self.current_block = Some(exit_block_id);
+            }
+
+            TastStatement::LaterAssignment {
+                variable,
+                symbol_id: _,
+                expression,
+                location,
+            } => {
+                // For async later assignments, we create a deferred execution context
+                // The expression is evaluated asynchronously and stored for later use
+                let value_id = self.build_expression(context, expression)?;
+
+                // Create a value ID for the variable
+                let variable_value_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+
+                // Store the async result in a local variable
+                let mir_type = self.convert_concrete_type(&expression.expr_type);
+                self.register_temp_local(context, variable_value_id, mir_type, location.clone());
+
+                // Create an async assignment instruction that defers the value
+                let async_instruction = MirInstruction {
+                    dest: Some(variable_value_id),
+                    operation: MirOperation::AsyncAssign {
+                        source: MirOperand::Value(value_id),
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, async_instruction);
+
+                // Add variable to current scope
+                if let Some(current_scope) = context.scope_stack.last_mut() {
+                    current_scope.insert(variable.clone(), variable_value_id);
+                }
+            }
+
             _ => {
                 // TODO: Implement other statement types
                 return Err(vec![CompilerError::validation_error(
@@ -888,7 +1015,7 @@ impl MirBuilder {
                 Ok(value_id)
             }
 
-            TastExpressionKind::Variable { symbol_id, name } => {
+            TastExpressionKind::Variable { symbol_id: _, name } => {
                 // Special case for 'this' - in class methods, 'this' refers to the first parameter
                 if name == "this" && context.class_context.is_some() {
                     // In class methods, 'this' is the first parameter (parameter 0)
@@ -1094,7 +1221,7 @@ impl MirBuilder {
 
             TastExpressionKind::MethodCall {
                 receiver,
-                method_name,
+                method_name: _,
                 method_symbol,
                 arguments,
                 type_args: _,
@@ -1140,7 +1267,7 @@ impl MirBuilder {
 
             TastExpressionKind::PropertyAccess {
                 object,
-                property_name,
+                property_name: _,
                 property_symbol,
             } => {
                 // Build the object expression first

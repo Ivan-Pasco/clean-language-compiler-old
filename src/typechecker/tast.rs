@@ -4,7 +4,7 @@
 //! All expressions have concrete types and all symbols are fully resolved.
 
 use crate::ast::SourceLocation;
-use crate::resolver::{SymbolId, ScopeId};
+use crate::resolver::{ScopeId, SymbolId};
 use std::collections::HashMap;
 
 /// Type-checked program representation
@@ -145,6 +145,12 @@ pub enum TastStatement {
     Print {
         expression: TastExpression,
         newline: bool,
+        location: SourceLocation,
+    },
+    LaterAssignment {
+        variable: String,
+        symbol_id: SymbolId,
+        expression: TastExpression,
         location: SourceLocation,
     },
 }
@@ -292,49 +298,55 @@ pub enum ConcreteType {
     Boolean,
     Null,
     Undefined,
-    
+
     /// Array type with element type
     Array(Box<ConcreteType>),
-    
+
+    /// Matrix type with element type (2D array)
+    Matrix(Box<ConcreteType>),
+
     /// Function type
     Function {
         parameters: Vec<ConcreteType>,
         return_type: Box<ConcreteType>,
         is_async: bool,
     },
-    
+
     /// Class type
     Class {
         symbol_id: SymbolId,
         type_args: Vec<ConcreteType>,
     },
-    
+
     /// Interface type
     Interface {
         symbol_id: SymbolId,
         type_args: Vec<ConcreteType>,
     },
-    
+
     /// Tuple type
     Tuple(Vec<ConcreteType>),
-    
+
     /// Union type (sum type)
     Union(Vec<ConcreteType>),
-    
+
     /// Intersection type
     Intersection(Vec<ConcreteType>),
-    
+
     /// Generic type parameter
     Generic {
         name: String,
         bounds: Vec<ConcreteType>,
     },
-    
+
     /// Unknown type (for error recovery)
     Unknown,
-    
+
     /// Never type (for functions that never return)
     Never,
+
+    /// Namespace type (for namespace identifiers like 'math', 'string')
+    Namespace,
 }
 
 /// Generic type parameter
@@ -355,21 +367,21 @@ pub enum TypeConstraint {
         right: ConcreteType,
         location: SourceLocation,
     },
-    
+
     /// Left type must be subtype of right type
     Subtype {
         subtype: ConcreteType,
         supertype: ConcreteType,
         location: SourceLocation,
     },
-    
+
     /// Type must implement interface
     Implements {
         type_: ConcreteType,
         interface: ConcreteType,
         location: SourceLocation,
     },
-    
+
     /// Type must have specific member
     HasMember {
         type_: ConcreteType,
@@ -389,7 +401,7 @@ pub enum BinaryOperator {
     Divide,
     Modulo,
     Power,
-    
+
     // Comparison
     Equal,
     NotEqual,
@@ -397,18 +409,18 @@ pub enum BinaryOperator {
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
-    
+
     // Logical
     And,
     Or,
-    
+
     // Bitwise
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
     LeftShift,
     RightShift,
-    
+
     // String
     Concatenate,
 }
@@ -441,75 +453,94 @@ impl ConcreteType {
         match (self, other) {
             // Exact type match
             (a, b) if a == b => true,
-            
+
             // Integer can be assigned to Number
             (ConcreteType::Integer, ConcreteType::Number) => true,
-            
+
             // Null can be assigned to any type (nullable types)
             (ConcreteType::Null, _) => true,
-            
+
             // Array covariance (if element types are assignable)
             (ConcreteType::Array(a), ConcreteType::Array(b)) => a.is_assignable_to(b),
-            
+
+            // Matrix covariance (if element types are assignable)
+            (ConcreteType::Matrix(a), ConcreteType::Matrix(b)) => a.is_assignable_to(b),
+
             // Function type compatibility
-            (ConcreteType::Function { parameters: p1, return_type: r1, is_async: a1 },
-             ConcreteType::Function { parameters: p2, return_type: r2, is_async: a2 }) => {
-                a1 == a2 && 
+            (
+                ConcreteType::Function {
+                    parameters: p1,
+                    return_type: r1,
+                    is_async: a1,
+                },
+                ConcreteType::Function {
+                    parameters: p2,
+                    return_type: r2,
+                    is_async: a2,
+                },
+            ) => {
+                a1 == a2 &&
                 p1.len() == p2.len() &&
                 p1.iter().zip(p2.iter()).all(|(t1, t2)| t2.is_assignable_to(t1)) && // contravariant
                 r1.is_assignable_to(r2) // covariant
             }
-            
+
             // Union types (can assign to union if assignable to any member)
             (t, ConcreteType::Union(types)) => types.iter().any(|ut| t.is_assignable_to(ut)),
-            
+
             // Intersection types (can assign from intersection if all members are assignable)
             (ConcreteType::Intersection(types), t) => types.iter().all(|it| it.is_assignable_to(t)),
-            
+
             // Unknown type is assignable to anything (for error recovery)
             (ConcreteType::Unknown, _) | (_, ConcreteType::Unknown) => true,
-            
+
             // Nothing else is assignable
             _ => false,
         }
     }
-    
+
     /// Get the common supertype of two types
     pub fn common_supertype(&self, other: &ConcreteType) -> ConcreteType {
         if self == other {
             return self.clone();
         }
-        
+
         match (self, other) {
             // Integer and Number -> Number
-            (ConcreteType::Integer, ConcreteType::Number) | 
-            (ConcreteType::Number, ConcreteType::Integer) => ConcreteType::Number,
-            
+            (ConcreteType::Integer, ConcreteType::Number)
+            | (ConcreteType::Number, ConcreteType::Integer) => ConcreteType::Number,
+
             // Array types with compatible elements
             (ConcreteType::Array(a), ConcreteType::Array(b)) => {
                 ConcreteType::Array(Box::new(a.common_supertype(b)))
             }
-            
+
+            // Matrix types with compatible elements
+            (ConcreteType::Matrix(a), ConcreteType::Matrix(b)) => {
+                ConcreteType::Matrix(Box::new(a.common_supertype(b)))
+            }
+
             // Different types -> Union
             _ => ConcreteType::Union(vec![self.clone(), other.clone()]),
         }
     }
-    
+
     /// Check if this is a numeric type
     pub fn is_numeric(&self) -> bool {
         matches!(self, ConcreteType::Integer | ConcreteType::Number)
     }
-    
+
     /// Check if this is a primitive type
     pub fn is_primitive(&self) -> bool {
-        matches!(self, 
-            ConcreteType::Integer | 
-            ConcreteType::Number | 
-            ConcreteType::String | 
-            ConcreteType::Boolean
+        matches!(
+            self,
+            ConcreteType::Integer
+                | ConcreteType::Number
+                | ConcreteType::String
+                | ConcreteType::Boolean
         )
     }
-    
+
     /// Get the default value for this type
     pub fn default_value(&self) -> TastLiteral {
         match self {
@@ -532,30 +563,44 @@ impl std::fmt::Display for ConcreteType {
             ConcreteType::Null => write!(f, "null"),
             ConcreteType::Undefined => write!(f, "undefined"),
             ConcreteType::Array(element_type) => write!(f, "Array<{}>", element_type),
-            ConcreteType::Function { parameters, return_type, is_async } => {
+            ConcreteType::Matrix(element_type) => write!(f, "Matrix<{}>", element_type),
+            ConcreteType::Function {
+                parameters,
+                return_type,
+                is_async,
+            } => {
                 let async_str = if *is_async { "async " } else { "" };
-                let params = parameters.iter()
+                let params = parameters
+                    .iter()
                     .map(|p| p.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, "{}({}) -> {}", async_str, params, return_type)
             }
-            ConcreteType::Class { symbol_id, type_args } => {
+            ConcreteType::Class {
+                symbol_id,
+                type_args,
+            } => {
                 if type_args.is_empty() {
                     write!(f, "Class#{}", symbol_id.0)
                 } else {
-                    let args = type_args.iter()
+                    let args = type_args
+                        .iter()
                         .map(|t| t.to_string())
                         .collect::<Vec<_>>()
                         .join(", ");
                     write!(f, "Class#{}<{}>", symbol_id.0, args)
                 }
             }
-            ConcreteType::Interface { symbol_id, type_args } => {
+            ConcreteType::Interface {
+                symbol_id,
+                type_args,
+            } => {
                 if type_args.is_empty() {
                     write!(f, "Interface#{}", symbol_id.0)
                 } else {
-                    let args = type_args.iter()
+                    let args = type_args
+                        .iter()
                         .map(|t| t.to_string())
                         .collect::<Vec<_>>()
                         .join(", ");
@@ -563,21 +608,24 @@ impl std::fmt::Display for ConcreteType {
                 }
             }
             ConcreteType::Tuple(types) => {
-                let types_str = types.iter()
+                let types_str = types
+                    .iter()
                     .map(|t| t.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, "({})", types_str)
             }
             ConcreteType::Union(types) => {
-                let types_str = types.iter()
+                let types_str = types
+                    .iter()
                     .map(|t| t.to_string())
                     .collect::<Vec<_>>()
                     .join(" | ");
                 write!(f, "{}", types_str)
             }
             ConcreteType::Intersection(types) => {
-                let types_str = types.iter()
+                let types_str = types
+                    .iter()
                     .map(|t| t.to_string())
                     .collect::<Vec<_>>()
                     .join(" & ");
@@ -587,7 +635,8 @@ impl std::fmt::Display for ConcreteType {
                 if bounds.is_empty() {
                     write!(f, "{}", name)
                 } else {
-                    let bounds_str = bounds.iter()
+                    let bounds_str = bounds
+                        .iter()
                         .map(|b| b.to_string())
                         .collect::<Vec<_>>()
                         .join(" + ");
@@ -596,6 +645,7 @@ impl std::fmt::Display for ConcreteType {
             }
             ConcreteType::Unknown => write!(f, "?"),
             ConcreteType::Never => write!(f, "!"),
+            ConcreteType::Namespace => write!(f, "namespace"),
         }
     }
 }

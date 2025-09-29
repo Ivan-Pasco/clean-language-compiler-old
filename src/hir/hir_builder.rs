@@ -6,10 +6,13 @@
 //! - Converting implicit operations to explicit ones
 //! - Maintaining source location information for error reporting
 
-use crate::ast::{Program, Statement, Expression, Function, Class, Type, Value, BinaryOperator, UnaryOperator, Parameter, Constructor};
 use crate::ast::SourceLocation;
-use crate::hir::*;
+use crate::ast::{
+    BinaryOperator, Class, Constructor, Expression, Function, Parameter, Program, Statement, Type,
+    UnaryOperator, Value,
+};
 use crate::error::CompilerError;
+use crate::hir::*;
 
 /// HIR Builder - constructs HIR from AST
 pub struct HirBuilder {
@@ -37,7 +40,10 @@ impl HirBuilder {
         // Process top-level statements
         for statement in &program.statements {
             match statement {
-                Statement::FunctionsBlock { functions: func_list, .. } => {
+                Statement::FunctionsBlock {
+                    functions: func_list,
+                    ..
+                } => {
                     for func in func_list {
                         let hir_func = self.build_function(func)?;
                         if func.name == "start" {
@@ -50,7 +56,10 @@ impl HirBuilder {
                 Statement::ClassDefinition { class, .. } => {
                     classes.push(self.build_class(class)?);
                 }
-                Statement::Import { imports: import_list, .. } => {
+                Statement::Import {
+                    imports: import_list,
+                    ..
+                } => {
                     for import_item in import_list {
                         imports.push(HirImport {
                             module_name: import_item.name.clone(),
@@ -98,7 +107,6 @@ impl HirBuilder {
             location: program.location.unwrap_or_default(),
         };
 
-
         Ok(HirValidationResult {
             hir: hir_program,
             warnings: self.warnings.clone(),
@@ -108,7 +116,9 @@ impl HirBuilder {
 
     /// Convert AST function to HIR function
     fn build_function(&mut self, func: &Function) -> Result<HirFunction, CompilerError> {
-        let parameters = func.parameters.iter()
+        let parameters = func
+            .parameters
+            .iter()
             .map(|param| self.build_parameter(param))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -132,7 +142,9 @@ impl HirBuilder {
 
     /// Convert AST class to HIR class
     fn build_class(&mut self, class: &Class) -> Result<HirClass, CompilerError> {
-        let fields = class.fields.iter()
+        let fields = class
+            .fields
+            .iter()
             .map(|field| self.build_field(field))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -142,7 +154,9 @@ impl HirBuilder {
             None
         };
 
-        let methods = class.methods.iter()
+        let methods = class
+            .methods
+            .iter()
             .map(|method| self.build_method(method))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -175,7 +189,9 @@ impl HirBuilder {
 
     /// Convert AST constructor to HIR constructor
     fn build_constructor(&mut self, ctor: &Constructor) -> Result<HirConstructor, CompilerError> {
-        let parameters = ctor.parameters.iter()
+        let parameters = ctor
+            .parameters
+            .iter()
             .map(|param| self.build_parameter(param))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -190,7 +206,9 @@ impl HirBuilder {
 
     /// Convert AST method to HIR method  
     fn build_method(&mut self, method: &Function) -> Result<HirMethod, CompilerError> {
-        let parameters = method.parameters.iter()
+        let parameters = method
+            .parameters
+            .iter()
             .map(|param| self.build_parameter(param))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -225,32 +243,30 @@ impl HirBuilder {
             Type::Number => Ok(HirType::Number),
             Type::String => Ok(HirType::String),
             Type::Void => Ok(HirType::Void),
-            Type::IntegerSized { bits, unsigned } => {
-                match (bits, unsigned) {
-                    (8, false) => Ok(HirType::Integer8),
-                    (8, true) => Ok(HirType::Integer8u),
-                    (16, false) => Ok(HirType::Integer16),
-                    (16, true) => Ok(HirType::Integer16u),
-                    (32, false) => Ok(HirType::Integer32),
-                    (64, false) => Ok(HirType::Integer64),
-                    _ => Err(CompilerError::syntax_error(
-                        format!("Unsupported integer size: {bits} bits, unsigned: {unsigned}"),
-                        Some("Only 8, 16, 32, and 64 bit integers are supported".to_string()),
-                        None,
-                    )),
-                }
-            }
-            Type::NumberSized { bits } => {
-                match bits {
-                    32 => Ok(HirType::Number32),
-                    64 => Ok(HirType::Number64),
-                    _ => Err(CompilerError::syntax_error(
-                        format!("Unsupported number size: {bits} bits"),
-                        Some("Only 32 and 64 bit numbers are supported".to_string()),
-                        None,
-                    )),
-                }
-            }
+            Type::IntegerSized { bits, unsigned } => match (bits, unsigned) {
+                (8, false) => Ok(HirType::Integer8),
+                (8, true) => Ok(HirType::Integer8u),
+                (16, false) => Ok(HirType::Integer16),
+                (16, true) => Ok(HirType::Integer16u),
+                (32, false) => Ok(HirType::Integer32),
+                (32, true) => Ok(HirType::Integer32u),
+                (64, false) => Ok(HirType::Integer64),
+                (64, true) => Ok(HirType::Integer64u),
+                _ => Err(CompilerError::syntax_error(
+                    format!("Unsupported integer size: {bits} bits, unsigned: {unsigned}"),
+                    Some("Only 8, 16, 32, and 64 bit integers are supported".to_string()),
+                    None,
+                )),
+            },
+            Type::NumberSized { bits } => match bits {
+                32 => Ok(HirType::Number32),
+                64 => Ok(HirType::Number64),
+                _ => Err(CompilerError::syntax_error(
+                    format!("Unsupported number size: {bits} bits"),
+                    Some("Only 32 and 64 bit numbers are supported".to_string()),
+                    None,
+                )),
+            },
             Type::List(inner) => {
                 let inner_type = self.build_type(inner)?;
                 Ok(HirType::List(Box::new(inner_type)))
@@ -259,12 +275,10 @@ impl HirBuilder {
                 let inner_type = self.build_type(inner)?;
                 Ok(HirType::Matrix(Box::new(inner_type)))
             }
-            Type::Object(name) | Type::Class { name, .. } => {
-                Ok(HirType::Named {
-                    name: name.clone(),
-                    location: SourceLocation::default(),
-                })
-            }
+            Type::Object(name) | Type::Class { name, .. } => Ok(HirType::Named {
+                name: name.clone(),
+                location: SourceLocation::default(),
+            }),
             Type::Any => {
                 self.type_inference_counter += 1;
                 Ok(HirType::Inferred {
@@ -285,7 +299,8 @@ impl HirBuilder {
 
     /// Convert statements to HIR block
     fn build_block(&mut self, statements: &[Statement]) -> Result<HirBlock, CompilerError> {
-        let hir_statements = statements.iter()
+        let hir_statements = statements
+            .iter()
             .map(|stmt| self.build_statement(stmt))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -298,7 +313,12 @@ impl HirBuilder {
     /// Convert AST statement to HIR statement
     fn build_statement(&mut self, stmt: &Statement) -> Result<HirStatement, CompilerError> {
         match stmt {
-            Statement::VariableDecl { name, type_, initializer, location } => {
+            Statement::VariableDecl {
+                name,
+                type_,
+                initializer,
+                location,
+            } => {
                 let var_type = self.build_type(type_)?;
                 let init_expr = if let Some(init) = initializer {
                     Some(self.build_expression(init)?)
@@ -314,7 +334,11 @@ impl HirBuilder {
                 })
             }
 
-            Statement::Assignment { target, value, location } => {
+            Statement::Assignment {
+                target,
+                value,
+                location,
+            } => {
                 let lvalue = HirLValue::Variable {
                     name: target.clone(),
                     location: location.clone().unwrap_or_default(),
@@ -328,7 +352,11 @@ impl HirBuilder {
                 })
             }
 
-            Statement::Print { expression, newline, location } => {
+            Statement::Print {
+                expression,
+                newline,
+                location,
+            } => {
                 let hir_expr = self.build_expression(expression)?;
                 Ok(HirStatement::Print {
                     expression: hir_expr,
@@ -350,7 +378,12 @@ impl HirBuilder {
                 })
             }
 
-            Statement::If { condition, then_branch, else_branch, location } => {
+            Statement::If {
+                condition,
+                then_branch,
+                else_branch,
+                location,
+            } => {
                 let hir_condition = self.build_expression(condition)?;
                 let hir_then = self.build_block(then_branch)?;
                 let hir_else = if let Some(else_stmts) = else_branch {
@@ -367,7 +400,11 @@ impl HirBuilder {
                 })
             }
 
-            Statement::While { condition, body, location } => {
+            Statement::While {
+                condition,
+                body,
+                location,
+            } => {
                 let hir_condition = self.build_expression(condition)?;
                 let hir_body = self.build_block(body)?;
 
@@ -378,7 +415,12 @@ impl HirBuilder {
                 })
             }
 
-            Statement::Iterate { iterator, collection, body, location } => {
+            Statement::Iterate {
+                iterator,
+                collection,
+                body,
+                location,
+            } => {
                 let hir_iterable = self.build_expression(collection)?;
                 let hir_body = self.build_block(body)?;
 
@@ -393,6 +435,15 @@ impl HirBuilder {
             Statement::Expression { expr, location } => {
                 let hir_expr = self.build_expression(expr)?;
                 Ok(HirStatement::Expression {
+                    expression: hir_expr,
+                    location: location.clone().unwrap_or_default(),
+                })
+            }
+
+            Statement::LaterAssignment { variable, expression, location } => {
+                let hir_expr = self.build_expression(expression)?;
+                Ok(HirStatement::LaterAssignment {
+                    variable: variable.clone(),
                     expression: hir_expr,
                     location: location.clone().unwrap_or_default(),
                 })
@@ -414,19 +465,15 @@ impl HirBuilder {
     /// Convert AST expression to HIR expression
     fn build_expression(&mut self, expr: &Expression) -> Result<HirExpression, CompilerError> {
         match expr {
-            Expression::Literal(value) => {
-                Ok(HirExpression::Literal {
-                    value: value.clone(),
-                    location: SourceLocation::default(),
-                })
-            }
+            Expression::Literal(value) => Ok(HirExpression::Literal {
+                value: value.clone(),
+                location: SourceLocation::default(),
+            }),
 
-            Expression::Variable(name) => {
-                Ok(HirExpression::Variable {
-                    name: name.clone(),
-                    location: SourceLocation::default(),
-                })
-            }
+            Expression::Variable(name) => Ok(HirExpression::Variable {
+                name: name.clone(),
+                location: SourceLocation::default(),
+            }),
 
             Expression::Binary(left, op, right) => {
                 let hir_left = self.build_expression(left)?;
@@ -453,7 +500,8 @@ impl HirBuilder {
             }
 
             Expression::Call(name, args) => {
-                let hir_args = args.iter()
+                let hir_args = args
+                    .iter()
                     .map(|arg| self.build_expression(arg))
                     .collect::<Result<Vec<_>, _>>()?;
 
@@ -464,9 +512,15 @@ impl HirBuilder {
                 })
             }
 
-            Expression::MethodCall { object, method, arguments, location } => {
+            Expression::MethodCall {
+                object,
+                method,
+                arguments,
+                location,
+            } => {
                 let hir_object = self.build_expression(object)?;
-                let hir_args = arguments.iter()
+                let hir_args = arguments
+                    .iter()
                     .map(|arg| self.build_expression(arg))
                     .collect::<Result<Vec<_>, _>>()?;
 
@@ -478,7 +532,11 @@ impl HirBuilder {
                 })
             }
 
-            Expression::PropertyAccess { object, property, location } => {
+            Expression::PropertyAccess {
+                object,
+                property,
+                location,
+            } => {
                 let hir_object = self.build_expression(object)?;
 
                 Ok(HirExpression::FieldAccess {
@@ -499,8 +557,13 @@ impl HirBuilder {
                 })
             }
 
-            Expression::ObjectCreation { class_name, arguments, location } => {
-                let hir_args = arguments.iter()
+            Expression::ObjectCreation {
+                class_name,
+                arguments,
+                location,
+            } => {
+                let hir_args = arguments
+                    .iter()
                     .map(|arg| self.build_expression(arg))
                     .collect::<Result<Vec<_>, _>>()?;
 
@@ -511,8 +574,14 @@ impl HirBuilder {
                 })
             }
 
-            Expression::NamespaceCall { namespace, function, arguments, location } => {
-                let hir_args = arguments.iter()
+            Expression::NamespaceCall {
+                namespace,
+                function,
+                arguments,
+                location,
+            } => {
+                let hir_args = arguments
+                    .iter()
                     .map(|arg| self.build_expression(arg))
                     .collect::<Result<Vec<_>, _>>()?;
 
