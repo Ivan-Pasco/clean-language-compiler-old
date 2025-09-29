@@ -822,10 +822,7 @@ impl GlobalSymbolTable {
             ),
             (
                 "list_push",
-                vec![
-                    HirType::List(Box::new(HirType::Number)),
-                    HirType::Number,
-                ],
+                vec![HirType::List(Box::new(HirType::Number)), HirType::Number],
                 HirType::Void,
             ),
             (
@@ -835,10 +832,7 @@ impl GlobalSymbolTable {
             ),
             (
                 "list_get",
-                vec![
-                    HirType::List(Box::new(HirType::Number)),
-                    HirType::Integer,
-                ],
+                vec![HirType::List(Box::new(HirType::Number)), HirType::Integer],
                 HirType::Number,
             ),
         ];
@@ -897,11 +891,15 @@ impl GlobalSymbolTable {
         // String namespace - so "string" is recognized as a valid identifier
         let string_functions = vec![
             self.lookup_symbol("string_length").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_substring").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_toUpperCase").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_toLowerCase").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_substring")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_toUpperCase")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_toLowerCase")
+                .unwrap_or(SymbolId(0)),
             self.lookup_symbol("string_trim").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_trimStart").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_trimStart")
+                .unwrap_or(SymbolId(0)),
             self.lookup_symbol("string_trimEnd").unwrap_or(SymbolId(0)),
             self.lookup_symbol("string_contains").unwrap_or(SymbolId(0)),
         ];

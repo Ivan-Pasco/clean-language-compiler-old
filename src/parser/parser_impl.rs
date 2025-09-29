@@ -896,7 +896,6 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
     Ok(program)
 }
 
-
 pub fn parse_start_function(pair: Pair<Rule>) -> Result<Function, CompilerError> {
     let name = "start".to_string();
     let mut body = Vec::new();
@@ -1589,7 +1588,6 @@ fn parse_parameter_list(param_list_pair: Pair<Rule>) -> Result<Vec<Parameter>, C
     Ok(parameters)
 }
 
-
 pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, CompilerError> {
     let mut func_name = String::new();
     let mut return_type: Option<Type> = None;
@@ -2098,7 +2096,7 @@ impl ErrorRecoveringParser {
                             .as_ref()
                             .map(|l| format!("{}:{}", l.line, l.column))
                             .unwrap_or_else(|| "unknown".to_string())
-                    },
+                    }
                     CompilerError::LexError(_) => {
                         "lexer".to_string()
                     }
@@ -2126,8 +2124,8 @@ impl ErrorRecoveringParser {
 
 #[cfg(test)]
 mod tests {
+    use super::CleanParser;
     use super::*;
-    use crate::CleanParser;
     use pest::Parser;
 
     #[test]

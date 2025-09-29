@@ -169,7 +169,14 @@ impl TypeInference {
             .symbol_table
             .lookup_symbol_in_scope("input", crate::resolver::ScopeId(0))
         {
-            self.type_env.insert(symbol_id, ConcreteType::String);
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::String],
+                    return_type: Box::new(ConcreteType::String),
+                    is_async: false,
+                },
+            );
         }
 
         // Find inputInteger function
@@ -177,7 +184,14 @@ impl TypeInference {
             .symbol_table
             .lookup_symbol_in_scope("inputInteger", crate::resolver::ScopeId(0))
         {
-            self.type_env.insert(symbol_id, ConcreteType::Integer);
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::String],
+                    return_type: Box::new(ConcreteType::Integer),
+                    is_async: false,
+                },
+            );
         }
 
         // Find inputNumber function
@@ -185,7 +199,14 @@ impl TypeInference {
             .symbol_table
             .lookup_symbol_in_scope("inputNumber", crate::resolver::ScopeId(0))
         {
-            self.type_env.insert(symbol_id, ConcreteType::Number);
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::String],
+                    return_type: Box::new(ConcreteType::Number),
+                    is_async: false,
+                },
+            );
         }
 
         // Find toString function
@@ -193,7 +214,14 @@ impl TypeInference {
             .symbol_table
             .lookup_symbol_in_scope("toString", crate::resolver::ScopeId(0))
         {
-            self.type_env.insert(symbol_id, ConcreteType::String);
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::Integer],
+                    return_type: Box::new(ConcreteType::String),
+                    is_async: false,
+                },
+            );
         }
 
         // Find toInteger function
@@ -201,7 +229,14 @@ impl TypeInference {
             .symbol_table
             .lookup_symbol_in_scope("toInteger", crate::resolver::ScopeId(0))
         {
-            self.type_env.insert(symbol_id, ConcreteType::Integer);
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::String],
+                    return_type: Box::new(ConcreteType::Integer),
+                    is_async: false,
+                },
+            );
         }
 
         // Find abs function
@@ -310,10 +345,7 @@ impl TypeInference {
             .symbol_table
             .lookup_symbol_in_scope("string", crate::resolver::ScopeId(0))
         {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Namespace,
-            );
+            self.type_env.insert(symbol_id, ConcreteType::Namespace);
         }
 
         // Add math namespace functions to type environment
@@ -538,7 +570,11 @@ impl TypeInference {
             self.type_env.insert(
                 symbol_id,
                 ConcreteType::Function {
-                    parameters: vec![ConcreteType::String, ConcreteType::Integer, ConcreteType::Integer],
+                    parameters: vec![
+                        ConcreteType::String,
+                        ConcreteType::Integer,
+                        ConcreteType::Integer,
+                    ],
                     return_type: Box::new(ConcreteType::String),
                     is_async: false,
                 },
@@ -1323,7 +1359,8 @@ impl TypeInference {
                 let tast_expression = self.infer_expression(expression)?;
 
                 // Add variable to type environment with inferred type from expression
-                self.type_env.insert(*symbol_id, tast_expression.expr_type.clone());
+                self.type_env
+                    .insert(*symbol_id, tast_expression.expr_type.clone());
 
                 Ok(TastStatement::LaterAssignment {
                     variable: variable.clone(),
@@ -1331,9 +1368,7 @@ impl TypeInference {
                     expression: tast_expression,
                     location: location.clone(),
                 })
-            }
-
-            // Handle any remaining unimplemented statement types
+            } // Handle any remaining unimplemented statement types
         };
         self.recursion_depth -= 1;
         result
@@ -1860,7 +1895,9 @@ impl TypeInference {
 
                             // Matrix-matrix addition: matrix<T> + matrix<T> -> matrix<T>
                             (ConcreteType::Matrix(left_elem), ConcreteType::Matrix(right_elem)) => {
-                                Ok(ConcreteType::Matrix(Box::new(left_elem.common_supertype(right_elem))))
+                                Ok(ConcreteType::Matrix(Box::new(
+                                    left_elem.common_supertype(right_elem),
+                                )))
                             }
                             _ => {
                                 // Try to constrain both operands to be numeric
@@ -1892,26 +1929,26 @@ impl TypeInference {
                 // Handle different operation combinations
                 match (left_type, right_type) {
                     // Integer-integer operations return integer
-                    (ConcreteType::Integer, ConcreteType::Integer) => {
-                        Ok(ConcreteType::Integer)
-                    }
+                    (ConcreteType::Integer, ConcreteType::Integer) => Ok(ConcreteType::Integer),
 
                     // Matrix-scalar operations: matrix<T> op scalar -> matrix<T>
                     (ConcreteType::Matrix(element_type), scalar_type)
-                        if scalar_type.is_numeric() => {
+                        if scalar_type.is_numeric() =>
+                    {
                         Ok(ConcreteType::Matrix(element_type.clone()))
                     }
 
                     // Scalar-matrix operations: scalar op matrix<T> -> matrix<T>
                     (scalar_type, ConcreteType::Matrix(element_type))
-                        if scalar_type.is_numeric() => {
+                        if scalar_type.is_numeric() =>
+                    {
                         Ok(ConcreteType::Matrix(element_type.clone()))
                     }
 
                     // Matrix-matrix operations: matrix<T> op matrix<T> -> matrix<T>
-                    (ConcreteType::Matrix(left_elem), ConcreteType::Matrix(right_elem)) => {
-                        Ok(ConcreteType::Matrix(Box::new(left_elem.common_supertype(right_elem))))
-                    }
+                    (ConcreteType::Matrix(left_elem), ConcreteType::Matrix(right_elem)) => Ok(
+                        ConcreteType::Matrix(Box::new(left_elem.common_supertype(right_elem))),
+                    ),
 
                     _ => {
                         // For other numeric combinations, enforce Number constraint
