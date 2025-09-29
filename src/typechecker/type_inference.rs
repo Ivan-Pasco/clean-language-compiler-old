@@ -690,6 +690,11 @@ impl TypeInference {
             self.register_function_signature(function);
         }
 
+        // Register start function signature if it exists
+        if let Some(start_fn) = &program.start_function {
+            self.register_function_signature(start_fn);
+        }
+
         for class in &program.classes {
             self.register_class_signature(class);
         }

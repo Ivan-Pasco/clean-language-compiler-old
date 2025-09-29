@@ -1,10 +1,13 @@
-use pest::{Parser, iterators::Pair};
-use crate::ast::{Function, FunctionSyntax, Parameter, Type, Statement, Visibility, FunctionModifier, SourceLocation};
-use crate::error::CompilerError;
-use super::{CleanParser, Rule};
-use super::lexical_analyzer::{LexicalAnalyzer, FunctionSegment};
+use super::lexical_analyzer::{FunctionSegment, LexicalAnalyzer};
 use super::statement_parser::parse_statement;
 use super::type_parser::parse_type;
+use super::{CleanParser, Rule};
+use crate::ast::{
+    Function, FunctionModifier, FunctionSyntax, Parameter, SourceLocation, Statement, Type,
+    Visibility,
+};
+use crate::error::CompilerError;
+use pest::{iterators::Pair, Parser};
 
 /// Enhanced function parser that uses lexical analysis for proper boundary detection
 pub struct FunctionParser {
@@ -50,16 +53,20 @@ impl FunctionParser {
         let wrapped_source = format!("functions:\n{}", segment.source);
 
         // Parse with pest
-        let parse_result = <CleanParser as Parser<Rule>>::parse(Rule::functions_block, &wrapped_source);
+        let parse_result =
+            <CleanParser as Parser<Rule>>::parse(Rule::functions_block, &wrapped_source);
         let pairs = parse_result.map_err(|e| {
             CompilerError::syntax_error(
-                &format!("Failed to parse function {}: {}", segment.boundary.function_name, e),
+                &format!(
+                    "Failed to parse function {}: {}",
+                    segment.boundary.function_name, e
+                ),
                 None,
                 Some(SourceLocation {
                     line: 1,
                     column: 1,
                     file: String::new(),
-                })
+                }),
             )
         })?;
 
@@ -76,18 +83,24 @@ impl FunctionParser {
         }
 
         Err(CompilerError::syntax_error(
-            &format!("No function found in segment for {}", segment.boundary.function_name),
+            &format!(
+                "No function found in segment for {}",
+                segment.boundary.function_name
+            ),
             None,
             Some(SourceLocation {
                 line: 1,
                 column: 1,
                 file: String::new(),
-            })
+            }),
         ))
     }
 
     /// Parse a single function from an indented functions block
-    fn parse_single_function_from_block(&self, pair: Pair<Rule>) -> Result<Function, CompilerError> {
+    fn parse_single_function_from_block(
+        &self,
+        pair: Pair<Rule>,
+    ) -> Result<Function, CompilerError> {
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
                 Rule::function_in_block => {
@@ -104,7 +117,7 @@ impl FunctionParser {
                 line: 1,
                 column: 1,
                 file: String::new(),
-            })
+            }),
         ))
     }
 
@@ -286,7 +299,10 @@ impl FunctionParser {
     }
 
     /// Fallback to traditional parsing if lexical analysis fails
-    fn parse_functions_traditional(&self, pair: Pair<Rule>) -> Result<Vec<Function>, CompilerError> {
+    fn parse_functions_traditional(
+        &self,
+        pair: Pair<Rule>,
+    ) -> Result<Vec<Function>, CompilerError> {
         // Use the existing parser implementation as fallback
         super::parser_impl::parse_functions_block_traditional(pair)
     }

@@ -14,8 +14,8 @@
 #![allow(clippy::useless_asref)]
 
 use clap::{Parser, Subcommand};
-use clean_language_compiler::{compile_with_file, runtime::wasmtime_config::CleanWasmtimeConfig};
 use clean_language_compiler::debug::DebugUtils;
+use clean_language_compiler::{compile_with_file, runtime::wasmtime_config::CleanWasmtimeConfig};
 use std::fs;
 use std::path::Path;
 
@@ -268,7 +268,10 @@ async fn handle_compile(
 
     let source = fs::read_to_string(&input)?;
 
-    eprintln!("DEBUG: About to call compile_with_file with {} characters of source", source.len());
+    eprintln!(
+        "DEBUG: About to call compile_with_file with {} characters of source",
+        source.len()
+    );
     eprintln!("DEBUG: Source content: {}", source);
 
     // Use the 7-stage pipeline for compilation
@@ -282,7 +285,7 @@ async fn handle_compile(
             return Err("Compilation failed".into());
         }
     };
-    
+
     // Note: Tests are not currently supported in the 7-stage pipeline
     if test {
         println!("⚠️  Test execution not yet implemented in 7-stage pipeline");
@@ -598,7 +601,10 @@ async fn handle_debug(
     // Debug using the 7-stage pipeline compilation attempt
     match compile_with_file(&source, &input) {
         Ok(wasm_binary) => {
-            println!("✅ Compilation successful: {} bytes of WASM generated", wasm_binary.len());
+            println!(
+                "✅ Compilation successful: {} bytes of WASM generated",
+                wasm_binary.len()
+            );
             if show_ast {
                 println!("⚠️  AST display not available in 7-stage pipeline (use specification parser directly)");
             }
@@ -694,7 +700,7 @@ async fn handle_lint(
                 }
             }
         }
-        
+
         // Note: Style validation not available in 7-stage pipeline
         if !errors_only {
             println!("  ⚠️  Style validation not yet implemented in 7-stage pipeline");
@@ -728,28 +734,31 @@ async fn handle_parse(
 
     // Use 7-stage pipeline for parsing
     println!("🔄 Using 7-stage compilation pipeline for parsing...\n");
-    
+
     match compile_with_file(&source, &input) {
         Ok(wasm_binary) => {
             println!("✅ Parsing and compilation succeeded!");
             println!("Generated {} bytes of WASM", wasm_binary.len());
-            
+
             if show_tree {
                 println!("⚠️  AST display not available in 7-stage pipeline");
                 println!("    Use the specification parser directly for AST inspection");
             }
-            
+
             if recover_errors {
                 println!("ℹ️  Error recovery mode not needed - compilation succeeded");
             }
         }
         Err(errors) => {
-            println!("❌ Parsing/compilation failed with {} error(s):\n", errors.len());
-            
+            println!(
+                "❌ Parsing/compilation failed with {} error(s):\n",
+                errors.len()
+            );
+
             for (i, error) in errors.iter().enumerate() {
                 println!("Error {}: {}", i + 1, error);
             }
-            
+
             println!("\n💡 Suggestions:");
             println!("  • Check the Clean Language syntax documentation");
             println!("  • Ensure proper indentation (tabs, not spaces)");
@@ -793,7 +802,9 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
                     for error in &compile_error {
                         eprintln!("  - {}", error);
                     }
-                    return Err(format!("Compilation failed with {} errors", compile_error.len()).into());
+                    return Err(
+                        format!("Compilation failed with {} errors", compile_error.len()).into(),
+                    );
                 }
             };
 

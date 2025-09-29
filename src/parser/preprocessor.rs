@@ -105,7 +105,7 @@ impl FunctionPreprocessor {
                 }
                 continue;
             }
-            
+
             // Preserve comments as part of function body - they are essential for proper parsing
             if trimmed.starts_with("//") || trimmed.starts_with("/*") {
                 if !current_function_lines.is_empty() {
@@ -290,12 +290,15 @@ impl FunctionPreprocessor {
                                 for inner_func_pair in func_pair.into_inner() {
                                     if inner_func_pair.as_rule() == Rule::function_in_block {
                                         let mut function =
-                                            super::parser_impl::parse_function_in_block(inner_func_pair)?;
+                                            super::parser_impl::parse_function_in_block(
+                                                inner_func_pair,
+                                            )?;
 
                                         // If we have class context, mark this as a class method
                                         if let Some(ref class_ctx) = self.class_context {
-                                            function = self
-                                                .enhance_function_with_class_context(function, class_ctx)?;
+                                            function = self.enhance_function_with_class_context(
+                                                function, class_ctx,
+                                            )?;
                                         }
 
                                         return Ok(function);

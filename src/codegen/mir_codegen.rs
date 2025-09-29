@@ -1041,7 +1041,10 @@ impl<'a> MirCodeGenerator<'a> {
             58 => Some("list_size".to_string()), // Alternative mapping
             59 => Some("list_push".to_string()), // Alternative mapping
             _ => {
-                println!("DEBUG MIR: Unknown namespace function SymbolId({})", symbol_id.0);
+                println!(
+                    "DEBUG MIR: Unknown namespace function SymbolId({})",
+                    symbol_id.0
+                );
                 None
             }
         }
@@ -1059,7 +1062,7 @@ impl<'a> MirCodeGenerator<'a> {
                 // Math namespace functions (approximately SymbolId 35-46 based on registration order)
                 // We need to map these to their host function names for WASM calls
                 self.resolve_namespace_function(symbol_id)
-            },
+            }
             _ => {
                 // CRITICAL FIX: Use the dynamic function symbol mapping for user-defined functions
                 if let Some(function_name) = self.function_symbol_map.get(&symbol_id) {

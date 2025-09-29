@@ -1166,6 +1166,11 @@ impl InstructionGenerator {
                 instructions.push(Instruction::I32Const(0));
                 Ok(WasmType::I32)
             }
+            Value::Null => {
+                // Null represents a null value - push 0 as null pointer
+                instructions.push(Instruction::I32Const(0));
+                Ok(WasmType::I32)
+            }
             Value::Void => {
                 instructions.push(Instruction::I32Const(0));
                 Ok(WasmType::I32)

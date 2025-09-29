@@ -267,10 +267,7 @@ fn parse_sized_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
         "any" => Type::Any,
         _ => {
             return Err(CompilerError::parse_error(
-                format!(
-                    "Unknown core type in sized type: {}",
-                    core_type_str
-                ),
+                format!("Unknown core type in sized type: {}", core_type_str),
                 None,
                 Some(
                     "Valid core types are: boolean, integer, number, float, string, void, any"

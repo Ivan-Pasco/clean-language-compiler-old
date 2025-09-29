@@ -133,6 +133,7 @@ impl TypeManager {
             Value::Number(_) => WasmType::F64,
             Value::List(_) => WasmType::I32, // Lists are pointers in WASM
             Value::Matrix(_) => WasmType::I32, // Matrices are pointers in WASM
+            Value::Null => WasmType::I32,    // Null represented as I32 (null pointer)
             Value::Void => WasmType::I32,    // Void represented as I32
             // Sized types
             Value::Integer8(_) => WasmType::I32,
@@ -155,6 +156,7 @@ impl TypeManager {
             Value::Number(_) => WasmType::F64,
             Value::List(_) => WasmType::I32, // Lists are pointers in WASM
             Value::Matrix(_) => WasmType::I32, // Matrices are pointers in WASM
+            Value::Null => WasmType::I32,    // Null represented as I32 (null pointer)
             Value::Void => WasmType::I32,    // Void represented as I32
             // Sized types
             Value::Integer8(_) => WasmType::I32,

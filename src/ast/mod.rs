@@ -30,6 +30,7 @@ pub enum Value {
     Boolean(bool),
     String(String),
     Matrix(Vec<Vec<f64>>),
+    Null,
     Void,
     // Advanced sized types
     Integer8(i8),
@@ -762,6 +763,7 @@ impl fmt::Display for Value {
                 }
                 write!(f, "]")
             }
+            Value::Null => write!(f, "null"),
             Value::Void => write!(f, "()"),
             Value::Integer8(i) => write!(f, "{i}:8"),
             Value::Integer8u(u) => write!(f, "{u}:8u"),

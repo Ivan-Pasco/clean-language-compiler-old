@@ -3,15 +3,15 @@
 //! These tests ensure 100% compliance with the Clean Language Specification
 //! by testing all language constructs defined in the specification.
 
+use clean_language_compiler::ast::SourceLocation;
 use clean_language_compiler::lexer::specification_lexer::*;
 use clean_language_compiler::lexer::specification_token::*;
-use clean_language_compiler::ast::SourceLocation;
 
 /// Helper function to tokenize and extract token kinds
 fn tokenize(input: &str) -> Result<Vec<TokenKind>, String> {
     let mut lexer = SpecificationLexer::new(input, "test.cln");
     let mut tokens = Vec::new();
-    
+
     loop {
         match lexer.next_token() {
             Ok(token) => {
@@ -23,7 +23,7 @@ fn tokenize(input: &str) -> Result<Vec<TokenKind>, String> {
             Err(e) => return Err(format!("{}", e)),
         }
     }
-    
+
     Ok(tokens)
 }
 
@@ -39,7 +39,11 @@ fn test_integer_literals() {
 
     for (input, expected) in test_cases {
         let tokens = tokenize(input).expect(&format!("Failed to tokenize: {}", input));
-        assert_eq!(tokens, expected, "Integer literal test failed for: {}", input);
+        assert_eq!(
+            tokens, expected,
+            "Integer literal test failed for: {}",
+            input
+        );
     }
 }
 
@@ -52,12 +56,19 @@ fn test_precision_integer_literals() {
         ("1000:16", vec![TokenKind::Integer16Literal(1000)]),
         ("1000:16u", vec![TokenKind::Integer16uLiteral(1000)]),
         ("50000:32", vec![TokenKind::Integer32Literal(50000)]),
-        ("9223372036854775807:64", vec![TokenKind::Integer64Literal(9223372036854775807)]),
+        (
+            "9223372036854775807:64",
+            vec![TokenKind::Integer64Literal(9223372036854775807)],
+        ),
     ];
 
     for (input, expected) in test_cases {
         let tokens = tokenize(input).expect(&format!("Failed to tokenize: {}", input));
-        assert_eq!(tokens, expected, "Precision integer test failed for: {}", input);
+        assert_eq!(
+            tokens, expected,
+            "Precision integer test failed for: {}",
+            input
+        );
     }
 }
 
@@ -72,7 +83,11 @@ fn test_number_literals() {
 
     for (input, expected) in test_cases {
         let tokens = tokenize(input).expect(&format!("Failed to tokenize: {}", input));
-        assert_eq!(tokens, expected, "Number literal test failed for: {}", input);
+        assert_eq!(
+            tokens, expected,
+            "Number literal test failed for: {}",
+            input
+        );
     }
 }
 
@@ -86,7 +101,11 @@ fn test_precision_number_literals() {
 
     for (input, expected) in test_cases {
         let tokens = tokenize(input).expect(&format!("Failed to tokenize: {}", input));
-        assert_eq!(tokens, expected, "Precision number test failed for: {}", input);
+        assert_eq!(
+            tokens, expected,
+            "Precision number test failed for: {}",
+            input
+        );
     }
 }
 
@@ -94,14 +113,24 @@ fn test_precision_number_literals() {
 #[test]
 fn test_string_literals() {
     let test_cases = vec![
-        (r#""hello""#, vec![TokenKind::StringLiteral("hello".to_string())]),
+        (
+            r#""hello""#,
+            vec![TokenKind::StringLiteral("hello".to_string())],
+        ),
         (r#""""#, vec![TokenKind::StringLiteral("".to_string())]),
-        (r#""Hello, World!""#, vec![TokenKind::StringLiteral("Hello, World!".to_string())]),
+        (
+            r#""Hello, World!""#,
+            vec![TokenKind::StringLiteral("Hello, World!".to_string())],
+        ),
     ];
 
     for (input, expected) in test_cases {
         let tokens = tokenize(input).expect(&format!("Failed to tokenize: {}", input));
-        assert_eq!(tokens, expected, "String literal test failed for: {}", input);
+        assert_eq!(
+            tokens, expected,
+            "String literal test failed for: {}",
+            input
+        );
     }
 }
 
@@ -115,7 +144,11 @@ fn test_boolean_literals() {
 
     for (input, expected) in test_cases {
         let tokens = tokenize(input).expect(&format!("Failed to tokenize: {}", input));
-        assert_eq!(tokens, expected, "Boolean literal test failed for: {}", input);
+        assert_eq!(
+            tokens, expected,
+            "Boolean literal test failed for: {}",
+            input
+        );
     }
 }
 
@@ -162,8 +195,17 @@ fn test_all_keywords() {
 
     for (keyword, expected_kind) in keywords {
         let tokens = tokenize(keyword).expect(&format!("Failed to tokenize keyword: {}", keyword));
-        assert_eq!(tokens.len(), 1, "Keyword should produce exactly one token: {}", keyword);
-        assert_eq!(tokens[0], expected_kind, "Keyword token mismatch for: {}", keyword);
+        assert_eq!(
+            tokens.len(),
+            1,
+            "Keyword should produce exactly one token: {}",
+            keyword
+        );
+        assert_eq!(
+            tokens[0], expected_kind,
+            "Keyword token mismatch for: {}",
+            keyword
+        );
     }
 }
 
@@ -221,10 +263,19 @@ fn test_punctuation() {
 fn test_identifiers() {
     let identifiers = vec![
         ("x", vec![TokenKind::Identifier("x".to_string())]),
-        ("variable_name", vec![TokenKind::Identifier("variable_name".to_string())]),
-        ("myFunction", vec![TokenKind::Identifier("myFunction".to_string())]),
+        (
+            "variable_name",
+            vec![TokenKind::Identifier("variable_name".to_string())],
+        ),
+        (
+            "myFunction",
+            vec![TokenKind::Identifier("myFunction".to_string())],
+        ),
         ("Person", vec![TokenKind::Identifier("Person".to_string())]),
-        ("calculateSum", vec![TokenKind::Identifier("calculateSum".to_string())]),
+        (
+            "calculateSum",
+            vec![TokenKind::Identifier("calculateSum".to_string())],
+        ),
     ];
 
     for (ident, expected) in identifiers {
@@ -238,18 +289,27 @@ fn test_identifiers() {
 fn test_indentation() {
     let input = "start()\n\tinteger x = 42\n\t\tprint(x)\n\tprint(\"done\")";
     let tokens = tokenize(input).expect("Failed to tokenize indented code");
-    
+
     // Should contain indentation tokens
     let has_indent = tokens.iter().any(|t| matches!(t, TokenKind::Indent(_)));
-    assert!(has_indent, "Indented code should contain indentation tokens");
+    assert!(
+        has_indent,
+        "Indented code should contain indentation tokens"
+    );
 }
 
 /// Test comments (not in AST but needed for parsing)
 #[test]
 fn test_comments() {
     let test_cases = vec![
-        ("// single line comment", vec![TokenKind::Comment(" single line comment".to_string())]),
-        ("/* block comment */", vec![TokenKind::BlockComment(" block comment ".to_string())]),
+        (
+            "// single line comment",
+            vec![TokenKind::Comment(" single line comment".to_string())],
+        ),
+        (
+            "/* block comment */",
+            vec![TokenKind::BlockComment(" block comment ".to_string())],
+        ),
     ];
 
     for (input, expected) in test_cases {
@@ -271,15 +331,18 @@ start()
 "#;
 
     let tokens = tokenize(program).expect("Failed to tokenize complete program");
-    
+
     // Verify it contains essential tokens
     assert!(tokens.iter().any(|t| matches!(t, TokenKind::Functions)));
     assert!(tokens.iter().any(|t| matches!(t, TokenKind::Start)));
     assert!(tokens.iter().any(|t| matches!(t, TokenKind::Return)));
     assert!(tokens.iter().any(|t| matches!(t, TokenKind::Plus)));
     assert!(tokens.iter().any(|t| matches!(t, TokenKind::Assign)));
-    
-    println!("Complete program tokenized successfully with {} tokens", tokens.len());
+
+    println!(
+        "Complete program tokenized successfully with {} tokens",
+        tokens.len()
+    );
 }
 
 /// Test precision modifier parsing edge cases
@@ -292,8 +355,13 @@ fn test_precision_edge_cases() {
     ];
 
     for (input, expected) in test_cases {
-        let tokens = tokenize(input).expect(&format!("Failed to tokenize precision case: {}", input));
-        assert_eq!(tokens, expected, "Precision edge case test failed for: {}", input);
+        let tokens =
+            tokenize(input).expect(&format!("Failed to tokenize precision case: {}", input));
+        assert_eq!(
+            tokens, expected,
+            "Precision edge case test failed for: {}",
+            input
+        );
     }
 }
 
@@ -302,7 +370,7 @@ fn test_precision_edge_cases() {
 fn test_newlines() {
     let input = "start()\nprint(\"hello\")\n";
     let tokens = tokenize(input).expect("Failed to tokenize newlines");
-    
+
     let has_newlines = tokens.iter().any(|t| matches!(t, TokenKind::Newline));
     assert!(has_newlines, "Should contain newline tokens");
 }
@@ -311,26 +379,31 @@ fn test_newlines() {
 #[test]
 fn test_performance_benchmark() {
     use std::time::Instant;
-    
+
     let large_program = r#"start()
 	integer x = 42
 	integer y = 24
 	integer sum = x + y
 	print(sum)
-"#.repeat(1000); // Repeat to create large input
+"#
+    .repeat(1000); // Repeat to create large input
 
     let start = Instant::now();
     let tokens = tokenize(&large_program).expect("Failed to tokenize large program");
     let elapsed = start.elapsed();
-    
+
     let token_count = tokens.len();
     let tokens_per_second = (token_count as f64) / elapsed.as_secs_f64();
-    
-    println!("Performance: {} tokens in {:?} ({:.0} tokens/second)", 
-        token_count, elapsed, tokens_per_second);
-    
+
+    println!(
+        "Performance: {} tokens in {:?} ({:.0} tokens/second)",
+        token_count, elapsed, tokens_per_second
+    );
+
     // Verify performance meets requirement
-    assert!(tokens_per_second >= 100_000.0, 
-        "Lexer performance requirement not met: {:.0} tokens/second < 100,000", 
-        tokens_per_second);
+    assert!(
+        tokens_per_second >= 100_000.0,
+        "Lexer performance requirement not met: {:.0} tokens/second < 100,000",
+        tokens_per_second
+    );
 }

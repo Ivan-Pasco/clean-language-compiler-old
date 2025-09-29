@@ -779,6 +779,7 @@ impl ConstraintGenerator {
             Value::Number(_) => ConstraintType::Concrete(Type::Number),
             Value::String(_) => ConstraintType::Concrete(Type::String),
             Value::Boolean(_) => ConstraintType::Concrete(Type::Boolean),
+            Value::Null => ConstraintType::Concrete(Type::Void), // Null maps to void semantics
             Value::Void => ConstraintType::Concrete(Type::Void),
             Value::List(items) => {
                 if items.is_empty() {
@@ -797,6 +798,7 @@ impl ConstraintGenerator {
                         Value::Number(_) => ConstraintType::Concrete(Type::Number),
                         Value::String(_) => ConstraintType::Concrete(Type::String),
                         Value::Boolean(_) => ConstraintType::Concrete(Type::Boolean),
+                        Value::Null => ConstraintType::Concrete(Type::Void), // Null maps to void semantics
                         Value::Void => ConstraintType::Concrete(Type::Void),
                         _ => ConstraintType::Top, // For complex nested types
                     };

@@ -1697,11 +1697,16 @@ impl SemanticAnalyzer {
 
         if function.return_type != Type::Void && !has_valid_return {
             // TEMPORARY WORKAROUND: Skip validation for functions with known semantic analysis bugs
-            if function.name.contains("power") || function.name.contains("multiply") || 
-               function.name.contains("processUserInput") || function.name.contains("fetchAndProcessData") ||
-               function.name.contains("internalValidation") || function.name.contains("secretKey") ||
-               function.name.contains("formatShapeReport") || function.name.contains("filterLargeShapes") ||
-               function.name.contains("calculateTotalArea") {
+            if function.name.contains("power")
+                || function.name.contains("multiply")
+                || function.name.contains("processUserInput")
+                || function.name.contains("fetchAndProcessData")
+                || function.name.contains("internalValidation")
+                || function.name.contains("secretKey")
+                || function.name.contains("formatShapeReport")
+                || function.name.contains("filterLargeShapes")
+                || function.name.contains("calculateTotalArea")
+            {
                 // Skip this validation for now - there's a bug in return path analysis
                 // TODO: Fix the underlying issue with return path validation
             } else {
@@ -3135,16 +3140,21 @@ impl SemanticAnalyzer {
                             return Err(CompilerError::type_error(
                                 &format!("List index must be integer, found {:?}", index_type),
                                 Some("Use integer values for array indexing".to_string()),
-                                None
+                                None,
                             ));
                         }
                         // Check that value type matches the list element type
                         if !self.types_compatible(&element_type, &value_type) {
                             return Err(CompilerError::type_error(
-                                &format!("Cannot assign {:?} to list element of type {:?}",
-                                    value_type, element_type),
-                                Some("Ensure the assignment value matches the list element type".to_string()),
-                                None
+                                &format!(
+                                    "Cannot assign {:?} to list element of type {:?}",
+                                    value_type, element_type
+                                ),
+                                Some(
+                                    "Ensure the assignment value matches the list element type"
+                                        .to_string(),
+                                ),
+                                None,
                             ));
                         }
                         Ok(Type::Void) // Assignment returns void
@@ -5244,6 +5254,7 @@ impl SemanticAnalyzer {
                 }
             }
             Value::Matrix(_) => Type::Matrix(Box::new(Type::Number)),
+            Value::Null => Type::Void, // Null maps to void semantics
             Value::Void => Type::Void,
             Value::Integer8(_) => Type::Integer,
             Value::Integer8u(_) => Type::Integer,
@@ -6380,14 +6391,30 @@ impl SemanticAnalyzer {
             Expression::Variable(name) => {
                 // Check if this variable name matches a known helper method pattern
                 let helper_methods = [
-                    "isEmpty", "isNotEmpty", "length", "size", "count",
-                    "first", "last", "head", "tail", "toString", "valueOf",
-                    "clear", "reset", "dispose", "clone", "copy"
+                    "isEmpty",
+                    "isNotEmpty",
+                    "length",
+                    "size",
+                    "count",
+                    "first",
+                    "last",
+                    "head",
+                    "tail",
+                    "toString",
+                    "valueOf",
+                    "clear",
+                    "reset",
+                    "dispose",
+                    "clone",
+                    "copy",
                 ];
 
                 if helper_methods.contains(&name.as_str()) {
                     return Err(CompilerError::syntax_error(
-                        format!("Helper method '{}' requires parentheses: '{}()'", name, name),
+                        format!(
+                            "Helper method '{}' requires parentheses: '{}()'",
+                            name, name
+                        ),
                         Some("Add parentheses to call the method properly".to_string()),
                         None,
                     ));
@@ -6410,7 +6437,9 @@ impl SemanticAnalyzer {
                 self.validate_method_parentheses(expr)?;
                 Ok(())
             }
-            Expression::MethodCall { object, arguments, .. } => {
+            Expression::MethodCall {
+                object, arguments, ..
+            } => {
                 self.validate_method_parentheses(object)?;
                 for arg in arguments {
                     self.validate_method_parentheses(arg)?;
@@ -6432,7 +6461,12 @@ impl SemanticAnalyzer {
                 self.validate_method_parentheses(col)?;
                 Ok(())
             }
-            Expression::Conditional { condition, then_expr, else_expr, .. } => {
+            Expression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+                ..
+            } => {
                 self.validate_method_parentheses(condition)?;
                 self.validate_method_parentheses(then_expr)?;
                 self.validate_method_parentheses(else_expr)?;

@@ -859,7 +859,7 @@ impl CodeGenerator {
                     Statement::VariableDecl { .. } => {
                         // Variable declarations don't leave values on the stack
                         self.generate_statement(last_stmt, &mut instructions)?;
-                        
+
                         // If the function has a non-void return type and this is the last statement,
                         // we need to add a default return value since variable declarations don't produce one
                         if needs_return_value {
@@ -897,8 +897,12 @@ impl CodeGenerator {
                     Type::Integer => instructions.push(Instruction::I32Const(0)),
                     Type::Number => instructions.push(Instruction::F64Const(0.0)),
                     Type::Boolean => instructions.push(Instruction::I32Const(0)),
-                    Type::IntegerSized { bits: 8..=32, .. } => instructions.push(Instruction::I32Const(0)),
-                    Type::IntegerSized { bits: 64, .. } => instructions.push(Instruction::I64Const(0)),
+                    Type::IntegerSized { bits: 8..=32, .. } => {
+                        instructions.push(Instruction::I32Const(0))
+                    }
+                    Type::IntegerSized { bits: 64, .. } => {
+                        instructions.push(Instruction::I64Const(0))
+                    }
                     Type::NumberSized { bits: 32 } => instructions.push(Instruction::F32Const(0.0)),
                     Type::NumberSized { bits: 64 } => instructions.push(Instruction::F64Const(0.0)),
                     Type::Object(_) => instructions.push(Instruction::I32Const(0)), // Object as pointer (0 = null for now)
@@ -8889,7 +8893,8 @@ impl CodeGenerator {
                 self.generate_print_statement(expression, false, instructions)?;
             } else {
                 // Generate a function call for each expression
-                let call_expr = Expression::Call(function_name.to_string(), vec![expression.clone()]);
+                let call_expr =
+                    Expression::Call(function_name.to_string(), vec![expression.clone()]);
                 self.generate_expression(&call_expr, instructions)?;
 
                 // Drop the result if the function returns something
@@ -9610,9 +9615,11 @@ impl CodeGenerator {
             self.code_section.function(&wasm_function);
 
             // Export as start function - use correct index after all imports and existing functions
-            let start_func_index = self.imported_functions.len() as u32 + self.function_names.len() as u32;
+            let start_func_index =
+                self.imported_functions.len() as u32 + self.function_names.len() as u32;
             // Start function exported with correct index
-            self.export_section.export("_start", wasm_encoder::ExportKind::Func, start_func_index);
+            self.export_section
+                .export("_start", wasm_encoder::ExportKind::Func, start_func_index);
 
             // Update function tracking to keep counts consistent
             self.function_names.push("_start".to_string());
@@ -9650,9 +9657,11 @@ pub fn generate_wasm_from_lir(
 }
 
 /// Generate WebAssembly from MIR using the new MIR code generator
-pub fn generate_wasm_from_mir(mir_program: crate::mir::MirProgram) -> Result<Vec<u8>, CompilerError> {
+pub fn generate_wasm_from_mir(
+    mir_program: crate::mir::MirProgram,
+) -> Result<Vec<u8>, CompilerError> {
     let mut mir_codegen = MirCodeGenerator::new();
-    
+
     match mir_codegen.generate(mir_program) {
         Ok(result) => Ok(result.wasm_bytes),
         Err(errors) => {
@@ -9674,9 +9683,11 @@ pub fn generate_wasm_from_mir(mir_program: crate::mir::MirProgram) -> Result<Vec
 }
 
 /// Generate WebAssembly from MIR with minimal runtime (for testing)
-pub fn generate_wasm_from_mir_minimal(mir_program: crate::mir::MirProgram) -> Result<Vec<u8>, CompilerError> {
+pub fn generate_wasm_from_mir_minimal(
+    mir_program: crate::mir::MirProgram,
+) -> Result<Vec<u8>, CompilerError> {
     let mut mir_codegen = MirCodeGenerator::new_minimal();
-    
+
     match mir_codegen.generate(mir_program) {
         Ok(result) => Ok(result.wasm_bytes),
         Err(errors) => {

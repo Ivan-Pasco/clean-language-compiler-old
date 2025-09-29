@@ -13,14 +13,14 @@ mod tests {
             let _ = CleanParser::parse_program(&s);
         }
 
-        #[test]  
+        #[test]
         fn test_empty_and_whitespace_only(s in "\\s*") {
             // Whitespace-only inputs should either parse successfully or fail gracefully
             let result = CleanParser::parse_program(&s);
             // We don't care about the result, just that it doesn't panic
             drop(result);
         }
-        
+
         #[test]
         fn test_valid_identifiers_dont_break_parser(
             id in "[a-zA-Z][a-zA-Z0-9_]*"
@@ -31,7 +31,7 @@ mod tests {
                 format!("integer {id}"),
                 format!("functions:\n\tvoid {id}()\n\t\treturn"),
             ];
-            
+
             for context in contexts {
                 let _ = CleanParser::parse_program(&context);
             }

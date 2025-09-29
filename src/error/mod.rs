@@ -493,10 +493,7 @@ impl CompilerError {
         }
     }
 
-    pub fn validation_error<T: Into<String>>(
-        message: T,
-        location: SourceLocation,
-    ) -> Self {
+    pub fn validation_error<T: Into<String>>(message: T, location: SourceLocation) -> Self {
         CompilerError::Validation {
             context: Box::new(
                 ErrorContext::new(message, None, ErrorType::Validation, Some(location))
@@ -505,10 +502,7 @@ impl CompilerError {
         }
     }
 
-    pub fn validation_warning<T: Into<String>>(
-        message: T,
-        location: SourceLocation,
-    ) -> Self {
+    pub fn validation_warning<T: Into<String>>(message: T, location: SourceLocation) -> Self {
         CompilerError::Validation {
             context: Box::new(
                 ErrorContext::new(message, None, ErrorType::Validation, Some(location))
@@ -1754,7 +1748,7 @@ impl ErrorUtils {
     ) -> CompilerError {
         // Convert pest error to basic syntax error for now
         let message = format!("Parse error: {}", pest_error);
-        
+
         // Try to extract location if possible
         let location = match pest_error.location {
             pest::error::InputLocation::Pos(pos) => {

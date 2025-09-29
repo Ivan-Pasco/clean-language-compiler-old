@@ -11,23 +11,23 @@
 //! - Built-in type operations and conversions
 //! - Comprehensive error reporting with type information
 
-use crate::resolver::*;
 use crate::error::CompilerError;
+use crate::resolver::*;
 use std::collections::HashMap;
 
 pub mod constraint_solver;
-pub mod type_inference;
 pub mod tast;
+pub mod type_inference;
 
 pub use constraint_solver::{ConstraintSolver, TypeVarId};
-pub use type_inference::{TypeInference, InferenceResult, BuiltinTypes};
 pub use tast::{
-    TastProgram, TastFunction, TastClass, TastExpression, TastStatement, TastBlock,
-    ConcreteType, TypeConstraint, BinaryOperator, UnaryOperator, Visibility
+    BinaryOperator, ConcreteType, TastBlock, TastClass, TastExpression, TastFunction, TastProgram,
+    TastStatement, TypeConstraint, UnaryOperator, Visibility,
 };
+pub use type_inference::{BuiltinTypes, InferenceResult, TypeInference};
 
 /// Type checker - Stage 5 of the pipeline  
-/// 
+///
 /// This is the main interface for type checking that wraps the constraint-based
 /// type inference engine. It transforms resolved HIR into TAST.
 #[derive(Debug)]
@@ -51,16 +51,16 @@ impl TypeChecker {
             inference_engine: None,
         }
     }
-    
+
     /// Type check a resolved HIR program using constraint-based type inference
     pub fn check(resolved_hir: ResolvedHirProgram) -> Result<TypeCheckResult, Vec<CompilerError>> {
         // Create type inference engine with symbol table from resolution
         let symbol_table = resolved_hir.symbol_table.clone();
         let inference_engine = TypeInference::new(symbol_table);
-        
+
         // Perform type inference
         let inference_result = inference_engine.infer_types(resolved_hir);
-        
+
         if !inference_result.errors.is_empty() {
             Err(inference_result.errors)
         } else {
@@ -102,13 +102,13 @@ mod tests {
     fn test_concrete_type_assignability() {
         // Integer can be assigned to Number
         assert!(ConcreteType::Integer.is_assignable_to(&ConcreteType::Number));
-        
+
         // Number cannot be assigned to Integer
         assert!(!ConcreteType::Number.is_assignable_to(&ConcreteType::Integer));
-        
+
         // Same types are assignable
         assert!(ConcreteType::String.is_assignable_to(&ConcreteType::String));
-        
+
         // Null can be assigned to any type
         assert!(ConcreteType::Null.is_assignable_to(&ConcreteType::String));
     }
@@ -118,11 +118,11 @@ mod tests {
         // Integer and Number -> Number
         let result = ConcreteType::Integer.common_supertype(&ConcreteType::Number);
         assert_eq!(result, ConcreteType::Number);
-        
+
         // Same types return same type
         let result = ConcreteType::String.common_supertype(&ConcreteType::String);
         assert_eq!(result, ConcreteType::String);
-        
+
         // Different incompatible types -> Union
         let result = ConcreteType::String.common_supertype(&ConcreteType::Boolean);
         if let ConcreteType::Union(types) = result {

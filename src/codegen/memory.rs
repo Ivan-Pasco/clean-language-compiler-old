@@ -255,7 +255,7 @@ impl MemoryUtils {
             permissions: MemoryPermissions::ReadWrite,
             name: "main_heap".to_string(),
         });
-        
+
         // No guard regions for now - simplify to fix the runtime issue
     }
 

@@ -710,9 +710,7 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::string => parse_string(inner),
         Rule::list_literal => parse_list_literal(inner),
         Rule::matrix_literal => parse_matrix_literal(inner),
-        Rule::pairs_literal => {
-            parse_pairs_literal(inner)
-        }
+        Rule::pairs_literal => parse_pairs_literal(inner),
         Rule::function_call => parse_function_call(inner),
         Rule::namespace_function_call => parse_namespace_function_call(inner),
         Rule::property_method_call => parse_property_method_call(inner),
@@ -1091,11 +1089,13 @@ pub fn parse_pairs_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError
                     // Parse string and extract the inner value
                     match parse_string(key_part)? {
                         Expression::Literal(Value::String(s)) => Value::String(s),
-                        _ => return Err(CompilerError::parse_error(
-                            "Invalid string key in pairs literal".to_string(),
-                            None,
-                            None,
-                        )),
+                        _ => {
+                            return Err(CompilerError::parse_error(
+                                "Invalid string key in pairs literal".to_string(),
+                                None,
+                                None,
+                            ))
+                        }
                     }
                 }
                 Rule::identifier => Value::String(key_part.as_str().to_string()),
@@ -1110,11 +1110,16 @@ pub fn parse_pairs_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError
                     })?;
                     Value::Integer(num)
                 }
-                _ => return Err(CompilerError::parse_error(
-                    format!("Unexpected key type in pairs literal: {:?}", key_part.as_rule()),
-                    None,
-                    None,
-                )),
+                _ => {
+                    return Err(CompilerError::parse_error(
+                        format!(
+                            "Unexpected key type in pairs literal: {:?}",
+                            key_part.as_rule()
+                        ),
+                        None,
+                        None,
+                    ))
+                }
             };
 
             // Parse the value (single_line_expression)

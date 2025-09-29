@@ -368,7 +368,7 @@ single_line_primary = {
 // More explicit matching to prevent ambiguity with expressions
 // Made atomic to prevent backtracking and incorrect splitting
 variable_decl_with_assignment = { variable_type ~ variable_name ~ "=" ~ expression }
-variable_decl_without_assignment = { !("print") ~ variable_type ~ variable_name }
+variable_decl_without_assignment = { !("print") ~ variable_type ~ variable_name ~ !("(" | WHITESPACE* ~ "(") }
 variable_type = { matrix_type | list_type | pairs_type | sized_type | core_type | identifier }
 variable_name = @{ identifier }
 variable_decl = { variable_decl_with_assignment | variable_decl_without_assignment }
@@ -391,7 +391,7 @@ error_stmt = { "error" ~ "(" ~ expression ~ ")" }
 
 // Control flow with indentation
 if_stmt = { "if" ~ WHITESPACE* ~ expression ~ indented_block ~ else_block? }
-else_block = { NEWLINE* ~ INDENT* ~ ("else" ~ WHITESPACE* ~ "if" ~ WHITESPACE* ~ expression ~ indented_block ~ else_block? | "else" ~ indented_block) }
+else_block = { NEWLINE ~ (empty_line)* ~ INDENT* ~ "else" ~ (WHITESPACE* ~ "if" ~ WHITESPACE* ~ expression ~ indented_block ~ else_block? | indented_block) }
 
 // Iteration
 iterate_stmt = { "iterate" ~ WHITESPACE* ~ identifier ~ WHITESPACE* ~ "in" ~ WHITESPACE* ~ expression ~ indented_block }
@@ -448,7 +448,7 @@ class_indented_functions_block = {
 }
 
 class_function_line = {
-    INDENT+ ~ function_in_block ~ (NEWLINE ~ (empty_line)*)?
+    INDENT+ ~ function_in_block
 }
 
 // Legacy function_line rule - maintained for backward compatibility

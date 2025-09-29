@@ -11,67 +11,67 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // Literals (§2.3 - exactly matching AST specification Value enum)
-    IntegerLiteral(i64),           // 42, -17 (default)
-    NumberLiteral(f64),            // 3.14, 6.02e23 (default)
-    StringLiteral(String),         // "Hello, World!"
-    BooleanLiteral(bool),          // true, false
-    
+    IntegerLiteral(i64),   // 42, -17 (default)
+    NumberLiteral(f64),    // 3.14, 6.02e23 (default)
+    StringLiteral(String), // "Hello, World!"
+    BooleanLiteral(bool),  // true, false
+
     // Precision Literals (§3.2 - AST specification precision modifiers)
-    Integer8Literal(i8),           // integer:8
-    Integer8uLiteral(u8),          // integer:8u
-    Integer16Literal(i16),         // integer:16
-    Integer16uLiteral(u16),        // integer:16u
-    Integer32Literal(i32),         // integer:32
-    Integer64Literal(i64),         // integer:64
-    Number32Literal(f32),          // number:32
-    Number64Literal(f64),          // number:64
-    
+    Integer8Literal(i8),    // integer:8
+    Integer8uLiteral(u8),   // integer:8u
+    Integer16Literal(i16),  // integer:16
+    Integer16uLiteral(u16), // integer:16u
+    Integer32Literal(i32),  // integer:32
+    Integer64Literal(i64),  // integer:64
+    Number32Literal(f32),   // number:32
+    Number64Literal(f64),   // number:64
+
     // Keywords (all from Clean Language Specification - complete list)
-    And,          // and
-    Background,   // background
-    Class,        // class
-    Constructor,  // constructor
-    Else,         // else
-    Error,        // error
-    False,        // false
-    For,          // for
-    From,         // from
-    Function,     // function
-    If,           // if
-    Import,       // import
-    In,           // in
-    Iterate,      // iterate
-    Not,          // not
-    OnError,      // onError
-    Or,           // or
-    Print,        // print
-    Println,      // println
-    Return,       // return
-    Start,        // start
-    Step,         // step
-    Test,         // test
-    Tests,        // tests
-    This,         // this
-    To,           // to
-    True,         // true
-    While,        // while
-    Is,           // is
-    Returns,      // returns
-    Description,  // description
-    Input,        // input
-    Unit,         // unit
-    Private,      // private
-    Constant,     // constant
-    Functions,    // functions
-    
+    And,         // and
+    Background,  // background
+    Class,       // class
+    Constructor, // constructor
+    Else,        // else
+    Error,       // error
+    False,       // false
+    For,         // for
+    From,        // from
+    Function,    // function
+    If,          // if
+    Import,      // import
+    In,          // in
+    Iterate,     // iterate
+    Not,         // not
+    OnError,     // onError
+    Or,          // or
+    Print,       // print
+    Println,     // println
+    Return,      // return
+    Start,       // start
+    Step,        // step
+    Test,        // test
+    Tests,       // tests
+    This,        // this
+    To,          // to
+    True,        // true
+    While,       // while
+    Is,          // is
+    Returns,     // returns
+    Description, // description
+    Input,       // input
+    Unit,        // unit
+    Private,     // private
+    Constant,    // constant
+    Functions,   // functions
+
     // Operators (§5.1 - Binary and Unary operators from specification)
-    Plus,         // +
-    Minus,        // -
-    Multiply,     // *
-    Divide,       // /
-    Modulo,       // %
-    Power,        // ^
-    
+    Plus,     // +
+    Minus,    // -
+    Multiply, // *
+    Divide,   // /
+    Modulo,   // %
+    Power,    // ^
+
     // Comparison operators
     Equal,        // ==
     NotEqual,     // !=
@@ -79,10 +79,10 @@ pub enum TokenKind {
     Greater,      // >
     LessEqual,    // <=
     GreaterEqual, // >=
-    
+
     // Assignment
-    Assign,       // =
-    
+    Assign, // =
+
     // Punctuation and delimiters
     LeftParen,    // (
     RightParen,   // )
@@ -94,27 +94,27 @@ pub enum TokenKind {
     Dot,          // .
     Colon,        // :
     Semicolon,    // ;
-    
+
     // Range operators (§9.2 - Range expressions)
-    Range,        // .. for ranges like 1..10
+    Range,          // .. for ranges like 1..10
     RangeInclusive, // ..= for inclusive ranges (if supported)
-    
+
     // String interpolation (§2.3.2)
-    InterpolationStart,  // "Hello {
-    InterpolationMid,    // } text {
-    InterpolationEnd,    // }"
-    
+    InterpolationStart, // "Hello {
+    InterpolationMid,   // } text {
+    InterpolationEnd,   // }"
+
     // Special tokens
-    Identifier(String),  // Variable names, function names, etc.
+    Identifier(String), // Variable names, function names, etc.
     Newline,            // \n (significant for Clean Language)
     Indent(usize),      // Tab levels for indentation
     Dedent(usize),      // Reduced tab levels
     Eof,                // End of file
-    
+
     // Comments (not in AST but needed for parsing)
-    Comment(String),    // // single line comments
+    Comment(String),      // // single line comments
     BlockComment(String), // /* block comments */
-    
+
     // Error recovery
     Invalid { text: String, message: String },
 }
@@ -127,7 +127,7 @@ impl fmt::Display for TokenKind {
             TokenKind::NumberLiteral(n) => write!(f, "{}", n),
             TokenKind::StringLiteral(s) => write!(f, "\"{}\"", s),
             TokenKind::BooleanLiteral(b) => write!(f, "{}", b),
-            
+
             // Precision literals
             TokenKind::Integer8Literal(n) => write!(f, "{}:8", n),
             TokenKind::Integer8uLiteral(n) => write!(f, "{}:8u", n),
@@ -137,7 +137,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Integer64Literal(n) => write!(f, "{}:64", n),
             TokenKind::Number32Literal(n) => write!(f, "{}:32", n),
             TokenKind::Number64Literal(n) => write!(f, "{}:64", n),
-            
+
             // Keywords
             TokenKind::And => write!(f, "and"),
             TokenKind::Background => write!(f, "background"),
@@ -175,7 +175,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Private => write!(f, "private"),
             TokenKind::Constant => write!(f, "constant"),
             TokenKind::Functions => write!(f, "functions"),
-            
+
             // Operators
             TokenKind::Plus => write!(f, "+"),
             TokenKind::Minus => write!(f, "-"),
@@ -190,7 +190,7 @@ impl fmt::Display for TokenKind {
             TokenKind::LessEqual => write!(f, "<="),
             TokenKind::GreaterEqual => write!(f, ">="),
             TokenKind::Assign => write!(f, "="),
-            
+
             // Punctuation
             TokenKind::LeftParen => write!(f, "("),
             TokenKind::RightParen => write!(f, ")"),
@@ -204,23 +204,23 @@ impl fmt::Display for TokenKind {
             TokenKind::Semicolon => write!(f, ";"),
             TokenKind::Range => write!(f, ".."),
             TokenKind::RangeInclusive => write!(f, "..="),
-            
+
             // String interpolation
             TokenKind::InterpolationStart => write!(f, "STRING_INTERP_START"),
             TokenKind::InterpolationMid => write!(f, "STRING_INTERP_MID"),
             TokenKind::InterpolationEnd => write!(f, "STRING_INTERP_END"),
-            
+
             // Special
             TokenKind::Identifier(name) => write!(f, "{}", name),
             TokenKind::Newline => write!(f, "\\n"),
             TokenKind::Indent(level) => write!(f, "INDENT({})", level),
             TokenKind::Dedent(level) => write!(f, "DEDENT({})", level),
             TokenKind::Eof => write!(f, "EOF"),
-            
+
             // Comments
             TokenKind::Comment(text) => write!(f, "//{}", text),
             TokenKind::BlockComment(text) => write!(f, "/*{}*/", text),
-            
+
             // Error
             TokenKind::Invalid { text, message } => write!(f, "INVALID('{}': {})", text, message),
         }
@@ -237,9 +237,13 @@ pub struct Token {
 
 impl Token {
     pub fn new(kind: TokenKind, location: SourceLocation, text: String) -> Self {
-        Self { kind, location, text }
+        Self {
+            kind,
+            location,
+            text,
+        }
     }
-    
+
     /// Create token with default text representation
     pub fn simple(kind: TokenKind, location: SourceLocation) -> Self {
         let text = format!("{}", kind);
@@ -249,7 +253,11 @@ impl Token {
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} at {}:{}", self.kind, self.location.line, self.location.column)
+        write!(
+            f,
+            "{} at {}:{}",
+            self.kind, self.location.line, self.location.column
+        )
     }
 }
 
@@ -282,14 +290,14 @@ impl SourceMap {
                 line_starts.push(byte_pos + ch.len_utf8());
             }
         }
-        
+
         Self {
             file_path,
             line_starts,
             total_bytes: source_content.len(),
         }
     }
-    
+
     /// Get source location from byte offset
     pub fn location_from_offset(&self, offset: usize) -> SourceLocation {
         // Binary search to find line number
@@ -297,10 +305,14 @@ impl SourceMap {
             Ok(line) => line + 1,
             Err(line) => line,
         };
-        
-        let line_start = self.line_starts.get(line.saturating_sub(1)).copied().unwrap_or(0);
+
+        let line_start = self
+            .line_starts
+            .get(line.saturating_sub(1))
+            .copied()
+            .unwrap_or(0);
         let column = offset - line_start + 1;
-        
+
         SourceLocation::new(line, column, &self.file_path)
     }
 }
@@ -352,7 +364,7 @@ impl Keywords {
             _ => None,
         }
     }
-    
+
     /// Get boolean literal value
     pub fn boolean_value(identifier: &str) -> Option<bool> {
         match identifier {

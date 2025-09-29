@@ -110,7 +110,10 @@ fn parse_variable_declaration(
             }
             _ => {
                 return Err(CompilerError::parse_error(
-                    format!("Unexpected variable declaration rule: {:?}", inner.as_rule()),
+                    format!(
+                        "Unexpected variable declaration rule: {:?}",
+                        inner.as_rule()
+                    ),
                     Some(ast_location),
                     None,
                 ));
@@ -208,7 +211,7 @@ fn parse_assignment_statement(
 
 fn parse_else_block_recursive(else_block: Pair<Rule>) -> Result<Vec<Statement>, CompilerError> {
     let mut parts = else_block.into_inner();
-    
+
     // Skip whitespace and INDENT tokens
     while let Some(part) = parts.next() {
         match part.as_rule() {
@@ -216,12 +219,12 @@ fn parse_else_block_recursive(else_block: Pair<Rule>) -> Result<Vec<Statement>, 
                 // This is an "else if" - we have: "else" "if" expression indented_block else_block?
                 let ast_location = convert_to_ast_location(&get_location(&part));
                 let condition = parse_expression(part)?;
-                
+
                 // Get the indented block for this else if
                 let then_block = parts.next().unwrap(); // This should be the indented_block
                 let mut then_stmts = Vec::new();
                 parse_indented_block_statements(then_block, &mut then_stmts)?;
-                
+
                 // Check if there's another else block
                 let mut else_branch = None;
                 if let Some(next_else) = parts.next() {
@@ -229,7 +232,7 @@ fn parse_else_block_recursive(else_block: Pair<Rule>) -> Result<Vec<Statement>, 
                         else_branch = Some(parse_else_block_recursive(next_else)?);
                     }
                 }
-                
+
                 // Return a single if statement representing the else if
                 return Ok(vec![Statement::If {
                     condition,
@@ -247,11 +250,14 @@ fn parse_else_block_recursive(else_block: Pair<Rule>) -> Result<Vec<Statement>, 
             _ => continue, // Skip whitespace and other tokens
         }
     }
-    
+
     Ok(Vec::new())
 }
 
-pub fn parse_indented_block_statements(block: Pair<Rule>, statements: &mut Vec<Statement>) -> Result<(), CompilerError> {
+pub fn parse_indented_block_statements(
+    block: Pair<Rule>,
+    statements: &mut Vec<Statement>,
+) -> Result<(), CompilerError> {
     for stmt_pair in block.into_inner() {
         match stmt_pair.as_rule() {
             Rule::statement => {
@@ -497,21 +503,20 @@ fn parse_standalone_on_error_statement(
     inner.next(); // ":"
 
     // Parse the indented block
-    let block_pair = inner.next()
-        .ok_or_else(|| CompilerError::Syntax {
-            context: Box::new(crate::error::ErrorContext {
-                message: "Expected block after onError:".to_string(),
-                location: Some(ast_location.clone()),
-                help: Some("Add indented statements after onError:".to_string()),
-                error_type: crate::error::ErrorType::Syntax,
-                suggestions: vec!["Add indented statements after onError:".to_string()],
-                source_snippet: None,
-                stack_trace: Vec::new(),
-                severity: crate::error::ErrorSeverity::Error,
-                error_code: Some("P001".to_string()),
-                related_errors: Vec::new(),
-            })
-        })?;
+    let block_pair = inner.next().ok_or_else(|| CompilerError::Syntax {
+        context: Box::new(crate::error::ErrorContext {
+            message: "Expected block after onError:".to_string(),
+            location: Some(ast_location.clone()),
+            help: Some("Add indented statements after onError:".to_string()),
+            error_type: crate::error::ErrorType::Syntax,
+            suggestions: vec!["Add indented statements after onError:".to_string()],
+            source_snippet: None,
+            stack_trace: Vec::new(),
+            severity: crate::error::ErrorSeverity::Error,
+            error_code: Some("P001".to_string()),
+            related_errors: Vec::new(),
+        }),
+    })?;
 
     let mut block = Vec::new();
     parse_indented_block_statements(block_pair, &mut block)?;
@@ -701,7 +706,6 @@ fn parse_constant_apply_block_statement(
         location: Some(ast_location),
     })
 }
-
 
 fn parse_background_statement(
     pair: Pair<Rule>,

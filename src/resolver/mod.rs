@@ -12,19 +12,19 @@
 //! - Forward declaration handling
 //! - Error reporting for unresolved symbols
 
-use crate::hir::*;
-use crate::error::CompilerError;
 use crate::ast::SourceLocation;
+use crate::error::CompilerError;
+use crate::hir::*;
 
-pub mod symbol_table;
-pub mod resolver_impl;
 pub mod module_resolver;
+pub mod resolver_impl;
+pub mod symbol_table;
 // pub mod passthrough_resolver;
 // pub mod passthrough_resolver; // Temporarily disabled due to compilation errors
 
-pub use symbol_table::*;
-pub use resolver_impl::*;
 pub use module_resolver::*;
+pub use resolver_impl::*;
+pub use symbol_table::*;
 
 // Type alias for backward compatibility with lib.rs
 pub type Resolver = NameResolver;
@@ -142,26 +142,26 @@ pub enum ResolvedHirStatement {
         initializer: Option<ResolvedHirExpression>,
         location: SourceLocation,
     },
-    
+
     /// Assignment with resolved target and value
     Assignment {
         target: ResolvedHirLValue,
         value: ResolvedHirExpression,
         location: SourceLocation,
     },
-    
+
     /// Expression statement with resolved expression
     Expression {
         expression: ResolvedHirExpression,
         location: SourceLocation,
     },
-    
+
     /// Return statement with resolved value
     Return {
         value: Option<ResolvedHirExpression>,
         location: SourceLocation,
     },
-    
+
     /// Conditional with resolved condition and branches
     If {
         condition: ResolvedHirExpression,
@@ -169,14 +169,14 @@ pub enum ResolvedHirStatement {
         else_branch: Option<ResolvedHirBlock>,
         location: SourceLocation,
     },
-    
+
     /// While loop with resolved condition and body
     While {
         condition: ResolvedHirExpression,
         body: ResolvedHirBlock,
         location: SourceLocation,
     },
-    
+
     /// For loop with resolved iterable and body
     For {
         variable: String,
@@ -185,11 +185,19 @@ pub enum ResolvedHirStatement {
         body: ResolvedHirBlock,
         location: SourceLocation,
     },
-    
+
     /// Print statement with resolved expression
     Print {
         expression: ResolvedHirExpression,
         newline: bool,
+        location: SourceLocation,
+    },
+
+    /// Later assignment (async variable declaration) with resolved expression
+    LaterAssignment {
+        variable: String,
+        symbol_id: SymbolId,
+        expression: ResolvedHirExpression,
         location: SourceLocation,
     },
 }
@@ -202,14 +210,14 @@ pub enum ResolvedHirExpression {
         value: crate::ast::Value,
         location: SourceLocation,
     },
-    
+
     /// Variable reference with resolved symbol
     Variable {
         name: String,
         symbol_id: SymbolId,
         location: SourceLocation,
     },
-    
+
     /// Binary operation with resolved operands
     BinaryOp {
         left: Box<ResolvedHirExpression>,
@@ -217,14 +225,14 @@ pub enum ResolvedHirExpression {
         right: Box<ResolvedHirExpression>,
         location: SourceLocation,
     },
-    
+
     /// Unary operation with resolved operand
     UnaryOp {
         op: HirUnaryOp,
         operand: Box<ResolvedHirExpression>,
         location: SourceLocation,
     },
-    
+
     /// Function call with resolved function symbol
     Call {
         function: String,
@@ -232,7 +240,7 @@ pub enum ResolvedHirExpression {
         arguments: Vec<ResolvedHirExpression>,
         location: SourceLocation,
     },
-    
+
     /// Method call with resolved receiver and method symbol
     MethodCall {
         receiver: Box<ResolvedHirExpression>,
@@ -259,21 +267,21 @@ pub enum ResolvedHirExpression {
         field_symbol_id: SymbolId,
         location: SourceLocation,
     },
-    
+
     /// Array indexing with resolved array and index
     Index {
         array: Box<ResolvedHirExpression>,
         index: Box<ResolvedHirExpression>,
         location: SourceLocation,
     },
-    
+
     /// Array literal with resolved elements
     Array {
         elements: Vec<ResolvedHirExpression>,
         element_type: HirType,
         location: SourceLocation,
     },
-    
+
     /// Constructor call with resolved class symbol
     Constructor {
         class_name: String,
@@ -281,20 +289,20 @@ pub enum ResolvedHirExpression {
         arguments: Vec<ResolvedHirExpression>,
         location: SourceLocation,
     },
-    
+
     /// This reference (resolved to current class)
     This {
         class_symbol_id: SymbolId,
         location: SourceLocation,
     },
-    
+
     /// Type cast with resolved expression and target type
     Cast {
         expression: Box<ResolvedHirExpression>,
         target_type: HirType,
         location: SourceLocation,
     },
-    
+
     /// Assignment expression with resolved target and value
     Assignment {
         target: ResolvedHirLValue,
@@ -339,20 +347,20 @@ pub enum ResolutionError {
         name: String,
         location: SourceLocation,
     },
-    
+
     /// Ambiguous symbol reference
     AmbiguousSymbol {
         name: String,
         candidates: Vec<SymbolId>,
         location: SourceLocation,
     },
-    
+
     /// Circular dependency detected
     CircularDependency {
         symbols: Vec<SymbolId>,
         location: SourceLocation,
     },
-    
+
     /// Invalid symbol usage (e.g., using function as variable)
     InvalidUsage {
         name: String,
@@ -361,13 +369,13 @@ pub enum ResolutionError {
         actual_kind: SymbolKind,
         location: SourceLocation,
     },
-    
+
     /// Module not found
     ModuleNotFound {
         module_name: String,
         location: SourceLocation,
     },
-    
+
     /// Import item not found in module
     ImportItemNotFound {
         item_name: String,

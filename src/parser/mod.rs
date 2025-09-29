@@ -4,23 +4,23 @@
 //! All parsing goes through the 7-stage compiler pipeline.
 
 // Include all parser modules
-pub mod parser_impl;
-pub mod expression_parser;
-pub mod statement_parser;
 pub mod class_parser;
+pub mod expression_parser;
 pub mod function_parser;
-pub mod type_parser;
-pub mod program_parser;
-pub mod preprocessor;
-pub mod specification_parser;
 pub mod grammar;
-pub mod property_tests;
 pub mod lexical_analyzer;
+pub mod parser_impl;
+pub mod preprocessor;
+pub mod program_parser;
+pub mod property_tests;
+pub mod specification_parser;
+pub mod statement_parser;
+pub mod type_parser;
 
 // Re-export main components
 pub use specification_parser::SpecificationParser;
 
-// Re-export pest parser components for internal use  
+// Re-export pest parser components for internal use
 pub use grammar::*;
 pub use parser_impl::ErrorRecoveringParser;
 
@@ -41,4 +41,3 @@ pub fn get_location(pair: &pest::iterators::Pair<Rule>) -> SourceLocation {
         file: String::new(), // Will be set by the parser context
     }
 }
-

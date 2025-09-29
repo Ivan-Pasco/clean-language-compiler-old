@@ -440,7 +440,11 @@ impl HirBuilder {
                 })
             }
 
-            Statement::LaterAssignment { variable, expression, location } => {
+            Statement::LaterAssignment {
+                variable,
+                expression,
+                location,
+            } => {
                 let hir_expr = self.build_expression(expression)?;
                 Ok(HirStatement::LaterAssignment {
                     variable: variable.clone(),

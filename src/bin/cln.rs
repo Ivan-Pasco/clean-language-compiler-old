@@ -530,12 +530,16 @@ fn benchmark_runtimes(file_path: &str) -> Result<(), CompilerError> {
     })?;
 
     // Compile to WASM
-    let wasm_bytes = clean_language_compiler::compile_with_file(&source, file_path)
-        .map_err(|errors| {
+    let wasm_bytes =
+        clean_language_compiler::compile_with_file(&source, file_path).map_err(|errors| {
             if let Some(first_error) = errors.first() {
                 first_error.clone()
             } else {
-                CompilerError::runtime_error("Compilation failed with unknown error".to_string(), None, None)
+                CompilerError::runtime_error(
+                    "Compilation failed with unknown error".to_string(),
+                    None,
+                    None,
+                )
             }
         })?;
 
