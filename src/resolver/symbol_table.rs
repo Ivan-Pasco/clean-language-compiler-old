@@ -824,6 +824,7 @@ impl GlobalSymbolTable {
                 HirType::String,
             ),
             ("string_isEmpty", vec![HirType::String], HirType::Boolean),
+            ("string_isBlank", vec![HirType::String], HirType::Boolean),
             (
                 "string_indexOf",
                 vec![HirType::String, HirType::String],
@@ -848,6 +849,31 @@ impl GlobalSymbolTable {
                 "string_split",
                 vec![HirType::String, HirType::String],
                 HirType::List(Box::new(HirType::String)),
+            ),
+            (
+                "string_join",
+                vec![HirType::List(Box::new(HirType::String)), HirType::String],
+                HirType::String,
+            ),
+            (
+                "string_padStart",
+                vec![HirType::String, HirType::Integer, HirType::String],
+                HirType::String,
+            ),
+            (
+                "string_padEnd",
+                vec![HirType::String, HirType::Integer, HirType::String],
+                HirType::String,
+            ),
+            (
+                "string_charAt",
+                vec![HirType::String, HirType::Integer],
+                HirType::String,
+            ),
+            (
+                "string_charCodeAt",
+                vec![HirType::String, HirType::Integer],
+                HirType::Integer,
             ),
             (
                 "string_contains",
@@ -1236,6 +1262,7 @@ impl GlobalSymbolTable {
             self.lookup_symbol("string_size").unwrap_or(SymbolId(0)),
             self.lookup_symbol("string_concat").unwrap_or(SymbolId(0)),
             self.lookup_symbol("string_isEmpty").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_isBlank").unwrap_or(SymbolId(0)),
             self.lookup_symbol("string_indexOf").unwrap_or(SymbolId(0)),
             self.lookup_symbol("string_lastIndexOf")
                 .unwrap_or(SymbolId(0)),
@@ -1257,6 +1284,12 @@ impl GlobalSymbolTable {
             self.lookup_symbol("string_replaceAll")
                 .unwrap_or(SymbolId(0)),
             self.lookup_symbol("string_split").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_join").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_padStart").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_padEnd").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_charAt").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_charCodeAt")
+                .unwrap_or(SymbolId(0)),
         ];
 
         let string_namespace_id = self.create_symbol(
