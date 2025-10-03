@@ -652,6 +652,11 @@ impl GlobalSymbolTable {
         self.builtins.contains(&symbol_id)
     }
 
+    /// Mark a symbol as builtin
+    pub fn mark_as_builtin(&mut self, symbol_id: SymbolId) {
+        self.builtins.insert(symbol_id);
+    }
+
     /// Create a new module
     pub fn create_module(&mut self, name: String, file_path: String) -> ModuleId {
         let module_id = self.next_module_id();
@@ -749,6 +754,23 @@ impl GlobalSymbolTable {
             ("math_sin", vec![HirType::Number], HirType::Number),
             ("math_cos", vec![HirType::Number], HirType::Number),
             ("math_tan", vec![HirType::Number], HirType::Number),
+            ("math_asin", vec![HirType::Number], HirType::Number),
+            ("math_acos", vec![HirType::Number], HirType::Number),
+            ("math_atan", vec![HirType::Number], HirType::Number),
+            (
+                "math_atan2",
+                vec![HirType::Number, HirType::Number],
+                HirType::Number,
+            ),
+            ("math_sinh", vec![HirType::Number], HirType::Number),
+            ("math_cosh", vec![HirType::Number], HirType::Number),
+            ("math_tanh", vec![HirType::Number], HirType::Number),
+            ("math_log", vec![HirType::Number], HirType::Number),
+            ("math_ln", vec![HirType::Number], HirType::Number),
+            ("math_log10", vec![HirType::Number], HirType::Number),
+            ("math_log2", vec![HirType::Number], HirType::Number),
+            ("math_exp", vec![HirType::Number], HirType::Number),
+            ("math_exp2", vec![HirType::Number], HirType::Number),
             ("math_abs", vec![HirType::Number], HirType::Number),
             ("math_floor", vec![HirType::Number], HirType::Number),
             ("math_ceil", vec![HirType::Number], HirType::Number),
@@ -756,6 +778,8 @@ impl GlobalSymbolTable {
             ("math_sqrt", vec![HirType::Number], HirType::Number),
             ("math_trunc", vec![HirType::Number], HirType::Number),
             ("math_pi", vec![], HirType::Number),
+            ("math_e", vec![], HirType::Number),
+            ("math_tau", vec![], HirType::Number),
             (
                 "math_pow",
                 vec![HirType::Number, HirType::Number],
@@ -771,8 +795,45 @@ impl GlobalSymbolTable {
                 vec![HirType::Number, HirType::Number],
                 HirType::Number,
             ),
+            (
+                "math_add",
+                vec![HirType::Number, HirType::Number],
+                HirType::Number,
+            ),
+            (
+                "math_subtract",
+                vec![HirType::Number, HirType::Number],
+                HirType::Number,
+            ),
+            (
+                "math_multiply",
+                vec![HirType::Number, HirType::Number],
+                HirType::Number,
+            ),
+            (
+                "math_divide",
+                vec![HirType::Number, HirType::Number],
+                HirType::Number,
+            ),
             // String namespace functions
-            ("string_length", vec![HirType::String], HirType::Integer),
+            // Canonical: string_size (not string_length - see Clean Language Specification)
+            ("string_size", vec![HirType::String], HirType::Integer),
+            (
+                "string_concat",
+                vec![HirType::String, HirType::String],
+                HirType::String,
+            ),
+            ("string_isEmpty", vec![HirType::String], HirType::Boolean),
+            (
+                "string_indexOf",
+                vec![HirType::String, HirType::String],
+                HirType::Integer,
+            ),
+            (
+                "string_lastIndexOf",
+                vec![HirType::String, HirType::String],
+                HirType::Integer,
+            ),
             (
                 "string_substring",
                 vec![HirType::String, HirType::Integer, HirType::Integer],
@@ -784,9 +845,34 @@ impl GlobalSymbolTable {
             ("string_trimStart", vec![HirType::String], HirType::String),
             ("string_trimEnd", vec![HirType::String], HirType::String),
             (
+                "string_split",
+                vec![HirType::String, HirType::String],
+                HirType::List(Box::new(HirType::String)),
+            ),
+            (
                 "string_contains",
                 vec![HirType::String, HirType::String],
                 HirType::Boolean,
+            ),
+            (
+                "string_startsWith",
+                vec![HirType::String, HirType::String],
+                HirType::Boolean,
+            ),
+            (
+                "string_endsWith",
+                vec![HirType::String, HirType::String],
+                HirType::Boolean,
+            ),
+            (
+                "string_replace",
+                vec![HirType::String, HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "string_replaceAll",
+                vec![HirType::String, HirType::String, HirType::String],
+                HirType::String,
             ),
             // StringUtils namespace functions (for StringUtils.length() syntax)
             (
@@ -815,10 +901,21 @@ impl GlobalSymbolTable {
                 HirType::String,
             ),
             // List namespace functions
+            // Canonical: list_size (not list_length - see Clean Language Specification)
             (
                 "list_size",
                 vec![HirType::List(Box::new(HirType::Number))],
                 HirType::Integer,
+            ),
+            (
+                "list_isEmpty",
+                vec![HirType::List(Box::new(HirType::Number))],
+                HirType::Boolean,
+            ),
+            (
+                "list_isNotEmpty",
+                vec![HirType::List(Box::new(HirType::Number))],
+                HirType::Boolean,
             ),
             (
                 "list_push",
@@ -835,6 +932,232 @@ impl GlobalSymbolTable {
                 vec![HirType::List(Box::new(HirType::Number)), HirType::Integer],
                 HirType::Number,
             ),
+            (
+                "list_remove",
+                vec![HirType::List(Box::new(HirType::Number)), HirType::Integer],
+                HirType::Number,
+            ),
+            (
+                "list_peek",
+                vec![HirType::List(Box::new(HirType::Number))],
+                HirType::Number,
+            ),
+            (
+                "list_add",
+                vec![HirType::List(Box::new(HirType::Number)), HirType::Number],
+                HirType::Void,
+            ),
+            (
+                "list_contains",
+                vec![HirType::List(Box::new(HirType::Number)), HirType::Number],
+                HirType::Boolean,
+            ),
+            (
+                "list_insert",
+                vec![
+                    HirType::List(Box::new(HirType::Number)),
+                    HirType::Integer,
+                    HirType::Number,
+                ],
+                HirType::List(Box::new(HirType::Number)),
+            ),
+            (
+                "list_indexOf",
+                vec![HirType::List(Box::new(HirType::Number)), HirType::Number],
+                HirType::Integer,
+            ),
+            (
+                "list_lastIndexOf",
+                vec![HirType::List(Box::new(HirType::Number)), HirType::Number],
+                HirType::Integer,
+            ),
+            (
+                "list_first",
+                vec![HirType::List(Box::new(HirType::Number))],
+                HirType::Number,
+            ),
+            (
+                "list_last",
+                vec![HirType::List(Box::new(HirType::Number))],
+                HirType::Number,
+            ),
+            (
+                "list_reverse",
+                vec![HirType::List(Box::new(HirType::Number))],
+                HirType::List(Box::new(HirType::Number)),
+            ),
+            (
+                "list_sort",
+                vec![HirType::List(Box::new(HirType::Number))],
+                HirType::List(Box::new(HirType::Number)),
+            ),
+            (
+                "list_slice",
+                vec![
+                    HirType::List(Box::new(HirType::Number)),
+                    HirType::Integer,
+                    HirType::Integer,
+                ],
+                HirType::List(Box::new(HirType::Number)),
+            ),
+            (
+                "list_concat",
+                vec![
+                    HirType::List(Box::new(HirType::Number)),
+                    HirType::List(Box::new(HirType::Number)),
+                ],
+                HirType::List(Box::new(HirType::Number)),
+            ),
+            (
+                "list_fill",
+                vec![
+                    HirType::List(Box::new(HirType::Number)),
+                    HirType::Number,
+                    HirType::Integer,
+                ],
+                HirType::Void,
+            ),
+            (
+                "list_range",
+                vec![HirType::Integer, HirType::Integer],
+                HirType::List(Box::new(HirType::Integer)),
+            ),
+            (
+                "list_join",
+                vec![HirType::List(Box::new(HirType::Number)), HirType::String],
+                HirType::String,
+            ),
+            // HTTP namespace functions
+            ("http_get", vec![HirType::String], HirType::String),
+            (
+                "http_post",
+                vec![HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "http_put",
+                vec![HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "http_patch",
+                vec![HirType::String, HirType::String],
+                HirType::String,
+            ),
+            ("http_delete", vec![HirType::String], HirType::String),
+            // File namespace functions
+            ("file_read", vec![HirType::String], HirType::String),
+            (
+                "file_write",
+                vec![HirType::String, HirType::String],
+                HirType::Boolean,
+            ),
+            (
+                "file_append",
+                vec![HirType::String, HirType::String],
+                HirType::Boolean,
+            ),
+            ("file_exists", vec![HirType::String], HirType::Boolean),
+            ("file_delete", vec![HirType::String], HirType::Boolean),
+            // Comparison namespace functions (compare.integer.*, compare.number.*)
+            (
+                "compare.integer_equal",
+                vec![HirType::Integer, HirType::Integer],
+                HirType::Boolean,
+            ),
+            (
+                "compare.integer_notEqual",
+                vec![HirType::Integer, HirType::Integer],
+                HirType::Boolean,
+            ),
+            (
+                "compare.integer_lessThan",
+                vec![HirType::Integer, HirType::Integer],
+                HirType::Boolean,
+            ),
+            (
+                "compare.integer_greaterThan",
+                vec![HirType::Integer, HirType::Integer],
+                HirType::Boolean,
+            ),
+            (
+                "compare.integer_lessEqual",
+                vec![HirType::Integer, HirType::Integer],
+                HirType::Boolean,
+            ),
+            (
+                "compare.integer_greaterEqual",
+                vec![HirType::Integer, HirType::Integer],
+                HirType::Boolean,
+            ),
+            (
+                "compare.number_equal",
+                vec![HirType::Number, HirType::Number],
+                HirType::Boolean,
+            ),
+            (
+                "compare.number_notEqual",
+                vec![HirType::Number, HirType::Number],
+                HirType::Boolean,
+            ),
+            (
+                "compare.number_lessThan",
+                vec![HirType::Number, HirType::Number],
+                HirType::Boolean,
+            ),
+            (
+                "compare.number_greaterThan",
+                vec![HirType::Number, HirType::Number],
+                HirType::Boolean,
+            ),
+            (
+                "compare.number_lessEqual",
+                vec![HirType::Number, HirType::Number],
+                HirType::Boolean,
+            ),
+            (
+                "compare.number_greaterEqual",
+                vec![HirType::Number, HirType::Number],
+                HirType::Boolean,
+            ),
+            // Conditional namespace functions (conditional.integer, conditional.number, etc.)
+            (
+                "conditional_integer",
+                vec![HirType::Boolean, HirType::Integer, HirType::Integer],
+                HirType::Integer,
+            ),
+            (
+                "conditional_number",
+                vec![HirType::Boolean, HirType::Number, HirType::Number],
+                HirType::Number,
+            ),
+            (
+                "conditional_string",
+                vec![HirType::Boolean, HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "conditional_boolean",
+                vec![HirType::Boolean, HirType::Boolean, HirType::Boolean],
+                HirType::Boolean,
+            ),
+            // Logical namespace functions (logical.and, logical.or, logical.not)
+            (
+                "logical_and",
+                vec![HirType::Boolean, HirType::Boolean],
+                HirType::Boolean,
+            ),
+            (
+                "logical_or",
+                vec![HirType::Boolean, HirType::Boolean],
+                HirType::Boolean,
+            ),
+            ("logical_not", vec![HirType::Boolean], HirType::Boolean),
+            // Input namespace functions (input(), input.integer(), input.yesNo(), etc.)
+            ("input", vec![HirType::String], HirType::String),
+            ("input_integer", vec![HirType::String], HirType::Integer),
+            ("input_number", vec![HirType::String], HirType::Number),
+            ("input_yesNo", vec![HirType::String], HirType::Boolean),
         ];
 
         for (name, params, return_type) in namespace_functions {
@@ -862,6 +1185,19 @@ impl GlobalSymbolTable {
             self.lookup_symbol("math_sin").unwrap_or(SymbolId(0)),
             self.lookup_symbol("math_cos").unwrap_or(SymbolId(0)),
             self.lookup_symbol("math_tan").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_asin").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_acos").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_atan").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_atan2").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_sinh").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_cosh").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_tanh").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_log").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_ln").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_log10").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_log2").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_exp").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_exp2").unwrap_or(SymbolId(0)),
             self.lookup_symbol("math_abs").unwrap_or(SymbolId(0)),
             self.lookup_symbol("math_floor").unwrap_or(SymbolId(0)),
             self.lookup_symbol("math_ceil").unwrap_or(SymbolId(0)),
@@ -869,9 +1205,15 @@ impl GlobalSymbolTable {
             self.lookup_symbol("math_sqrt").unwrap_or(SymbolId(0)),
             self.lookup_symbol("math_trunc").unwrap_or(SymbolId(0)),
             self.lookup_symbol("math_pi").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_e").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_tau").unwrap_or(SymbolId(0)),
             self.lookup_symbol("math_pow").unwrap_or(SymbolId(0)),
             self.lookup_symbol("math_max").unwrap_or(SymbolId(0)),
             self.lookup_symbol("math_min").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_add").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_subtract").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_multiply").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math_divide").unwrap_or(SymbolId(0)),
         ];
 
         let math_namespace_id = self.create_symbol(
@@ -889,8 +1231,14 @@ impl GlobalSymbolTable {
         self.builtins.insert(math_namespace_id);
 
         // String namespace - so "string" is recognized as a valid identifier
+        // Canonical: string_size (not string_length - see Clean Language Specification)
         let string_functions = vec![
-            self.lookup_symbol("string_length").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_size").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_concat").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_isEmpty").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_indexOf").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_lastIndexOf")
+                .unwrap_or(SymbolId(0)),
             self.lookup_symbol("string_substring")
                 .unwrap_or(SymbolId(0)),
             self.lookup_symbol("string_toUpperCase")
@@ -902,6 +1250,13 @@ impl GlobalSymbolTable {
                 .unwrap_or(SymbolId(0)),
             self.lookup_symbol("string_trimEnd").unwrap_or(SymbolId(0)),
             self.lookup_symbol("string_contains").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_startsWith")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_endsWith").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_replace").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_replaceAll")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string_split").unwrap_or(SymbolId(0)),
         ];
 
         let string_namespace_id = self.create_symbol(
@@ -919,11 +1274,31 @@ impl GlobalSymbolTable {
         self.builtins.insert(string_namespace_id);
 
         // Create list namespace
+        // Canonical: list_size (not list_length - see Clean Language Specification)
         let list_functions = vec![
             self.lookup_symbol("list_size").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_isEmpty").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_isNotEmpty").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list_push").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list_pop").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list_get").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_remove").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_peek").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_add").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_contains").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_insert").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_indexOf").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_lastIndexOf")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_first").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_last").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_reverse").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_sort").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_slice").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_concat").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_fill").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_range").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list_join").unwrap_or(SymbolId(0)),
         ];
 
         let list_namespace_id = self.create_symbol(
@@ -939,6 +1314,189 @@ impl GlobalSymbolTable {
             },
         );
         self.builtins.insert(list_namespace_id);
+
+        // Create http namespace
+        // Create conditional namespace
+        let conditional_functions = vec![
+            self.lookup_symbol("conditional.integer")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("conditional.number")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("conditional.string")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("conditional.boolean")
+                .unwrap_or(SymbolId(0)),
+        ];
+
+        let conditional_namespace_id = self.create_symbol(
+            "conditional".to_string(),
+            SymbolKind::Namespace {
+                functions: conditional_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+            },
+        );
+        self.builtins.insert(conditional_namespace_id);
+
+        let http_functions = vec![
+            self.lookup_symbol("http_get").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http_post").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http_put").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http_patch").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http_delete").unwrap_or(SymbolId(0)),
+        ];
+
+        let http_namespace_id = self.create_symbol(
+            "http".to_string(),
+            SymbolKind::Namespace {
+                functions: http_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+            },
+        );
+        self.builtins.insert(http_namespace_id);
+
+        // Create file namespace
+        let file_functions = vec![
+            self.lookup_symbol("file_read").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("file_write").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("file_append").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("file_exists").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("file_delete").unwrap_or(SymbolId(0)),
+        ];
+
+        let file_namespace_id = self.create_symbol(
+            "file".to_string(),
+            SymbolKind::Namespace {
+                functions: file_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+            },
+        );
+        self.builtins.insert(file_namespace_id);
+
+        // Create compare namespace (compare.integer.*, compare.number.*)
+        let compare_functions = vec![
+            self.lookup_symbol("compare.integer_equal")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("compare.integer_notEqual")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("compare.integer_lessThan")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("compare.integer_greaterThan")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("compare.integer_lessEqual")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("compare.integer_greaterEqual")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("compare.number_equal")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("compare.number_notEqual")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("compare.number_lessThan")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("compare.number_greaterThan")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("compare.number_lessEqual")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("compare.number_greaterEqual")
+                .unwrap_or(SymbolId(0)),
+        ];
+
+        let compare_namespace_id = self.create_symbol(
+            "compare".to_string(),
+            SymbolKind::Namespace {
+                functions: compare_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+            },
+        );
+        self.builtins.insert(compare_namespace_id);
+
+        // Create conditional namespace
+        let conditional_functions = vec![
+            self.lookup_symbol("conditional_integer")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("conditional_number")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("conditional_string")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("conditional_boolean")
+                .unwrap_or(SymbolId(0)),
+        ];
+
+        let conditional_namespace_id = self.create_symbol(
+            "conditional".to_string(),
+            SymbolKind::Namespace {
+                functions: conditional_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+            },
+        );
+        self.builtins.insert(conditional_namespace_id);
+
+        // Create logical namespace
+        let logical_functions = vec![
+            self.lookup_symbol("logical_and").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("logical_or").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("logical_not").unwrap_or(SymbolId(0)),
+        ];
+
+        let logical_namespace_id = self.create_symbol(
+            "logical".to_string(),
+            SymbolKind::Namespace {
+                functions: logical_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+            },
+        );
+        self.builtins.insert(logical_namespace_id);
+
+        // Create input namespace
+        let input_functions = vec![
+            self.lookup_symbol("input").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("input_integer").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("input_number").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("input_yesNo").unwrap_or(SymbolId(0)),
+        ];
+
+        let input_namespace_id = self.create_symbol(
+            "input".to_string(),
+            SymbolKind::Namespace {
+                functions: input_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+            },
+        );
+        self.builtins.insert(input_namespace_id);
     }
 }
 

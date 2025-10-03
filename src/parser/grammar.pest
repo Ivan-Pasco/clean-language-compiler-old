@@ -1,6 +1,6 @@
 // Basic tokens - DISABLE AUTOMATIC WHITESPACE for indentation-sensitive parsing
 WHITESPACE = _{ " " | "\r" }
-COMMENT = _{ ("#" | "//") ~ (!"\n" ~ ANY)* ~ ("\n" | EOI) | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
+COMMENT = _{ ("#" | "//") ~ (!"\n" ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 
 // Trivia rules for handling comments in indented contexts
 // LINE_TRIVIA handles single-line comments with proper indentation preservation
@@ -140,7 +140,13 @@ method_call_chain = { identifier ~ ("." ~ identifier)+ }
 // Function apply-blocks: println: "Hello", "World" (catch-all for identifiers and specific keywords)
 function_name_in_apply_block = { "println" | "printl" | "print" | identifier }
 function_apply_block = { !("functions" ~ ":") ~ function_name_in_apply_block ~ ":" ~ indented_expressions }
-indented_expressions = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ expression ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ !apply_block_start ~ expression)* }
+// Fixed: Match only expressions at deeper indentation than parent statement
+indented_expressions = {
+    NEWLINE ~ (empty_line)* ~
+    &(INDENT ~ INDENT) ~ // Lookahead: require at least 2 levels of indentation
+    INDENT+ ~ expression ~
+    (NEWLINE ~ (empty_line)* ~ &(INDENT ~ INDENT) ~ INDENT+ ~ !apply_block_start ~ expression)*
+}
 
 // Helper rule to detect the start of a new apply-block
 apply_block_start = { (sized_type | core_type | matrix_type | list_type | pairs_type) ~ ":" | identifier ~ ("." ~ identifier)+ ~ ":" | "constant" ~ ":" | function_name_in_apply_block ~ ":" }
@@ -174,14 +180,17 @@ namespace_identifier = { identifier }
 static_class_name = { static_class_identifier ~ ("." ~ static_class_identifier)* }
 
 // Argument expression - bounded expression that allows arithmetic but stops at natural boundaries
-argument_expression = { argument_bounded_expression }
+// Argument expressions now support full logical expressions including comparisons
+argument_expression = { argument_logical }
 
-// Bounded expressions for function arguments - allows arithmetic but no logical/comparison operations
-argument_bounded_expression = { argument_additive }
+// Argument expressions support logical, comparison, and arithmetic operations
+argument_logical = { argument_comparison ~ (WHITESPACE* ~ logical_op ~ WHITESPACE* ~ argument_comparison)* }
+argument_comparison = { argument_unary ~ (WHITESPACE* ~ comparison_op ~ WHITESPACE* ~ argument_unary)* }
+argument_unary = { (unary_op ~ WHITESPACE*)* ~ argument_additive }
 argument_additive = { argument_multiplicative ~ (WHITESPACE* ~ additive_op ~ WHITESPACE* ~ argument_multiplicative)* }
 argument_multiplicative = { argument_power ~ (WHITESPACE* ~ multiplicative_op ~ WHITESPACE* ~ argument_power)* }
-argument_power = { argument_unary ~ (WHITESPACE* ~ power_op ~ WHITESPACE* ~ argument_unary)* }
-argument_unary = { (unary_op ~ WHITESPACE*)* ~ primary }
+argument_power = { argument_primary ~ (WHITESPACE* ~ power_op ~ WHITESPACE* ~ argument_primary)* }
+argument_primary = { primary }
 
 // Argument list pattern for comma-separated expressions
 argument_list = { argument_expression ~ ("," ~ argument_expression)* }
@@ -203,6 +212,10 @@ multiple_method_call = { method_call_base ~ method_call_segment ~ method_call_se
 // Single method call
 method_call = { method_call_base ~ method_call_segment }
 
+// Parenthesized expression with method call(s)
+// Handles cases like (a + b).toString() or (x * y).toInteger().toString()
+parenthesized_method_call = { "(" ~ parenthesized_expr ~ ")" ~ method_call_segment+ }
+
 // Three-level chained method call: namespace.class.method() patterns (most specific)
 three_level_method_call = { identifier ~ "." ~ identifier ~ "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
 
@@ -211,6 +224,9 @@ property_method_call = { identifier ~ ("." ~ identifier) ~ ("." ~ identifier)+ ~
 
 // Static method call syntax for ClassName.method() patterns (single level)
 static_method_call = { static_class_name ~ "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
+
+// Namespace function call with optional method chaining (e.g., math.sqrt(x).toString())
+namespace_method_chain = { namespace_identifier ~ "." ~ identifier ~ "(" ~ argument_list? ~ ")" ~ method_call_segment+ }
 
 // Namespace function call syntax for namespace.function() patterns (e.g., math.sin)
 namespace_function_call = { namespace_identifier ~ "." ~ identifier ~ "(" ~ argument_list? ~ ")" }
@@ -228,16 +244,24 @@ primary = {
     matrix_literal |
     list_literal |
     pairs_literal |
+    // Parenthesized expressions with method calls MUST come before plain parenthesized expressions
+    // This handles cases like (a + b).toString()
+    parenthesized_method_call |
     // Parenthesized expressions - flexible indentation for multiline expressions
     "(" ~ parenthesized_expr ~ ")" |
     // Complex patterns that might partially match - put after literals
     constructor_call |
+    // base_call must come AFTER base_identifier to allow "base" as variable name
+    // It requires "base(", not just "base", so it's unambiguous
     base_call |
+    // Namespace method chain must come before plain namespace call to match longer patterns first
+    namespace_method_chain |
+    // Three-level calls MUST come before namespace calls to match longer patterns first
+    three_level_method_call |
+    property_method_call |
     // Namespace calls must come before method calls to prevent 'math.sin()' being parsed as method on 'math' variable
     namespace_function_call |
     // Multiple method calls MUST come before single method calls for proper chaining
-    three_level_method_call |
-    property_method_call |
     multiple_method_call |
     chained_method_call |
     method_call |
@@ -247,8 +271,15 @@ primary = {
     list_access |
     property_access |
     error_variable |
+    // "base" can be both a keyword (for base() calls) and a variable/parameter name
+    // Check it explicitly before general identifier to allow it as a variable
+    base_identifier |
     identifier
 }
+
+// Special rule to allow "base" as a variable/parameter name
+// This comes before identifier to match "base" when not followed by "("
+base_identifier = @{ "base" ~ !("(" | ASCII_ALPHANUMERIC | "_") }
 
 // Base constructor call
 base_call = { "base" ~ "(" ~ argument_list? ~ ")" }
@@ -307,9 +338,15 @@ expression = { on_error_block | on_error_expr | base_expression }
 parenthesized_expr = { (WHITESPACE | NEWLINE | INDENT)* ~ multiline_logical_expression ~ (WHITESPACE | NEWLINE | INDENT)* }
 
 // Operators with proper precedence levels
-logical_op = { "and" | "or" }
-comparison_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" | ("is" ~ !(ASCII_ALPHANUMERIC | "_")) }
-unary_op = { "not" | "-" }
+// For keyword operators, use word boundaries to prevent matching inside identifiers
+// e.g., "notEmpty" should parse as identifier, not "not" + "Empty"
+logical_op_and = @{ "and" ~ !(ASCII_ALPHANUMERIC | "_") }
+logical_op_or = @{ "or" ~ !(ASCII_ALPHANUMERIC | "_") }
+logical_op = { logical_op_and | logical_op_or }
+comparison_op_is = @{ "is" ~ !(ASCII_ALPHANUMERIC | "_") }
+comparison_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" | comparison_op_is }
+unary_op_not = @{ "not" ~ !(ASCII_ALPHANUMERIC | "_") }
+unary_op = { unary_op_not | "-" }
 additive_op = { "+" | "-" }
 multiplicative_op = { "*" | "/" | "%" }
 power_op = { "^" }
@@ -439,8 +476,13 @@ function_declaration_line = {
 }
 
 // Function signature lookahead to distinguish function declarations from statements
-// Must include the opening parenthesis to avoid matching variable declarations
-function_signature = { function_type ~ " "* ~ function_name ~ " "* ~ "(" | "void" ~ " "* ~ function_name ~ " "* ~ "(" }
+// Uses function_return_type to avoid identifier ambiguity
+function_signature = {
+    class_name ~ " "+ ~ function_name ~ " "* ~ "(" |
+    function_return_type ~ " "* ~ function_name ~ " "* ~ "(" |
+    "void" ~ " "* ~ function_name ~ " "* ~ "(" |
+    function_name ~ " "* ~ "("
+}
 
 class_indented_functions_block = { 
     NEWLINE ~ 
@@ -461,11 +503,29 @@ function_line = {
 // Function header (declaration without body) inside functions block
 function_header = { function_type? ~ " "* ~ function_name ~ " "* ~ "(" ~ parameter_list? ~ ")" ~ " "* }
 
-// Function declaration inside functions block - Clean Language spec compliant
-function_in_block = { function_type? ~ " "* ~ function_name ~ " "* ~ "(" ~ parameter_list? ~ ")" ~ " "* ~ function_body_in_block }
+// Function return type - like function_type but WITHOUT plain identifier and class_name to avoid ambiguity
+// class_name is handled separately in function_in_block
+function_return_type = {
+    matrix_type |
+    list_type |
+    pairs_type |
+    generic_type |
+    sized_type |
+    core_type
+}
 
-// Function name - allows identifiers and certain contextual keywords that might be used as method names
-function_name = { identifier | "start" | "stop" | "toString" | "input" | "error" | "test" | "from" | "to" | "step" }
+// Function declaration inside functions block - Clean Language spec compliant
+// Ordered choice: try class return type first (uppercase), then other types, then no return type
+function_in_block = {
+    (class_name ~ " "+ ~ function_name ~ " "* ~ "(" ~ parameter_list? ~ ")" ~ " "* ~ function_body_in_block) |
+    ((function_return_type | "void") ~ " "* ~ function_name ~ " "* ~ "(" ~ parameter_list? ~ ")" ~ " "* ~ function_body_in_block) |
+    (function_name ~ " "* ~ "(" ~ parameter_list? ~ ")" ~ " "* ~ function_body_in_block)
+}
+
+// Function name - allows identifiers (but not class names which start with uppercase) and certain contextual keywords
+// Class names start with uppercase, function names start with lowercase or are keywords
+function_name = { lowercase_identifier | "start" | "stop" | "toString" | "input" | "error" | "test" | "from" | "to" | "step" }
+lowercase_identifier = @{ !keyword ~ ('a'..'z' | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Function body can have setup blocks (description and input) or just statements
 // Also supports single-line function bodies and empty functions
@@ -477,11 +537,12 @@ function_body = {
 }
 
 // Function body for functions inside blocks (no EOI required)
+// Allow multiple empty lines after function declaration for flexible formatting
 function_body_in_block = {
-    (NEWLINE ~ function_body_statements) |
-    (NEWLINE ~ INDENT+ ~ setup_block ~ (NEWLINE)? ~ function_body_statements) |
-    (NEWLINE ~ INDENT+ ~ setup_block) |
-    (NEWLINE) // Allow empty function body with newline
+    (NEWLINE ~ (empty_line)* ~ function_body_statements) |
+    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block ~ (NEWLINE)? ~ function_body_statements) |
+    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ setup_block) |
+    (NEWLINE ~ (empty_line)*) // Allow empty function body with newline and empty lines
 }
 
 // Function body statements - simplified to not consume trailing empty lines
