@@ -71,6 +71,9 @@ impl NameResolver {
 
     /// First pass: Register all top-level symbols (functions, classes)
     fn register_top_level_symbols(&mut self, hir: &HirProgram) -> Result<(), ()> {
+        // Register builtin functions so they pass validation
+        self.register_builtin_functions();
+
         // Register functions
         for function in &hir.functions {
             // Check for duplicates BEFORE creating the symbol
@@ -206,12 +209,19 @@ impl NameResolver {
                 param.location.clone(),
             );
 
+            // Resolve default value if present
+            let resolved_default = if let Some(default_expr) = &param.default_value {
+                Some(self.resolve_expression(default_expr)?)
+            } else {
+                None
+            };
+
             resolved_parameters.push(ResolvedHirParameter {
                 name: param.name.clone(),
                 symbol_id: param_symbol_id,
                 param_type: param.param_type.clone(),
-                default_value: None, // TODO: Handle default values
-                is_variadic: false,  // TODO: Handle variadic parameters
+                default_value: resolved_default,
+                is_variadic: false, // TODO: Handle variadic parameters
                 location: param.location.clone(),
             });
         }
@@ -1015,6 +1025,7 @@ impl NameResolver {
                 arguments,
                 location,
             } => {
+                // Lookup function in symbol table (includes builtin functions)
                 let function_symbol_id =
                     self.symbol_table.lookup_symbol(function).ok_or_else(|| {
                         self.error(
@@ -1084,6 +1095,38 @@ impl NameResolver {
                                     class_symbol_id,
                                     method: method.clone(),
                                     method_symbol_id,
+                                    arguments: resolved_arguments,
+                                    location: location.clone(),
+                                });
+                            } else if let SymbolKind::Namespace { .. } = &class_symbol.kind {
+                                eprintln!("DEBUG RESOLVER: '{}' is a namespace! Converting to namespace call", class_name);
+                                // This is a namespace function call (e.g., logical.and, conditional.integer)
+                                let qualified_name = format!("{}_{}", class_name, method);
+
+                                // Look up the qualified function name in the symbol table
+                                let function_symbol_id = self
+                                    .symbol_table
+                                    .lookup_symbol(&qualified_name)
+                                    .ok_or_else(|| {
+                                        self.error(
+                                            &format!(
+                                                "Namespace function '{}::{}' not found",
+                                                class_name, method
+                                            ),
+                                            location.clone(),
+                                        );
+                                    })?;
+
+                                // Resolve all arguments
+                                let mut resolved_arguments = Vec::new();
+                                for arg in arguments {
+                                    resolved_arguments.push(self.resolve_expression(arg)?);
+                                }
+
+                                // Return as a regular function call (namespace functions are just functions)
+                                return Ok(ResolvedHirExpression::Call {
+                                    function: qualified_name,
+                                    function_symbol_id,
                                     arguments: resolved_arguments,
                                     location: location.clone(),
                                 });
@@ -1250,14 +1293,164 @@ impl NameResolver {
                 arguments,
                 location,
             } => {
+                // CRITICAL FIX: Handle field access chains like test.flag.toString()
+                // The namespace "test.flag" needs to be converted to a field access expression
+                // BUT only if the first part is a variable, not a namespace
+                if namespace.contains('.') {
+                    // Split the namespace into parts (e.g., "test.flag" -> ["test", "flag"])
+                    let parts: Vec<&str> = namespace.split('.').collect();
+                    let base_name = parts[0];
+
+                    // Check if the first part is a variable (not a namespace)
+                    if let Some(base_symbol_id) = self.symbol_table.lookup_symbol(base_name) {
+                        // Check if it's a namespace - if so, don't convert
+                        let is_namespace =
+                            if let Some(symbol) = self.symbol_table.get_symbol(base_symbol_id) {
+                                matches!(symbol.kind, SymbolKind::Namespace { .. })
+                            } else {
+                                false
+                            };
+
+                        if !is_namespace {
+                            // This is a variable with field accesses - convert to field access chain
+                            eprintln!("DEBUG RESOLVER: NamespaceCall '{}::{}' starts with variable '{}' - converting to field access + method call", namespace, function, base_name);
+
+                            let mut receiver = ResolvedHirExpression::Variable {
+                                name: base_name.to_string(),
+                                symbol_id: base_symbol_id,
+                                location: location.clone(),
+                            };
+
+                            // Chain field accesses for remaining parts
+                            for field_name in &parts[1..] {
+                                receiver = ResolvedHirExpression::FieldAccess {
+                                    object: Box::new(receiver),
+                                    field: field_name.to_string(),
+                                    field_symbol_id: SymbolId(0), // Placeholder, will be resolved by type checker
+                                    location: location.clone(),
+                                };
+                            }
+
+                            // Resolve arguments
+                            let mut resolved_arguments = Vec::new();
+                            for arg in arguments {
+                                resolved_arguments.push(self.resolve_expression(arg)?);
+                            }
+
+                            // Return as a method call on the field access chain
+                            return Ok(ResolvedHirExpression::MethodCall {
+                                receiver: Box::new(receiver),
+                                method: function.clone(),
+                                method_symbol_id: None, // Will be resolved based on receiver type
+                                arguments: resolved_arguments,
+                                location: location.clone(),
+                            });
+                        } else {
+                            eprintln!("DEBUG RESOLVER: NamespaceCall '{}::{}' starts with namespace '{}' - keeping as namespace call", namespace, function, base_name);
+                        }
+                    }
+                    // If base_name not found, continue with normal namespace processing below
+                }
+
+                // CRITICAL FIX: Check if the "namespace" is actually a field (method call on field)
+                // This handles cases like x.toString() where 'x' is a field, not a namespace
+                if let Some(current_class_id) = self.current_class {
+                    if let Some(class_symbol) = self.symbol_table.get_symbol(current_class_id) {
+                        if let SymbolKind::Class { fields, parent, .. } = &class_symbol.kind {
+                            // Check current class fields
+                            for &field_id in fields {
+                                if let Some(field_symbol) = self.symbol_table.get_symbol(field_id) {
+                                    if field_symbol.name == *namespace {
+                                        eprintln!("DEBUG RESOLVER: Converting NamespaceCall '{}::{}' to MethodCall - '{}' is a field", namespace, function, namespace);
+
+                                        // Create field access for the receiver
+                                        let receiver = ResolvedHirExpression::FieldAccess {
+                                            object: Box::new(ResolvedHirExpression::This {
+                                                class_symbol_id: current_class_id,
+                                                location: location.clone(),
+                                            }),
+                                            field: namespace.clone(),
+                                            field_symbol_id: field_id,
+                                            location: location.clone(),
+                                        };
+
+                                        // Resolve arguments
+                                        let mut resolved_arguments = Vec::new();
+                                        for arg in arguments {
+                                            resolved_arguments.push(self.resolve_expression(arg)?);
+                                        }
+
+                                        // Return as a method call
+                                        return Ok(ResolvedHirExpression::MethodCall {
+                                            receiver: Box::new(receiver),
+                                            method: function.clone(),
+                                            method_symbol_id: None,
+                                            arguments: resolved_arguments,
+                                            location: location.clone(),
+                                        });
+                                    }
+                                }
+                            }
+
+                            // Check parent class fields if inheritance is involved
+                            if let Some(parent_class_id) = parent {
+                                if let Some(parent_symbol) = self.symbol_table.get_symbol(*parent_class_id) {
+                                    if let SymbolKind::Class { fields: parent_fields, .. } = &parent_symbol.kind {
+                                        for &field_id in parent_fields {
+                                            if let Some(field_symbol) = self.symbol_table.get_symbol(field_id) {
+                                                if field_symbol.name == *namespace {
+                                                    eprintln!("DEBUG RESOLVER: Converting NamespaceCall '{}::{}' to MethodCall - '{}' is a parent field", namespace, function, namespace);
+
+                                                    // Create field access for the receiver
+                                                    let receiver = ResolvedHirExpression::FieldAccess {
+                                                        object: Box::new(ResolvedHirExpression::This {
+                                                            class_symbol_id: current_class_id,
+                                                            location: location.clone(),
+                                                        }),
+                                                        field: namespace.clone(),
+                                                        field_symbol_id: field_id,
+                                                        location: location.clone(),
+                                                    };
+
+                                                    // Resolve arguments
+                                                    let mut resolved_arguments = Vec::new();
+                                                    for arg in arguments {
+                                                        resolved_arguments.push(self.resolve_expression(arg)?);
+                                                    }
+
+                                                    // Return as a method call
+                                                    return Ok(ResolvedHirExpression::MethodCall {
+                                                        receiver: Box::new(receiver),
+                                                        method: function.clone(),
+                                                        method_symbol_id: None,
+                                                        arguments: resolved_arguments,
+                                                        location: location.clone(),
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // CRITICAL FIX: Check if the "namespace" is actually a variable (method call)
                 // This handles cases like value.toString() where 'value' is a variable, not a namespace
-                // However, do NOT convert if it's a known namespace like StringUtils, math, etc.
+                // However, do NOT convert if it's a known namespace
                 if let Some(symbol_id) = self.symbol_table.lookup_symbol(namespace) {
-                    // Check if this is a known namespace that should NOT be converted to method call
-                    if namespace == "StringUtils" || namespace == "math" || namespace == "Math" {
-                        // This is a legitimate namespace call, continue with normal namespace processing
-                        eprintln!("DEBUG RESOLVER: Keeping NamespaceCall '{}::{}' as namespace - '{}' is a known namespace", namespace, function, namespace);
+                    // Check the symbol kind to determine if it's a true namespace
+                    let is_namespace = if let Some(symbol) = self.symbol_table.get_symbol(symbol_id)
+                    {
+                        matches!(symbol.kind, SymbolKind::Namespace { .. })
+                    } else {
+                        false
+                    };
+
+                    if is_namespace {
+                        // This is a legitimate namespace, continue with normal namespace processing
+                        eprintln!("DEBUG RESOLVER: Keeping NamespaceCall '{}::{}' as namespace - '{}' is a Namespace symbol", namespace, function, namespace);
                         // Continue to normal namespace processing below
                     } else {
                         // This is actually a method call on a variable, not a namespace call
@@ -1312,6 +1505,39 @@ impl NameResolver {
                     function: qualified_name,
                     function_symbol_id,
                     arguments: resolved_arguments,
+                    location: location.clone(),
+                })
+            }
+
+            HirExpression::OnError {
+                expression,
+                fallback,
+                location,
+            } => {
+                let resolved_expression = self.resolve_expression(expression)?;
+                let resolved_fallback = self.resolve_expression(fallback)?;
+
+                Ok(ResolvedHirExpression::OnError {
+                    expression: Box::new(resolved_expression),
+                    fallback: Box::new(resolved_fallback),
+                    location: location.clone(),
+                })
+            }
+
+            HirExpression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+                location,
+            } => {
+                let resolved_condition = self.resolve_expression(condition)?;
+                let resolved_then = self.resolve_expression(then_expr)?;
+                let resolved_else = self.resolve_expression(else_expr)?;
+
+                Ok(ResolvedHirExpression::Conditional {
+                    condition: Box::new(resolved_condition),
+                    then_expr: Box::new(resolved_then),
+                    else_expr: Box::new(resolved_else),
                     location: location.clone(),
                 })
             }
@@ -1440,6 +1666,123 @@ impl NameResolver {
     fn warning(&mut self, message: &str, location: SourceLocation) {
         self.warnings
             .push(CompilerError::validation_warning(message, location));
+    }
+
+    /// Register builtin functions in the symbol table to allow validation
+    /// This is a simplified version that registers commonly used builtins
+    /// Full validation is done in the semantic analyzer
+    fn register_builtin_functions(&mut self) {
+        // Create a dummy source location for builtin functions
+        let builtin_location = SourceLocation {
+            line: 0,
+            column: 0,
+            file: "<builtin>".to_string(),
+        };
+
+        // Common IO functions
+        self.register_builtin_fn(
+            "print",
+            vec![HirType::String],
+            Some(HirType::Void),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "println",
+            vec![HirType::String],
+            Some(HirType::Void),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "printl",
+            vec![HirType::String],
+            Some(HirType::Void),
+            builtin_location.clone(),
+        );
+
+        // Conversion functions
+        self.register_builtin_fn(
+            "bool_to_string",
+            vec![HirType::Boolean],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "int_to_string",
+            vec![HirType::Integer],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "float_to_string",
+            vec![HirType::Number],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "number_to_string",
+            vec![HirType::Number],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "to_number",
+            vec![HirType::String],
+            Some(HirType::Number),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "to_integer",
+            vec![HirType::Number],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // Testing functions
+        self.register_builtin_fn(
+            "mustBeTrue",
+            vec![HirType::Boolean],
+            Some(HirType::Void),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "mustBeFalse",
+            vec![HirType::Boolean],
+            Some(HirType::Void),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "assertEqual",
+            vec![HirType::Integer, HirType::Integer],
+            Some(HirType::Void),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "assertNotEqual",
+            vec![HirType::Integer, HirType::Integer],
+            Some(HirType::Void),
+            builtin_location.clone(),
+        );
+    }
+
+    /// Helper to register a single builtin function
+    fn register_builtin_fn(
+        &mut self,
+        name: &str,
+        parameters: Vec<HirType>,
+        return_type: Option<HirType>,
+        location: SourceLocation,
+    ) {
+        let symbol_id = self.symbol_table.create_symbol(
+            name.to_string(),
+            SymbolKind::Function {
+                parameters,
+                return_type,
+            },
+            self.symbol_table.current_scope_id(),
+            location,
+        );
+        // Mark the symbol as builtin so it gets registered in the type environment
+        self.symbol_table.mark_as_builtin(symbol_id);
     }
 }
 
