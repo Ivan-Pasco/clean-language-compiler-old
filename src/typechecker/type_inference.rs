@@ -29,7 +29,7 @@ pub struct TypeInference<'a> {
     constraints: Vec<TypeConstraint>,
 
     /// Type variable generator
-    constraint_solver: ConstraintSolver<'a>,
+    constraint_solver: ConstraintSolver,
 
     /// Symbol table from resolution phase
     symbol_table: &'a GlobalSymbolTable,
@@ -79,7 +79,7 @@ impl<'a> TypeInference<'a> {
         Self {
             type_env: HashMap::new(),
             constraints: Vec::new(),
-            constraint_solver: ConstraintSolver::new(symbol_table),
+            constraint_solver: ConstraintSolver::new(),
             symbol_table,
             builtins: BuiltinTypes::new(),
             required_param_counts: HashMap::new(),
@@ -101,10 +101,7 @@ impl<'a> TypeInference<'a> {
         let tast_program = self.infer_program(&program);
 
         // Solve generated constraints
-        let mut solver = std::mem::replace(
-            &mut self.constraint_solver,
-            ConstraintSolver::new(self.symbol_table),
-        );
+        let mut solver = std::mem::replace(&mut self.constraint_solver, ConstraintSolver::new());
         solver.add_constraints(std::mem::take(&mut self.constraints));
         let solver_result = solver.solve();
 
@@ -2049,65 +2046,67 @@ impl<'a> TypeInference<'a> {
                     target_concrete_type,
                     location.clone(),
                 )
-            }
+            } // OnError and Conditional expressions not yet implemented in refactored HIR
+              // These features will be added back when needed
+              /*
+              ResolvedHirExpression::OnError {
+                  expression,
+                  fallback,
+                  location,
+              } => {
+                  // Infer types for both the expression and fallback
+                  let tast_expression = self.infer_expression(expression)?;
+                  let _tast_fallback = self.infer_expression(fallback)?;
 
-            ResolvedHirExpression::OnError {
-                expression,
-                fallback,
-                location,
-            } => {
-                // Infer types for both the expression and fallback
-                let tast_expression = self.infer_expression(expression)?;
-                let _tast_fallback = self.infer_expression(fallback)?;
+                  // The onError expression returns the type of the main expression
+                  // The fallback is used if the expression fails at runtime
+                  let result_type = tast_expression.expr_type.clone();
 
-                // The onError expression returns the type of the main expression
-                // The fallback is used if the expression fails at runtime
-                let result_type = tast_expression.expr_type.clone();
+                  // TODO: Add type compatibility checking between expression and fallback
+                  // TODO: Implement proper error handling in TAST and codegen
 
-                // TODO: Add type compatibility checking between expression and fallback
-                // TODO: Implement proper error handling in TAST and codegen
+                  // For now, represent onError as just the expression (fallback handled at runtime)
+                  (tast_expression.kind, result_type, location.clone())
+              }
 
-                // For now, represent onError as just the expression (fallback handled at runtime)
-                (tast_expression.kind, result_type, location.clone())
-            }
+              ResolvedHirExpression::Conditional {
+                  condition,
+                  then_expr,
+                  else_expr,
+                  location,
+              } => {
+                  // Infer condition type and ensure it's boolean
+                  let tast_condition = self.infer_expression(condition)?;
+                  self.add_constraint(TypeConstraint::Equality {
+                      left: tast_condition.expr_type.clone(),
+                      right: ConcreteType::Boolean,
+                      location: location.clone(),
+                  });
 
-            ResolvedHirExpression::Conditional {
-                condition,
-                then_expr,
-                else_expr,
-                location,
-            } => {
-                // Infer condition type and ensure it's boolean
-                let tast_condition = self.infer_expression(condition)?;
-                self.add_constraint(TypeConstraint::Equality {
-                    left: tast_condition.expr_type.clone(),
-                    right: ConcreteType::Boolean,
-                    location: location.clone(),
-                });
+                  // Infer types for both branches
+                  let tast_then = self.infer_expression(then_expr)?;
+                  let tast_else = self.infer_expression(else_expr)?;
 
-                // Infer types for both branches
-                let tast_then = self.infer_expression(then_expr)?;
-                let tast_else = self.infer_expression(else_expr)?;
+                  // Both branches must have compatible types
+                  self.add_constraint(TypeConstraint::Equality {
+                      left: tast_then.expr_type.clone(),
+                      right: tast_else.expr_type.clone(),
+                      location: location.clone(),
+                  });
 
-                // Both branches must have compatible types
-                self.add_constraint(TypeConstraint::Equality {
-                    left: tast_then.expr_type.clone(),
-                    right: tast_else.expr_type.clone(),
-                    location: location.clone(),
-                });
+                  // Result type is the unified type of both branches
+                  let result_type = tast_then.expr_type.clone();
 
-                // Result type is the unified type of both branches
-                let result_type = tast_then.expr_type.clone();
+                  // Create conditional TAST node
+                  let kind = TastExpressionKind::Conditional {
+                      condition: Box::new(tast_condition),
+                      then_expr: Box::new(tast_then),
+                      else_expr: Box::new(tast_else),
+                  };
 
-                // Create conditional TAST node
-                let kind = TastExpressionKind::Conditional {
-                    condition: Box::new(tast_condition),
-                    then_expr: Box::new(tast_then),
-                    else_expr: Box::new(tast_else),
-                };
-
-                (kind, result_type, location.clone())
-            }
+                  (kind, result_type, location.clone())
+              }
+              */
         };
 
         self.recursion_depth -= 1;

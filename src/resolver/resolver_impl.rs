@@ -209,19 +209,14 @@ impl NameResolver {
                 param.location.clone(),
             );
 
-            // Resolve default value if present
-            let resolved_default = if let Some(default_expr) = &param.default_value {
-                Some(self.resolve_expression(default_expr)?)
-            } else {
-                None
-            };
+            // Default values removed from HIR - handled at AST level
 
             resolved_parameters.push(ResolvedHirParameter {
                 name: param.name.clone(),
                 symbol_id: param_symbol_id,
                 param_type: param.param_type.clone(),
-                default_value: resolved_default,
-                is_variadic: false, // TODO: Handle variadic parameters
+                default_value: None, // Default parameters handled at AST level
+                is_variadic: false,  // TODO: Handle variadic parameters
                 location: param.location.clone(),
             });
         }
@@ -1564,40 +1559,42 @@ impl NameResolver {
                     arguments: resolved_arguments,
                     location: location.clone(),
                 })
-            }
+            } // OnError and Conditional expressions not yet implemented in refactored HIR
+              // These features will be added back when needed
+              /*
+              HirExpression::OnError {
+                  expression,
+                  fallback,
+                  location,
+              } => {
+                  let resolved_expression = self.resolve_expression(expression)?;
+                  let resolved_fallback = self.resolve_expression(fallback)?;
 
-            HirExpression::OnError {
-                expression,
-                fallback,
-                location,
-            } => {
-                let resolved_expression = self.resolve_expression(expression)?;
-                let resolved_fallback = self.resolve_expression(fallback)?;
+                  Ok(ResolvedHirExpression::OnError {
+                      expression: Box::new(resolved_expression),
+                      fallback: Box::new(resolved_fallback),
+                      location: location.clone(),
+                  })
+              }
 
-                Ok(ResolvedHirExpression::OnError {
-                    expression: Box::new(resolved_expression),
-                    fallback: Box::new(resolved_fallback),
-                    location: location.clone(),
-                })
-            }
+              HirExpression::Conditional {
+                  condition,
+                  then_expr,
+                  else_expr,
+                  location,
+              } => {
+                  let resolved_condition = self.resolve_expression(condition)?;
+                  let resolved_then = self.resolve_expression(then_expr)?;
+                  let resolved_else = self.resolve_expression(else_expr)?;
 
-            HirExpression::Conditional {
-                condition,
-                then_expr,
-                else_expr,
-                location,
-            } => {
-                let resolved_condition = self.resolve_expression(condition)?;
-                let resolved_then = self.resolve_expression(then_expr)?;
-                let resolved_else = self.resolve_expression(else_expr)?;
-
-                Ok(ResolvedHirExpression::Conditional {
-                    condition: Box::new(resolved_condition),
-                    then_expr: Box::new(resolved_then),
-                    else_expr: Box::new(resolved_else),
-                    location: location.clone(),
-                })
-            }
+                  Ok(ResolvedHirExpression::Conditional {
+                      condition: Box::new(resolved_condition),
+                      then_expr: Box::new(resolved_then),
+                      else_expr: Box::new(resolved_else),
+                      location: location.clone(),
+                  })
+              }
+              */
         }
     }
 

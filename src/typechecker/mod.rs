@@ -33,7 +33,7 @@ pub use type_inference::{BuiltinTypes, InferenceResult, TypeInference};
 #[derive(Debug)]
 pub struct TypeChecker {
     /// The underlying type inference engine
-    inference_engine: Option<TypeInference>,
+    inference_engine: Option<TypeInference<'static>>,
 }
 
 /// Type checking result
@@ -54,9 +54,12 @@ impl TypeChecker {
 
     /// Type check a resolved HIR program using constraint-based type inference
     pub fn check(resolved_hir: ResolvedHirProgram) -> Result<TypeCheckResult, Vec<CompilerError>> {
-        // Create type inference engine with symbol table from resolution
+        // Clone symbol table to satisfy borrow checker (TypeInference needs a reference
+        // but infer_types consumes the resolved_hir)
         let symbol_table = resolved_hir.symbol_table.clone();
-        let inference_engine = TypeInference::new(symbol_table);
+
+        // Create type inference engine with symbol table from resolution
+        let inference_engine = TypeInference::new(&symbol_table);
 
         // Perform type inference
         let inference_result = inference_engine.infer_types(resolved_hir);

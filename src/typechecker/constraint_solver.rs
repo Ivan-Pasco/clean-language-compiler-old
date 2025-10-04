@@ -438,7 +438,7 @@ impl ConstraintSolver {
     }
 
     /// Apply current substitution to a type
-    fn apply_substitution(&self, type_: &ConcreteType) -> ConcreteType {
+    pub fn apply_substitution(&self, type_: &ConcreteType) -> ConcreteType {
         match type_ {
             ConcreteType::Generic { name, .. } => {
                 // Try to resolve type variable (simplified)
