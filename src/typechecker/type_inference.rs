@@ -2325,20 +2325,40 @@ impl<'a> TypeInference<'a> {
         // Check if this is a generic list function that should skip type checking
         // These functions accept lists of any element type, so we can't validate
         // parameter types with the fixed type signatures we registered
-        let is_generic_list_fn = if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
-            matches!(
-                symbol.name.as_str(),
-                "list_fill" | "list_add" | "list_push" | "list_insert" | "list_contains"
-                | "list_indexOf" | "list_index_of" | "list_lastIndexOf"
-                | "list_size" | "list_length" | "list_isEmpty" | "list_isNotEmpty"
-                | "list_get" | "list_set" | "list_remove" | "list_pop" | "list_peek"
-                | "list_first" | "list_last" | "list_sort" | "list_reverse"
-                | "list_slice" | "list_concat" | "list_join" | "list_clear"
-                | "list_range"  // list_range creates lists, doesn't take list argument
-            )
-        } else {
-            false
-        };
+        let is_generic_list_fn =
+            if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
+                matches!(
+                    symbol.name.as_str(),
+                    "list_fill"
+                        | "list_add"
+                        | "list_push"
+                        | "list_insert"
+                        | "list_contains"
+                        | "list_indexOf"
+                        | "list_index_of"
+                        | "list_lastIndexOf"
+                        | "list_size"
+                        | "list_length"
+                        | "list_isEmpty"
+                        | "list_isNotEmpty"
+                        | "list_get"
+                        | "list_set"
+                        | "list_remove"
+                        | "list_pop"
+                        | "list_peek"
+                        | "list_first"
+                        | "list_last"
+                        | "list_sort"
+                        | "list_reverse"
+                        | "list_slice"
+                        | "list_concat"
+                        | "list_join"
+                        | "list_clear"
+                        | "list_range" // list_range creates lists, doesn't take list argument
+                )
+            } else {
+                false
+            };
 
         match function_type {
             ConcreteType::Function {
