@@ -1436,47 +1436,88 @@ impl NameResolver {
                     }
                 }
 
-                // CRITICAL FIX: Check if the "namespace" is actually a variable (method call)
+                // CRITICAL FIX: Check if the "namespace" is actually a variable (method call) or a static class method
                 // This handles cases like value.toString() where 'value' is a variable, not a namespace
-                // However, do NOT convert if it's a known namespace
+                // However, do NOT convert if it's a known namespace or a class (static method call)
                 if let Some(symbol_id) = self.symbol_table.lookup_symbol(namespace) {
-                    // Check the symbol kind to determine if it's a true namespace
-                    let is_namespace = if let Some(symbol) = self.symbol_table.get_symbol(symbol_id)
+                    // Check the symbol kind to determine if it's a true namespace or class
+                    let symbol_kind = if let Some(symbol) = self.symbol_table.get_symbol(symbol_id)
                     {
-                        matches!(symbol.kind, SymbolKind::Namespace { .. })
+                        Some(symbol.kind.clone())
                     } else {
-                        false
+                        None
                     };
 
-                    if is_namespace {
-                        // This is a legitimate namespace, continue with normal namespace processing
-                        eprintln!("DEBUG RESOLVER: Keeping NamespaceCall '{}::{}' as namespace - '{}' is a Namespace symbol", namespace, function, namespace);
-                        // Continue to normal namespace processing below
-                    } else {
-                        // This is actually a method call on a variable, not a namespace call
-                        eprintln!("DEBUG RESOLVER: Converting NamespaceCall '{}::{}' to MethodCall - '{}' is a variable", namespace, function, namespace);
-
-                        // Create a variable expression for the receiver
-                        let receiver = ResolvedHirExpression::Variable {
-                            name: namespace.clone(),
-                            symbol_id,
-                            location: location.clone(),
-                        };
-
-                        // Resolve arguments
-                        let mut resolved_arguments = Vec::new();
-                        for arg in arguments {
-                            resolved_arguments.push(self.resolve_expression(arg)?);
+                    match symbol_kind {
+                        Some(SymbolKind::Namespace { .. }) => {
+                            // This is a legitimate namespace, continue with normal namespace processing
+                            eprintln!("DEBUG RESOLVER: Keeping NamespaceCall '{}::{}' as namespace - '{}' is a Namespace symbol", namespace, function, namespace);
+                            // Continue to normal namespace processing below
                         }
+                        Some(SymbolKind::Class { methods, .. }) => {
+                            // This is a static method call on a class (e.g., MathUtils.add(5, 3))
+                            eprintln!("DEBUG RESOLVER: NamespaceCall '{}::{}' - '{}' is a Class, looking for static method", namespace, function, namespace);
 
-                        // Return as a method call
-                        return Ok(ResolvedHirExpression::MethodCall {
-                            receiver: Box::new(receiver),
-                            method: function.clone(),
-                            method_symbol_id: None, // Will be resolved based on receiver type
-                            arguments: resolved_arguments,
-                            location: location.clone(),
-                        });
+                            // Look for the method in the class
+                            let method_symbol_id = methods.iter()
+                                .find_map(|&method_id| {
+                                    self.symbol_table.get_symbol(method_id)
+                                        .filter(|s| s.name == *function)
+                                        .map(|_| method_id)
+                                });
+
+                            if let Some(method_id) = method_symbol_id {
+                                // Resolve arguments
+                                let mut resolved_arguments = Vec::new();
+                                for arg in arguments {
+                                    resolved_arguments.push(self.resolve_expression(arg)?);
+                                }
+
+                                // Return as a static method call
+                                return Ok(ResolvedHirExpression::StaticMethodCall {
+                                    class_name: namespace.clone(),
+                                    class_symbol_id: symbol_id,
+                                    method: function.clone(),
+                                    method_symbol_id: method_id,
+                                    arguments: resolved_arguments,
+                                    location: location.clone(),
+                                });
+                            } else {
+                                return Err(self.error(
+                                    &format!("Static method '{}' not found in class '{}'", function, namespace),
+                                    location.clone(),
+                                ));
+                            }
+                        }
+                        Some(_) => {
+                            // This is actually a method call on a variable, not a namespace call
+                            eprintln!("DEBUG RESOLVER: Converting NamespaceCall '{}::{}' to MethodCall - '{}' is a variable", namespace, function, namespace);
+
+                            // Create a variable expression for the receiver
+                            let receiver = ResolvedHirExpression::Variable {
+                                name: namespace.clone(),
+                                symbol_id,
+                                location: location.clone(),
+                            };
+
+                            // Resolve arguments
+                            let mut resolved_arguments = Vec::new();
+                            for arg in arguments {
+                                resolved_arguments.push(self.resolve_expression(arg)?);
+                            }
+
+                            // Return as a method call
+                            return Ok(ResolvedHirExpression::MethodCall {
+                                receiver: Box::new(receiver),
+                                method: function.clone(),
+                                method_symbol_id: None, // Will be resolved based on receiver type
+                                arguments: resolved_arguments,
+                                location: location.clone(),
+                            });
+                        }
+                        None => {
+                            // Symbol not found, continue to error handling below
+                        }
                     }
                 }
 
@@ -1760,6 +1801,165 @@ impl NameResolver {
             "assertNotEqual",
             vec![HirType::Integer, HirType::Integer],
             Some(HirType::Void),
+            builtin_location.clone(),
+        );
+
+        // List namespace functions (underscore versions for namespace resolution)
+        // Using Integer as generic placeholder - type checker handles actual generic list typing
+        self.register_builtin_fn(
+            "list_add",
+            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
+            Some(HirType::List(Box::new(HirType::Integer))),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_get",
+            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_set",
+            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer, HirType::Integer],
+            Some(HirType::Void),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_clear",
+            vec![HirType::List(Box::new(HirType::Integer))],
+            Some(HirType::Void),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_sort",
+            vec![HirType::List(Box::new(HirType::Integer))],
+            Some(HirType::List(Box::new(HirType::Integer))),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_reverse",
+            vec![HirType::List(Box::new(HirType::Integer))],
+            Some(HirType::List(Box::new(HirType::Integer))),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_contains",
+            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
+            Some(HirType::Boolean),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_remove",
+            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_size",
+            vec![HirType::List(Box::new(HirType::Integer))],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_length",
+            vec![HirType::List(Box::new(HirType::Integer))],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_isEmpty",
+            vec![HirType::List(Box::new(HirType::Integer))],
+            Some(HirType::Boolean),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_isNotEmpty",
+            vec![HirType::List(Box::new(HirType::Integer))],
+            Some(HirType::Boolean),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_peek",
+            vec![HirType::List(Box::new(HirType::Integer))],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_indexOf",
+            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_index_of",
+            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_lastIndexOf",
+            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_insert",
+            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer, HirType::Integer],
+            Some(HirType::List(Box::new(HirType::Integer))),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_slice",
+            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer, HirType::Integer],
+            Some(HirType::List(Box::new(HirType::Integer))),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_concat",
+            vec![HirType::List(Box::new(HirType::Integer)), HirType::List(Box::new(HirType::Integer))],
+            Some(HirType::List(Box::new(HirType::Integer))),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_first",
+            vec![HirType::List(Box::new(HirType::Integer))],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_last",
+            vec![HirType::List(Box::new(HirType::Integer))],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_join",
+            vec![HirType::List(Box::new(HirType::Integer)), HirType::String],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_fill",
+            vec![HirType::Integer, HirType::Integer],
+            Some(HirType::List(Box::new(HirType::Integer))),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_range",
+            vec![HirType::Integer, HirType::Integer],
+            Some(HirType::List(Box::new(HirType::Integer))),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_push",
+            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
+            Some(HirType::List(Box::new(HirType::Integer))),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "list_pop",
+            vec![HirType::List(Box::new(HirType::Integer))],
+            Some(HirType::Integer),
             builtin_location.clone(),
         );
     }

@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 /// Type inference engine
 #[derive(Debug)]
-pub struct TypeInference {
+pub struct TypeInference<'a> {
     /// Current type environment mapping symbols to types
     type_env: HashMap<SymbolId, ConcreteType>,
 
@@ -29,13 +29,17 @@ pub struct TypeInference {
     constraints: Vec<TypeConstraint>,
 
     /// Type variable generator
-    constraint_solver: ConstraintSolver,
+    constraint_solver: ConstraintSolver<'a>,
 
     /// Symbol table from resolution phase
-    symbol_table: GlobalSymbolTable,
+    symbol_table: &'a GlobalSymbolTable,
 
     /// Built-in types and their methods
     builtins: BuiltinTypes,
+
+    /// Map from function SymbolId to minimum required parameter count
+    /// (parameters without defaults)
+    required_param_counts: HashMap<SymbolId, usize>,
 
     /// Current context for inference
     current_function: Option<SymbolId>,
@@ -69,15 +73,16 @@ pub struct InferenceResult {
     pub warnings: Vec<CompilerError>,
 }
 
-impl TypeInference {
+impl<'a> TypeInference<'a> {
     /// Create a new type inference engine
-    pub fn new(symbol_table: GlobalSymbolTable) -> Self {
+    pub fn new(symbol_table: &'a GlobalSymbolTable) -> Self {
         Self {
             type_env: HashMap::new(),
             constraints: Vec::new(),
-            constraint_solver: ConstraintSolver::new(),
+            constraint_solver: ConstraintSolver::new(symbol_table),
             symbol_table,
             builtins: BuiltinTypes::new(),
+            required_param_counts: HashMap::new(),
             current_function: None,
             current_class: None,
             current_return_type: None,
@@ -96,7 +101,10 @@ impl TypeInference {
         let tast_program = self.infer_program(&program);
 
         // Solve generated constraints
-        let mut solver = std::mem::replace(&mut self.constraint_solver, ConstraintSolver::new());
+        let mut solver = std::mem::replace(
+            &mut self.constraint_solver,
+            ConstraintSolver::new(self.symbol_table),
+        );
         solver.add_constraints(std::mem::take(&mut self.constraints));
         let solver_result = solver.solve();
 
@@ -344,6 +352,20 @@ impl TypeInference {
         if let Some(symbol_id) = self
             .symbol_table
             .lookup_symbol_in_scope("string", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(symbol_id, ConcreteType::Namespace);
+        }
+
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("http", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(symbol_id, ConcreteType::Namespace);
+        }
+
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("file", crate::resolver::ScopeId(0))
         {
             self.type_env.insert(symbol_id, ConcreteType::Namespace);
         }
@@ -655,6 +677,174 @@ impl TypeInference {
                 },
             );
         }
+
+        // HTTP namespace functions
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("http_get", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::String],
+                    return_type: Box::new(ConcreteType::String),
+                    is_async: false,
+                },
+            );
+        }
+
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("http_post", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::String, ConcreteType::String],
+                    return_type: Box::new(ConcreteType::String),
+                    is_async: false,
+                },
+            );
+        }
+
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("http_put", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::String, ConcreteType::String],
+                    return_type: Box::new(ConcreteType::String),
+                    is_async: false,
+                },
+            );
+        }
+
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("http_delete", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::String],
+                    return_type: Box::new(ConcreteType::String),
+                    is_async: false,
+                },
+            );
+        }
+
+        // File namespace functions
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("file_read", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::String],
+                    return_type: Box::new(ConcreteType::String),
+                    is_async: false,
+                },
+            );
+        }
+
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("file_write", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::String, ConcreteType::String],
+                    return_type: Box::new(ConcreteType::Boolean),
+                    is_async: false,
+                },
+            );
+        }
+
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("file_append", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::String, ConcreteType::String],
+                    return_type: Box::new(ConcreteType::Boolean),
+                    is_async: false,
+                },
+            );
+        }
+
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("file_exists", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::String],
+                    return_type: Box::new(ConcreteType::Boolean),
+                    is_async: false,
+                },
+            );
+        }
+
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("file_delete", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::String],
+                    return_type: Box::new(ConcreteType::Boolean),
+                    is_async: false,
+                },
+            );
+        }
+
+        // Generic registration: Register all builtin functions from symbol table
+        // This automatically handles namespace functions and other builtins
+        let builtin_symbols: Vec<_> = self.symbol_table.accessible_symbols();
+        for symbol_id in builtin_symbols {
+            if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
+                if self.symbol_table.is_builtin(symbol_id) {
+                    match &symbol.kind {
+                        crate::resolver::SymbolKind::Function {
+                            parameters,
+                            return_type,
+                        } => {
+                            // Skip if already registered (to preserve manual overrides above)
+                            if self.type_env.get(&symbol_id).is_none() {
+                                let concrete_params: Vec<ConcreteType> = parameters
+                                    .iter()
+                                    .map(Self::hir_type_to_concrete_type)
+                                    .collect();
+                                let concrete_return = return_type
+                                    .as_ref()
+                                    .map(|t| Box::new(Self::hir_type_to_concrete_type(t)))
+                                    .unwrap_or_else(|| Box::new(ConcreteType::Null));
+
+                                self.type_env.insert(
+                                    symbol_id,
+                                    ConcreteType::Function {
+                                        parameters: concrete_params,
+                                        return_type: concrete_return,
+                                        is_async: false,
+                                    },
+                                );
+                            }
+                        }
+                        _ => {
+                            // Skip non-function builtins (classes, namespaces, etc.)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Convert HirType to ConcreteType for builtin function type mapping
@@ -762,6 +952,15 @@ impl TypeInference {
         };
 
         self.type_env.insert(function.symbol_id, function_type);
+
+        // Track minimum required parameters (those without defaults)
+        let required_count = function
+            .parameters
+            .iter()
+            .filter(|p| p.default_value.is_none())
+            .count();
+        self.required_param_counts
+            .insert(function.symbol_id, required_count);
     }
 
     /// Register method signature in type environment
@@ -1439,10 +1638,14 @@ impl TypeInference {
                 let tast_left = self.infer_expression(left)?;
                 let tast_right = self.infer_expression(right)?;
 
+                // Resolve types with current substitutions before binary operation type inference
+                let resolved_left_type = self.resolve_type(&tast_left.expr_type);
+                let resolved_right_type = self.resolve_type(&tast_right.expr_type);
+
                 let result_type = self.infer_binary_operation(
                     op,
-                    &tast_left.expr_type,
-                    &tast_right.expr_type,
+                    &resolved_left_type,
+                    &resolved_right_type,
                     location,
                 )?;
 
@@ -1472,8 +1675,12 @@ impl TypeInference {
                 // Get the function type and add parameter type constraints
                 if let Some(function_type) = self.type_env.get(function_symbol_id).cloned() {
                     // Add type constraints between arguments and parameters
-                    let _constraint_check =
-                        self.infer_function_call(&function_type, &tast_arguments, location)?;
+                    let _constraint_check = self.infer_function_call(
+                        &function_type,
+                        &tast_arguments,
+                        *function_symbol_id,
+                        location,
+                    )?;
                 }
 
                 // Look up function type and determine return type
@@ -1525,9 +1732,13 @@ impl TypeInference {
                     ));
                 }
 
-                // Extract element type from array type
+                // Extract element type from array or matrix type
                 let element_type = match &tast_array.expr_type {
                     ConcreteType::Array(element_type) => (**element_type).clone(),
+                    // Matrix indexing: matrix<T>[i] returns Array<T>
+                    ConcreteType::Matrix(element_type) => {
+                        ConcreteType::Array(Box::new((**element_type).clone()))
+                    }
                     other_type => {
                         self.errors.push(CompilerError::type_error(
                             &format!("Cannot index into non-array type: {:?}", other_type),
@@ -1562,10 +1773,13 @@ impl TypeInference {
                     tast_arguments.push(self.infer_expression(arg)?);
                 }
 
-                // For now, use simple method resolution based on receiver type
+                // Resolve receiver type with current substitutions before method lookup
+                let resolved_receiver_type = self.resolve_type(&tast_receiver.expr_type);
+
+                // Use resolved type for method resolution
                 let return_type = self.infer_method_return_type(
                     method,
-                    &tast_receiver.expr_type,
+                    &resolved_receiver_type,
                     &tast_arguments,
                 )?;
 
@@ -1836,6 +2050,64 @@ impl TypeInference {
                     location.clone(),
                 )
             }
+
+            ResolvedHirExpression::OnError {
+                expression,
+                fallback,
+                location,
+            } => {
+                // Infer types for both the expression and fallback
+                let tast_expression = self.infer_expression(expression)?;
+                let _tast_fallback = self.infer_expression(fallback)?;
+
+                // The onError expression returns the type of the main expression
+                // The fallback is used if the expression fails at runtime
+                let result_type = tast_expression.expr_type.clone();
+
+                // TODO: Add type compatibility checking between expression and fallback
+                // TODO: Implement proper error handling in TAST and codegen
+
+                // For now, represent onError as just the expression (fallback handled at runtime)
+                (tast_expression.kind, result_type, location.clone())
+            }
+
+            ResolvedHirExpression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+                location,
+            } => {
+                // Infer condition type and ensure it's boolean
+                let tast_condition = self.infer_expression(condition)?;
+                self.add_constraint(TypeConstraint::Equality {
+                    left: tast_condition.expr_type.clone(),
+                    right: ConcreteType::Boolean,
+                    location: location.clone(),
+                });
+
+                // Infer types for both branches
+                let tast_then = self.infer_expression(then_expr)?;
+                let tast_else = self.infer_expression(else_expr)?;
+
+                // Both branches must have compatible types
+                self.add_constraint(TypeConstraint::Equality {
+                    left: tast_then.expr_type.clone(),
+                    right: tast_else.expr_type.clone(),
+                    location: location.clone(),
+                });
+
+                // Result type is the unified type of both branches
+                let result_type = tast_then.expr_type.clone();
+
+                // Create conditional TAST node
+                let kind = TastExpressionKind::Conditional {
+                    condition: Box::new(tast_condition),
+                    then_expr: Box::new(tast_then),
+                    else_expr: Box::new(tast_else),
+                };
+
+                (kind, result_type, location.clone())
+            }
         };
 
         self.recursion_depth -= 1;
@@ -1860,6 +2132,18 @@ impl TypeInference {
                 (TastLiteral::Boolean(*value), ConcreteType::Boolean)
             }
             crate::ast::Value::Void => (TastLiteral::Null, ConcreteType::Null),
+            crate::ast::Value::List(elements) => {
+                // Infer list type from elements
+                if elements.is_empty() {
+                    // Empty list - type will be inferred from context
+                    // For now, return Unknown which will be unified with expected type
+                    (TastLiteral::Null, ConcreteType::Unknown)
+                } else {
+                    // Infer element type from first element (could be improved)
+                    let (_first_lit, first_type) = self.infer_literal(&elements[0]);
+                    (TastLiteral::Null, ConcreteType::Array(Box::new(first_type)))
+                }
+            }
             _ => (TastLiteral::Null, ConcreteType::Unknown), // Handle other value types
         }
     }
@@ -2035,18 +2319,57 @@ impl TypeInference {
         &mut self,
         function_type: &ConcreteType,
         arguments: &[TastExpression],
+        function_symbol_id: SymbolId,
         location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
+        // Check if this is a generic list function that should skip type checking
+        // These functions accept lists of any element type, so we can't validate
+        // parameter types with the fixed type signatures we registered
+        let is_generic_list_fn = if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
+            matches!(
+                symbol.name.as_str(),
+                "list_fill" | "list_add" | "list_push" | "list_insert" | "list_contains"
+                | "list_indexOf" | "list_index_of" | "list_lastIndexOf"
+                | "list_size" | "list_length" | "list_isEmpty" | "list_isNotEmpty"
+                | "list_get" | "list_set" | "list_remove" | "list_pop" | "list_peek"
+                | "list_first" | "list_last" | "list_sort" | "list_reverse"
+                | "list_slice" | "list_concat" | "list_join" | "list_clear"
+                | "list_range"  // list_range creates lists, doesn't take list argument
+            )
+        } else {
+            false
+        };
+
         match function_type {
             ConcreteType::Function {
                 parameters,
                 return_type,
                 ..
             } => {
-                if parameters.len() != arguments.len() {
+                // Check if function has default parameters
+                let required_count = self
+                    .required_param_counts
+                    .get(&function_symbol_id)
+                    .copied()
+                    .unwrap_or(parameters.len());
+
+                // Validate argument count against required parameters (not total parameters)
+                if arguments.len() < required_count {
                     return Err(CompilerError::type_error(
                         &format!(
-                            "Function expects {} arguments, got {}",
+                            "Function requires at least {} arguments, got {}",
+                            required_count,
+                            arguments.len()
+                        ),
+                        None,
+                        Some(location.clone()),
+                    ));
+                }
+
+                if arguments.len() > parameters.len() {
+                    return Err(CompilerError::type_error(
+                        &format!(
+                            "Function accepts at most {} arguments, got {}",
                             parameters.len(),
                             arguments.len()
                         ),
@@ -2055,13 +2378,16 @@ impl TypeInference {
                     ));
                 }
 
-                // Check argument types match parameters
-                for (param_type, arg) in parameters.iter().zip(arguments.iter()) {
-                    self.add_constraint(TypeConstraint::Equality {
-                        left: arg.expr_type.clone(),
-                        right: param_type.clone(),
-                        location: location.clone(),
-                    });
+                // Check argument types match parameters (only for provided arguments)
+                // Skip type checking for generic list functions that accept any element type
+                if !is_generic_list_fn {
+                    for (param_type, arg) in parameters.iter().zip(arguments.iter()) {
+                        self.add_constraint(TypeConstraint::Equality {
+                            left: arg.expr_type.clone(),
+                            right: param_type.clone(),
+                            location: location.clone(),
+                        });
+                    }
                 }
 
                 Ok((**return_type).clone())
@@ -2081,6 +2407,53 @@ impl TypeInference {
         function_symbol_id: SymbolId,
         arguments: &[TastExpression],
     ) -> Result<ConcreteType, CompilerError> {
+        // Special handling for generic list namespace functions FIRST
+        if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
+            let function_name = &symbol.name;
+
+            // Functions that return the element type of their list argument
+            if (function_name == "list_remove"
+                || function_name == "list_get"
+                || function_name == "list_pop"
+                || function_name == "list_peek"
+                || function_name == "list_first"
+                || function_name == "list_last")
+                && !arguments.is_empty()
+            {
+                let resolved_arg_type = self.resolve_type(&arguments[0].expr_type);
+                if let ConcreteType::Array(element_type) = resolved_arg_type {
+                    return Ok((*element_type).clone());
+                }
+            }
+
+            // Functions that return the same list type as their input
+            if (function_name == "list_add"
+                || function_name == "list_push"
+                || function_name == "list_sort"
+                || function_name == "list_reverse"
+                || function_name == "list_insert"
+                || function_name == "list_slice"
+                || function_name == "list_concat")
+                && !arguments.is_empty()
+            {
+                let resolved_arg_type = self.resolve_type(&arguments[0].expr_type);
+                if let ConcreteType::Array(_) = resolved_arg_type {
+                    return Ok(resolved_arg_type);
+                }
+            }
+
+            // Functions that create new lists with element type from second argument
+            if (function_name == "list_fill") && arguments.len() >= 2 {
+                let element_type = self.resolve_type(&arguments[1].expr_type);
+                return Ok(ConcreteType::Array(Box::new(element_type)));
+            }
+
+            // list_range always returns list<integer>
+            if function_name == "list_range" {
+                return Ok(ConcreteType::Array(Box::new(ConcreteType::Integer)));
+            }
+        }
+
         // Look up function type from symbol table
         if let Some(function_type) = self.type_env.get(&function_symbol_id) {
             match function_type {
@@ -2096,6 +2469,7 @@ impl TypeInference {
             // Look up the symbol in the symbol table to get its name
             if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
                 let function_name = &symbol.name;
+
                 // Check if the function name follows the static method pattern Class.method
                 if let Some(dot_pos) = function_name.find('.') {
                     let class_name = &function_name[..dot_pos];
@@ -2142,12 +2516,14 @@ impl TypeInference {
 
             // String methods
             (ConcreteType::String, "length") => Ok(ConcreteType::Integer),
+            (ConcreteType::String, "toString") => Ok(ConcreteType::String),
             (ConcreteType::String, "toUpperCase") => Ok(ConcreteType::String),
             (ConcreteType::String, "toLowerCase") => Ok(ConcreteType::String),
             (ConcreteType::String, "trim") => Ok(ConcreteType::String),
 
             // Array methods
             (ConcreteType::Array(_), "length") => Ok(ConcreteType::Integer),
+            (ConcreteType::Array(_), "size") => Ok(ConcreteType::Integer), // Alias for length
             (ConcreteType::Array(_), "push") => Ok(ConcreteType::Undefined), // void return
             (ConcreteType::Array(element_type), "pop") => Ok((**element_type).clone()),
             (ConcreteType::Array(_), "toString") => Ok(ConcreteType::String),
@@ -2349,6 +2725,11 @@ impl TypeInference {
     fn apply_substitutions(&mut self, solver_result: &SolverResult) {
         // Would apply substitutions to finalize types
         // For now, types in type_env are already concrete
+    }
+
+    /// Apply current substitution to resolve a type
+    fn resolve_type(&self, type_: &ConcreteType) -> ConcreteType {
+        self.constraint_solver.apply_substitution(type_)
     }
 
     /// Find a common type between two types for control flow branches
