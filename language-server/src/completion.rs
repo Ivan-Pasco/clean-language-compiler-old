@@ -1,12 +1,12 @@
 /*
- * Clean Language Completion Provider
- * Created by Ivan Pasco
- * 
- * This module provides intelligent autocompletion for Clean Language including:
+ * Clean Language Server - Completion Provider
+ *
+ * Provides intelligent autocompletion for Clean Language including:
  * - Keywords and syntax patterns
- * - Built-in class methods
+ * - Built-in functions and methods
  * - Type annotations
  * - Apply-block completions
+ * - Language constructs
  */
 
 use tower_lsp::lsp_types::*;
@@ -21,15 +21,15 @@ impl CompletionProvider {
 
     pub async fn provide_completions(&self, text: &Rope, position: Position) -> Vec<CompletionItem> {
         let mut completions = Vec::new();
-        
+
         // Get the current line and character context
         let line_idx = position.line as usize;
         let char_idx = position.character as usize;
-        
+
         if line_idx >= text.len_lines() {
             return completions;
         }
-        
+
         let line = text.line(line_idx);
         let line_str = line.to_string();
         let prefix = if char_idx <= line_str.len() {
@@ -37,23 +37,26 @@ impl CompletionProvider {
         } else {
             &line_str
         };
-        
+
         // Check for different completion contexts
         if self.is_after_dot(prefix) {
-            // Method completion after dot
+            // Method completion after dot (e.g., "string.len")
             completions.extend(self.get_method_completions(prefix));
         } else if self.is_apply_block_context(prefix) {
-            // Apply-block completions
+            // Apply-block completions (e.g., after "identifier:")
             completions.extend(self.get_apply_block_completions());
         } else if self.is_type_context(prefix) {
-            // Type completions
+            // Type completions (e.g., function parameters, variable declarations)
             completions.extend(self.get_type_completions());
+        } else if self.is_function_context(prefix) {
+            // Function-related completions
+            completions.extend(self.get_function_completions());
         } else {
-            // General keyword and identifier completions
-            completions.extend(self.get_keyword_completions());
-            completions.extend(self.get_builtin_class_completions());
+            // General keyword and language construct completions
+            completions.extend(self.get_keyword_completions(prefix));
+            completions.extend(self.get_builtin_function_completions());
         }
-        
+
         completions
     }
 
@@ -66,605 +69,223 @@ impl CompletionProvider {
     }
 
     fn is_type_context(&self, prefix: &str) -> bool {
-        let words: Vec<&str> = prefix.split_whitespace().collect();
-        // Check if we're in a variable declaration context
-        words.len() == 1 && (words[0] == "integer" || words[0] == "number" || words[0] == "string" || words[0] == "boolean")
+        // Check if we're in a position where type annotation is expected
+        prefix.contains("(") || prefix.contains("->") || prefix.contains(":")
+    }
+
+    fn is_function_context(&self, prefix: &str) -> bool {
+        prefix.trim().is_empty() || prefix.trim() == "functions"
     }
 
     fn get_method_completions(&self, prefix: &str) -> Vec<CompletionItem> {
         let mut completions = Vec::new();
-        
-        // Extract the object before the dot
-        let parts: Vec<&str> = prefix.split('.').collect();
-        if parts.len() < 2 {
-            return completions;
+
+        // Determine the object type from context (simplified)
+        if prefix.contains("string") || prefix.contains("\"") {
+            completions.extend(self.get_string_methods());
+        } else if prefix.contains("integer") || prefix.contains("number") {
+            completions.extend(self.get_number_methods());
+        } else if prefix.contains("list") || prefix.contains("[") {
+            completions.extend(self.get_list_methods());
+        } else {
+            // Generic object methods
+            completions.extend(self.get_generic_methods());
         }
-        
-        let object_part = parts[parts.len() - 2].split_whitespace().last().unwrap_or("");
-        
-        match object_part {
-            "Math" => {
-                completions.extend(vec![
-                    CompletionItem {
-                        label: "sqrt".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("sqrt(number) -> number".to_string()),
-                        documentation: Some(Documentation::String("Returns the square root of a number".to_string())),
-                        insert_text: Some("sqrt($1)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                    CompletionItem {
-                        label: "pow".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("pow(base, exponent) -> number".to_string()),
-                        documentation: Some(Documentation::String("Returns base raised to the power of exponent".to_string())),
-                        insert_text: Some("pow($1, $2)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                    CompletionItem {
-                        label: "abs".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("abs(number) -> number".to_string()),
-                        documentation: Some(Documentation::String("Returns the absolute value of a number".to_string())),
-                        insert_text: Some("abs($1)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                    CompletionItem {
-                        label: "sin".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("sin(angle) -> number".to_string()),
-                        documentation: Some(Documentation::String("Returns the sine of an angle (in radians)".to_string())),
-                        insert_text: Some("sin($1)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                    CompletionItem {
-                        label: "cos".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("cos(angle) -> number".to_string()),
-                        documentation: Some(Documentation::String("Returns the cosine of an angle (in radians)".to_string())),
-                        insert_text: Some("cos($1)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                ]);
-            },
-            "String" => {
-                completions.extend(vec![
-                    CompletionItem {
-                        label: "length".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("length(string) -> integer".to_string()),
-                        documentation: Some(Documentation::String("Returns the length of a string".to_string())),
-                        insert_text: Some("length($1)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                    CompletionItem {
-                        label: "toUpperCase".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("toUpperCase(string) -> string".to_string()),
-                        documentation: Some(Documentation::String("Converts string to uppercase".to_string())),
-                        insert_text: Some("toUpperCase($1)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                    CompletionItem {
-                        label: "toLowerCase".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("toLowerCase(string) -> string".to_string()),
-                        documentation: Some(Documentation::String("Converts string to lowercase".to_string())),
-                        insert_text: Some("toLowerCase($1)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                    CompletionItem {
-                        label: "substring".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("substring(string, start, end) -> string".to_string()),
-                        documentation: Some(Documentation::String("Returns a substring from start to end".to_string())),
-                        insert_text: Some("substring($1, $2, $3)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                ]);
-            },
-            "List" => {
-                completions.extend(vec![
-                    CompletionItem {
-                        label: "length".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("length(list) -> integer".to_string()),
-                        documentation: Some(Documentation::String("Returns the length of a list".to_string())),
-                        insert_text: Some("length($1)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                    CompletionItem {
-                        label: "add".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("add(list, item) -> void".to_string()),
-                        documentation: Some(Documentation::String("Adds an item to the list".to_string())),
-                        insert_text: Some("add($1, $2)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                    CompletionItem {
-                        label: "filter".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("filter(list, predicate) -> list".to_string()),
-                        documentation: Some(Documentation::String("Filters list items based on a predicate function".to_string())),
-                        insert_text: Some("filter($1, $2)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                ]);
-            },
-            "Http" => {
-                completions.extend(vec![
-                    CompletionItem {
-                        label: "get".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("get(url) -> string".to_string()),
-                        documentation: Some(Documentation::String("Performs an HTTP GET request".to_string())),
-                        insert_text: Some("get(\"$1\")".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                    CompletionItem {
-                        label: "post".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("post(url, data) -> string".to_string()),
-                        documentation: Some(Documentation::String("Performs an HTTP POST request".to_string())),
-                        insert_text: Some("post(\"$1\", $2)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                ]);
-            },
-            "File" => {
-                completions.extend(vec![
-                    CompletionItem {
-                        label: "read".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("read(filename) -> string".to_string()),
-                        documentation: Some(Documentation::String("Reads content from a file".to_string())),
-                        insert_text: Some("read(\"$1\")".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                    CompletionItem {
-                        label: "write".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("write(filename, content) -> void".to_string()),
-                        documentation: Some(Documentation::String("Writes content to a file".to_string())),
-                        insert_text: Some("write(\"$1\", $2)".to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                ]);
-            },
-            _ => {
-                // For user-defined objects, provide common method patterns
-                completions.extend(vec![
-                    CompletionItem {
-                        label: "toString".to_string(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some("toString() -> string".to_string()),
-                        documentation: Some(Documentation::String("Converts object to string representation".to_string())),
-                        insert_text: Some("toString()".to_string()),
-                        ..Default::default()
-                    },
-                ]);
-            }
-        }
-        
+
         completions
+    }
+
+    fn get_string_methods(&self) -> Vec<CompletionItem> {
+        vec![
+            self.create_method_completion("length", "Get the length of the string", "property"),
+            self.create_method_completion("charAt", "Get character at index", "charAt(${1:index})"),
+            self.create_method_completion("substring", "Extract substring", "substring(${1:start}, ${2:end})"),
+            self.create_method_completion("indexOf", "Find index of substring", "indexOf(${1:substring})"),
+            self.create_method_completion("replace", "Replace occurrences", "replace(${1:search}, ${2:replacement})"),
+            self.create_method_completion("toUpperCase", "Convert to uppercase", "toUpperCase()"),
+            self.create_method_completion("toLowerCase", "Convert to lowercase", "toLowerCase()"),
+            self.create_method_completion("trim", "Remove whitespace", "trim()"),
+            self.create_method_completion("split", "Split string", "split(${1:delimiter})"),
+        ]
+    }
+
+    fn get_number_methods(&self) -> Vec<CompletionItem> {
+        vec![
+            self.create_method_completion("toString", "Convert to string", "toString()"),
+            self.create_method_completion("abs", "Absolute value", "abs()"),
+            self.create_method_completion("round", "Round to nearest integer", "round()"),
+            self.create_method_completion("floor", "Round down", "floor()"),
+            self.create_method_completion("ceil", "Round up", "ceil()"),
+        ]
+    }
+
+    fn get_list_methods(&self) -> Vec<CompletionItem> {
+        vec![
+            self.create_method_completion("length", "Get the length of the list", "property"),
+            self.create_method_completion("push", "Add element to end", "push(${1:element})"),
+            self.create_method_completion("pop", "Remove and return last element", "pop()"),
+            self.create_method_completion("get", "Get element at index", "get(${1:index})"),
+            self.create_method_completion("set", "Set element at index", "set(${1:index}, ${2:value})"),
+            self.create_method_completion("indexOf", "Find index of element", "indexOf(${1:element})"),
+            self.create_method_completion("contains", "Check if contains element", "contains(${1:element})"),
+            self.create_method_completion("clear", "Remove all elements", "clear()"),
+            self.create_method_completion("slice", "Extract portion of list", "slice(${1:start}, ${2:end})"),
+        ]
+    }
+
+    fn get_generic_methods(&self) -> Vec<CompletionItem> {
+        vec![
+            self.create_method_completion("toString", "Convert to string", "toString()"),
+            self.create_method_completion("equals", "Check equality", "equals(${1:other})"),
+            self.create_method_completion("hashCode", "Get hash code", "hashCode()"),
+        ]
     }
 
     fn get_apply_block_completions(&self) -> Vec<CompletionItem> {
         vec![
-            // Function apply-blocks
-            CompletionItem {
-                label: "print".to_string(),
-                kind: Some(CompletionItemKind::FUNCTION),
-                detail: Some("print apply-block".to_string()),
-                documentation: Some(Documentation::String("Print items to console".to_string())),
-                insert_text: Some("\n\t$1".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "println".to_string(),
-                kind: Some(CompletionItemKind::FUNCTION),
-                detail: Some("println apply-block".to_string()),
-                documentation: Some(Documentation::String("Print items to console with newline".to_string())),
-                insert_text: Some("\n\t$1".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            // Type apply-blocks
-            CompletionItem {
-                label: "integer".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                detail: Some("integer type apply-block".to_string()),
-                documentation: Some(Documentation::String("Declare multiple integer variables".to_string())),
-                insert_text: Some("\n\t$1 = $2".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "string".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                detail: Some("string type apply-block".to_string()),
-                documentation: Some(Documentation::String("Declare multiple string variables".to_string())),
-                insert_text: Some("\n\t$1 = \"$2\"".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "number".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                detail: Some("number type apply-block".to_string()),
-                documentation: Some(Documentation::String("Declare multiple number variables".to_string())),
-                insert_text: Some("\n\t$1 = $2".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "list".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                detail: Some("list type apply-block".to_string()),
-                documentation: Some(Documentation::String("Declare multiple list variables".to_string())),
-                insert_text: Some("\n\t$1 = [$2]".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            // Constant apply-blocks
-            CompletionItem {
-                label: "constant".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                detail: Some("constant apply-block".to_string()),
-                documentation: Some(Documentation::String("Define constant values".to_string())),
-                insert_text: Some("\n\t$1 $2 = $3".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
+            self.create_snippet_completion("apply_function", "Function call with apply block",
+                "\n\t${1:function_call}\n\t${2:another_call}"),
+            self.create_snippet_completion("apply_assignment", "Variable assignments",
+                "\n\t${1:variable} = ${2:value}\n\t${3:another_var} = ${4:value}"),
+            self.create_snippet_completion("apply_method_chain", "Method chain calls",
+                "\n\t${1:method}(${2:args})\n\t${3:method}(${4:args})"),
         ]
     }
 
     fn get_type_completions(&self) -> Vec<CompletionItem> {
         vec![
-            CompletionItem {
-                label: "integer".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("Platform-optimal signed integer".to_string()),
-                insert_text: Some("integer".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "integer:8".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("8-bit signed integer".to_string()),
-                insert_text: Some("integer:8".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "integer:8u".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("8-bit unsigned integer".to_string()),
-                insert_text: Some("integer:8u".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "integer:16".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("16-bit signed integer".to_string()),
-                insert_text: Some("integer:16".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "integer:16u".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("16-bit unsigned integer".to_string()),
-                insert_text: Some("integer:16u".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "integer:32".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("32-bit signed integer".to_string()),
-                insert_text: Some("integer:32".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "integer:64".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("64-bit signed integer".to_string()),
-                insert_text: Some("integer:64".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "number".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("64-bit floating point number".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "number:32".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("32-bit floating point number".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "string".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("String type".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "boolean".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("Boolean type (true/false)".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "list<T>".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("Generic list type".to_string()),
-                insert_text: Some("list<$1>".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "matrix<T>".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("Generic matrix type".to_string()),
-                insert_text: Some("matrix<$1>".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "pairs<T, U>".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("Generic pairs type for key-value pairs".to_string()),
-                insert_text: Some("pairs<$1, $2>".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "any".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("Universal generic type".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "void".to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some("No return value".to_string()),
-                ..Default::default()
-            },
+            self.create_type_completion("integer", "Integer type"),
+            self.create_type_completion("number", "Number/float type"),
+            self.create_type_completion("string", "String type"),
+            self.create_type_completion("boolean", "Boolean type"),
+            self.create_type_completion("void", "Void type (no return value)"),
+            self.create_type_completion("any", "Any type"),
+            self.create_snippet_completion("list_type", "List type", "list<${1:element_type}>"),
+            self.create_snippet_completion("matrix_type", "Matrix type", "matrix<${1:element_type}>"),
+            self.create_snippet_completion("pairs_type", "Pairs type", "pairs<${1:key_type}, ${2:value_type}>"),
         ]
     }
 
-    fn get_keyword_completions(&self) -> Vec<CompletionItem> {
+    fn get_function_completions(&self) -> Vec<CompletionItem> {
         vec![
-            // Control flow
-            CompletionItem {
-                label: "if".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("if $1\n\t$0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "else".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("else\n\t$0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "iterate".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("iterate $1 in $2\n\t$0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "while".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("while $1\n\t$0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "for".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("for $1 = $2 to $3\n\t$0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            // Function definitions
-            CompletionItem {
-                label: "function".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("function $1($2)\n\t$0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "functions".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("functions:\n\t$1 $2($3)\n\t\t$0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "start".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("start()\n\t$0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            // Class definitions
-            CompletionItem {
-                label: "class".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("class $1\n\t$2 $3\n\n\tconstructor($4)\n\n\tfunctions:\n\t\t$5 $6($7)\n\t\t\t$0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "constructor".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("constructor($1)\n\t$0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            // Testing
-            CompletionItem {
-                label: "tests".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("tests:\n\t\"$1\": $2 = $3\n\t$0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            // Error handling
-            CompletionItem {
-                label: "onError".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("onError $1\n\t$0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                detail: Some("Error handling block".to_string()),
-                ..Default::default()
-            },
-            // Async keywords
-            CompletionItem {
-                label: "later".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("later $0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                detail: Some("Async execution".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "background".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("background $0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                detail: Some("Background execution".to_string()),
-                ..Default::default()
-            },
-            // Module keywords
-            CompletionItem {
-                label: "import".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("import $1 from \"$2\"".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                detail: Some("Import statement".to_string()),
-                ..Default::default()
-            },
-            // Class modifiers
-            CompletionItem {
-                label: "constant".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("constant:\n\t$1 $2 = $3".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                detail: Some("Constant apply-block".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "private".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("private $0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                detail: Some("Private member".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "base".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("base($0)".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                detail: Some("Base class constructor call".to_string()),
-                ..Default::default()
-            },
-            // Function metadata
-            CompletionItem {
-                label: "input".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("input:\n\t$1: $2".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                detail: Some("Function input specification".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "description".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("description \"$1\"".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                detail: Some("Function description".to_string()),
-                ..Default::default()
-            },
-            // Other keywords
-            CompletionItem {
-                label: "return".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("return $0".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "error".to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                insert_text: Some("error \"$1\"".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                ..Default::default()
-            },
+            self.create_snippet_completion("function", "Function declaration",
+                "${1:return_type} ${2:function_name}(${3:parameters})\n\t${4:body}"),
+            self.create_snippet_completion("void_function", "Void function",
+                "${1:function_name}(${2:parameters})\n\t${3:body}"),
+            self.create_snippet_completion("start_function", "Start function",
+                "start()\n\t${1:body}"),
         ]
     }
 
-    fn get_builtin_class_completions(&self) -> Vec<CompletionItem> {
+    fn get_keyword_completions(&self, prefix: &str) -> Vec<CompletionItem> {
+        let keywords = [
+            ("functions", "Functions block", "functions:\n\t${1:function_definitions}"),
+            ("class", "Class declaration", "class ${1:ClassName}\n\t${2:body}"),
+            ("constants", "Constants block", "constants:\n\t${1:constant_definitions}"),
+            ("types", "Types block", "types:\n\t${1:type_definitions}"),
+            ("start", "Start function", "start()\n\t${1:body}"),
+            ("if", "If statement", "if ${1:condition}\n\t${2:body}"),
+            ("else", "Else statement", "else\n\t${1:body}"),
+            ("while", "While loop", "while ${1:condition}\n\t${2:body}"),
+            ("for", "For loop", "for ${1:variable} in ${2:iterable}\n\t${3:body}"),
+            ("return", "Return statement", "return ${1:value}"),
+            ("extends", "Class inheritance", "extends ${1:BaseClass}"),
+            ("base", "Base constructor call", "base(${1:arguments})"),
+            ("onError", "Error handling", "onError ${1:error_variable}\n\t${2:error_handling}"),
+        ];
+
+        keywords
+            .iter()
+            .filter(|(keyword, _, _)| {
+                prefix.is_empty() || keyword.starts_with(&prefix.to_lowercase())
+            })
+            .map(|(keyword, description, snippet)| {
+                CompletionItem {
+                    label: keyword.to_string(),
+                    kind: Some(CompletionItemKind::KEYWORD),
+                    detail: Some(description.to_string()),
+                    documentation: Some(Documentation::String(format!(
+                        "Clean Language keyword: {}", description
+                    ))),
+                    insert_text: Some(snippet.to_string()),
+                    insert_text_format: Some(InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                }
+            })
+            .collect()
+    }
+
+    fn get_builtin_function_completions(&self) -> Vec<CompletionItem> {
         vec![
-            CompletionItem {
-                label: "Math".to_string(),
-                kind: Some(CompletionItemKind::CLASS),
-                detail: Some("Built-in Math class".to_string()),
-                documentation: Some(Documentation::String("Provides mathematical functions and constants".to_string())),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "String".to_string(),
-                kind: Some(CompletionItemKind::CLASS),
-                detail: Some("Built-in String class".to_string()),
-                documentation: Some(Documentation::String("Provides string manipulation functions".to_string())),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "List".to_string(),
-                kind: Some(CompletionItemKind::CLASS),
-                detail: Some("Built-in List class".to_string()),
-                documentation: Some(Documentation::String("Provides list manipulation functions".to_string())),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "Http".to_string(),
-                kind: Some(CompletionItemKind::CLASS),
-                detail: Some("Built-in Http class".to_string()),
-                documentation: Some(Documentation::String("Provides HTTP request functions".to_string())),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "File".to_string(),
-                kind: Some(CompletionItemKind::CLASS),
-                detail: Some("Built-in File class".to_string()),
-                documentation: Some(Documentation::String("Provides file I/O functions".to_string())),
-                ..Default::default()
-            },
+            self.create_function_completion("print", "Print to console", "print(${1:message})"),
+            self.create_function_completion("println", "Print line to console", "println(${1:message})"),
+            self.create_function_completion("input", "Get user input", "input(${1:prompt})"),
+            self.create_function_completion("error", "Print error message", "error(${1:message})"),
         ]
+    }
+
+    fn create_method_completion(&self, name: &str, description: &str, insert_text: &str) -> CompletionItem {
+        CompletionItem {
+            label: name.to_string(),
+            kind: Some(CompletionItemKind::METHOD),
+            detail: Some(description.to_string()),
+            documentation: Some(Documentation::String(format!(
+                "Method: {}\n\n{}", name, description
+            ))),
+            insert_text: if insert_text == "property" {
+                Some(name.to_string())
+            } else {
+                Some(insert_text.to_string())
+            },
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..Default::default()
+        }
+    }
+
+    fn create_type_completion(&self, name: &str, description: &str) -> CompletionItem {
+        CompletionItem {
+            label: name.to_string(),
+            kind: Some(CompletionItemKind::TYPE_PARAMETER),
+            detail: Some(description.to_string()),
+            documentation: Some(Documentation::String(format!(
+                "Clean Language type: {}", description
+            ))),
+            insert_text: Some(name.to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn create_function_completion(&self, name: &str, description: &str, insert_text: &str) -> CompletionItem {
+        CompletionItem {
+            label: name.to_string(),
+            kind: Some(CompletionItemKind::FUNCTION),
+            detail: Some(description.to_string()),
+            documentation: Some(Documentation::String(format!(
+                "Built-in function: {}\n\n{}", name, description
+            ))),
+            insert_text: Some(insert_text.to_string()),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..Default::default()
+        }
+    }
+
+    fn create_snippet_completion(&self, name: &str, description: &str, insert_text: &str) -> CompletionItem {
+        CompletionItem {
+            label: name.to_string(),
+            kind: Some(CompletionItemKind::SNIPPET),
+            detail: Some(description.to_string()),
+            documentation: Some(Documentation::String(format!(
+                "Code snippet: {}", description
+            ))),
+            insert_text: Some(insert_text.to_string()),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..Default::default()
+        }
+    }
+}
+
+impl Default for CompletionProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }

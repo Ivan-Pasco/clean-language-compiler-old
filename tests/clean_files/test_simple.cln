@@ -1,0 +1,6 @@
+functions:
+    void testFunction()
+        print "Test" ln
+
+start()
+    testFunction()

@@ -3,17 +3,15 @@
 
 functions:
 
-	testStaticMethods()
+	void testStaticMethods()
 
 		// Test math class static methods (lowercase)
 		number result = math.max(5.0, 3.0)
 		print("math.max(5.0, 3.0): ")
 		print(result.toString())
-		
 		number absolute = math.abs(-42.5)
 		print("math.abs(-42.5): ")
 		print(absolute.toString())
-		
 		print("Static method calls test completed successfully!")
 
 start()

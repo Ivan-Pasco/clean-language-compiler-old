@@ -1,6 +1,6 @@
 functions:
-	greet(string name="World")
+	string greet(string name="World")
 		return "Hello, " + name
 	
-	add(integer a, integer b)
+	integer add(integer a, integer b)
 		return a + b

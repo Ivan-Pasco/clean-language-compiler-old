@@ -1,6 +1,7 @@
 /*
- * Clean Language Hover Provider
- * Created by Ivan Pasco
+ * Clean Language Server - Hover Provider
+ *
+ * Provides hover information and documentation for Clean Language elements
  */
 
 use tower_lsp::lsp_types::*;
@@ -15,195 +16,184 @@ impl HoverProvider {
 
     pub async fn provide_hover(&self, text: &Rope, position: Position) -> Option<Hover> {
         let line_idx = position.line as usize;
-        
+
         if line_idx >= text.len_lines() {
             return None;
         }
-        
+
         let line = text.line(line_idx);
         let line_str = line.to_string();
-        
-        // Simple word extraction at position
+
+        // Extract word at position
         let char_idx = position.character as usize;
         let word = self.extract_word_at_position(&line_str, char_idx)?;
-        
-        // Provide hover information for known elements
-        match word.as_str() {
-            // Built-in classes
-            "Math" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**Math** - Built-in mathematics class\n\n```clean\nMath.sqrt(number) -> number\nMath.pow(base, exponent) -> number\nMath.sin(angle) -> number\nMath.cos(angle) -> number\nMath.abs(number) -> number\n```\n\nProvides mathematical functions and constants.".to_string(),
-                }),
-                range: None,
-            }),
-            "String" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**String** - Built-in string manipulation class\n\n```clean\nString.length(string) -> integer\nString.toUpperCase(string) -> string\nString.toLowerCase(string) -> string\nString.substring(string, start, end) -> string\n```\n\nProvides string processing functions.".to_string(),
-                }),
-                range: None,
-            }),
-            "List" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**List** - Built-in list manipulation class\n\n```clean\nList.length(list) -> integer\nList.add(list, item) -> void\nList.filter(list, predicate) -> list\nList.map(list, function) -> list\n```\n\nProvides list operations and functional programming methods.".to_string(),
-                }),
-                range: None,
-            }),
-            
-            // Keywords
-            "start" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**start()** - Main entry point function\n\n```clean\nstart()\n\tprint(\"Hello, World!\")\n```\n\nEvery Clean program must have a `start()` function as its entry point.".to_string(),
-                }),
-                range: None,
-            }),
-            "functions" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**functions:** - Function definition block\n\n```clean\nfunctions:\n\tinteger add(integer a, integer b)\n\t\treturn a + b\n```\n\nDefines a block containing function declarations.".to_string(),
-                }),
-                range: None,
-            }),
-            "class" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**class** - Class definition keyword\n\n```clean\nclass Person\n\tstring name\n\tinteger age\n\n\tconstructor(string name, integer age)\n\t\tthis.name = name\n\t\tthis.age = age\n```\n\nDefines a new class with fields and methods.".to_string(),
-                }),
-                range: None,
-            }),
-            "constant" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**constant:** - Constant definition apply-block\n\n```clean\nconstant:\n\tinteger MAX_SIZE = 100\n\tstring VERSION = \"1.0.0\"\n```\n\nDefines compile-time constants.".to_string(),
-                }),
-                range: None,
-            }),
-            "onError" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**onError** - Error handling block\n\n```clean\nfunctionCall() onError errorValue\n\tprint(\"Handling error: \" + errorValue)\n```\n\nHandles errors from function calls or expressions.".to_string(),
-                }),
-                range: None,
-            }),
-            "iterate" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**iterate** - Loop over collections\n\n```clean\niterate item in myList\n\tprint(item)\n\n// With index\niterate i in 1 to 10\n\tprint(i)\n```\n\nIterates over lists, ranges, or other iterable collections.".to_string(),
-                }),
-                range: None,
-            }),
-            "later" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**later** - Async execution\n\n```clean\nlater result = asyncFunction()\nprint(result)\n```\n\nExecutes operations asynchronously without blocking.".to_string(),
-                }),
-                range: None,
-            }),
-            "background" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**background** - Background execution\n\n```clean\nbackground longRunningTask()\n```\n\nExecutes operations in the background without waiting for completion.".to_string(),
-                }),
-                range: None,
-            }),
-            
-            // Types
-            "integer" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**integer** - Signed integer type\n\n```clean\ninteger count = 42\ninteger:32 id = 1000  // 32-bit\ninteger:64 bigNumber = 999999999999\ninteger:8u byte = 255  // 8-bit unsigned\n```\n\nPlatform-optimal signed integer. Supports size specifiers (:8, :16, :32, :64) and unsigned variants (u).".to_string(),
-                }),
-                range: None,
-            }),
-            "number" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**number** - Floating-point number type\n\n```clean\nnumber pi = 3.14159\nnumber:32 smallFloat = 1.5  // 32-bit\nnumber:64 doubleFloat = 2.718281828\n```\n\nPlatform-optimal floating-point number (default 64-bit). Supports 32-bit variant with :32 specifier.".to_string(),
-                }),
-                range: None,
-            }),
-            "string" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**string** - Text string type\n\n```clean\nstring message = \"Hello, World!\"\nstring interpolated = \"Count: {count}\"\n```\n\nUTF-8 encoded text string with interpolation support using `{variable}` syntax.".to_string(),
-                }),
-                range: None,
-            }),
-            "boolean" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**boolean** - True/false type\n\n```clean\nboolean isActive = true\nboolean isEmpty = false\n```\n\nBoolean type with `true` and `false` literal values.".to_string(),
-                }),
-                range: None,
-            }),
-            "list" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**list\\<T>** - Generic list type\n\n```clean\nlist<integer> numbers = [1, 2, 3]\nlist<string> names = [\"Alice\", \"Bob\"]\nlist<any> mixed = [1, \"hello\", true]\n```\n\nGeneric list type that can hold elements of any type T.".to_string(),
-                }),
-                range: None,
-            }),
-            "matrix" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**matrix\\<T>** - Generic matrix type\n\n```clean\nmatrix<number> grid = [[1.0, 2.0], [3.0, 4.0]]\nmatrix<integer> intMatrix = [[1, 2], [3, 4]]\n```\n\nGeneric matrix (2D array) type for mathematical operations and data grids.".to_string(),
-                }),
-                range: None,
-            }),
-            "pairs" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**pairs\\<K, V>** - Generic key-value pairs type\n\n```clean\npairs<string, integer> scores = [(\"Alice\", 100), (\"Bob\", 85)]\npairs<integer, string> mapping = [(1, \"One\"), (2, \"Two\")]\n```\n\nGeneric pairs type for key-value data structures.".to_string(),
-                }),
-                range: None,
-            }),
-            "void" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**void** - No return value\n\n```clean\nvoid printMessage(string msg)\n\tprint(msg)\n\t// No return statement needed\n```\n\nIndicates that a function does not return a value.".to_string(),
-                }),
-                range: None,
-            }),
-            "any" => Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: "**any** - Universal type\n\n```clean\nany value = 42\nvalue = \"Hello\"\nvalue = [1, 2, 3]\n```\n\nUniversal type that can hold any value. Use sparingly for type safety.".to_string(),
-                }),
-                range: None,
-            }),
-            
-            _ => None,
-        }
+
+        // Provide hover information for different language elements
+        self.get_hover_info(&word, &line_str, text)
     }
 
     fn extract_word_at_position(&self, line: &str, char_idx: usize) -> Option<String> {
-        if char_idx > line.len() {
+        if char_idx >= line.len() {
             return None;
         }
-        
+
         let chars: Vec<char> = line.chars().collect();
-        
-        // Find word boundaries
         let mut start = char_idx;
         let mut end = char_idx;
-        
-        // Move start backwards
-        while start > 0 && chars[start - 1].is_alphanumeric() {
+
+        // Find the start of the word
+        while start > 0 && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_') {
             start -= 1;
         }
-        
-        // Move end forwards
-        while end < chars.len() && chars[end].is_alphanumeric() {
+
+        // Find the end of the word
+        while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_') {
             end += 1;
         }
-        
+
         if start < end {
             Some(chars[start..end].iter().collect())
         } else {
             None
         }
+    }
+
+    fn get_hover_info(&self, word: &str, line: &str, _text: &Rope) -> Option<Hover> {
+        // Check different categories of language elements
+
+        // Keywords
+        if let Some(keyword_info) = self.get_keyword_info(word) {
+            return Some(self.create_hover(keyword_info));
+        }
+
+        // Types
+        if let Some(type_info) = self.get_type_info(word) {
+            return Some(self.create_hover(type_info));
+        }
+
+        // Built-in functions
+        if let Some(builtin_info) = self.get_builtin_function_info(word, line) {
+            return Some(self.create_hover(builtin_info));
+        }
+
+        // Method information (after dot)
+        if line.contains(&format!(".{}", word)) {
+            if let Some(method_info) = self.get_method_info(word, line) {
+                return Some(self.create_hover(method_info));
+            }
+        }
+
+        // Language constructs
+        if let Some(construct_info) = self.get_construct_info(word, line) {
+            return Some(self.create_hover(construct_info));
+        }
+
+        None
+    }
+
+    fn get_keyword_info(&self, word: &str) -> Option<String> {
+        match word {
+            "functions" => Some("**functions:** Block\n\nDefines a block containing function declarations.\n\n```clean\nfunctions:\n\tinteger add(integer a, integer b)\n\t\treturn a + b\n```".to_string()),
+            "class" => Some("**class** Keyword\n\nDefines a class with optional inheritance.\n\n```clean\nclass MyClass extends BaseClass\n\tfield: string\n\tconstructor(value: string)\n\t\tfield = value\n```".to_string()),
+            "start" => Some("**start()** Function\n\nEntry point function for Clean Language programs.\n\n```clean\nstart()\n\tprint(\"Hello, World!\")\n```".to_string()),
+            "if" => Some("**if** Statement\n\nConditional execution.\n\n```clean\nif condition\n\t// code block\nelse\n\t// alternative block\n```".to_string()),
+            "while" => Some("**while** Loop\n\nRepeats a block while condition is true.\n\n```clean\nwhile count < 10\n\tprint(count)\n\tcount = count + 1\n```".to_string()),
+            "for" => Some("**for** Loop\n\nIterates over collections.\n\n```clean\nfor item in collection\n\tprint(item)\n```".to_string()),
+            "return" => Some("**return** Statement\n\nReturns a value from a function.\n\n```clean\nreturn value\n```".to_string()),
+            "constants" => Some("**constants:** Block\n\nDefines constant values.\n\n```clean\nconstants:\n\tPI = 3.14159\n\tMAX_SIZE = 100\n```".to_string()),
+            "types" => Some("**types:** Block\n\nDefines custom type aliases.\n\n```clean\ntypes:\n\tUserId = integer\n\tUserName = string\n```".to_string()),
+            "extends" => Some("**extends** Keyword\n\nUsed in class inheritance.\n\n```clean\nclass Child extends Parent\n\t// child class body\n```".to_string()),
+            "base" => Some("**base()** Call\n\nCalls the parent class constructor.\n\n```clean\nconstructor(value: string)\n\tbase(value)\n```".to_string()),
+            "onError" => Some("**onError** Handler\n\nError handling mechanism.\n\n```clean\nonError error\n\tprint(\"Error occurred: \" + error)\n```".to_string()),
+            _ => None,
+        }
+    }
+
+    fn get_type_info(&self, word: &str) -> Option<String> {
+        match word {
+            "integer" => Some("**integer** Type\n\nSigned integer number type.\n\n**Examples:**\n```clean\ninteger count = 42\ninteger negative = -10\n```\n\n**Methods:**\n- `toString()` - Convert to string\n- `abs()` - Absolute value".to_string()),
+            "number" => Some("**number** Type\n\nFloating-point number type.\n\n**Examples:**\n```clean\nnumber pi = 3.14159\nnumber temperature = -5.5\n```\n\n**Methods:**\n- `toString()` - Convert to string\n- `round()` - Round to nearest integer\n- `floor()` - Round down\n- `ceil()` - Round up".to_string()),
+            "string" => Some("**string** Type\n\nText string type.\n\n**Examples:**\n```clean\nstring name = \"Alice\"\nstring greeting = \"Hello, \" + name\n```\n\n**Methods:**\n- `length` - Get string length\n- `charAt(index)` - Get character at index\n- `substring(start, end)` - Extract substring\n- `indexOf(text)` - Find text position\n- `replace(old, new)` - Replace text".to_string()),
+            "boolean" => Some("**boolean** Type\n\nBoolean true/false type.\n\n**Examples:**\n```clean\nboolean isValid = true\nboolean isEmpty = false\n```\n\n**Values:**\n- `true`\n- `false`".to_string()),
+            "void" => Some("**void** Type\n\nRepresents no return value.\n\n**Usage:**\n```clean\nvoid printMessage(string msg)\n\tprint(msg)\n\t// no return statement needed\n```".to_string()),
+            "any" => Some("**any** Type\n\nAccepts any type of value.\n\n**Usage:**\n```clean\nany value = 42\nvalue = \"text\"\nvalue = true\n```\n\n**Note:** Use sparingly for type safety.".to_string()),
+            "list" => Some("**list<T>** Type\n\nDynamic array type.\n\n**Examples:**\n```clean\nlist<integer> numbers = [1, 2, 3]\nlist<string> names = [\"Alice\", \"Bob\"]\n```\n\n**Methods:**\n- `length` - Get list size\n- `push(item)` - Add item to end\n- `pop()` - Remove last item\n- `get(index)` - Get item at index".to_string()),
+            "matrix" => Some("**matrix<T>** Type\n\nTwo-dimensional array type.\n\n**Examples:**\n```clean\nmatrix<integer> grid = [[1, 2], [3, 4]]\n```\n\n**Usage:**\n- Multi-dimensional data\n- Mathematical operations".to_string()),
+            _ => None,
+        }
+    }
+
+    fn get_builtin_function_info(&self, word: &str, _line: &str) -> Option<String> {
+        match word {
+            "print" => Some("**print()** Function\n\nPrints a message to the console.\n\n**Signature:**\n```clean\nprint(message: any)\n```\n\n**Examples:**\n```clean\nprint(\"Hello, World!\")\nprint(42)\nprint(variable)\n```".to_string()),
+            "println" => Some("**println()** Function\n\nPrints a message with a newline.\n\n**Signature:**\n```clean\nprintln(message: any)\n```\n\n**Examples:**\n```clean\nprintln(\"Line 1\")\nprintln(\"Line 2\")\n```".to_string()),
+            "input" => Some("**input()** Function\n\nGets user input from console.\n\n**Signature:**\n```clean\ninput(prompt: string) -> string\n```\n\n**Example:**\n```clean\nstring name = input(\"Enter your name: \")\nprint(\"Hello, \" + name)\n```".to_string()),
+            "error" => Some("**error()** Function\n\nPrints an error message.\n\n**Signature:**\n```clean\nerror(message: string)\n```\n\n**Example:**\n```clean\nerror(\"Something went wrong!\")\n```".to_string()),
+            _ => None,
+        }
+    }
+
+    fn get_method_info(&self, word: &str, line: &str) -> Option<String> {
+        // Determine context from the line
+        if line.contains("string.") || line.contains("\".") {
+            self.get_string_method_info(word)
+        } else if line.contains("list.") || line.contains("[.") {
+            self.get_list_method_info(word)
+        } else if line.contains("number.") || line.contains("integer.") {
+            self.get_number_method_info(word)
+        } else {
+            None
+        }
+    }
+
+    fn get_string_method_info(&self, word: &str) -> Option<String> {
+        match word {
+            "length" => Some("**string.length** Property\n\nGets the length of the string.\n\n**Type:** `integer`\n\n**Example:**\n```clean\nstring text = \"Hello\"\ninteger len = text.length  // 5\n```".to_string()),
+            "charAt" => Some("**string.charAt()** Method\n\nGets the character at the specified index.\n\n**Signature:**\n```clean\ncharAt(index: integer) -> string\n```\n\n**Example:**\n```clean\nstring text = \"Hello\"\nstring char = text.charAt(0)  // \"H\"\n```".to_string()),
+            "substring" => Some("**string.substring()** Method\n\nExtracts a portion of the string.\n\n**Signature:**\n```clean\nsubstring(start: integer, end: integer) -> string\n```\n\n**Example:**\n```clean\nstring text = \"Hello World\"\nstring sub = text.substring(0, 5)  // \"Hello\"\n```".to_string()),
+            _ => None,
+        }
+    }
+
+    fn get_list_method_info(&self, word: &str) -> Option<String> {
+        match word {
+            "length" => Some("**list.length** Property\n\nGets the number of items in the list.\n\n**Type:** `integer`\n\n**Example:**\n```clean\nlist<integer> nums = [1, 2, 3]\ninteger count = nums.length  // 3\n```".to_string()),
+            "push" => Some("**list.push()** Method\n\nAdds an item to the end of the list.\n\n**Signature:**\n```clean\npush(item: T) -> void\n```\n\n**Example:**\n```clean\nlist<integer> nums = [1, 2]\nnums.push(3)  // [1, 2, 3]\n```".to_string()),
+            "get" => Some("**list.get()** Method\n\nGets the item at the specified index.\n\n**Signature:**\n```clean\nget(index: integer) -> T\n```\n\n**Example:**\n```clean\nlist<string> names = [\"Alice\", \"Bob\"]\nstring first = names.get(0)  // \"Alice\"\n```".to_string()),
+            _ => None,
+        }
+    }
+
+    fn get_number_method_info(&self, word: &str) -> Option<String> {
+        match word {
+            "toString" => Some("**number.toString()** Method\n\nConverts the number to a string.\n\n**Signature:**\n```clean\ntoString() -> string\n```\n\n**Example:**\n```clean\nnumber value = 42.5\nstring text = value.toString()  // \"42.5\"\n```".to_string()),
+            "round" => Some("**number.round()** Method\n\nRounds to the nearest integer.\n\n**Signature:**\n```clean\nround() -> integer\n```\n\n**Example:**\n```clean\nnumber value = 42.7\ninteger rounded = value.round()  // 43\n```".to_string()),
+            _ => None,
+        }
+    }
+
+    fn get_construct_info(&self, word: &str, line: &str) -> Option<String> {
+        // Check for apply-block patterns
+        if line.contains(&format!("{}:", word)) {
+            Some(format!("**{}:** Apply Block\n\nApplies the identifier '{}' to each indented item below.\n\n**Pattern:**\n```clean\n{}:\n\titem1\n\titem2\n\titem3\n```\n\n**Usage:**\n- Function calls\n- Variable assignments\n- Method chains", word, word, word))
+        } else {
+            None
+        }
+    }
+
+    fn create_hover(&self, content: String) -> Hover {
+        Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: content,
+            }),
+            range: None,
+        }
+    }
+}
+
+impl Default for HoverProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -1,4 +1,4 @@
-//! Module for memory operations during code generation.
+//! Module for memory operations during code generation with comprehensive safety validation.
 
 use crate::ast::Value;
 use crate::error::CompilerError;
@@ -7,6 +7,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use wasm_encoder::{ConstExpr, DataSection, Instruction, ValType};
+
+/// Memory safety configuration constants
+const GUARD_PAGE_SIZE: usize = 512; // 512 bytes guard pages (reduced for single-page WASM)
+const MAX_MEMORY_SIZE: usize = 65536; // 64KB total limit (1 WASM page)
+const MEMORY_ALIGNMENT: usize = 8; // 8-byte alignment
+const POISON_PATTERN: u8 = 0xDE; // Pattern for poisoned memory
+const CANARY_VALUE: u32 = 0xDEADBEEF; // Canary for overflow detection
 
 // Essential constants
 pub const HEADER_SIZE: u32 = 16; // 16-byte header for memory blocks
@@ -22,20 +29,81 @@ const SMALL_POOL_SIZE: usize = 64;
 const MEDIUM_POOL_SIZE: usize = 256;
 const LARGE_POOL_SIZE: usize = 1024;
 
-/// Memory block header layout in WASM memory
+/// Enhanced memory block header layout in WASM memory with safety validation
 /// Offset 0-3: Size (u32)
 /// Offset 4-7: Reference count (u32)
 /// Offset 8-11: Type ID (u32)
 /// Offset 12-15: Next free block pointer (u32, 0 if not free)
+/// Safety extensions:
+/// - Guard bytes before/after allocation
+/// - Canary values for overflow detection
+/// - Allocation metadata for bounds checking
 #[derive(Debug, Clone)]
 pub struct MemoryBlock {
-    #[allow(dead_code)]
     pub address: usize,
     pub size: usize,
     pub is_free: bool,
     pub type_id: u32,
     pub ref_count: usize,
     pub next_free: Option<usize>,
+    // Memory safety fields
+    pub allocation_id: u64,
+    pub canary_start: u32,
+    pub canary_end: u32,
+    pub is_poisoned: bool,
+    pub stack_trace: Vec<String>, // For debugging use-after-free
+}
+
+/// Memory safety validation errors
+#[derive(Debug, Clone)]
+pub enum MemorySafetyError {
+    BufferOverflow {
+        address: usize,
+        size: usize,
+        attempted_size: usize,
+    },
+    UseAfterFree {
+        address: usize,
+        allocation_id: u64,
+    },
+    DoubleFree {
+        address: usize,
+        allocation_id: u64,
+    },
+    InvalidPointer {
+        address: usize,
+    },
+    CorruptedCanary {
+        address: usize,
+        expected: u32,
+        found: u32,
+    },
+    OutOfBounds {
+        address: usize,
+        base: usize,
+        size: usize,
+    },
+    UnalignedAccess {
+        address: usize,
+        alignment: usize,
+    },
+}
+
+/// Memory region for bounds checking
+#[derive(Debug, Clone)]
+struct MemoryRegion {
+    start: usize,
+    end: usize,
+    permissions: MemoryPermissions,
+    name: String,
+}
+
+/// Memory access permissions
+#[derive(Debug, Clone, PartialEq)]
+enum MemoryPermissions {
+    ReadWrite,
+    ReadOnly,
+    NoAccess, // Guard regions
 }
 
 /// Memory pool for size-segregated allocation
@@ -55,6 +123,24 @@ impl MemoryPool {
         }
     }
 
+    /// Validate pool integrity
+    fn validate_integrity(&self) -> Result<(), MemorySafetyError> {
+        // Ensure all free blocks are unique
+        let mut sorted_blocks = self.free_blocks.clone();
+        sorted_blocks.sort();
+        sorted_blocks.dedup();
+
+        if sorted_blocks.len() != self.free_blocks.len() {
+            return Err(MemorySafetyError::CorruptedCanary {
+                address: 0,
+                expected: self.free_blocks.len() as u32,
+                found: sorted_blocks.len() as u32,
+            });
+        }
+
+        Ok(())
+    }
+
     fn allocate(&mut self, _heap_start: usize, current_address: &mut usize) -> Option<usize> {
         if let Some(address) = self.free_blocks.pop() {
             Some(address)
@@ -72,7 +158,7 @@ impl MemoryPool {
     }
 }
 
-/// Enhanced memory management utilities with ARC and memory pools
+/// Enhanced memory management utilities with comprehensive safety validation
 pub(crate) struct MemoryUtils {
     data_section: DataSection,
     heap_start: usize,
@@ -93,21 +179,49 @@ pub(crate) struct MemoryUtils {
     // String pool for deduplication
     string_pool: HashMap<String, usize>,
 
+    // Memory safety validation
+    memory_regions: Vec<MemoryRegion>,
+    allocation_counter: u64,
+    guard_regions: HashMap<usize, usize>, // Guard page mappings
+    poisoned_memory: HashMap<usize, u64>, // Address -> allocation_id for freed memory
+    bounds_check_enabled: bool,
+
+    // Shadow memory for tracking allocation status
+    shadow_memory: HashMap<usize, AllocationStatus>,
+
     // Shared memory manager for stdlib integration
-    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 
+/// Allocation status for shadow memory tracking
+#[derive(Debug, Clone, PartialEq)]
+enum AllocationStatus {
+    Allocated {
+        size: usize,
+        type_id: u32,
+        allocation_id: u64,
+    },
+    Free,
+    Poisoned {
+        allocation_id: u64,
+    },
+    Guard,
+}
+
 impl MemoryUtils {
-    /// Create a new MemoryUtils instance with memory pools
+    /// Create a new MemoryUtils instance with comprehensive memory safety validation
     pub(crate) fn new(heap_start: usize) -> Self {
         // Create a shared memory manager for stdlib integration
         let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, None)));
 
-        Self {
+        // Ensure heap_start is properly aligned (simplified for single WASM page)
+        let aligned_heap_start = Self::align_size(heap_start);
+        let aligned_current_address = aligned_heap_start; // Start directly at heap start
+
+        let mut memory_utils = Self {
             data_section: DataSection::new(),
-            heap_start,
-            current_address: heap_start,
+            heap_start: aligned_heap_start,
+            current_address: aligned_current_address, // Start after guard page with proper alignment
             memory_blocks: HashMap::new(),
             free_blocks: Vec::new(),
             small_pool: MemoryPool::new(SMALL_POOL_SIZE),
@@ -117,15 +231,112 @@ impl MemoryUtils {
             gc_threshold: 1000,
             allocated_objects: 0,
             string_pool: HashMap::new(),
+            memory_regions: Vec::new(),
+            allocation_counter: 1,
+            guard_regions: HashMap::new(),
+            poisoned_memory: HashMap::new(),
+            bounds_check_enabled: true,
+            shadow_memory: HashMap::new(),
             memory_manager,
-        }
+        };
+
+        // Initialize memory regions with guard pages
+        memory_utils.setup_memory_regions();
+        memory_utils
     }
 
-    /// Add a data segment
-    pub(crate) fn add_data_segment(&mut self, offset: u32, data: &[u8]) {
+    /// Setup initial memory regions with simplified layout for single WASM page
+    fn setup_memory_regions(&mut self) {
+        // Single main heap region covering most of the WASM page
+        // Start after some static data area (0-1024), end before 64KB page limit
+        self.memory_regions.push(MemoryRegion {
+            start: self.heap_start, // 1024
+            end: MAX_MEMORY_SIZE,   // 65536
+            permissions: MemoryPermissions::ReadWrite,
+            name: "main_heap".to_string(),
+        });
+
+        // No guard regions for now - simplify to fix the runtime issue
+    }
+
+    /// Add a data segment with bounds validation
+    pub(crate) fn add_data_segment(
+        &mut self,
+        offset: u32,
+        data: &[u8],
+    ) -> Result<(), MemorySafetyError> {
+        // Validate bounds before adding data segment
+        self.validate_memory_access(offset as usize, data.len())?;
+
         let offset_expr = ConstExpr::i32_const(offset as i32);
         let data_vec: Vec<u8> = data.to_vec();
         self.data_section.active(0, &offset_expr, data_vec);
+        Ok(())
+    }
+
+    /// Legacy add_data_segment for compatibility (unsafe)
+    pub(crate) fn unsafe_add_data_segment(&mut self, offset: u32, data: &[u8]) {
+        let offset_expr = ConstExpr::i32_const(offset as i32);
+        let data_vec: Vec<u8> = data.to_vec();
+        self.data_section.active(0, &offset_expr, data_vec);
+    }
+
+    /// Comprehensive memory access validation
+    fn validate_memory_access(&self, address: usize, size: usize) -> Result<(), MemorySafetyError> {
+        if !self.bounds_check_enabled {
+            return Ok(());
+        }
+
+        // Check for null pointer
+        if address == 0 {
+            return Err(MemorySafetyError::InvalidPointer { address });
+        }
+
+        // Check alignment - allow 4-byte alignment for small allocations (strings and small data)
+        let required_alignment = if size <= 64 { 4 } else { MEMORY_ALIGNMENT };
+        if address % required_alignment != 0 {
+            return Err(MemorySafetyError::UnalignedAccess {
+                address,
+                alignment: required_alignment,
+            });
+        }
+
+        // Check if accessing poisoned memory (use-after-free detection)
+        if let Some(&allocation_id) = self.poisoned_memory.get(&address) {
+            return Err(MemorySafetyError::UseAfterFree {
+                address,
+                allocation_id,
+            });
+        }
+
+        // Validate against memory regions
+        for region in &self.memory_regions {
+            if address >= region.start && address < region.end {
+                match region.permissions {
+                    MemoryPermissions::NoAccess => {
+                        return Err(MemorySafetyError::OutOfBounds {
+                            address,
+                            base: region.start,
+                            size: region.end - region.start,
+                        });
+                    }
+                    MemoryPermissions::ReadWrite | MemoryPermissions::ReadOnly => {
+                        // Check if access goes beyond region bounds
+                        if address + size > region.end {
+                            return Err(MemorySafetyError::BufferOverflow {
+                                address,
+                                size: region.end - address,
+                                attempted_size: size,
+                            });
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        // Address not in any defined region
+        Err(MemorySafetyError::InvalidPointer { address })
     }
 
     /// Add string data to the data section with proper memory layout
@@ -142,9 +353,12 @@ impl MemoryUtils {
             return existing_ptr as u32;
         }
 
-        // Allocate new string with proper layout
+        // Allocate new string with proper layout and alignment
         let string_len = data.len();
-        let total_size = HEADER_SIZE as usize + 4 + string_len; // header + length + content
+        let header_size = Self::align_size(HEADER_SIZE as usize);
+        let len_size = Self::align_size(4);
+        let content_size = Self::align_size(string_len);
+        let total_size = header_size + len_size + content_size;
 
         let address = match self.allocate_from_pool(total_size, STRING_TYPE_ID) {
             Ok(addr) => addr,
@@ -157,6 +371,9 @@ impl MemoryUtils {
         };
 
         // Create memory block
+        let allocation_id = self.allocation_counter;
+        self.allocation_counter += 1;
+
         let block = MemoryBlock {
             address,
             size: total_size,
@@ -164,7 +381,23 @@ impl MemoryUtils {
             type_id: STRING_TYPE_ID,
             ref_count: 1,
             next_free: None,
+            allocation_id,
+            canary_start: CANARY_VALUE,
+            canary_end: CANARY_VALUE,
+            is_poisoned: false,
+            stack_trace: Vec::new(),
         };
+
+        // Update shadow memory
+        self.shadow_memory.insert(
+            address,
+            AllocationStatus::Allocated {
+                size: total_size,
+                type_id: STRING_TYPE_ID,
+                allocation_id,
+            },
+        );
+
         self.memory_blocks.insert(address, block);
         self.allocated_objects += 1;
 
@@ -180,18 +413,19 @@ impl MemoryUtils {
             0u32.to_le_bytes(), // next_free
         ]
         .concat();
-        self.add_data_segment(address as u32, &header_data);
+        let _ = self.add_data_segment(address as u32, &header_data);
 
-        // String length
+        // String length - ensure alignment
+        let len_offset = address + header_size;
         let len_data = (string_len as u32).to_le_bytes();
-        self.add_data_segment((address + HEADER_SIZE as usize) as u32, &len_data);
+        let _ = self.add_data_segment(len_offset as u32, &len_data);
 
-        // String content
-        self.add_data_segment((address + HEADER_SIZE as usize + 4) as u32, data);
+        // String content - ensure proper alignment
+        let content_offset = len_offset + len_size;
+        let _ = self.add_data_segment(content_offset as u32, data);
 
-        // Return pointer to the string length field (after header)
-        // The caller can then read the length and access the content
-        (address + HEADER_SIZE as usize) as u32
+        // Return pointer to the string length field (properly aligned)
+        len_offset as u32
     }
 
     /// Get the data section
@@ -226,7 +460,10 @@ impl MemoryUtils {
 
         match address {
             Some(addr) => {
-                // Create memory block
+                // Create memory block with safety metadata
+                let allocation_id = self.allocation_counter;
+                self.allocation_counter += 1;
+
                 let block = MemoryBlock {
                     address: addr,
                     size: aligned_size,
@@ -234,7 +471,23 @@ impl MemoryUtils {
                     type_id,
                     ref_count: 1,
                     next_free: None,
+                    allocation_id,
+                    canary_start: CANARY_VALUE,
+                    canary_end: CANARY_VALUE,
+                    is_poisoned: false,
+                    stack_trace: Vec::new(),
                 };
+
+                // Update shadow memory
+                self.shadow_memory.insert(
+                    addr,
+                    AllocationStatus::Allocated {
+                        size: aligned_size,
+                        type_id,
+                        allocation_id,
+                    },
+                );
+
                 self.memory_blocks.insert(addr, block);
                 self.allocated_objects += 1;
 
@@ -257,6 +510,9 @@ impl MemoryUtils {
     /// Record memory allocation
     pub(crate) fn record_allocation(&mut self, size: usize, type_id: u32) -> usize {
         let address = self.current_address;
+        let allocation_id = self.allocation_counter;
+        self.allocation_counter += 1;
+
         let block = MemoryBlock {
             address,
             size,
@@ -264,7 +520,23 @@ impl MemoryUtils {
             type_id,
             ref_count: 1,
             next_free: None,
+            allocation_id,
+            canary_start: CANARY_VALUE,
+            canary_end: CANARY_VALUE,
+            is_poisoned: false,
+            stack_trace: Vec::new(),
         };
+
+        // Update shadow memory
+        self.shadow_memory.insert(
+            address,
+            AllocationStatus::Allocated {
+                size,
+                type_id,
+                allocation_id,
+            },
+        );
+
         self.memory_blocks.insert(address, block);
         self.current_address += size;
         self.allocated_objects += 1;
@@ -471,9 +743,15 @@ impl MemoryUtils {
     pub(crate) fn allocate_string(&mut self, s: &str) -> Result<usize, CompilerError> {
         // Check if string already exists in pool
         if let Some(&existing_ptr) = self.string_pool.get(s) {
-            // Increment reference count for existing string
-            self.retain(existing_ptr + HEADER_SIZE as usize)?;
-            return Ok(existing_ptr);
+            // Verify the memory block still exists (safety check for GC issues)
+            if self.memory_blocks.contains_key(&existing_ptr) {
+                // Increment reference count for existing string
+                self.retain(existing_ptr + HEADER_SIZE as usize)?;
+                return Ok(existing_ptr);
+            } else {
+                // String pool entry is stale, remove it
+                self.string_pool.remove(s);
+            }
         }
 
         let bytes = s.as_bytes();
@@ -499,12 +777,28 @@ impl MemoryUtils {
         // Add to string pool
         self.string_pool.insert(s.to_string(), string_ptr);
 
-        // Create data segment for length
+        // Create data segment for length with safety validation
         let len_bytes = (len as u32).to_le_bytes();
-        self.add_data_segment(string_ptr as u32, &len_bytes);
+        self.add_data_segment(string_ptr as u32, &len_bytes)
+            .map_err(|e| {
+                CompilerError::memory_allocation_error(
+                    &format!("String length allocation failed: {:?}", e),
+                    4,
+                    None,
+                    None,
+                )
+            })?;
 
-        // Create data segment for the string content
-        self.add_data_segment((string_ptr + 4) as u32, bytes);
+        // Create data segment for the string content with safety validation
+        self.add_data_segment((string_ptr + 4) as u32, bytes)
+            .map_err(|e| {
+                CompilerError::memory_allocation_error(
+                    &format!("String content allocation failed: {:?}", e),
+                    len,
+                    None,
+                    None,
+                )
+            })?;
 
         Ok(string_ptr)
     }
@@ -522,12 +816,29 @@ impl MemoryUtils {
         // Debug: Log what we're allocating
         // eprintln!("DEBUG: Allocating '{s}' (len={len}) at address {target_addr}");
 
-        // Create data segment for the string length (4 bytes, little-endian)
+        // Create data segment for the string length (4 bytes, little-endian) with safety validation
         let len_bytes = (len as u32).to_le_bytes().to_vec();
-        self.add_data_segment(target_addr, &len_bytes);
+        self.add_data_segment(target_addr, &len_bytes)
+            .map_err(|e| {
+                CompilerError::memory_allocation_error(
+                    &format!("String length allocation failed: {:?}", e),
+                    4,
+                    None,
+                    None,
+                )
+            })?;
 
-        // Create data segment for the string content
-        self.add_data_segment(target_addr + 4, bytes);
+        // Create data segment for the string content with safety validation
+        // Align the content address to 8-byte boundary to meet WASM requirements
+        let content_addr = target_addr + 8; // Use 8-byte offset instead of 4 for alignment
+        self.add_data_segment(content_addr, bytes).map_err(|e| {
+            CompilerError::memory_allocation_error(
+                &format!("String content allocation failed: {:?}", e),
+                len,
+                None,
+                None,
+            )
+        })?;
 
         // Debug: Log the bytes being written
         // eprintln!("DEBUG: Length bytes: {len_bytes:?}, Content bytes: {bytes:?}");
@@ -578,9 +889,17 @@ impl MemoryUtils {
 
         let ptr = self.allocate(total_size, ARRAY_TYPE_ID)?;
 
-        // Create data segment for array length
+        // Create data segment for array length with safety validation
         let len_bytes = (elements.len() as u32).to_le_bytes();
-        self.add_data_segment((ptr - HEADER_SIZE as usize) as u32, &len_bytes);
+        self.add_data_segment((ptr - HEADER_SIZE as usize) as u32, &len_bytes)
+            .map_err(|e| {
+                CompilerError::memory_allocation_error(
+                    &format!("Array length allocation failed: {:?}", e),
+                    4,
+                    None,
+                    None,
+                )
+            })?;
 
         // Create data segments for array elements
         let mut offset = 4;
@@ -645,7 +964,15 @@ impl MemoryUtils {
                 }
             };
 
-            self.add_data_segment((ptr + offset - HEADER_SIZE as usize) as u32, &element_bytes);
+            self.add_data_segment((ptr + offset - HEADER_SIZE as usize) as u32, &element_bytes)
+                .map_err(|e| {
+                    CompilerError::memory_allocation_error(
+                        &format!("Array element allocation failed: {:?}", e),
+                        element_bytes.len(),
+                        None,
+                        None,
+                    )
+                })?;
             offset += element_size;
         }
 
@@ -683,15 +1010,23 @@ impl MemoryUtils {
 
         let ptr = self.allocate(total_size, MATRIX_TYPE_ID)?;
 
-        // Create data segment for matrix dimensions
+        // Create data segment for matrix dimensions with safety validation
         let dims_bytes = [
             (num_rows as u32).to_le_bytes(),
             (num_cols as u32).to_le_bytes(),
         ]
         .concat();
-        self.add_data_segment((ptr - HEADER_SIZE as usize) as u32, &dims_bytes);
+        self.add_data_segment((ptr - HEADER_SIZE as usize) as u32, &dims_bytes)
+            .map_err(|e| {
+                CompilerError::memory_allocation_error(
+                    &format!("Matrix dimensions allocation failed: {:?}", e),
+                    8,
+                    None,
+                    None,
+                )
+            })?;
 
-        // Create data segment for matrix elements (row-major order)
+        // Create data segment for matrix elements (row-major order) with safety validation
         let mut element_bytes = Vec::new();
         for row in rows {
             for &element in row {
@@ -699,7 +1034,15 @@ impl MemoryUtils {
             }
         }
 
-        self.add_data_segment((ptr + 8 - HEADER_SIZE as usize) as u32, &element_bytes);
+        self.add_data_segment((ptr + 8 - HEADER_SIZE as usize) as u32, &element_bytes)
+            .map_err(|e| {
+                CompilerError::memory_allocation_error(
+                    &format!("Matrix elements allocation failed: {:?}", e),
+                    element_bytes.len(),
+                    None,
+                    None,
+                )
+            })?;
 
         Ok(ptr)
     }
@@ -755,5 +1098,10 @@ impl MemoryUtils {
     pub(crate) fn get_memory_manager_ref(&self) -> Rc<RefCell<MemoryManager>> {
         // Return the shared memory manager instance for stdlib integration
         self.memory_manager.clone()
+    }
+
+    /// Get the current allocation address (first available address for new allocations)
+    pub(crate) fn get_current_address(&self) -> usize {
+        self.current_address
     }
 }

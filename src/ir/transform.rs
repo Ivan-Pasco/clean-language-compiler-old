@@ -300,6 +300,23 @@ impl ASTToHIRTransformer {
                 object: Box::new(self.transform_expression(*list)?),
                 index: Box::new(self.transform_expression(*index)?),
             })),
+            ast::Expression::NamespaceCall {
+                namespace,
+                function,
+                arguments,
+                ..
+            } => {
+                // Convert namespace calls to regular function calls with qualified names
+                let qualified_name = format!("{}_{}", namespace, function);
+                let mut hir_args = Vec::new();
+                for arg in arguments {
+                    hir_args.push(self.transform_expression(arg)?);
+                }
+                Ok(HIRExpression::Call(HIRCall {
+                    function: Box::new(HIRExpression::Variable(qualified_name)),
+                    arguments: hir_args,
+                }))
+            }
             // Handle other expression types
             _ => {
                 // For now, return a placeholder for unsupported expressions

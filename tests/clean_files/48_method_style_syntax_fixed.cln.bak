@@ -1,0 +1,64 @@
+// Comprehensive QA Test for Method-Style Syntax
+// Tests all enhanced method-style calls supported by the parser
+
+start()
+	// Test utility methods on values
+	string text = "Hello World"
+	integer length = text.length()
+	print "Text length: " ln
+	print length.toString( ln)
+	
+	// Test type conversion methods
+	integer age = 25
+	number ageFloat = age.toNumber()
+	string ageText = age.toString()
+	boolean ageValid = age.toBoolean()
+	
+	print "Age: " ln
+	print ageText ln
+	print " as number: " ln
+	print ageFloat.toString( ln)
+	print " as boolean: " ln
+	print ageValid.toString( ln)
+	
+	// Test validation methods
+	integer score = 85
+	score.mustBeTrue(score > 0)
+	score.mustBeTrue(score <= 100)
+	
+	string email = "user@example.com"
+	email.mustBeFalse(email.isEmpty())
+	
+	string password = "secret123"
+	string confirmPassword = "secret123"
+	password.mustBeEqual(confirmPassword)
+	
+	// Test boundary checking methods
+	integer volume = 150
+	integer safeVolume = volume.keepBetween(0, 100)
+	print "Safe volume: " ln
+	print safeVolume.toString( ln)
+	
+	// Test existence checking methods
+	string username = "alice"
+	boolean exists = username.isDefined()
+	boolean missing = username.isNotDefined()
+	print "Username exists: " ln
+	print exists.toString( ln)
+	
+	// Test empty/not empty methods
+	list<integer> numbers = [1, 2, 3]
+	boolean isEmpty = numbers.isEmpty()
+	boolean notEmpty = numbers.isNotEmpty()
+	print "Numbers empty: " ln
+	print isEmpty.toString( ln)
+	print "Numbers not empty: " ln
+	print notEmpty.toString( ln)
+	
+	// Test method chaining
+	string messyInput = "  Hello  "
+	string cleanInput = messyInput.toString()
+	print "Cleaned input: " ln
+	print cleanInput ln
+	
+	print "Method-style syntax test completed successfully!" ln

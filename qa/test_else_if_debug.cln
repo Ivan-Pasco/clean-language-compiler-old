@@ -1,0 +1,12 @@
+functions:
+	integer power(integer base, integer exponent)
+		if exponent == 0
+			return 1
+		else if exponent == 1
+			return base
+		else
+			return 2
+
+start()
+	integer result = power(2, 1)
+	print(result.toString())

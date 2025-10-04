@@ -1,0 +1,47 @@
+// Simple QA Test for Import/Export Block Syntax
+// Tests basic import: and private: block syntax for module management
+
+// Test simple import block syntax
+import:
+    math
+    string
+    list
+
+functions:
+
+	// Public functions (exported by default)
+	integer calculateSum(integer a, integer b)
+		return a + b
+	
+	string formatText(string input)
+		return input
+	
+	// Functions to be marked private
+	void helperFunction()
+		print "This is a helper function" ln
+	
+	string internalProcessor(string data)
+		return "Processed: " + data
+
+// Test private block syntax
+private:
+    helperFunction
+    internalProcessor
+
+start()
+
+	// Test using public functions
+	integer sum = calculateSum(10, 20)
+	print "Sum result: " ln
+	print sum.toString( ln)
+	
+	string formatted = formatText("test")
+	print "Formatted text: " ln
+	print formatted ln
+	
+	// Private functions should not be accessible from outside
+	// These would cause compilation errors if uncommented:
+	// helperFunction()         // Error: private function
+	// internalProcessor("test") // Error: private function
+	
+	print "Import/export block syntax test completed successfully!" ln

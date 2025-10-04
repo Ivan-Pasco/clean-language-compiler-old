@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct SourceLocation {
     pub line: usize,
     pub column: usize,
@@ -17,6 +17,12 @@ impl SourceLocation {
     }
 }
 
+impl fmt::Display for SourceLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}:{}", self.file, self.line, self.column)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Integer(i64), // Default integer (platform optimal)
@@ -24,6 +30,7 @@ pub enum Value {
     Boolean(bool),
     String(String),
     Matrix(Vec<Vec<f64>>),
+    Null,
     Void,
     // Advanced sized types
     Integer8(i8),
@@ -51,7 +58,7 @@ pub enum ListBehavior {
     LineUniquePile, // All three combined
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     // Core types from specification
     Boolean,
@@ -84,7 +91,7 @@ pub enum Type {
     Any,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BinaryOperator {
     Add,
     Subtract,
@@ -108,7 +115,7 @@ pub enum BinaryOperator {
     Or,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum UnaryOperator {
     Negate,
     Not,
@@ -166,6 +173,14 @@ pub enum Expression {
     PropertyAssignment {
         object: Box<Expression>,
         property: String,
+        value: Box<Expression>,
+        location: SourceLocation,
+    },
+
+    // List assignment (for list[index] = value)
+    ListAssignment {
+        list: Box<Expression>,
+        index: Box<Expression>,
         value: Box<Expression>,
         location: SourceLocation,
     },
@@ -491,6 +506,12 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
+    // Standalone error handler (global error handling for previous statements)
+    StandaloneErrorHandler {
+        body: Vec<Statement>,
+        location: Option<SourceLocation>,
+    },
+
     // Class definition statement
     ClassDefinition {
         class: Class,
@@ -742,6 +763,7 @@ impl fmt::Display for Value {
                 }
                 write!(f, "]")
             }
+            Value::Null => write!(f, "null"),
             Value::Void => write!(f, "()"),
             Value::Integer8(i) => write!(f, "{i}:8"),
             Value::Integer8u(u) => write!(f, "{u}:8u"),

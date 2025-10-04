@@ -331,6 +331,15 @@ impl FixSuggestionEngine {
             CompilerError::Runtime { context } => context,
             CompilerError::Validation { context } => context,
             CompilerError::Module { context } => context,
+            CompilerError::Testing { context } => context,
+            CompilerError::LexError(_) => {
+                // LexError doesn't have ErrorContext, return minimal context
+                return FixContext {
+                    location: None,
+                    surrounding_code: None,
+                    variable_scope: Vec::new(),
+                };
+            }
         };
 
         FixContext {
@@ -437,6 +446,8 @@ impl ErrorCorrelator {
             CompilerError::Runtime { context } => context,
             CompilerError::Validation { context } => context,
             CompilerError::Module { context } => context,
+            CompilerError::Testing { context } => context,
+            CompilerError::LexError(_) => return None,
         };
 
         context.location.as_ref()
@@ -476,6 +487,8 @@ impl ErrorStatistics {
                 CompilerError::Runtime { .. } => "runtime",
                 CompilerError::Validation { .. } => "validation",
                 CompilerError::Module { .. } => "module",
+                CompilerError::Testing { .. } => "testing",
+                CompilerError::LexError(_) => "lexical",
             };
 
             *self.error_types.entry(error_type.to_string()).or_insert(0) += 1;
@@ -498,6 +511,8 @@ impl ErrorStatistics {
             CompilerError::Runtime { context } => context,
             CompilerError::Validation { context } => context,
             CompilerError::Module { context } => context,
+            CompilerError::Testing { context } => context,
+            CompilerError::LexError(_) => return None,
         };
 
         context.location.as_ref()

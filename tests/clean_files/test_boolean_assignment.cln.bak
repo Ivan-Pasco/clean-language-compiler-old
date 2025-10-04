@@ -1,0 +1,8 @@
+class Test
+	boolean flag
+	constructor(boolean value)
+		flag = value
+
+start()
+	Test test = Test(true)
+	print "flag: " + test.flag.toString( ln)

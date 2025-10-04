@@ -122,6 +122,13 @@ impl ErrorReporter {
             CompilerError::Module { context } => {
                 self.report_module_error(&mut stderr, context, source_code)?;
             }
+            CompilerError::Testing { context } => {
+                self.report_validation_error(&mut stderr, context, source_code)?;
+            }
+            CompilerError::LexError(lex_error) => {
+                // Handle lexical errors
+                writeln!(stderr, "Lexical error: {}", lex_error)?;
+            }
         }
 
         Ok(())
@@ -512,6 +519,8 @@ impl ErrorReporter {
                 CompilerError::Runtime { .. } => "runtime",
                 CompilerError::Validation { .. } => "validation",
                 CompilerError::Module { .. } => "module",
+                CompilerError::Testing { .. } => "testing",
+                CompilerError::LexError(_) => "lexical",
             };
 
             *type_counts.entry(error_type).or_insert(0) += 1;

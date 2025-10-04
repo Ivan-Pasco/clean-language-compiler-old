@@ -37,5 +37,55 @@ function.wasm
 # Build outputs
 --output
 *.clean.wasm 
+
+# AI Tools and Development Environments
+# Claude Code (ignore session/temp files but keep config)
+.claude-testing.json
+.claude-session*
+claude-session*
+.claude/temp/
+.claude/cache/
+.claude/logs/
+*claude-code*
+
+# OpenAI/ChatGPT
+.openai/
+openai_*.json
+chatgpt_*.json
+.gpt/
+gpt-session*
+
+# Cursor AI Editor  
+.cursor/
+cursor_*.json
+.cursor-tutor/
+cursor-session*
+
+# Kiro AI
+.kiro/
+kiro_*.json
+kiro-session*
+
+# Other AI Tools
+.ai/
+.anthropic/
+.copilot/
+github-copilot*
+.tabnine/
+.codeium/
+.sourcegraph/
+.replit/
+
+# Development Environment Configs
+.serena/
+.superdesign/
+.devcontainer/
+.codespaces/
+
+# AI Generated Content Markers  
+*_ai_generated*
+*-ai-generated*
+*.ai.md
+*.claude.md
+*.gpt.md
 GEMINI.md
-CLAUDE.md 

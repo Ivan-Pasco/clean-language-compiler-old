@@ -1,0 +1,7 @@
+functions:
+	integer add()
+		return 5 + 3
+
+start()
+	integer result = add()
+	print result.toString() ln

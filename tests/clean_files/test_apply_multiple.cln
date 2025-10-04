@@ -1,9 +1,9 @@
 functions:
-	test()
+	void test()
 		integer:
 			x = 5
 		string:
 			name = "test"
 
-start()
-	test()
+	void start()
+	void test()

@@ -47,12 +47,32 @@ impl LexicalAnalyzer {
         }
     }
 
-    /// Count the indentation level of a line (tabs and spaces)
-    fn count_indentation(&self, line: &str) -> usize {
-        let mut count = 0;
+    /// Convert tabs to spaces before indentation counting
+    fn detab(&self, line: &str) -> String {
+        let mut out = String::with_capacity(line.len());
+        let mut col = 0usize;
         for ch in line.chars() {
+            if ch == '\t' {
+                let next = ((col / 4) + 1) * 4;
+                let n = next - col;
+                for _ in 0..n {
+                    out.push(' ');
+                }
+                col = next;
+            } else {
+                out.push(ch);
+                col += 1;
+            }
+        }
+        out
+    }
+
+    /// Count the indentation level of a line (tabs normalized to spaces)
+    fn count_indentation(&self, line: &str) -> usize {
+        let detabbed = self.detab(line);
+        let mut count = 0;
+        for ch in detabbed.chars() {
             match ch {
-                '\t' => count += 1,
                 ' ' => count += 1,
                 _ => break,
             }
@@ -113,9 +133,10 @@ impl LexicalAnalyzer {
                     });
                 } else if let Some(ref mut func) = current_function {
                     // Check for complex constructs within function body
-                    if trimmed.starts_with("if ") ||
-                       trimmed.starts_with("iterate ") ||
-                       trimmed.starts_with("test ") {
+                    if trimmed.starts_with("if ")
+                        || trimmed.starts_with("iterate ")
+                        || trimmed.starts_with("test ")
+                    {
                         func.has_complex_body = true;
                     }
                 }
@@ -141,12 +162,12 @@ impl LexicalAnalyzer {
                 1 => {
                     // Just identifier(params) - like factorial(integer n)
                     self.is_valid_identifier(parts[0])
-                },
+                }
                 2 => {
                     // type identifier(params) - like integer factorial(integer n)
                     self.is_valid_type(parts[0]) && self.is_valid_identifier(parts[1])
-                },
-                _ => false
+                }
+                _ => false,
             }
         } else {
             false
@@ -162,7 +183,7 @@ impl LexicalAnalyzer {
             match parts.len() {
                 1 => parts[0].to_string(),
                 2 => parts[1].to_string(),
-                _ => "unknown".to_string()
+                _ => "unknown".to_string(),
             }
         } else {
             "unknown".to_string()
@@ -185,16 +206,19 @@ impl LexicalAnalyzer {
 
     /// Check if a string is a valid type
     fn is_valid_type(&self, s: &str) -> bool {
-        matches!(s, "integer" | "number" | "string" | "boolean" | "void" | "any") ||
-        s.starts_with("list<") ||
-        s.starts_with("matrix<") ||
-        s.starts_with("pairs<") ||
-        self.is_valid_identifier(s) // Could be a custom type
+        matches!(
+            s,
+            "integer" | "number" | "string" | "boolean" | "void" | "any"
+        ) || s.starts_with("list<")
+            || s.starts_with("matrix<")
+            || s.starts_with("pairs<")
+            || self.is_valid_identifier(s) // Could be a custom type
     }
 
     /// Get function boundary for a specific line
     pub fn get_function_boundary_for_line(&self, line_num: usize) -> Option<&FunctionBoundary> {
-        self.function_boundaries.iter()
+        self.function_boundaries
+            .iter()
             .find(|boundary| line_num >= boundary.start_line && line_num <= boundary.end_line)
     }
 

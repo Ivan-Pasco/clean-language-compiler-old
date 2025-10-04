@@ -1,0 +1,79 @@
+// Math Module Minimal Working Test
+// Tests only the actually implemented mathematical functions
+
+functions:
+	void testImplementedMathFunctions()
+		print "=== Implemented Math Functions ===" ln
+		
+		// Test functions that are actually implemented
+		number sqrtResult = math.sqrt(16.0)
+		integer absResult = math.abs(-42)
+		number maxResult = math.max(10.5, 7.2)
+		number minResult = math.min(10.5, 7.2)
+		
+		print "sqrt(16.0) = " + sqrtResult.toString() ln
+		print "abs(-42) = " + absResult.toString() ln
+		print "max(10.5, 7.2) = " + maxResult.toString() ln
+		print "min(10.5, 7.2) = " + minResult.toString() ln
+		
+	void testBasicArithmeticOperators()
+		print "=== Basic Arithmetic with Operators ===" ln
+		
+		// Use operators for basic math as specified
+		number a = 15.0
+		number b = 4.0
+		
+		number sum = a + b
+		number difference = a - b  
+		number product = a * b
+		number quotient = a / b
+		number power = a ^ 2.0
+		
+		print "15.0 + 4.0 = " + sum.toString() ln
+		print "15.0 - 4.0 = " + difference.toString() ln
+		print "15.0 * 4.0 = " + product.toString() ln
+		print "15.0 / 4.0 = " + quotient.toString() ln
+		print "15.0 ^ 2.0 = " + power.toString() ln
+		
+	void testPracticalExample()
+		print "=== Practical Example ===" ln
+		
+		// Pythagorean theorem calculation
+		number side1 = 3.0
+		number side2 = 4.0
+		
+		number side1Squared = side1 * side1
+		number side2Squared = side2 * side2
+		number sumOfSquares = side1Squared + side2Squared
+		number hypotenuse = math.sqrt(sumOfSquares)
+		
+		print "Triangle sides: " + side1.toString() + ", " + side2.toString() ln
+		print "Hypotenuse: " + hypotenuse.toString() ln
+		
+	void testAbsoluteValues()
+		print "=== Absolute Values ===" ln
+		
+		integer negative = -15
+		integer positive = 25
+		integer zero = 0
+		
+		integer absNeg = math.abs(negative)
+		integer absPos = math.abs(positive)
+		integer absZero = math.abs(zero)
+		
+		print "abs(-15) = " + absNeg.toString() ln
+		print "abs(25) = " + absPos.toString() ln
+		print "abs(0) = " + absZero.toString() ln
+
+start()
+	print "Math Module Minimal Test" ln
+	print "========================" ln
+	testImplementedMathFunctions()
+	print "" ln
+	testBasicArithmeticOperators()
+	print "" ln
+	testPracticalExample()
+	print "" ln
+	testAbsoluteValues()
+	print "" ln
+	print "Minimal math test completed successfully" ln

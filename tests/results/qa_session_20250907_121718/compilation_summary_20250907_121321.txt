@@ -1,0 +1,56 @@
+Clean Language Comprehensive Compilation Test
+Started: Sun Sep  7 12:13:21 -05 2025
+=========================================
+
+SUCCESS: 00_empty_start.cln
+SUCCESS: 00_minimal_no_strings.cln
+SUCCESS: 00_minimal_test.cln
+SUCCESS: 00_minimal.cln
+SUCCESS: 01_hello_world.cln
+SUCCESS: 02_variables_basic.cln
+SUCCESS: 03_arithmetic_operations.cln
+SUCCESS: 04_comparison_operations.cln
+SUCCESS: 05_logical_operations.cln
+SUCCESS: 06_type_conversions.cln
+SUCCESS: 07_lists_basic.cln
+SUCCESS: 08_matrices.cln
+SUCCESS: 09_type_inference.cln
+SUCCESS: 10_functions_basic.cln
+SUCCESS: 100_testing_framework_simple.cln
+SUCCESS: 11_functions_overloading.cln
+SUCCESS: 12_functions_recursion.cln
+SUCCESS: 13_functions_generics.cln
+SUCCESS: 14_classes_basic.cln
+SUCCESS: 15_classes_inheritance.cln
+SUCCESS: 16_classes_polymorphism_fixed.cln
+SUCCESS: 16_classes_polymorphism_new.cln
+SUCCESS: 16_classes_polymorphism_simple.cln
+SUCCESS: 16_classes_polymorphism.cln
+SUCCESS: 17_control_flow_if.cln
+SUCCESS: 18_control_flow_loops.cln
+SUCCESS: 19_async_basic.cln
+SUCCESS: 20_async_parallel.cln
+SUCCESS: 21_error_handling_try_catch.cln
+SUCCESS: 22_error_handling_onerror.cln
+SUCCESS: 23_error_handling_async.cln
+SUCCESS: 24_memory_management.cln
+SUCCESS: 25_stdlib_functions_original_modules.cln
+SUCCESS: 25_stdlib_functions.cln
+SUCCESS: 26_io_operations.cln
+SUCCESS: 27_http_networking.cln
+SUCCESS: 28_complex_example.cln
+SUCCESS: 29_apply_blocks_fixed.cln
+SUCCESS: 29_apply_blocks.cln
+SUCCESS: 30_precision_modifiers.cln
+SUCCESS: 31_testing_framework.cln
+SUCCESS: 32_comprehensive_stdlib.cln
+SUCCESS: 33_complex_integration.cln
+SUCCESS: 34_list_behaviors_simple.cln
+SUCCESS: 34_list_behaviors.cln
+SUCCESS: 35_method_style_simple.cln
+SUCCESS: 35_method_style.cln
+SUCCESS: 36_conditionals_fixed.cln
+SUCCESS: 36_conditionals_simple.cln
+SUCCESS: 36_conditionals.cln
+SUCCESS: 37_property_assignment_simple.cln
+SUCCESS: 37_property_assignment.cln

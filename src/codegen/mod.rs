@@ -2,23 +2,30 @@
 
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
-    ImportSection, Instruction, MemArg, MemorySection, MemoryType, Module, ValType,
+    ImportSection, Instruction, MemArg, MemorySection, MemoryType, ValType,
 };
 
 use crate::ast::{
     self, BinaryOperator, Class, Expression, Function as AstFunction, Pattern, Program,
     SourceLocation, Statement, Type, UnaryOperator, Value,
 };
-use crate::error::CompilerError;
+use crate::error::{CompilationErrorKind, CompilerError, EnhancedErrorCollector};
 
 use crate::types::WasmType;
 use std::collections::{HashMap, HashSet};
 
 // Declare the modules
+mod binary_operations;
+mod binaryen_optimizer;
 mod instruction_generator;
 mod memory;
+pub mod mir_codegen;
+pub mod optimizations;
+mod stdlib_generator;
+mod type_conversion;
 mod type_manager;
 pub mod wasm_generator;
+mod wasm_module_builder;
 
 #[cfg(test)]
 mod tests;
@@ -27,8 +34,13 @@ mod tests;
 
 // Import the StringPool struct
 use self::memory::MemoryUtils;
+use binaryen_optimizer::BinaryenOptimizer;
 use instruction_generator::{InstructionGenerator, LocalVarInfo};
+pub use mir_codegen::{MirCodeGenerator, MirCodegenResult};
+use stdlib_generator::StdlibGenerator;
+use type_conversion::TypeConverter;
 use type_manager::TypeManager;
+use wasm_module_builder::WasmModuleBuilder;
 
 // Add these constants for memory type IDs
 pub const INTEGER_TYPE_ID: u32 = 1;
@@ -42,7 +54,7 @@ pub const PAIRS_TYPE_ID: u32 = 6;
 pub const PAGE_SIZE: u32 = 65536;
 pub const HEADER_SIZE: u32 = 16; // 16-byte header for memory blocks
 pub const MIN_ALLOCATION: u32 = 16;
-pub const HEAP_START: usize = 65536; // Start heap at 64KB
+pub const HEAP_START: usize = 1024; // Start heap at 1KB, leaving room for static data
 
 /// Code generator for Clean Language
 pub struct CodeGenerator {
@@ -54,6 +66,7 @@ pub struct CodeGenerator {
     import_section: ImportSection,
     type_manager: TypeManager,
     instruction_generator: InstructionGenerator,
+    enhanced_error_collector: EnhancedErrorCollector,
     variable_map: HashMap<String, LocalVarInfo>,
     memory_utils: MemoryUtils,
     function_count: u32,
@@ -93,6 +106,18 @@ pub struct CodeGenerator {
 
     // Track imported function names to avoid exporting them
     imported_functions: HashSet<String>,
+
+    // WASM module builder for assembling final module
+    module_builder: WasmModuleBuilder,
+
+    // Standard library generator
+    stdlib_generator: StdlibGenerator,
+
+    // Type converter
+    type_converter: TypeConverter,
+
+    // Binaryen optimizer for WebAssembly optimization
+    binaryen_optimizer: Option<BinaryenOptimizer>,
 }
 
 impl Default for CodeGenerator {
@@ -116,6 +141,8 @@ impl CodeGenerator {
     fn new_with_config(include_runtime_imports: bool) -> Self {
         let type_manager = TypeManager::new();
         let instruction_generator = InstructionGenerator::new(type_manager.clone());
+        let _stdlib_type_manager = type_manager.clone();
+        let _stdlib_instruction_generator = InstructionGenerator::new(type_manager.clone());
 
         Self {
             function_section: FunctionSection::new(),
@@ -126,8 +153,9 @@ impl CodeGenerator {
             import_section: ImportSection::new(),
             type_manager,
             instruction_generator,
+            enhanced_error_collector: EnhancedErrorCollector::new(),
             variable_map: HashMap::new(),
-            memory_utils: MemoryUtils::new(1024), // Start at 1KB instead of 64KB
+            memory_utils: MemoryUtils::new(HEAP_START), // Start at proper heap location (64KB)
             function_count: 0,
             current_function_params: Vec::new(),
             current_function_locals: Vec::new(),
@@ -165,7 +193,41 @@ impl CodeGenerator {
 
             // Track imported function names to avoid exporting them
             imported_functions: HashSet::new(),
+            module_builder: WasmModuleBuilder::new(include_runtime_imports),
+            stdlib_generator: StdlibGenerator::new(),
+            type_converter: TypeConverter::new(),
+            binaryen_optimizer: None, // Will be configured based on optimization level
         }
+    }
+
+    /// Enable production-level optimization using Binaryen
+    pub fn enable_production_optimization(&mut self) {
+        self.binaryen_optimizer = Some(BinaryenOptimizer::for_production());
+    }
+
+    /// Enable size-optimized compilation for web deployment
+    pub fn enable_size_optimization(&mut self) {
+        self.binaryen_optimizer = Some(BinaryenOptimizer::for_size_optimization());
+    }
+
+    /// Enable speed-optimized compilation for maximum performance
+    pub fn enable_speed_optimization(&mut self) {
+        self.binaryen_optimizer = Some(BinaryenOptimizer::for_speed_optimization());
+    }
+
+    /// Enable development mode with debugging support
+    pub fn enable_development_mode(&mut self) {
+        self.binaryen_optimizer = Some(BinaryenOptimizer::for_development());
+    }
+
+    /// Disable all optimizations
+    pub fn disable_optimization(&mut self) {
+        self.binaryen_optimizer = None;
+    }
+
+    /// Set custom Binaryen optimizer
+    pub fn set_optimizer(&mut self, optimizer: BinaryenOptimizer) {
+        self.binaryen_optimizer = Some(optimizer);
     }
 
     /// Create a new CodeGenerator with imports registered for testing
@@ -275,18 +337,9 @@ impl CodeGenerator {
         // ------------------------------------------------------------------
         // 3. Store class information and setup field maps
         // ------------------------------------------------------------------
-        // DEBUG: PARSE Program has classes
         for class in &program.classes {
-            println!(
-                "DEBUG: PARSE Class '{}' has constructor: {}",
-                class.name,
-                class.constructor.is_some()
-            );
-            if let Some(constructor) = &class.constructor {
-                println!(
-                    "DEBUG: PARSE Constructor has {} parameters",
-                    constructor.parameters.len()
-                );
+            if let Some(_constructor) = &class.constructor {
+                // Constructor processing logic continues below
             }
             self.class_table.insert(class.name.clone(), class.clone());
 
@@ -327,13 +380,10 @@ impl CodeGenerator {
 
         // Prepare class methods as static functions and constructors
         for class in &program.classes {
-            // Prepare constructor if it exists
+            // Prepare constructor if it exists, or prepare default constructor if not
             if let Some(constructor) = &class.constructor {
                 let constructor_function_name =
                     format!("{class_name}_constructor", class_name = class.name);
-                println!(
-                    "DEBUG: PREPARE Preparing constructor function '{constructor_function_name}'"
-                );
                 let constructor_function = ast::Function::new(
                     constructor_function_name,
                     constructor.parameters.clone(),
@@ -342,10 +392,18 @@ impl CodeGenerator {
                     constructor.location.clone(),
                 );
                 self.prepare_function_type(&constructor_function)?;
-                println!(
-                    "DEBUG: PREPARE Constructor '{}' prepared successfully",
-                    constructor_function.name
+            } else {
+                // Prepare default constructor
+                let constructor_function_name =
+                    format!("{class_name}_constructor", class_name = class.name);
+                let constructor_function = ast::Function::new(
+                    constructor_function_name,
+                    vec![], // No parameters for default constructor
+                    Type::Object(class.name.clone()),
+                    self.generate_constructor_body(class)?, // Generate proper constructor body
+                    None,
                 );
+                self.prepare_function_type(&constructor_function)?;
             }
 
             // Prepare class methods as static functions
@@ -442,15 +500,11 @@ impl CodeGenerator {
         }
 
         // Also generate the start function if it exists
-        // println!("DEBUG: About to generate start function if it exists");
         if let Some(start_function) = &program.start_function {
-            // println!("DEBUG: Generating start function '{}'", start_function.name);
             self.generate_function(start_function)?;
 
             // After generating start function, track its final result for get_result function
             self.track_start_function_result(start_function)?;
-        } else {
-            // println!("DEBUG: No start function to generate");
         }
 
         // ------------------------------------------------------------------
@@ -505,7 +559,12 @@ impl CodeGenerator {
         }
 
         // ------------------------------------------------------------------
-        // 7. Assemble the final module
+        // 7. Generate start function if "start" function exists
+        // ------------------------------------------------------------------
+        self.generate_start_function()?;
+
+        // ------------------------------------------------------------------
+        // 8. Assemble the final module
         // ------------------------------------------------------------------
         self.assemble_module()
     }
@@ -544,94 +603,61 @@ impl CodeGenerator {
     }
 
     fn ast_type_to_wasm_type(&self, ast_type: &Type) -> Result<WasmType, CompilerError> {
-        match ast_type {
-            Type::Boolean => Ok(WasmType::I32),
-            Type::Integer => Ok(WasmType::I32),
-            Type::Number => Ok(WasmType::F64),
-            Type::String => Ok(WasmType::I32),  // String pointers
-            Type::Void => Ok(WasmType::I32),    // Void represented as I32
-            Type::List(_) => Ok(WasmType::I32), // List pointers
-            Type::Matrix(_) => Ok(WasmType::I32), // Matrix pointers
-            Type::Pairs(_, _) => Ok(WasmType::I32), // Pairs are represented as pointers
-            Type::Object(_) => Ok(WasmType::I32), // Object pointers
-            Type::Generic(_, _) => Ok(WasmType::I32), // Generic type pointers
-            Type::TypeParameter(_) => Ok(WasmType::I32), // Type parameter pointers
-            Type::Any => Ok(WasmType::I32),     // Any type is represented as a pointer
-            // Sized types
-            Type::IntegerSized { bits: 8..=32, .. } => Ok(WasmType::I32),
-            Type::IntegerSized { bits: 64, .. } => Ok(WasmType::I64),
-            Type::NumberSized { bits: 32 } => Ok(WasmType::F32),
-            Type::NumberSized { bits: 64 } => Ok(WasmType::F64),
-            Type::Class { .. } => Ok(WasmType::I32), // Pointer to object
-            Type::Function(_, _) => Ok(WasmType::I32), // Function pointer
-            _ => Ok(WasmType::I32),                  // Default fallback for any other types
-        }
+        // Delegate to the extracted TypeConverter
+        self.type_converter.ast_type_to_wasm_type(ast_type)
     }
 
     fn types_compatible(&self, from: &WasmType, to: &WasmType) -> bool {
-        // Any type is compatible with any other type
-        if from == &WasmType::I32 && to == &WasmType::I32 {
-            return true;
-        }
-
-        // Exact type match
-        if from == to {
-            return true;
-        }
-
-        // Standard integer/float conversions
-        match (from, to) {
-            (WasmType::I32, WasmType::F32) => true,
-            (WasmType::I32, WasmType::F64) => true,
-            (WasmType::I64, WasmType::F64) => true,
-            (WasmType::F32, WasmType::F64) => true,
-            (WasmType::F64, WasmType::F32) => true, // Allow F64 to F32 conversion with precision loss
-            _ => false,
-        }
+        // Delegate to the extracted TypeConverter
+        self.type_converter.types_compatible(from, to)
     }
 
     /// Assemble the final WebAssembly module
     fn assemble_module(&mut self) -> Result<Vec<u8>, CompilerError> {
-        let mut module = Module::new();
+        // Use the extracted WasmModuleBuilder to assemble the module
+        let base_wasm = self.module_builder.assemble_module(
+            &self.type_manager,
+            &self.import_section,
+            &self.function_section,
+            &self.memory_section,
+            &self.export_section,
+            &self.code_section,
+            self.memory_utils.get_data_section(),
+            self.function_count,
+        )?;
 
-        // Debug: Check what's in the type manager
-        // println!(
-        //     "DEBUG: Type manager has {} function types",
-        //     self.type_manager.get_function_types().len()
-        // );
-        // println!(
-        //     "DEBUG: Type section function count: {}",
-        //     self.type_manager.get_type_section().len()
-        // );
+        // Apply Binaryen optimization if configured
+        if let Some(ref optimizer) = self.binaryen_optimizer {
+            // Check if wasm-opt is available before attempting optimization
+            if !BinaryenOptimizer::is_available() {
+                log::info!("Binaryen wasm-opt not available. Consider installing Binaryen for optimization.");
+                log::info!("Install instructions: https://github.com/WebAssembly/binaryen");
+                return Ok(base_wasm);
+            }
 
-        // Add sections in the correct order
-        module.section(&self.type_manager.clone_type_section());
+            match optimizer.optimize(&base_wasm) {
+                Ok((optimized_wasm, stats)) => {
+                    // Log optimization results
+                    log::info!("Binaryen optimization completed:");
+                    log::info!("  Original size: {} bytes", stats.original_size);
+                    log::info!("  Optimized size: {} bytes", stats.optimized_size);
+                    log::info!("  Size reduction: {:.2}%", stats.size_reduction_percent);
+                    log::info!("  Optimization time: {}ms", stats.optimization_time_ms);
 
-        // Add import section if we have imports
-        if self.include_runtime_imports {
-            module.section(&self.import_section);
+                    Ok(optimized_wasm)
+                }
+                Err(e) => {
+                    // Log optimization failure but continue with unoptimized WASM
+                    log::warn!(
+                        "Binaryen optimization failed: {}, using unoptimized WASM",
+                        e
+                    );
+                    Ok(base_wasm)
+                }
+            }
+        } else {
+            Ok(base_wasm)
         }
-
-        if self.function_count > 0 {
-            module.section(&self.function_section);
-        }
-
-        // Always add memory section
-        module.section(&self.memory_section);
-
-        // Add exports if any
-        module.section(&self.export_section);
-
-        // Add code section if we have functions
-        if self.function_count > 0 {
-            module.section(&self.code_section);
-        }
-
-        // Always add data section since we might have string literals
-        // Use the data section from memory_utils which contains our string data
-        module.section(self.memory_utils.get_data_section());
-
-        Ok(module.finish())
     }
 
     fn add_function_type(
@@ -679,14 +705,23 @@ impl CodeGenerator {
             .get(function_name)
             .copied()
             .ok_or_else(|| {
-                CompilerError::codegen_error(
-                    format!("Function '{}' not found in function map", function_name),
-                    Some(format!(
+                let error = self
+                    .enhanced_error_collector
+                    .create_compilation_error(
+                        CompilationErrorKind::FunctionNotFound,
+                        format!("Function '{}' not found in function map", function_name),
+                        None,
+                    )
+                    .with_help(format!(
                         "Available functions: {:?}",
                         self.function_map.keys().collect::<Vec<_>>()
-                    )),
-                    None,
-                )
+                    ))
+                    .with_suggestion(format!(
+                        "Define the function '{}' before calling it",
+                        function_name
+                    ))
+                    .build();
+                error.into_compiler_error()
             })
     }
 
@@ -798,12 +833,14 @@ impl CodeGenerator {
                         // unless the function return type is Void
                         if function.return_type == Type::Void {
                             // If function returns void, generate the expression but drop the value
-                            // EXCEPT for print functions which already return void
-                            self.generate_expression(expr, &mut instructions)?;
+                            // EXCEPT for expressions that don't leave values on the stack
+                            let result_type = self.generate_expression(expr, &mut instructions)?;
 
-                            // Drop the result for all expressions in void functions
-                            // Even void host functions return status codes that need to be dropped
-                            instructions.push(Instruction::Drop);
+                            // Only drop if the expression actually produced a value
+                            // Void function calls return WasmType::Unit and don't leave values on the stack
+                            if result_type != WasmType::Unit {
+                                instructions.push(Instruction::Drop);
+                            }
                         } else {
                             // If function has a return type, use the expression as return value
                             self.generate_expression(expr, &mut instructions)?;
@@ -818,6 +855,23 @@ impl CodeGenerator {
                     Statement::Return { .. } => {
                         // For explicit return statements, generate normally
                         self.generate_statement(last_stmt, &mut instructions)?;
+                    }
+                    Statement::VariableDecl { .. } => {
+                        // Variable declarations don't leave values on the stack
+                        self.generate_statement(last_stmt, &mut instructions)?;
+
+                        // If the function has a non-void return type and this is the last statement,
+                        // we need to add a default return value since variable declarations don't produce one
+                        if needs_return_value {
+                            match function.return_type {
+                                Type::Integer => instructions.push(Instruction::I32Const(0)),
+                                Type::Number => instructions.push(Instruction::F64Const(0.0)),
+                                Type::Boolean => instructions.push(Instruction::I32Const(0)),
+                                _ => instructions.push(Instruction::I32Const(0)), // Default for other types
+                            }
+                        }
+                        // For void functions, nothing more needs to be done since variable declarations
+                        // don't leave values on the stack that need to be dropped
                     }
                     _ => {
                         // For non-expression, non-return statements, generate normally
@@ -843,9 +897,20 @@ impl CodeGenerator {
                     Type::Integer => instructions.push(Instruction::I32Const(0)),
                     Type::Number => instructions.push(Instruction::F64Const(0.0)),
                     Type::Boolean => instructions.push(Instruction::I32Const(0)),
+                    Type::IntegerSized { bits: 8..=32, .. } => {
+                        instructions.push(Instruction::I32Const(0))
+                    }
+                    Type::IntegerSized { bits: 64, .. } => {
+                        instructions.push(Instruction::I64Const(0))
+                    }
+                    Type::NumberSized { bits: 32 } => instructions.push(Instruction::F32Const(0.0)),
+                    Type::NumberSized { bits: 64 } => instructions.push(Instruction::F64Const(0.0)),
                     Type::Object(_) => instructions.push(Instruction::I32Const(0)), // Object as pointer (0 = null for now)
                     Type::String => instructions.push(Instruction::I32Const(0)), // String as pointer
                     Type::List(_) => instructions.push(Instruction::I32Const(0)), // List as pointer
+                    Type::Pairs(_, _) => instructions.push(Instruction::I32Const(0)), // Pairs as pointer
+                    Type::Matrix(_) => instructions.push(Instruction::I32Const(0)), // Matrix as pointer
+                    Type::Any => instructions.push(Instruction::I32Const(0)), // Any as pointer
                     Type::Void => {} // No return value needed for void
                     _ => {
                         return Err(CompilerError::codegen_error(
@@ -1226,6 +1291,18 @@ impl CodeGenerator {
                 }
             }
 
+            Statement::StandaloneErrorHandler { body, .. } => {
+                // Standalone error handler - for now, generate the error handling statements
+                // TODO: Implement proper WebAssembly exception handling
+                let mut error_instructions = Vec::new();
+                for stmt in body {
+                    self.generate_statement(stmt, &mut error_instructions)?;
+                }
+                // For now, we append the error handling instructions
+                // In the future, this should be wrapped in proper exception handling
+                instructions.extend(error_instructions);
+            }
+
             Statement::ClassDefinition { class, .. } => {
                 // Class definition - generate class code
                 self.generate_class(class)?;
@@ -1298,20 +1375,40 @@ impl CodeGenerator {
             instructions.extend(init_instr);
             instructions.push(Instruction::LocalSet(local_info.index));
         } else {
-            match var_type {
-                WasmType::I32 => instructions.push(Instruction::I32Const(0)),
-                WasmType::I64 => instructions.push(Instruction::I64Const(0)),
-                WasmType::F32 => instructions.push(Instruction::F32Const(0.0)),
-                WasmType::F64 => instructions.push(Instruction::F64Const(0.0)),
-                _ => {
+            // Check if this is an object type that needs constructor call
+            if let Type::Object(class_name) = type_ {
+                // Call the default constructor for this class
+                let constructor_name = format!("{}_constructor", class_name);
+                if let Some(constructor_index) = self.function_map.get(&constructor_name) {
+                    instructions.push(Instruction::Call(*constructor_index));
+                    instructions.push(Instruction::LocalSet(local_info.index));
+                } else {
                     return Err(CompilerError::codegen_error(
-                        format!("Cannot determine default value for type {var_type:?}"),
-                        None,
+                        format!(
+                            "Constructor '{}' not found for class '{}'",
+                            constructor_name, class_name
+                        ),
+                        Some("Ensure the class has a constructor defined".to_string()),
                         location.clone(),
-                    ))
+                    ));
                 }
+            } else {
+                // Handle primitive types with default values
+                match var_type {
+                    WasmType::I32 => instructions.push(Instruction::I32Const(0)),
+                    WasmType::I64 => instructions.push(Instruction::I64Const(0)),
+                    WasmType::F32 => instructions.push(Instruction::F32Const(0.0)),
+                    WasmType::F64 => instructions.push(Instruction::F64Const(0.0)),
+                    _ => {
+                        return Err(CompilerError::codegen_error(
+                            format!("Cannot determine default value for type {var_type:?}"),
+                            None,
+                            location.clone(),
+                        ))
+                    }
+                }
+                instructions.push(Instruction::LocalSet(local_info.index));
             }
-            instructions.push(Instruction::LocalSet(local_info.index));
         }
         Ok(())
     }
@@ -1407,19 +1504,6 @@ impl CodeGenerator {
         match expr {
             Expression::Literal(value) => self.generate_value(value, instructions),
             Expression::Variable(name) => {
-                // Debug output for class field variables
-                if name == "name" || name == "age" {
-                    println!(
-                        "DEBUG: CODEGEN Variable lookup for '{}'. Available variables: {:?}",
-                        name,
-                        self.variable_map.keys().collect::<Vec<_>>()
-                    );
-                    println!(
-                        "DEBUG: Current class context: {:?}",
-                        self.current_class_context
-                    );
-                }
-
                 // Check if variable exists to provide better error messages
                 if let Some(local) = self.find_local(name) {
                     instructions.push(Instruction::LocalGet(local.index));
@@ -1693,6 +1777,16 @@ impl CodeGenerator {
 
                 // Try name-based function resolution first (gives precedence to user-defined functions)
                 let func_index = self.get_function_index(func_name).or_else(|| {
+                    // Check if this is an implicit method call in a class context
+                    if let Some(ref current_class) = self.current_class_context {
+                        // Try to find the method in the current class hierarchy
+                        if let Some(method_index) =
+                            self.find_method_in_hierarchy(current_class, func_name)
+                        {
+                            return Some(method_index);
+                        }
+                    }
+
                     self.instruction_generator
                         .get_function_index_by_signature(func_name, &arg_types)
                 });
@@ -2125,10 +2219,6 @@ impl CodeGenerator {
 
                             // Special handling for polymorphic math.abs - determine the correct function variant
                             if function_name == "math.abs" && !arguments.is_empty() {
-                                println!(
-                                    "DEBUG: Processing math.abs with {} arguments in MethodCall",
-                                    arguments.len()
-                                );
                                 // Determine the argument type to select correct math.abs variant
                                 let arg_type = match &arguments[0] {
                                     Expression::Variable(name) => {
@@ -2187,10 +2277,6 @@ impl CodeGenerator {
                                     WasmType::F32 => "math.abs".to_string(), // Use F64 version for F32
                                     WasmType::V128 | WasmType::Unit => "math.abs".to_string(), // Default to F64 version
                                 };
-                                println!(
-                                    "DEBUG: Final function name in MethodCall: {}",
-                                    function_name
-                                );
                             }
 
                             // Generate arguments
@@ -3394,17 +3480,13 @@ impl CodeGenerator {
                                 let mut field_offset = 0u32;
 
                                 // Look through all classes to find the field
-                                for (class_name, field_map) in &self.class_field_map {
+                                for (_class_name, field_map) in &self.class_field_map {
                                     if let Some((found_field_type, found_offset)) =
                                         field_map.get(property)
                                     {
                                         field_found = true;
                                         field_type = found_field_type.clone();
                                         field_offset = *found_offset;
-                                        println!(
-                                            "DEBUG: Found field '{}' in class '{}' at offset {}",
-                                            property, class_name, field_offset
-                                        );
                                         break;
                                     }
                                 }
@@ -3544,10 +3626,6 @@ impl CodeGenerator {
 
                 // Special handling for polymorphic math.abs - determine the correct function variant
                 if full_function_name == "math.abs" && !arguments.is_empty() {
-                    println!(
-                        "DEBUG: Processing math.abs with {} arguments",
-                        arguments.len()
-                    );
                     // Determine the argument type to select correct math.abs variant
                     let arg_type = match &arguments[0] {
                         Expression::Variable(name) => {
@@ -4081,6 +4159,94 @@ impl CodeGenerator {
                 }
             },
 
+            (WasmType::F32, WasmType::F64) => {
+                // Convert F32 to F64 and perform F64 operation
+                // Stack currently has: [F32_left, F64_right]
+                // We need: [F64_left, F64_right]
+
+                // Store the F64 right operand temporarily
+                let temp_f64_local = self.add_local(WasmType::F64);
+                instructions.push(Instruction::LocalSet(temp_f64_local));
+
+                // Convert the F32 left operand to F64
+                instructions.push(Instruction::F64PromoteF32);
+
+                // Restore the F64 right operand
+                instructions.push(Instruction::LocalGet(temp_f64_local));
+
+                match op {
+                    ast::BinaryOperator::Add => { instructions.push(Instruction::F64Add); Ok(WasmType::F64) },
+                    ast::BinaryOperator::Subtract => { instructions.push(Instruction::F64Sub); Ok(WasmType::F64) },
+                    ast::BinaryOperator::Multiply => { instructions.push(Instruction::F64Mul); Ok(WasmType::F64) },
+                    ast::BinaryOperator::Divide => { instructions.push(Instruction::F64Div); Ok(WasmType::F64) },
+                    ast::BinaryOperator::Equal => { instructions.push(Instruction::F64Eq); Ok(WasmType::I32) },
+                    ast::BinaryOperator::NotEqual => { instructions.push(Instruction::F64Ne); Ok(WasmType::I32) },
+                    ast::BinaryOperator::Less => { instructions.push(Instruction::F64Lt); Ok(WasmType::I32) },
+                    ast::BinaryOperator::Greater => { instructions.push(Instruction::F64Gt); Ok(WasmType::I32) },
+                    ast::BinaryOperator::LessEqual => { instructions.push(Instruction::F64Le); Ok(WasmType::I32) },
+                    ast::BinaryOperator::GreaterEqual => { instructions.push(Instruction::F64Ge); Ok(WasmType::I32) },
+                    ast::BinaryOperator::Modulo => {
+                        if let Some(mod_index) = self.get_function_index("mod") {
+                            instructions.push(Instruction::Call(mod_index));
+                            Ok(WasmType::F64)
+                        } else {
+                            Err(CompilerError::type_error("Modulo function not found".to_string(), None, None))
+                        }
+                    },
+                    ast::BinaryOperator::Power => {
+                        if let Some(pow_index) = self.get_function_index("pow") {
+                            instructions.push(Instruction::Call(pow_index));
+                            Ok(WasmType::F64)
+                        } else {
+                            Err(CompilerError::type_error("Power function not found".to_string(), None, None))
+                        }
+                    },
+                    _ => Err(CompilerError::type_error(
+                        format!("Unsupported mixed F32/F64 binary operator: {op:?}"), None, None
+                    ))
+                }
+            },
+            (WasmType::F64, WasmType::F32) => {
+                // Convert F32 to F64 and perform F64 operation
+                // Stack currently has: [F64_left, F32_right]
+                // We need: [F64_left, F64_right]
+
+                // Convert the F32 right operand to F64
+                instructions.push(Instruction::F64PromoteF32);
+
+                match op {
+                    ast::BinaryOperator::Add => { instructions.push(Instruction::F64Add); Ok(WasmType::F64) },
+                    ast::BinaryOperator::Subtract => { instructions.push(Instruction::F64Sub); Ok(WasmType::F64) },
+                    ast::BinaryOperator::Multiply => { instructions.push(Instruction::F64Mul); Ok(WasmType::F64) },
+                    ast::BinaryOperator::Divide => { instructions.push(Instruction::F64Div); Ok(WasmType::F64) },
+                    ast::BinaryOperator::Equal => { instructions.push(Instruction::F64Eq); Ok(WasmType::I32) },
+                    ast::BinaryOperator::NotEqual => { instructions.push(Instruction::F64Ne); Ok(WasmType::I32) },
+                    ast::BinaryOperator::Less => { instructions.push(Instruction::F64Lt); Ok(WasmType::I32) },
+                    ast::BinaryOperator::Greater => { instructions.push(Instruction::F64Gt); Ok(WasmType::I32) },
+                    ast::BinaryOperator::LessEqual => { instructions.push(Instruction::F64Le); Ok(WasmType::I32) },
+                    ast::BinaryOperator::GreaterEqual => { instructions.push(Instruction::F64Ge); Ok(WasmType::I32) },
+                    ast::BinaryOperator::Modulo => {
+                        if let Some(mod_index) = self.get_function_index("mod") {
+                            instructions.push(Instruction::Call(mod_index));
+                            Ok(WasmType::F64)
+                        } else {
+                            Err(CompilerError::type_error("Modulo function not found".to_string(), None, None))
+                        }
+                    },
+                    ast::BinaryOperator::Power => {
+                        if let Some(pow_index) = self.get_function_index("pow") {
+                            instructions.push(Instruction::Call(pow_index));
+                            Ok(WasmType::F64)
+                        } else {
+                            Err(CompilerError::type_error("Power function not found".to_string(), None, None))
+                        }
+                    },
+                    _ => Err(CompilerError::type_error(
+                        format!("Unsupported mixed F64/F32 binary operator: {op:?}"), None, None
+                    ))
+                }
+            },
+
             _ => {
                 Err(CompilerError::detailed_type_error(
                     format!("Type mismatch: Cannot apply {op:?} to incompatible types"),
@@ -4367,56 +4533,18 @@ impl CodeGenerator {
     // Helper to register stdlib functions
     #[allow(dead_code)]
     fn register_stdlib_functions(&mut self) -> Result<(), CompilerError> {
-        // Re-enable stdlib functions using the same approach as user-defined functions
-        // This avoids the validation issues we had with the register_function approach
+        // Delegate to the extracted stdlib generator
+        self.stdlib_generator.register_stdlib_functions()?;
 
-        // 1. Create stdlib function definitions using AstFunction
-        // TEMPORARILY DISABLED: All AST-based stdlib functions cause systematic validation errors
-        // let stdlib_functions = self.create_stdlib_ast_functions()?;
-        let stdlib_functions: Vec<ast::Function> = Vec::new(); // Empty vector for testing
-
-        // 2. Process them like regular user functions
-        for function in &stdlib_functions {
-            self.prepare_function_type(function)?;
-        }
-
-        // 3. Generate their code
-        for function in &stdlib_functions {
-            self.generate_function(function)?;
-        }
-
-        // TEMPORARILY DISABLED ALL STDLIB REGISTRATIONS to isolate validation issue
-        // 4. Register string operations directly using the StringOperations implementation
-        // DISABLED for validation debugging: self.register_string_operations()?;
-
-        // TEMPORARILY DISABLED due to memory allocation Call(0) issues
-        // self.register_simple_string_concat()?;
-
-        // 5. Register matrix operations
+        // Legacy implementations for functions not yet moved to stdlib_generator
+        // These will be gradually migrated to the stdlib_generator
         self.register_matrix_operations()?;
-
-        // 6. Register numeric operations
-        // eprintln!("DEBUG: About to register numeric operations");
         self.register_numeric_operations()?;
-        // eprintln!("DEBUG: Numeric operations registered successfully");
-
-        // 7. Register array operations
         self.register_list_operations()?;
-
-        // 8. Register type conversion operations
         self.register_type_conversion_operations()?;
-
-        // 8.5. Register file operations
         self.register_file_operations()?;
-
-        // 9. Register basic array_get fallback
         self.register_basic_array_get_fallback()?;
-
-        // Pre-allocate conversion strings
         self.pre_allocate_conversion_strings()?;
-
-        // TESTING INDIVIDUAL REGISTRATIONS to find the problematic one
-        // 9. Register console input operations
         // self.register_console_operations()?;
 
         // 10. Register HTTP operations - DISABLED due to Call(0) issues
@@ -4441,15 +4569,15 @@ impl CodeGenerator {
         // 14. Register conditional operations
         // println!("DEBUG: About to register conditional operations");
         match self.register_conditional_operations() {
-            Ok(()) => {}, // println!("DEBUG: Conditional operations registered successfully"),
-            Err(_e) => {}, // println!("DEBUG: Conditional operations registration failed: {:?}", e),
+            Ok(()) => {}  // println!("DEBUG: Conditional operations registered successfully"),
+            Err(_e) => {} // println!("DEBUG: Conditional operations registration failed: {:?}", e),
         }
 
         // 15. Register HTTP operations
         // println!("DEBUG: About to register HTTP operations");
         match self.register_http_operations() {
-            Ok(()) => {}, // println!("DEBUG: HTTP operations registered successfully"),
-            Err(_e) => {}, // println!("DEBUG: HTTP operations registration failed: {:?}", e),
+            Ok(()) => {}  // println!("DEBUG: HTTP operations registered successfully"),
+            Err(_e) => {} // println!("DEBUG: HTTP operations registration failed: {:?}", e),
         }
 
         // 11. Register math operations - TEST THIS ONE
@@ -4552,25 +4680,29 @@ impl CodeGenerator {
         // Allocate strings at specific memory addresses that the conversion functions expect
         // Use non-overlapping addresses with proper spacing (address + 4 bytes length + content + padding)
 
-        // Boolean strings - start at 300 with spacing
-        let _true_ptr = self.allocate_string_at_address("true", 300)?; // 300 + 4 + 4 = 308
-        let _false_ptr = self.allocate_string_at_address("false", 310)?; // 310 + 4 + 5 = 319
+        // Start at the current allocation address to ensure we're in the valid memory region
+        // Use the memory_utils current_address which is already aligned and beyond guard pages
+        let base_addr = self.memory_utils.get_current_address() as u32;
 
-        // Integer strings - start at 320 with spacing
-        let _int_42_ptr = self.allocate_string_at_address("42", 320)?; // 320 + 4 + 2 = 326
-        let _generic_int_ptr = self.allocate_string_at_address("[int]", 330)?; // 330 + 4 + 5 = 339
+        // Boolean strings (use 24-byte spacing to ensure 8-byte alignment and space for content)
+        let _true_ptr = self.allocate_string_at_address("true", base_addr)?; // length + content
+        let _false_ptr = self.allocate_string_at_address("false", base_addr + 24)?; // well-spaced
 
-        // Float strings - start at 340 with spacing
-        let _float_314_ptr = self.allocate_string_at_address("3.14", 340)?; // 340 + 4 + 4 = 348
-        let _generic_float_ptr = self.allocate_string_at_address("[float]", 350)?; // 350 + 4 + 7 = 361
+        // Integer strings
+        let _int_42_ptr = self.allocate_string_at_address("42", base_addr + 48)?;
+        let _generic_int_ptr = self.allocate_string_at_address("[int]", base_addr + 72)?;
 
-        // Additional integer strings for int_to_string function - start at 400 with spacing
-        let _int_0_ptr = self.allocate_string_at_address("0", 400)?; // 400 + 4 + 1 = 405
-        let _int_1_ptr = self.allocate_string_at_address("1", 410)?; // 410 + 4 + 1 = 415
-        let _int_2_ptr = self.allocate_string_at_address("2", 420)?; // 420 + 4 + 1 = 425
-        let _int_3_ptr = self.allocate_string_at_address("3", 430)?; // 430 + 4 + 1 = 435
-        let _int_5_ptr = self.allocate_string_at_address("5", 440)?; // 440 + 4 + 1 = 445
-        let _int_7_ptr = self.allocate_string_at_address("7", 450)?; // 450 + 4 + 1 = 455
+        // Float strings
+        let _float_314_ptr = self.allocate_string_at_address("3.14", base_addr + 96)?;
+        let _generic_float_ptr = self.allocate_string_at_address("[float]", base_addr + 120)?;
+
+        // Additional integer strings for int_to_string function
+        let _int_0_ptr = self.allocate_string_at_address("0", base_addr + 144)?;
+        let _int_1_ptr = self.allocate_string_at_address("1", base_addr + 168)?;
+        let _int_2_ptr = self.allocate_string_at_address("2", base_addr + 192)?;
+        let _int_3_ptr = self.allocate_string_at_address("3", base_addr + 216)?;
+        let _int_5_ptr = self.allocate_string_at_address("5", base_addr + 240)?;
+        let _int_7_ptr = self.allocate_string_at_address("7", base_addr + 264)?;
 
         Ok(())
     }
@@ -5057,7 +5189,6 @@ impl CodeGenerator {
                 } else {
                     // Variable not found in type context - this shouldn't happen for properly declared variables
                     // Default to i32 instead of unreliable name-based heuristics
-                    eprintln!("WARNING: Variable '{var_name}' not found in type context, defaulting to i32");
                     Ok(WasmType::I32)
                 }
             }
@@ -5571,8 +5702,7 @@ impl CodeGenerator {
         if let Some(&index) = self.function_map.get("array_get") {
             return index;
         }
-        // Debug: log when array_get function is not found
-        eprintln!("WARNING: array_get/list.get function not found, using fallback");
+        // Fallback when array_get function is not found
         0
     }
 
@@ -5847,7 +5977,7 @@ impl CodeGenerator {
         data.extend_from_slice(bytes); // String content
 
         // Add the data segment to memory
-        self.memory_utils.add_data_segment(test_ptr, &data);
+        let _ = self.memory_utils.add_data_segment(test_ptr, &data);
 
         Ok(test_ptr)
     }
@@ -6469,17 +6599,7 @@ impl CodeGenerator {
         instructions: &mut Vec<Instruction>,
     ) -> Result<WasmType, CompilerError> {
         // Generate the object expression first
-        // println!("DEBUG: Generating object expression for toString()");
-        println!(
-            "DEBUG: Instructions before object generation: {} instructions",
-            instructions.len()
-        );
         let object_type = self.generate_expression(object, instructions)?;
-        // println!("DEBUG: Object expression generated, type: {object_type:?}");
-        println!(
-            "DEBUG: Instructions after object generation: {} instructions",
-            instructions.len()
-        );
 
         // For variables, try to get the original Clean Language type for better type conversion
         let clean_type = if let Expression::Variable(var_name) = object {
@@ -6584,45 +6704,9 @@ impl CodeGenerator {
                                 // println!("DEBUG: Found float_to_string at function index {float_to_string_index}");
 
                                 // Verify the function mapping
-                                if let Some(actual_name) = self
-                                    .function_map
-                                    .iter()
-                                    .find(|(_, &idx)| idx == float_to_string_index)
-                                    .map(|(name, _)| name)
-                                {
-                                    println!(
-                                        "DEBUG: Function index {float_to_string_index} actually maps to: '{actual_name}'"
-                                    );
-                                } else {
-                                    println!(
-                                        "ERROR: Function index {float_to_string_index} not found in function_map!"
-                                    );
-                                }
-
-                                // println!("DEBUG: About to call float_to_string - value should be 16.0 on stack");
-                                println!(
-                                    "DEBUG: Instructions before Call: {} instructions",
-                                    instructions.len()
-                                );
                                 instructions.push(Instruction::Call(float_to_string_index));
-                                // println!("DEBUG: Call instruction added to instructions");
-                                println!(
-                                    "DEBUG: Instructions after Call: {} instructions",
-                                    instructions.len()
-                                );
-                                println!(
-                                    "DEBUG: Final instructions sequence: {:?}",
-                                    instructions.iter().enumerate().collect::<Vec<_>>()
-                                );
                                 Ok(WasmType::I32) // String is represented as I32 pointer
                             } else {
-                                println!(
-                                    "ERROR: number.toString or float_to_string function not found in function_map!"
-                                );
-                                println!(
-                                    "DEBUG: Available functions: {:?}",
-                                    self.function_map.keys().collect::<Vec<_>>()
-                                );
                                 Err(CompilerError::codegen_error(
                                     "Number to string conversion function not found",
                                     Some(
@@ -7494,7 +7578,8 @@ impl CodeGenerator {
         let current_offset = self.string_offset_counter;
 
         // Add the string data directly to the data section at this offset
-        self.memory_utils
+        let _ = self
+            .memory_utils
             .add_data_segment(current_offset, string_bytes);
 
         // Update offset counter with padding for next string
@@ -8802,12 +8887,19 @@ impl CodeGenerator {
         expressions: &[Expression],
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
-        for expr in expressions {
-            if let Some(func_index) = self.get_function_index(function_name) {
-                self.generate_expression(expr, instructions)?;
-                instructions.push(Instruction::Call(func_index));
+        for expression in expressions {
+            // Special case for print functions - treat them as print statements
+            if function_name == "print" || function_name == "println" || function_name == "printl" {
+                self.generate_print_statement(expression, false, instructions)?;
+            } else {
+                // Generate a function call for each expression
+                let call_expr =
+                    Expression::Call(function_name.to_string(), vec![expression.clone()]);
+                self.generate_expression(&call_expr, instructions)?;
 
-                if function_name != "print" && function_name != "printl" {
+                // Drop the result if the function returns something
+                let return_type = self.get_function_return_type_by_name(function_name);
+                if return_type != WasmType::Unit {
                     instructions.push(Instruction::Drop);
                 }
             }
@@ -9334,6 +9426,24 @@ impl CodeGenerator {
     fn generate_constructor_body(&self, class: &Class) -> Result<Vec<Statement>, CompilerError> {
         let mut body = Vec::new();
 
+        // Calculate total size needed for object (4 bytes per field for simplicity)
+        let object_size = class.fields.len() * 4;
+
+        // Allocate memory for the object - for now we'll use a simple pointer value
+        // In a full implementation, this would call a memory allocator
+        body.push(Statement::VariableDecl {
+            name: "object_ptr".to_string(),
+            type_: Type::Integer,
+            initializer: Some(Expression::Literal(Value::Integer(
+                1000 + object_size as i64,
+            ))), // Simple mock allocation
+            location: Some(SourceLocation {
+                file: String::new(),
+                line: 0,
+                column: 0,
+            }),
+        });
+
         // Generate field initialization statements
         for field in &class.fields {
             let default_value = match field.type_ {
@@ -9370,6 +9480,16 @@ impl CodeGenerator {
                 }),
             });
         }
+
+        // Return the object pointer
+        body.push(Statement::Return {
+            value: Some(Expression::Variable("object_ptr".to_string())),
+            location: Some(SourceLocation {
+                file: String::new(),
+                line: 0,
+                column: 0,
+            }),
+        });
 
         Ok(body)
     }
@@ -9411,22 +9531,12 @@ impl CodeGenerator {
         // Look for classes that might have methods with this name
         // This is a heuristic approach - in a perfect world, parsing would handle this correctly
 
-        // Debug output for getName function specifically
-        if function_name == "getName" {
-            println!(
-                "DEBUG: CODEGEN Inference for '{}'. Available classes: {:?}",
-                function_name,
-                self.class_table.keys().collect::<Vec<_>>()
-            );
-        }
+        // Inference for class context based on function name
 
         // FIRST: Handle constructor functions (e.g., "Person_constructor" -> "Person")
         if function_name.ends_with("_constructor") {
             let class_name = function_name.strip_suffix("_constructor").unwrap();
             if self.class_table.contains_key(class_name) {
-                println!(
-                    "DEBUG: CODEGEN Inferred class context '{class_name}' for constructor '{function_name}'"
-                );
                 return Some(class_name.to_string());
             }
         }
@@ -9450,11 +9560,7 @@ impl CodeGenerator {
                 // Try each possible class name and return the first one that exists
                 for cname in cnames {
                     if self.class_table.contains_key(*cname) {
-                        if function_name == "getName" {
-                            println!(
-                                "DEBUG: CODEGEN Found matching class '{cname}' for function '{function_name}'"
-                            );
-                        }
+                        // Found matching class for function
                         return Some(cname.to_string());
                     }
                 }
@@ -9474,6 +9580,53 @@ impl CodeGenerator {
             }
         }
         None
+    }
+
+    /// Create _start function that calls the Clean Language start() function if it exists
+    pub fn generate_start_function(&mut self) -> Result<(), CompilerError> {
+        // Look for Clean Language entry point "start" function
+        if let Some(&start_index) = self.function_map.get("start") {
+            // CRITICAL FIX: Declare the _start function in the function section FIRST
+            // The _start function has no parameters and no return value
+            let type_index = self.type_manager.add_function_type(&[], None)?;
+            self.function_section.function(type_index);
+
+            let mut instructions = Vec::new();
+
+            // Call start function
+            instructions.push(Instruction::Call(start_index));
+
+            // Drop return value if any
+            instructions.push(Instruction::Drop);
+
+            // Create start function
+            let start_function = Function::new(vec![]);
+
+            // Add instructions
+            let mut wasm_function = start_function;
+            for instruction in instructions {
+                wasm_function.instruction(&instruction);
+            }
+
+            // CRITICAL FIX: Add 'end' instruction to properly terminate start function
+            wasm_function.instruction(&Instruction::End);
+
+            // Add to code section
+            self.code_section.function(&wasm_function);
+
+            // Export as start function - use correct index after all imports and existing functions
+            let start_func_index =
+                self.imported_functions.len() as u32 + self.function_names.len() as u32;
+            // Start function exported with correct index
+            self.export_section
+                .export("_start", wasm_encoder::ExportKind::Func, start_func_index);
+
+            // Update function tracking to keep counts consistent
+            self.function_names.push("_start".to_string());
+            self.function_count += 1;
+        }
+
+        Ok(())
     }
 }
 
@@ -9501,4 +9654,56 @@ pub fn generate_wasm_from_lir(
 
     let mut wasm_generator = WasmGenerator::new();
     wasm_generator.generate_wasm_module(lir_program)
+}
+
+/// Generate WebAssembly from MIR using the new MIR code generator
+pub fn generate_wasm_from_mir(
+    mir_program: crate::mir::MirProgram,
+) -> Result<Vec<u8>, CompilerError> {
+    let mut mir_codegen = MirCodeGenerator::new();
+
+    match mir_codegen.generate(mir_program) {
+        Ok(result) => Ok(result.wasm_bytes),
+        Err(errors) => {
+            // Return the first error for now
+            if let Some(error) = errors.into_iter().next() {
+                Err(error)
+            } else {
+                Err(CompilerError::Codegen {
+                    context: Box::new(crate::error::ErrorContext::new(
+                        "Unknown error during MIR code generation",
+                        None,
+                        crate::error::ErrorType::Codegen,
+                        Some(crate::ast::SourceLocation::default()),
+                    )),
+                })
+            }
+        }
+    }
+}
+
+/// Generate WebAssembly from MIR with minimal runtime (for testing)
+pub fn generate_wasm_from_mir_minimal(
+    mir_program: crate::mir::MirProgram,
+) -> Result<Vec<u8>, CompilerError> {
+    let mut mir_codegen = MirCodeGenerator::new_minimal();
+
+    match mir_codegen.generate(mir_program) {
+        Ok(result) => Ok(result.wasm_bytes),
+        Err(errors) => {
+            // Return the first error for now
+            if let Some(error) = errors.into_iter().next() {
+                Err(error)
+            } else {
+                Err(CompilerError::Codegen {
+                    context: Box::new(crate::error::ErrorContext::new(
+                        "Unknown error during MIR code generation",
+                        None,
+                        crate::error::ErrorType::Codegen,
+                        Some(crate::ast::SourceLocation::default()),
+                    )),
+                })
+            }
+        }
+    }
 }

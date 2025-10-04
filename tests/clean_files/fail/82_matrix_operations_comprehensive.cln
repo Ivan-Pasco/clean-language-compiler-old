@@ -1,0 +1,43 @@
+// Test 82: Comprehensive Matrix Operations
+// Tests matrix creation, arithmetic, and advanced operations
+
+start()
+	// Basic matrix creation
+	matrix<integer> matrix1 = [[1, 2], [3, 4]]
+	matrix<integer> matrix2 = [[5, 6], [7, 8]]
+	print "Matrix 1: [[1, 2], [3, 4]]" ln
+	print "Matrix 2: [[5, 6], [7, 8]]" ln
+	
+	// Matrix arithmetic operations
+	matrix<integer> sum = matrix1 + matrix2
+	matrix<integer> difference = matrix1 - matrix2
+	matrix<integer> product = matrix1 * matrix2
+	print "Matrix addition complete" ln
+	print "Matrix subtraction complete" ln
+	print "Matrix multiplication complete" ln
+	
+	// Scalar operations
+	matrix<integer> scaled = matrix1 * 2
+	print "Scalar multiplication complete" ln
+	
+	// Matrix advanced operations
+	matrix<integer> transposed = matrix1.transpose()
+	print "Matrix transpose complete" ln
+	
+	// Working with floating point matrices
+	matrix<number> floatMatrix = [[1.5, 2.5], [3.5, 4.5]]
+	matrix<number> floatResult = floatMatrix * 2.0
+	print "Float matrix operations complete" ln
+	
+	// 3x3 matrix operations
+	matrix<integer> matrix3x3 = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+	matrix<integer> transposed3x3 = matrix3x3.transpose()
+	print "3x3 matrix operations complete" ln
+	
+	// Matrix with different types
+	matrix<number> precisionMatrix = [[3.14159, 2.71828], [1.41421, 1.73205]]
+	print "Precision matrix created" ln
+	
+	// Empty matrix handling
+	matrix<integer> emptyMatrix = [[]]
+	print "Empty matrix created" ln

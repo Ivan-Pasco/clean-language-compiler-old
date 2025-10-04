@@ -1,0 +1,342 @@
+🔍 Phase 1: Compilation and WASM Generation
+============================================
+Testing [1/319] 00_empty_start... ❌ WASM VALIDATION FAILURE
+Testing [2/319] 00_minimal_no_strings... ❌ WASM VALIDATION FAILURE
+Testing [3/319] 00_minimal_test... ❌ WASM VALIDATION FAILURE
+Testing [4/319] 00_minimal... ❌ WASM VALIDATION FAILURE
+Testing [5/319] 01_hello_world... ❌ EXECUTION FAILURE
+Testing [6/319] 02_variables_basic... ❌ WASM VALIDATION FAILURE
+Testing [7/319] 03_arithmetic_operations... ❌ COMPILE FAILURE
+Testing [8/319] 04_comparison_operations... ❌ WASM VALIDATION FAILURE
+Testing [9/319] 05_logical_operations... ❌ WASM VALIDATION FAILURE
+Testing [10/319] 06_type_conversions... ❌ WASM VALIDATION FAILURE
+Testing [11/319] 07_lists_basic... ❌ COMPILE FAILURE
+Testing [12/319] 08_matrices... ❌ WASM VALIDATION FAILURE
+Testing [13/319] 09_type_inference... ❌ WASM VALIDATION FAILURE
+Testing [14/319] 10_functions_basic... ❌ WASM VALIDATION FAILURE
+Testing [15/319] 100_testing_framework_simple... ❌ COMPILE FAILURE
+Testing [16/319] 11_functions_overloading... ❌ WASM VALIDATION FAILURE
+Testing [17/319] 12_functions_recursion... ❌ WASM VALIDATION FAILURE
+Testing [18/319] 13_functions_generics... ❌ COMPILE FAILURE
+Testing [19/319] 14_classes_basic... ❌ WASM VALIDATION FAILURE
+Testing [20/319] 15_classes_inheritance... ❌ WASM VALIDATION FAILURE
+Testing [21/319] 16_classes_polymorphism_fixed... ❌ EXECUTION FAILURE
+Testing [22/319] 16_classes_polymorphism_new... ❌ EXECUTION FAILURE
+Testing [23/319] 16_classes_polymorphism_simple... ❌ WASM VALIDATION FAILURE
+Testing [24/319] 16_classes_polymorphism... ❌ COMPILE FAILURE
+Testing [25/319] 17_control_flow_if... ❌ WASM VALIDATION FAILURE
+Testing [26/319] 18_control_flow_loops... ❌ COMPILE FAILURE
+Testing [27/319] 19_async_basic... ❌ WASM VALIDATION FAILURE
+Testing [28/319] 20_async_parallel... ❌ COMPILE FAILURE
+Testing [29/319] 21_error_handling_try_catch... ❌ WASM VALIDATION FAILURE
+Testing [30/319] 22_error_handling_onerror... ❌ WASM VALIDATION FAILURE
+Testing [31/319] 23_error_handling_async... ❌ WASM VALIDATION FAILURE
+Testing [32/319] 24_memory_management... ❌ WASM VALIDATION FAILURE
+Testing [33/319] 25_stdlib_functions_original_modules... ❌ COMPILE FAILURE
+Testing [34/319] 25_stdlib_functions... ❌ COMPILE FAILURE
+Testing [35/319] 26_io_operations... ❌ WASM VALIDATION FAILURE
+Testing [36/319] 27_http_networking... ❌ COMPILE FAILURE
+Testing [37/319] 28_complex_example... ❌ WASM VALIDATION FAILURE
+Testing [38/319] 29_apply_blocks_fixed... ❌ WASM VALIDATION FAILURE
+Testing [39/319] 29_apply_blocks... ❌ WASM VALIDATION FAILURE
+Testing [40/319] 30_precision_modifiers... ❌ WASM VALIDATION FAILURE
+Testing [41/319] 31_testing_framework... ❌ COMPILE FAILURE
+Testing [42/319] 32_comprehensive_stdlib... ❌ COMPILE FAILURE
+Testing [43/319] 33_complex_integration... ❌ COMPILE FAILURE
+Testing [44/319] 34_list_behaviors_simple... ❌ COMPILE FAILURE
+Testing [45/319] 34_list_behaviors... ❌ COMPILE FAILURE
+Testing [46/319] 35_method_style_simple... ❌ COMPILE FAILURE
+Testing [47/319] 35_method_style... ❌ COMPILE FAILURE
+Testing [48/319] 36_conditionals_fixed... ❌ WASM VALIDATION FAILURE
+Testing [49/319] 36_conditionals_simple... ❌ COMPILE FAILURE
+Testing [50/319] 36_conditionals... ❌ COMPILE FAILURE
+Testing [51/319] 37_property_assignment_simple... ❌ WASM VALIDATION FAILURE
+Testing [52/319] 37_property_assignment... ❌ WASM VALIDATION FAILURE
+Testing [53/319] 38_method_calls_test... ❌ COMPILE FAILURE
+Testing [54/319] 39_conditional_expressions_test... ❌ WASM VALIDATION FAILURE
+Testing [55/319] 40_onerror_test... ❌ WASM VALIDATION FAILURE
+Testing [56/319] 41_static_methods_test... ❌ COMPILE FAILURE
+Testing [57/319] 42_test_framework... ❌ EXECUTION FAILURE
+Testing [58/319] 43_string_interpolation... ❌ COMPILE FAILURE
+Testing [59/319] 44_type_precision_simple... ❌ WASM VALIDATION FAILURE
+Testing [60/319] 44_type_precision_working... ❌ WASM VALIDATION FAILURE
+Testing [61/319] 44_type_precision... ❌ WASM VALIDATION FAILURE
+Testing [62/319] 45_numeric_literals_simple... ❌ WASM VALIDATION FAILURE
+Testing [63/319] 45_numeric_literals... ❌ WASM VALIDATION FAILURE
+Testing [64/319] 46_matrix_literals_simple... ❌ COMPILE FAILURE
+Testing [65/319] 46_matrix_literals... ❌ COMPILE FAILURE
+Testing [66/319] 47_string_interpolation... ❌ COMPILE FAILURE
+Testing [67/319] 48_method_style_syntax_fixed... ❌ COMPILE FAILURE
+Testing [68/319] 48_method_style_syntax_simple... ❌ COMPILE FAILURE
+Testing [69/319] 48_method_style_syntax... ❌ COMPILE FAILURE
+Testing [70/319] 49_static_method_calls_simple... ❌ COMPILE FAILURE
+Testing [71/319] 49_static_method_calls... ❌ COMPILE FAILURE
+Testing [72/319] 50_input_method_syntax... ❌ WASM VALIDATION FAILURE
+Testing [73/319] 51_http_method_syntax... ❌ COMPILE FAILURE
+Testing [74/319] 52_async_keywords... ❌ COMPILE FAILURE
+Testing [75/319] 53_import_export_blocks... ❌ WASM VALIDATION FAILURE
+Testing [76/319] 54_integration_test... ❌ COMPILE FAILURE
+Testing [77/319] 55_error_handling_test... ❌ COMPILE FAILURE
+Testing [78/319] 56_apply_blocks_comprehensive... ❌ WASM VALIDATION FAILURE
+Testing [79/319] 56_apply_blocks_simple... ❌ WASM VALIDATION FAILURE
+Testing [80/319] 57_console_input_comprehensive... ❌ COMPILE FAILURE
+Testing [81/319] 57_console_input_simple... ❌ WASM VALIDATION FAILURE
+Testing [82/319] 58_error_handling_onerror... ❌ WASM VALIDATION FAILURE
+Testing [83/319] 58_error_handling_simple... ❌ WASM VALIDATION FAILURE
+Testing [84/319] 59_default_parameters_simple... ❌ WASM VALIDATION FAILURE
+Testing [85/319] 59_default_parameters_working... ❌ COMPILE FAILURE
+Testing [86/319] 59_default_parameters... ❌ WASM VALIDATION FAILURE
+Testing [87/319] 60_automatic_return... ❌ WASM VALIDATION FAILURE
+Testing [88/319] 61_multiline_expressions_simple... ❌ WASM VALIDATION FAILURE
+Testing [89/319] 61_multiline_expressions... ❌ WASM VALIDATION FAILURE
+Testing [90/319] 62_apply_blocks_specification... ❌ WASM VALIDATION FAILURE
+Testing [91/319] 63_multiline_expressions_spec... ❌ EXECUTION FAILURE
+Testing [92/319] 64_default_parameters_spec... ❌ COMPILE FAILURE
+Testing [93/319] 65_error_handling_onerror_spec... ❌ WASM VALIDATION FAILURE
+Testing [94/319] 66_type_precision_spec... ❌ WASM VALIDATION FAILURE
+Testing [95/319] 67_import_export_comprehensive... ❌ COMPILE FAILURE
+Testing [96/319] 68_list_behaviors_comprehensive... ❌ COMPILE FAILURE
+Testing [97/319] 69_string_interpolation_comprehensive... ❌ COMPILE FAILURE
+Testing [98/319] 70_type_precision_comprehensive... ❌ WASM VALIDATION FAILURE
+Testing [99/319] 71_error_handling_onerror_comprehensive... ❌ WASM VALIDATION FAILURE
+Testing [100/319] 72_default_parameters_comprehensive... ❌ WASM VALIDATION FAILURE
+Testing [101/319] 73_console_input_comprehensive... ❌ WASM VALIDATION FAILURE
+Testing [102/319] 74_file_module_comprehensive... ❌ COMPILE FAILURE
+Testing [103/319] 75_parser_verification... ❌ EXECUTION FAILURE
+Testing [104/319] 76_math_module_comprehensive... ❌ COMPILE FAILURE
+Testing [105/319] 77_string_module_comprehensive... ❌ COMPILE FAILURE
+Testing [106/319] 78_list_module_comprehensive... ❌ COMPILE FAILURE
+Testing [107/319] 79_http_module_comprehensive... ❌ COMPILE FAILURE
+Testing [108/319] 80_chained_method_calls... ❌ COMPILE FAILURE
+Testing [109/319] 80_host_functions_test... ❌ COMPILE FAILURE
+Testing [110/319] 81_async_comprehensive... ❌ EXECUTION FAILURE
+Testing [111/319] 82_matrix_operations_comprehensive... ❌ COMPILE FAILURE
+Testing [112/319] 83_memory_management_comprehensive... ❌ EXECUTION FAILURE
+Testing [113/319] 90_comments_multiline... ❌ WASM VALIDATION FAILURE
+Testing [114/319] 91_identifiers_validation... ❌ WASM VALIDATION FAILURE
+Testing [115/319] 92_numeric_literals_comprehensive... ❌ WASM VALIDATION FAILURE
+Testing [116/319] 93_stdlib_math_comprehensive... ❌ COMPILE FAILURE
+Testing [117/319] 94_stdlib_string_comprehensive... ❌ COMPILE FAILURE
+Testing [118/319] 95_apply_blocks_specification... ❌ WASM VALIDATION FAILURE
+Testing [119/319] 96_console_input_comprehensive... ❌ COMPILE FAILURE
+Testing [120/319] 97_testing_framework_comprehensive... ❌ COMPILE FAILURE
+Testing [121/319] 98_stdlib_math_working... ❌ COMPILE FAILURE
+Testing [122/319] 99_math_minimal_working... ❌ COMPILE FAILURE
+Testing [123/319] 99_spec_basic_features... ❌ COMPILE FAILURE
+Testing [124/319] debug_args... ❌ COMPILE FAILURE
+Testing [125/319] debug_both... ❌ COMPILE FAILURE
+Testing [126/319] debug_compare... ❌ COMPILE FAILURE
+Testing [127/319] debug_conditional... ❌ COMPILE FAILURE
+Testing [128/319] debug_default_long... ❌ WASM VALIDATION FAILURE
+Testing [129/319] debug_default_param... ❌ WASM VALIDATION FAILURE
+Testing [130/319] debug_default_simple... ❌ WASM VALIDATION FAILURE
+Testing [131/319] debug_different_varname... ❌ WASM VALIDATION FAILURE
+Testing [132/319] debug_direct_math... ❌ COMPILE FAILURE
+Testing [133/319] debug_exponent_parsing... ❌ WASM VALIDATION FAILURE
+Testing [134/319] debug_full_copy... ❌ COMPILE FAILURE
+Testing [135/319] debug_greater_equal... ❌ COMPILE FAILURE
+Testing [136/319] debug_int_only... ❌ EXECUTION FAILURE
+Testing [137/319] debug_integer_parsing... ❌ WASM VALIDATION FAILURE
+Testing [138/319] debug_list_access... ❌ COMPILE FAILURE
+Testing [139/319] debug_list_push... ❌ COMPILE FAILURE
+Testing [140/319] debug_listlength_conflict... ❌ COMPILE FAILURE
+Testing [141/319] debug_logical_function... ❌ COMPILE FAILURE
+Testing [142/319] debug_logical_not... ❌ COMPILE FAILURE
+Testing [143/319] debug_logical... ❌ COMPILE FAILURE
+Testing [144/319] debug_math_namespace... ❌ COMPILE FAILURE
+Testing [145/319] debug_memory... ❌ WASM VALIDATION FAILURE
+Testing [146/319] debug_method_1... ❌ COMPILE FAILURE
+Testing [147/319] debug_method_2... ❌ COMPILE FAILURE
+Testing [148/319] debug_method_call_empty... ❌ EXECUTION FAILURE
+Testing [149/319] debug_method_call_statement... ❌ COMPILE FAILURE
+Testing [150/319] debug_method_call_test... ❌ WASM VALIDATION FAILURE
+Testing [151/319] debug_method_chain... ❌ WASM VALIDATION FAILURE
+Testing [152/319] debug_minimal_stack... ❌ WASM VALIDATION FAILURE
+Testing [153/319] debug_multifunction_complex... ❌ COMPILE FAILURE
+Testing [154/319] debug_multifunction... ❌ EXECUTION FAILURE
+Testing [155/319] debug_namespace_parsing... ❌ COMPILE FAILURE
+Testing [156/319] debug_nested... ❌ COMPILE FAILURE
+Testing [157/319] debug_polymorphism_minimal... ❌ EXECUTION FAILURE
+Testing [158/319] debug_regression_test... ❌ WASM VALIDATION FAILURE
+Testing [159/319] debug_second_function... ❌ COMPILE FAILURE
+Testing [160/319] debug_simple_class_method... ❌ WASM VALIDATION FAILURE
+Testing [161/319] debug_simple_math... ❌ COMPILE FAILURE
+Testing [162/319] debug_simple_param... ❌ WASM VALIDATION FAILURE
+Testing [163/319] debug_simple_polymorphism... ❌ WASM VALIDATION FAILURE
+Testing [164/319] debug_simple_static... ❌ COMPILE FAILURE
+Testing [165/319] debug_standalone_function... ❌ WASM VALIDATION FAILURE
+Testing [166/319] debug_test... ❌ EXECUTION FAILURE
+Testing [167/319] debug_three_functions... ❌ COMPILE FAILURE
+Testing [168/319] debug_ultra_minimal... ❌ EXECUTION FAILURE
+Testing [169/319] debug_uppercase_math... ❌ COMPILE FAILURE
+Testing [170/319] debug_variable_name... ❌ WASM VALIDATION FAILURE
+Testing [171/319] debug_variables... ❌ COMPILE FAILURE
+Testing [172/319] debug_void_proper... ❌ EXECUTION FAILURE
+Testing [173/319] debug_with_comments... ❌ COMPILE FAILURE
+Testing [174/319] final_test... ❌ WASM VALIDATION FAILURE
+Testing [175/319] simple_class_test... ❌ COMPILE FAILURE
+Testing [176/319] simple_method_test... ❌ COMPILE FAILURE
+Testing [177/319] simple_test... ❌ EXECUTION FAILURE
+Testing [178/319] static_method_args_test... ❌ COMPILE FAILURE
+Testing [179/319] super_minimal... ❌ WASM VALIDATION FAILURE
+Testing [180/319] test_apply_blocks_debug... ❌ WASM VALIDATION FAILURE
+Testing [181/319] test_apply_boolean... ❌ WASM VALIDATION FAILURE
+Testing [182/319] test_apply_multiple... ❌ WASM VALIDATION FAILURE
+Testing [183/319] test_apply_simple... ❌ WASM VALIDATION FAILURE
+Testing [184/319] test_args_comprehensive... ❌ COMPILE FAILURE
+Testing [185/319] test_arith_return... ❌ WASM VALIDATION FAILURE
+Testing [186/319] test_base_param... ❌ WASM VALIDATION FAILURE
+Testing [187/319] test_boolean_assignment... ❌ COMPILE FAILURE
+Testing [188/319] test_boundary_debug... ❌ WASM VALIDATION FAILURE
+Testing [189/319] test_cat_only... ❌ COMPILE FAILURE
+Testing [190/319] test_chained_minimal... ❌ COMPILE FAILURE
+Testing [191/319] test_chained_onerror... ❌ WASM VALIDATION FAILURE
+Testing [192/319] test_chained_property_method... ❌ COMPILE FAILURE
+Testing [193/319] test_chained_static... ❌ COMPILE FAILURE
+Testing [194/319] test_class_functions_debug... ❌ EXECUTION FAILURE
+Testing [195/319] test_combined_apply_blocks... ❌ WASM VALIDATION FAILURE
+Testing [196/319] test_comparison... ❌ WASM VALIDATION FAILURE
+Testing [197/319] test_complex_method_chain... ❌ COMPILE FAILURE
+Testing [198/319] test_complex_onerror... ❌ COMPILE FAILURE
+Testing [199/319] test_conditional_namespace... ❌ COMPILE FAILURE
+Testing [200/319] test_conditional_simple... ❌ COMPILE FAILURE
+Testing [201/319] test_constructor_assignment... ❌ COMPILE FAILURE
+Testing [202/319] test_constructor_base_minimal... ❌ WASM VALIDATION FAILURE
+Testing [203/319] test_constructor_complex_functions... ❌ WASM VALIDATION FAILURE
+Testing [204/319] test_constructor_simple... ❌ WASM VALIDATION FAILURE
+Testing [205/319] test_constructor_with_base... ❌ COMPILE FAILURE
+Testing [206/319] test_debug_apply_blocks... ❌ WASM VALIDATION FAILURE
+Testing [207/319] test_debug_function_boundary... ❌ WASM VALIDATION FAILURE
+Testing [208/319] test_debug_property_method_call... ❌ COMPILE FAILURE
+Testing [209/319] test_debug_property_method... ❌ COMPILE FAILURE
+Testing [210/319] test_debug_spacing... ❌ COMPILE FAILURE
+Testing [211/319] test_debug_step_by_step... ❌ COMPILE FAILURE
+Testing [212/319] test_default_params... ❌ WASM VALIDATION FAILURE
+Testing [213/319] test_different_name... ❌ COMPILE FAILURE
+Testing [214/319] test_different_property_chain... ❌ COMPILE FAILURE
+Testing [215/319] test_empty_params_debug... ❌ EXECUTION FAILURE
+Testing [216/319] test_exact_68_structure... ❌ EXECUTION FAILURE
+Testing [217/319] test_exact_comparison... ❌ WASM VALIDATION FAILURE
+Testing [218/319] test_exact_failing_pattern... ❌ EXECUTION FAILURE
+Testing [219/319] test_existing_method_call... ❌ EXECUTION FAILURE
+Testing [220/319] test_explicit_method_chained... ❌ COMPILE FAILURE
+Testing [221/319] test_exponent_pattern... ❌ COMPILE FAILURE
+Testing [222/319] test_final_onerror... ❌ WASM VALIDATION FAILURE
+Testing [223/319] test_function_apply_block... ❌ EXECUTION FAILURE
+Testing [224/319] test_function_apply_only... ❌ EXECUTION FAILURE
+Testing [225/319] test_function_body_debug... ❌ EXECUTION FAILURE
+Testing [226/319] test_function_decl_only... ❌ EXECUTION FAILURE
+Testing [227/319] test_grammar_debug_1... ❌ EXECUTION FAILURE
+Testing [228/319] test_grammar_debug_2... ❌ EXECUTION FAILURE
+Testing [229/319] test_grammar_debug_3... ❌ COMPILE FAILURE
+Testing [230/319] test_grammar_debug... ❌ COMPILE FAILURE
+Testing [231/319] test_hello... ❌ EXECUTION FAILURE
+Testing [232/319] test_http_basic... ❌ COMPILE FAILURE
+Testing [233/319] test_identifier_method_call... ❌ WASM VALIDATION FAILURE
+Testing [234/319] test_if_else_boundary_debug... ❌ COMPILE FAILURE
+Testing [235/319] test_if_only_boundary... ❌ EXECUTION FAILURE
+Testing [236/319] test_if_with_else... ❌ WASM VALIDATION FAILURE
+Testing [237/319] test_inheritance_fields_and_functions... ❌ WASM VALIDATION FAILURE
+Testing [238/319] test_inheritance_function_minimal... ❌ EXECUTION FAILURE
+Testing [239/319] test_inheritance_minimal... ❌ COMPILE FAILURE
+Testing [240/319] test_inheritance_polymorphism... ❌ EXECUTION FAILURE
+Testing [241/319] test_inheritance_with_constructor... ❌ WASM VALIDATION FAILURE
+Testing [242/319] test_int_return... ❌ WASM VALIDATION FAILURE
+Testing [243/319] test_io_validation... ❌ EXECUTION FAILURE
+Testing [244/319] test_is_prefix... ❌ COMPILE FAILURE
+Testing [245/319] test_list_type... ❌ COMPILE FAILURE
+Testing [246/319] test_literal_method_call... ❌ WASM VALIDATION FAILURE
+Testing [247/319] test_logical... ❌ COMPILE FAILURE
+Testing [248/319] test_match_59_structure... ❌ EXECUTION FAILURE
+Testing [249/319] test_method_call_debug... ❌ COMPILE FAILURE
+Testing [250/319] test_method_call_in_args... ❌ WASM VALIDATION FAILURE
+Testing [251/319] test_method_call_pattern... ❌ WASM VALIDATION FAILURE
+Testing [252/319] test_method_chaining... ❌ WASM VALIDATION FAILURE
+Testing [253/319] test_method_override... ❌ EXECUTION FAILURE
+Testing [254/319] test_minimal_default... ❌ COMPILE FAILURE
+Testing [255/319] test_minimal_if_boundary... ❌ WASM VALIDATION FAILURE
+Testing [256/319] test_minimal_precision... ❌ WASM VALIDATION FAILURE
+Testing [257/319] test_minimal_two_functions... ❌ EXECUTION FAILURE
+Testing [258/319] test_minimal_working_boundary... ❌ EXECUTION FAILURE
+Testing [259/319] test_mixed_return_types_reverse... ❌ EXECUTION FAILURE
+Testing [260/319] test_mixed_return_types... ❌ EXECUTION FAILURE
+Testing [261/319] test_multi_function_debug... ❌ EXECUTION FAILURE
+Testing [262/319] test_multiple_functions_after_fix... ❌ WASM VALIDATION FAILURE
+Testing [263/319] test_multiple_functions_debug... ❌ COMPILE FAILURE
+Testing [264/319] test_multiple_statements_debug... ❌ COMPILE FAILURE
+Testing [265/319] test_nested_method_simple... ❌ COMPILE FAILURE
+Testing [266/319] test_no_if_else_baseline... ❌ EXECUTION FAILURE
+Testing [267/319] test_no_return_type... ❌ COMPILE FAILURE
+Testing [268/319] test_no_static... ❌ WASM VALIDATION FAILURE
+Testing [269/319] test_number_method... ❌ EXECUTION FAILURE
+Testing [270/319] test_onerror_simple... ❌ WASM VALIDATION FAILURE
+Testing [271/319] test_parser_backtrack_issue... ❌ WASM VALIDATION FAILURE
+Testing [272/319] test_polymorphism_param... ❌ EXECUTION FAILURE
+Testing [273/319] test_precision_debug... ❌ WASM VALIDATION FAILURE
+Testing [274/319] test_precision_standalone... ❌ WASM VALIDATION FAILURE
+Testing [275/319] test_preprocessor_debug... ❌ EXECUTION FAILURE
+Testing [276/319] test_print_without_parens... ❌ WASM VALIDATION FAILURE
+Testing [277/319] test_priority_2_fixes... ❌ WASM VALIDATION FAILURE
+Testing [278/319] test_proper_indent... ❌ WASM VALIDATION FAILURE
+Testing [279/319] test_property_method_call_fixed... ❌ COMPILE FAILURE
+Testing [280/319] test_property_method_debug... ❌ COMPILE FAILURE
+Testing [281/319] test_property_method_no_args... ❌ COMPILE FAILURE
+Testing [282/319] test_property_method_one_arg... ❌ COMPILE FAILURE
+Testing [283/319] test_regular_method_multiarg... ❌ COMPILE FAILURE
+Testing [284/319] test_return_issue... ❌ COMPILE FAILURE
+Testing [285/319] test_simple_chain... ❌ COMPILE FAILURE
+Testing [286/319] test_simple_chained_property... ❌ COMPILE FAILURE
+Testing [287/319] test_simple_default_params... ❌ COMPILE FAILURE
+Testing [288/319] test_simple_function_debug... ❌ EXECUTION FAILURE
+Testing [289/319] test_simple_input... ❌ WASM VALIDATION FAILURE
+Testing [290/319] test_simple_math... ❌ COMPILE FAILURE
+Testing [291/319] test_simple_method_multiarg... ❌ COMPILE FAILURE
+Testing [292/319] test_simple_method... ❌ WASM VALIDATION FAILURE
+Testing [293/319] test_simple_param_debug... ❌ EXECUTION FAILURE
+Testing [294/319] test_simple_polymorphism... ❌ EXECUTION FAILURE
+Testing [295/319] test_simple_property_method... ❌ COMPILE FAILURE
+Testing [296/319] test_simple_return... ❌ WASM VALIDATION FAILURE
+Testing [297/319] test_simple_three_level... ❌ COMPILE FAILURE
+Testing [298/319] test_simple... ❌ EXECUTION FAILURE
+Testing [299/319] test_simplest_if... ❌ EXECUTION FAILURE
+Testing [300/319] test_single_boolean... ❌ WASM VALIDATION FAILURE
+Testing [301/319] test_single_function_debug... ❌ EXECUTION FAILURE
+Testing [302/319] test_static_method... ❌ COMPILE FAILURE
+Testing [303/319] test_string_concat... ❌ WASM VALIDATION FAILURE
+Testing [304/319] test_tab_indentation... ❌ EXECUTION FAILURE
+Testing [305/319] test_tab_with_two_statements... ❌ WASM VALIDATION FAILURE
+Testing [306/319] test_three_level... ❌ COMPILE FAILURE
+Testing [307/319] test_top_level_apply... ❌ EXECUTION FAILURE
+Testing [308/319] test_two_statements_only... ❌ WASM VALIDATION FAILURE
+Testing [309/319] test_two_vars_only... ❌ WASM VALIDATION FAILURE
+Testing [310/319] test_type_apply_block... ❌ WASM VALIDATION FAILURE
+Testing [311/319] test_type_apply_only... ❌ WASM VALIDATION FAILURE
+Testing [312/319] test_type_only_apply... ❌ WASM VALIDATION FAILURE
+Testing [313/319] test_validation_only... ❌ EXECUTION FAILURE
+Testing [314/319] test_var_arith_return... ❌ COMPILE FAILURE
+Testing [315/319] test_variable_name... ❌ COMPILE FAILURE
+Testing [316/319] test_while_concat... ❌ COMPILE FAILURE
+Testing [317/319] test_whitespace_debug... ❌ EXECUTION FAILURE
+Testing [318/319] test_without_method_call... ❌ WASM VALIDATION FAILURE
+Testing [319/319] test_working_method_call... ❌ WASM VALIDATION FAILURE
+
+📊 FINAL COMPREHENSIVE QA RESULTS
+==================================
+Total Tests: 319
+Successful: 0
+Success Rate: 0%
+
+Failure Breakdown:
+  Compilation Failures: 137
+  WASM Validation Failures: 129
+  Execution Failures: 53
+  Total Failures: 319
+
+🎯 PRODUCTION READINESS ASSESSMENT
+===================================
+🔴 STATUS: NEEDS IMPROVEMENT - 0% Success Rate
+
+📁 Results saved to:
+  Success List: tests/qa_results/final_success_list.txt
+  Failure List: tests/qa_results/final_failure_list.txt
+  Detailed Log: tests/qa_results/final_comprehensive_log.txt

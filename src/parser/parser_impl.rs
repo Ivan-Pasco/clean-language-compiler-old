@@ -8,7 +8,7 @@ use crate::ast::{
     Class, Constructor, Expression, Field, Function, FunctionModifier, FunctionSyntax, ImportItem,
     Parameter, Program, Statement, TestCase, Type, Visibility,
 };
-use crate::error::{CompilerError, ErrorUtils};
+use crate::error::{CompilerError, EnhancedErrorCollector, ErrorUtils};
 use pest::{iterators::Pair, Parser};
 
 /// Parse context to track file information and improve error reporting
@@ -31,6 +31,7 @@ pub struct ErrorRecoveringParser {
     pub warnings: Vec<crate::error::CompilerWarning>,
     pub recovery_points: Vec<usize>,
     pub max_errors: usize,
+    pub enhanced_collector: EnhancedErrorCollector,
 }
 
 impl ErrorRecoveringParser {
@@ -42,12 +43,32 @@ impl ErrorRecoveringParser {
             warnings: Vec::new(),
             recovery_points: Vec::new(),
             max_errors: 100, // Prevent infinite error cascades
+            enhanced_collector: EnhancedErrorCollector::new(),
         }
     }
 
     pub fn with_max_errors(mut self, max_errors: usize) -> Self {
         self.max_errors = max_errors;
         self
+    }
+
+    /// Simple program parsing method for SpecificationParser compatibility
+    pub fn parse_program(&mut self) -> Result<Program, CompilerError> {
+        match self.parse_with_recovery(&self.source.clone()) {
+            Ok(program) => Ok(program),
+            Err(errors) => {
+                // Return the first error if any
+                if let Some(first_error) = errors.first() {
+                    Err(first_error.clone())
+                } else {
+                    Err(CompilerError::syntax_error(
+                        "Unknown parsing error".to_string(),
+                        None,
+                        None,
+                    ))
+                }
+            }
+        }
     }
 
     /// Parse with comprehensive error recovery - collects multiple errors and continues parsing
@@ -61,12 +82,15 @@ impl ErrorRecoveringParser {
                 if self.errors.is_empty() {
                     Ok(program)
                 } else {
+                    // Return program with warnings/errors for partial compilation
                     Err(self.errors.clone())
                 }
             }
             Err(mut parse_errors) => {
                 // Merge any additional errors we collected during recovery
                 parse_errors.extend(self.errors.clone());
+                // Deduplicate similar errors
+                parse_errors = self.deduplicate_errors(parse_errors);
                 Err(parse_errors)
             }
         }
@@ -74,31 +98,61 @@ impl ErrorRecoveringParser {
 
     /// Identify synchronization points for error recovery
     fn identify_recovery_points(&mut self, source: &str) {
-        let mut pos = 0;
-        let chars: Vec<char> = source.chars().collect();
+        let lines: Vec<&str> = source.lines().collect();
 
-        while pos < chars.len() {
-            // Look for function boundaries
-            if pos + 8 < chars.len() && chars[pos..pos + 8].iter().collect::<String>() == "function"
+        // Clear existing recovery points
+        self.recovery_points.clear();
+
+        // Find major structural boundaries
+        let mut byte_pos = 0;
+        for (_line_idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+
+            // Function declarations
+            if trimmed.starts_with("function ") || trimmed.starts_with("functions:") {
+                self.recovery_points.push(byte_pos);
+            }
+            // Class declarations
+            else if trimmed.starts_with("class ") {
+                self.recovery_points.push(byte_pos);
+            }
+            // Start function
+            else if trimmed.starts_with("start()") {
+                self.recovery_points.push(byte_pos);
+            }
+            // Import statements
+            else if trimmed.starts_with("import ") || trimmed.starts_with("import:") {
+                self.recovery_points.push(byte_pos);
+            }
+            // Block-level constructs
+            else if trimmed.ends_with(":")
+                && (trimmed.starts_with("if ")
+                    || trimmed.starts_with("while ")
+                    || trimmed.starts_with("for ")
+                    || trimmed == "functions:"
+                    || trimmed == "tests:")
             {
-                self.recovery_points.push(pos);
+                self.recovery_points.push(byte_pos);
+            }
+            // Statement-level recovery (indented lines)
+            else if line.starts_with('\t') || (line.starts_with(' ') && line.trim() != "") {
+                // Only add if it's not already close to another recovery point
+                if self.recovery_points.is_empty()
+                    || byte_pos.saturating_sub(*self.recovery_points.last().unwrap()) > 20
+                {
+                    self.recovery_points.push(byte_pos);
+                }
             }
 
-            // Look for class boundaries
-            if pos + 5 < chars.len() && chars[pos..pos + 5].iter().collect::<String>() == "class" {
-                self.recovery_points.push(pos);
-            }
-
-            // Look for statement boundaries (lines starting with tabs/spaces)
-            if (pos == 0 || chars[pos - 1] == '\n')
-                && pos < chars.len()
-                && (chars[pos] == '\t' || chars[pos] == ' ')
-            {
-                self.recovery_points.push(pos);
-            }
-
-            pos += 1;
+            byte_pos += line.len() + 1; // +1 for newline
         }
+
+        // Add end of file as recovery point
+        self.recovery_points.push(source.len());
+
+        // Sort recovery points
+        self.recovery_points.sort_unstable();
+        self.recovery_points.dedup();
     }
 
     /// Parse with error recovery using synchronization points
@@ -125,10 +179,13 @@ impl ErrorRecoveringParser {
         let mut classes = Vec::new();
         let mut imports = Vec::new();
         let mut start_function = None;
+        let mut successful_segments = 0;
+        let total_segments = segments.len();
 
-        for segment in segments {
-            match self.parse_segment(&segment) {
+        for (segment_idx, segment) in segments.iter().enumerate() {
+            match self.parse_segment(segment) {
                 Ok(segment_result) => {
+                    successful_segments += 1;
                     // Merge successful parse results
                     functions.extend(segment_result.functions);
                     classes.extend(segment_result.classes);
@@ -138,22 +195,78 @@ impl ErrorRecoveringParser {
                     }
                 }
                 Err(segment_error) => {
-                    collected_errors.push(segment_error);
+                    // Enhance error with segment context
+                    let enhanced_error = self.enhance_error_with_segment_context(
+                        segment_error,
+                        segment_idx,
+                        total_segments,
+                        segment,
+                    );
+                    collected_errors.push(enhanced_error);
 
                     // Try to create a partial AST node for the failed segment
-                    if let Some(partial) = self.create_partial_node(&segment) {
+                    if let Some(partial) = self.create_partial_node(segment) {
                         match partial {
-                            PartialNode::Function(f) => functions.push(f),
-                            PartialNode::Class(c) => classes.push(c),
-                            // Add other cases as needed
+                            PartialNode::Function(f) => {
+                                let function_name = f.name.clone();
+                                let function_location = f.location.clone();
+                                functions.push(f);
+                                // Add recovery warning
+                                self.warnings.push(crate::error::CompilerWarning::new(
+                                    format!("Function '{}' parsed with errors - may have incomplete body", function_name),
+                                    crate::error::WarningType::DeadCode,
+                                    function_location.map(|l| crate::ast::SourceLocation {
+                                        file: self.file_path.clone(),
+                                        line: l.line,
+                                        column: l.column,
+                                    })
+                                ));
+                            }
+                            PartialNode::Class(c) => {
+                                let class_name = c.name.clone();
+                                let class_location = c.location.clone();
+                                classes.push(c);
+                                // Add recovery warning
+                                self.warnings.push(crate::error::CompilerWarning::new(
+                                    format!("Class '{}' parsed with errors - may have incomplete definition", class_name),
+                                    crate::error::WarningType::DeadCode,
+                                    class_location.map(|l| crate::ast::SourceLocation {
+                                        file: self.file_path.clone(),
+                                        line: l.line,
+                                        column: l.column,
+                                    })
+                                ));
+                            }
                         }
                     }
                 }
             }
 
             if collected_errors.len() >= self.max_errors {
+                // Add warning about stopping early
+                self.warnings.push(crate::error::CompilerWarning::new(
+                    format!(
+                        "Stopped error recovery after {} errors (max: {})",
+                        collected_errors.len(),
+                        self.max_errors
+                    ),
+                    crate::error::WarningType::Performance,
+                    None,
+                ));
                 break;
             }
+        }
+
+        // Add recovery statistics
+        if total_segments > 0 && successful_segments < total_segments {
+            self.warnings.push(crate::error::CompilerWarning::new(
+                format!(
+                    "Parsed {}/{} segments successfully during error recovery",
+                    successful_segments, total_segments
+                ),
+                crate::error::WarningType::Performance,
+                None,
+            ));
         }
 
         // Create a program from recovered parts
@@ -442,46 +555,75 @@ impl ErrorRecoveringParser {
 
         // Try to extract function name even if parsing failed
         if trimmed.starts_with("function ") {
-            if let Some(name) = self.extract_function_name(trimmed) {
+            if let Some((name, return_type, params)) = self.extract_function_signature(trimmed) {
                 return Some(PartialNode::Function(Function {
-                    name,
+                    name: name.clone(),
                     type_parameters: Vec::new(),
                     type_constraints: Vec::new(),
-                    parameters: Vec::new(),
-                    return_type: Type::Void,
-                    body: Vec::new(), // Empty body for failed parse
-                    description: Some(
-                        "// Parse error - function body could not be parsed".to_string(),
-                    ),
+                    parameters: params,
+                    return_type,
+                    body: vec![Statement::Expression {
+                        expr: Expression::Literal(crate::ast::Value::String(format!(
+                            "// ERROR: Function '{}' body could not be parsed due to syntax errors",
+                            name
+                        ))),
+                        location: None,
+                    }],
+                    description: Some(format!(
+                        "// RECOVERY: Function '{}' - syntax errors in body",
+                        name
+                    )),
                     syntax: FunctionSyntax::Simple,
                     visibility: Visibility::Public,
                     modifier: FunctionModifier::None,
-                    location: None,
+                    location: self.calculate_location_from_segment(segment),
                 }));
             }
+        } else if trimmed.starts_with("class ") {
+            if let Some(class_name) = self.extract_class_name(trimmed) {
+                return Some(PartialNode::Class(Class {
+                    name: class_name.clone(),
+                    type_parameters: Vec::new(),
+                    description: Some(format!(
+                        "// RECOVERY: Class '{}' - syntax errors in definition",
+                        class_name
+                    )),
+                    base_class: None,
+                    base_class_type_args: Vec::new(),
+                    fields: Vec::new(),
+                    methods: Vec::new(),
+                    constructor: None,
+                    location: self.calculate_location_from_segment(segment),
+                }));
+            }
+        } else if trimmed.starts_with("start()") {
+            // Try to create a partial start function
+            return Some(PartialNode::Function(Function {
+                name: "start".to_string(),
+                type_parameters: Vec::new(),
+                type_constraints: Vec::new(),
+                parameters: Vec::new(),
+                return_type: Type::Void,
+                body: vec![Statement::Expression {
+                    expr: Expression::Literal(crate::ast::Value::String(
+                        "// ERROR: Start function body could not be parsed".to_string(),
+                    )),
+                    location: None,
+                }],
+                description: Some(
+                    "// RECOVERY: Start function - syntax errors in body".to_string(),
+                ),
+                syntax: FunctionSyntax::Simple,
+                visibility: Visibility::Public,
+                modifier: FunctionModifier::None,
+                location: self.calculate_location_from_segment(segment),
+            }));
         }
 
         None
     }
 
     /// Extract function name from malformed function declaration
-    fn extract_function_name(&self, segment: &str) -> Option<String> {
-        // Look for pattern: function [type] name(
-        let words: Vec<&str> = segment.split_whitespace().collect();
-        if words.len() >= 2 && words[0] == "function" {
-            // Case 1: function name(
-            if words[1].contains('(') {
-                return Some(words[1].split('(').next().unwrap().to_string());
-            }
-            // Case 2: function type name(
-            if words.len() >= 3 && words[2].contains('(') {
-                return Some(words[2].split('(').next().unwrap().to_string());
-            }
-            // Case 3: just function name
-            return Some(words[1].to_string());
-        }
-        None
-    }
 
     fn parse_internal(&mut self, source: &str) -> Result<Program, CompilerError> {
         let trimmed_source = source.trim();
@@ -513,7 +655,8 @@ pub fn parse_with_file(source: &str, file_path: &str) -> Result<Program, Compile
     let trimmed_source = source.trim();
 
     // Check if this is a functions: block program - handle it specially
-    if source.contains("functions:") {
+    // BUT NOT if it also contains classes (which need full grammar parsing)
+    if source.contains("functions:") && !source.contains("class ") {
         match parse_with_preprocessing(source, file_path) {
             Ok(program) => {
                 return Ok(program);
@@ -529,22 +672,10 @@ pub fn parse_with_file(source: &str, file_path: &str) -> Result<Program, Compile
         Ok(pairs) => parse_program_ast(pairs),
         Err(pest_error) => {
             // If traditional parsing fails, use recovery parsing instead of preprocessing
-            let error_msg = pest_error.to_string();
+            let _error_msg = pest_error.to_string();
 
-            // Use recovery parsing which handles both classes and functions correctly
-            match super::CleanParser::parse_program_with_recovery(source, file_path) {
-                Ok(program) => {
-                    Ok(program)
-                }
-                Err(errors) => {
-                    // Return the first error from recovery parsing, or the original error if recovery had no errors
-                    if let Some(first_error) = errors.first() {
-                        Err(first_error.clone())
-                    } else {
-                        Err(ErrorUtils::from_pest_error(pest_error, source, file_path))
-                    }
-                }
-            }
+            // Return a clear error message for parsing failures
+            Err(ErrorUtils::from_pest_error(pest_error, source, file_path))
         }
     }
 }
@@ -554,12 +685,10 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
     // Check if this is a functions block and use preprocessing for consistency
     // Look for functions: anywhere in the source, potentially after comments
     if source.contains("functions:") {
-
         // Use direct preprocessing for all functions blocks to avoid grammar parsing issues
         let preprocessor = super::preprocessor::FunctionPreprocessor::new(source);
         match preprocessor.process_functions_block(source) {
             Ok(functions) => {
-
                 // Also look for start function in the source
                 let start_function = if let Some(start_match) = source.find("start()") {
                     // Extract the start function text
@@ -604,17 +733,11 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                     ) {
                         Ok(pairs) => {
                             match parse_start_function(pairs.into_iter().next().unwrap()) {
-                                Ok(func) => {
-                                    Some(func)
-                                }
-                                Err(e) => {
-                                    None
-                                }
+                                Ok(func) => Some(func),
+                                Err(_e) => None,
                             }
                         }
-                        Err(e) => {
-                            None
-                        }
+                        Err(_e) => None,
                     }
                 } else {
                     None
@@ -633,18 +756,14 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
 
                 return Ok(program);
             }
-            Err(preprocess_error) => {
-            }
+            Err(_preprocess_error) => {}
         }
     }
 
     // For non-functions blocks, try traditional parsing
     match <CleanParser as Parser<Rule>>::parse(Rule::program, source) {
-        Ok(pairs) => {
-            parse_program_ast(pairs)
-        }
+        Ok(pairs) => parse_program_ast(pairs),
         Err(traditional_error) => {
-
             // If all else fails, return the original error
             Err(ErrorUtils::from_pest_error(
                 traditional_error,
@@ -656,6 +775,7 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
 }
 
 pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program, CompilerError> {
+    let file_path = "unknown";
     let mut functions = Vec::new();
     let mut classes = Vec::new();
     let mut start_function = None;
@@ -702,8 +822,8 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
                                     tests.extend(test_cases);
                                 }
                                 Rule::statement => {
-                                    // Handle top-level statements - these should be added to the start function
                                     let stmt = parse_statement(program_item_inner)?;
+                                    // Handle top-level statements - these should be added to the start function
                                     top_level_statements.push(stmt);
                                 }
                                 _ => {}
@@ -783,9 +903,33 @@ pub fn parse_start_function(pair: Pair<Rule>) -> Result<Function, CompilerError>
 
     for inner in pair.into_inner() {
         if inner.as_rule() == Rule::indented_block {
-            for stmt_pair in inner.into_inner() {
-                if stmt_pair.as_rule() == Rule::statement {
-                    body.push(parse_statement(stmt_pair)?);
+            // indented_block contains either function_nested_block or simple_indented_block
+            for block_pair in inner.into_inner() {
+                match block_pair.as_rule() {
+                    Rule::simple_indented_block => {
+                        // simple_indented_block contains indented_statement rules
+                        for stmt_pair in block_pair.into_inner() {
+                            if stmt_pair.as_rule() == Rule::indented_statement {
+                                // indented_statement contains the actual statement
+                                for inner_stmt in stmt_pair.into_inner() {
+                                    if inner_stmt.as_rule() == Rule::statement {
+                                        body.push(parse_statement(inner_stmt)?);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Rule::function_nested_block => {
+                        // function_nested_block contains statements directly
+                        for stmt_pair in block_pair.into_inner() {
+                            if stmt_pair.as_rule() == Rule::statement {
+                                body.push(parse_statement(stmt_pair)?);
+                            }
+                        }
+                    }
+                    _ => {
+                        // Skip other elements like NEWLINE, INDENT, etc.
+                    }
                 }
             }
         }
@@ -873,9 +1017,11 @@ fn parse_parameter(pair: Pair<Rule>) -> Result<Parameter, CompilerError> {
 
 pub fn get_location(pair: &Pair<Rule>) -> super::SourceLocation {
     let span = pair.as_span();
+    let (line, col) = span.start_pos().line_col();
     super::SourceLocation {
-        start: span.start(),
-        end: span.end(),
+        line,
+        column: col,
+        file: String::new(), // Will be set by the parser context
     }
 }
 
@@ -890,13 +1036,13 @@ pub fn parse_functions_block_with_context(
     // Extract source text for preprocessing
     let source_text = functions_block.as_str();
 
+    // For class context, use traditional parsing directly to avoid preprocessor issues
+    if class_context.is_some() {
+        return parse_functions_block_traditional(functions_block);
+    }
 
-    // Try preprocessing approach first for multi-function blocks
-    let preprocessor = if let Some(context) = class_context {
-        super::preprocessor::FunctionPreprocessor::with_class_context(source_text, context)
-    } else {
-        super::preprocessor::FunctionPreprocessor::new(source_text)
-    };
+    // Try preprocessing approach first for multi-function blocks (non-class only)
+    let preprocessor = super::preprocessor::FunctionPreprocessor::new(source_text);
 
     match preprocessor.process_functions_block(source_text) {
         Ok(functions) => {
@@ -904,7 +1050,8 @@ pub fn parse_functions_block_with_context(
                 return Ok(functions);
             }
         }
-        Err(e) => {
+        Err(_) => {
+            // Fall back to traditional parsing if preprocessing fails
         }
     }
 
@@ -918,11 +1065,40 @@ pub fn parse_functions_block_traditional(
     let mut functions = Vec::new();
 
     for item in functions_block.into_inner() {
-        if item.as_rule() == Rule::indented_functions_block {
+        if item.as_rule() == Rule::indented_functions_block
+            || item.as_rule() == Rule::class_indented_functions_block
+        {
             for func_item in item.into_inner() {
-                if func_item.as_rule() == Rule::function_in_block {
-                    let func = parse_function_in_block(func_item)?;
-                    functions.push(func);
+                match func_item.as_rule() {
+                    Rule::function_in_block => {
+                        match parse_function_in_block(func_item) {
+                            Ok(func) => functions.push(func),
+                            Err(_) => continue, // Recovery: skip failed function
+                        }
+                    }
+                    Rule::function_line => {
+                        // function_line contains function_in_block inside
+                        for inner_item in func_item.into_inner() {
+                            if inner_item.as_rule() == Rule::function_in_block {
+                                match parse_function_in_block(inner_item) {
+                                    Ok(func) => functions.push(func),
+                                    Err(_) => continue, // Recovery: skip failed function
+                                }
+                            }
+                        }
+                    }
+                    Rule::class_function_line => {
+                        // Handle the new class_function_line rule
+                        for inner in func_item.into_inner() {
+                            if inner.as_rule() == Rule::function_in_block {
+                                match parse_function_in_block(inner) {
+                                    Ok(func) => functions.push(func),
+                                    Err(_) => continue, // Recovery: skip failed function
+                                }
+                            }
+                        }
+                    }
+                    _ => {} // Skip other items like empty_line
                 }
             }
         }
@@ -1443,7 +1619,7 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
                 let params = parse_parameter_list(item)?;
                 parameters.extend(params);
             }
-            Rule::function_body => {
+            Rule::function_body | Rule::function_body_in_block => {
                 // function_body = (setup_block ~ indented_block) | indented_block | empty
                 let mut found_body = false;
                 let mut _found_setup = false;
@@ -1492,7 +1668,7 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
                                 }
                             }
                         }
-                        Rule::function_statements => {
+                        Rule::function_body_statements => {
                             found_body = true;
                             // Process statements, handling input_declaration specially
                             for stmt_pair in body_item.into_inner() {
@@ -1779,10 +1955,177 @@ fn _unused_parse_expression(_pair: Pair<Rule>) -> Result<Expression, CompilerErr
     ))
 }
 
+impl ErrorRecoveringParser {
+    /// Extract function signature from malformed function declaration
+    fn extract_function_signature(&self, segment: &str) -> Option<(String, Type, Vec<Parameter>)> {
+        // Look for pattern: function [type] name([params])
+        let words: Vec<&str> = segment.split_whitespace().collect();
+        if words.len() >= 2 && words[0] == "function" {
+            let mut return_type = Type::Void;
+            let function_name;
+
+            // Case 1: function name(
+            if words[1].contains('(') {
+                function_name = words[1].split('(').next().unwrap().to_string();
+            }
+            // Case 2: function type name(
+            else if words.len() >= 3 && words[2].contains('(') {
+                // Try to parse the type
+                return_type = match words[1] {
+                    "integer" => Type::Integer,
+                    "number" => Type::Number,
+                    "string" => Type::String,
+                    "boolean" => Type::Boolean,
+                    _ => Type::Any,
+                };
+                function_name = words[2].split('(').next().unwrap().to_string();
+            }
+            // Case 3: just function name
+            else {
+                function_name = words[1].to_string();
+            }
+
+            // For recovery, don't try to parse parameters - too error-prone
+            let parameters = Vec::new();
+
+            if !function_name.is_empty() {
+                return Some((function_name, return_type, parameters));
+            }
+        }
+        None
+    }
+
+    /// Extract class name from malformed class declaration
+    fn extract_class_name(&self, segment: &str) -> Option<String> {
+        let words: Vec<&str> = segment.split_whitespace().collect();
+        if words.len() >= 2 && words[0] == "class" {
+            // Handle "class Name" or "class Name is BaseClass"
+            let class_name = words[1].split_whitespace().next()?.to_string();
+            if !class_name.is_empty() && class_name.chars().all(|c| c.is_alphanumeric() || c == '_')
+            {
+                return Some(class_name);
+            }
+        }
+        None
+    }
+
+    /// Calculate approximate location from segment content
+    fn calculate_location_from_segment(&self, segment: &str) -> Option<crate::ast::SourceLocation> {
+        // Find the segment position in the original source
+        if let Some(pos) = self.source.find(segment.trim()) {
+            let (line, column) = self.calculate_line_column(pos);
+            return Some(crate::ast::SourceLocation {
+                file: self.file_path.clone(),
+                line,
+                column,
+            });
+        }
+        None
+    }
+
+    /// Calculate line and column from byte position
+    fn calculate_line_column(&self, pos: usize) -> (usize, usize) {
+        let mut line = 1;
+        let mut column = 1;
+
+        for (i, ch) in self.source.char_indices() {
+            if i >= pos {
+                break;
+            }
+            if ch == '\n' {
+                line += 1;
+                column = 1;
+            } else {
+                column += 1;
+            }
+        }
+
+        (line, column)
+    }
+
+    /// Enhance error with segment recovery context
+    fn enhance_error_with_segment_context(
+        &self,
+        error: CompilerError,
+        segment_idx: usize,
+        total_segments: usize,
+        segment: &str,
+    ) -> CompilerError {
+        match error {
+            CompilerError::Syntax { context } => {
+                let enhanced_context = context
+                    .with_suggestion(format!(
+                        "Error in segment {} of {} during recovery parsing",
+                        segment_idx + 1,
+                        total_segments
+                    ))
+                    .with_source_snippet(segment.lines().take(5).collect::<Vec<_>>().join("\n"))
+                    .with_help_option(Some(format!(
+                        "This error occurred while trying to parse a recovered segment. \
+                        Check the syntax in this section of your code."
+                    )));
+                CompilerError::Syntax {
+                    context: Box::new(enhanced_context),
+                }
+            }
+            _ => error, // Don't enhance non-syntax errors during recovery
+        }
+    }
+
+    /// Deduplicate similar errors to reduce noise
+    fn deduplicate_errors(&self, errors: Vec<CompilerError>) -> Vec<CompilerError> {
+        let mut deduped = Vec::new();
+        let mut seen_messages = std::collections::HashSet::new();
+
+        for error in errors {
+            let error_key = format!(
+                "{}:{}",
+                error.to_string().lines().next().unwrap_or(""),
+                match &error {
+                    CompilerError::Syntax { context }
+                    | CompilerError::Type { context }
+                    | CompilerError::Memory { context }
+                    | CompilerError::Codegen { context }
+                    | CompilerError::IO { context }
+                    | CompilerError::Runtime { context }
+                    | CompilerError::Validation { context }
+                    | CompilerError::Module { context }
+                    | CompilerError::Testing { context } => {
+                        context
+                            .location
+                            .as_ref()
+                            .map(|l| format!("{}:{}", l.line, l.column))
+                            .unwrap_or_else(|| "unknown".to_string())
+                    }
+                    CompilerError::LexError(_) => {
+                        "lexer".to_string()
+                    }
+                }
+            );
+
+            if !seen_messages.contains(&error_key) {
+                seen_messages.insert(error_key);
+                deduped.push(error);
+            }
+        }
+
+        deduped
+    }
+
+    /// Extract function name from malformed function declaration (legacy method)
+    fn extract_function_name(&self, segment: &str) -> Option<String> {
+        if let Some((name, _, _)) = self.extract_function_signature(segment) {
+            Some(name)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::CleanParser;
     use super::*;
-    use crate::CleanParser;
     use pest::Parser;
 
     #[test]

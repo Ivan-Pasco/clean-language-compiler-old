@@ -1,10 +1,13 @@
-use pest::{Parser, iterators::Pair};
-use crate::ast::{Function, FunctionSyntax, Parameter, Type, Statement, Visibility, FunctionModifier, SourceLocation};
-use crate::error::CompilerError;
-use super::{CleanParser, Rule};
-use super::lexical_analyzer::{LexicalAnalyzer, FunctionSegment};
+use super::lexical_analyzer::{FunctionSegment, LexicalAnalyzer};
 use super::statement_parser::parse_statement;
 use super::type_parser::parse_type;
+use super::{CleanParser, Rule};
+use crate::ast::{
+    Function, FunctionModifier, FunctionSyntax, Parameter, SourceLocation, Statement, Type,
+    Visibility,
+};
+use crate::error::CompilerError;
+use pest::{iterators::Pair, Parser};
 
 /// Enhanced function parser that uses lexical analysis for proper boundary detection
 pub struct FunctionParser {
@@ -47,19 +50,23 @@ impl FunctionParser {
     /// Parse a single function segment
     fn parse_function_segment(&self, segment: &FunctionSegment) -> Result<Function, CompilerError> {
         // Create a minimal functions block wrapper for parsing
-        let wrapped_source = format!("functions:\n{segment.source}");
+        let wrapped_source = format!("functions:\n{}", segment.source);
 
         // Parse with pest
-        let parse_result = <CleanParser as Parser<Rule>>::parse(Rule::functions_block, &wrapped_source);
+        let parse_result =
+            <CleanParser as Parser<Rule>>::parse(Rule::functions_block, &wrapped_source);
         let pairs = parse_result.map_err(|e| {
             CompilerError::syntax_error(
-                &format!("Failed to parse function {}: {segment.boundary.function_name, e}"),
+                &format!(
+                    "Failed to parse function {}: {}",
+                    segment.boundary.function_name, e
+                ),
                 None,
                 Some(SourceLocation {
                     line: 1,
                     column: 1,
                     file: String::new(),
-                })
+                }),
             )
         })?;
 
@@ -76,18 +83,24 @@ impl FunctionParser {
         }
 
         Err(CompilerError::syntax_error(
-            &format!("No function found in segment for {segment.boundary.function_name}"),
+            &format!(
+                "No function found in segment for {}",
+                segment.boundary.function_name
+            ),
             None,
             Some(SourceLocation {
                 line: 1,
                 column: 1,
                 file: String::new(),
-            })
+            }),
         ))
     }
 
     /// Parse a single function from an indented functions block
-    fn parse_single_function_from_block(&self, pair: Pair<Rule>) -> Result<Function, CompilerError> {
+    fn parse_single_function_from_block(
+        &self,
+        pair: Pair<Rule>,
+    ) -> Result<Function, CompilerError> {
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
                 Rule::function_in_block => {
@@ -104,7 +117,7 @@ impl FunctionParser {
                 line: 1,
                 column: 1,
                 file: String::new(),
-            })
+            }),
         ))
     }
 
@@ -132,6 +145,11 @@ impl FunctionParser {
                     parameters = self.parse_parameter_list(inner_pair)?;
                 }
                 Rule::function_body => {
+                    let parsed_body = self.parse_function_body(inner_pair)?;
+                    statements = parsed_body.statements;
+                    syntax = parsed_body.syntax;
+                }
+                Rule::function_body_in_block => {
                     let parsed_body = self.parse_function_body(inner_pair)?;
                     statements = parsed_body.statements;
                     syntax = parsed_body.syntax;
@@ -211,13 +229,17 @@ impl FunctionParser {
                     syntax = FunctionSyntax::Detailed;
                     // Skip setup parsing for now - handled elsewhere
                 }
-                Rule::function_content => {
+                Rule::function_line => {
                     let content_statements = self.parse_function_content(inner_pair)?;
                     statements.extend(content_statements);
                 }
-                Rule::limited_statements => {
+                Rule::function_body_statements => {
                     let content_statements = self.parse_limited_statements(inner_pair)?;
                     statements.extend(content_statements);
+                }
+                // Skip whitespace/formatting tokens
+                Rule::NEWLINE | Rule::INDENT => {
+                    // These are just formatting, skip them
                 }
                 _ => {}
             }
@@ -232,10 +254,20 @@ impl FunctionParser {
 
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
-                Rule::limited_statement | Rule::statement => {
+                Rule::function_body_statement => {
+                    // function_body_statement = { INDENT+ ~ statement }
+                    // We need to extract the actual statement from the indented wrapper
+                    for statement_pair in inner_pair.into_inner() {
+                        if statement_pair.as_rule() == Rule::statement {
+                            statements.push(parse_statement(statement_pair)?);
+                            break; // There should only be one statement per function_body_statement
+                        }
+                    }
+                }
+                Rule::statement => {
                     statements.push(parse_statement(inner_pair)?);
                 }
-                Rule::limited_statements => {
+                Rule::function_body_statements => {
                     let nested_statements = self.parse_limited_statements(inner_pair)?;
                     statements.extend(nested_statements);
                 }
@@ -251,8 +283,15 @@ impl FunctionParser {
         let mut statements = Vec::new();
 
         for inner_pair in pair.into_inner() {
-            if inner_pair.as_rule() == Rule::limited_statement {
-                statements.push(parse_statement(inner_pair)?);
+            if inner_pair.as_rule() == Rule::function_body_statement {
+                // function_body_statement = { INDENT+ ~ statement }
+                // We need to extract the actual statement from the indented wrapper
+                for statement_pair in inner_pair.into_inner() {
+                    if statement_pair.as_rule() == Rule::statement {
+                        statements.push(parse_statement(statement_pair)?);
+                        break; // There should only be one statement per function_body_statement
+                    }
+                }
             }
         }
 
@@ -260,7 +299,10 @@ impl FunctionParser {
     }
 
     /// Fallback to traditional parsing if lexical analysis fails
-    fn parse_functions_traditional(&self, pair: Pair<Rule>) -> Result<Vec<Function>, CompilerError> {
+    fn parse_functions_traditional(
+        &self,
+        pair: Pair<Rule>,
+    ) -> Result<Vec<Function>, CompilerError> {
         // Use the existing parser implementation as fallback
         super::parser_impl::parse_functions_block_traditional(pair)
     }

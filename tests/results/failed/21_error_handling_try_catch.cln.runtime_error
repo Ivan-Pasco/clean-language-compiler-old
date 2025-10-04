@@ -1,0 +1,6 @@
+Error: error while executing at wasm backtrace:
+    0: 0x3734 - <unknown>!<wasm function 405>
+    1: 0x37a6 - <unknown>!<wasm function 406>
+
+Caused by:
+    wasm trap: wasm `unreachable` instruction executed

@@ -1,0 +1,59 @@
+// Apply-blocks specification compliance test
+// Tests all apply-block patterns defined in Clean Language Specification
+
+functions:
+	void processItem(string item)
+		print "Processing: " + item ln
+	
+	void showNumber(integer num)
+		print "Number: " + num.toString( ln)
+
+start()
+	print "=== Apply-Block Specification Test ===" ln
+	
+	// Test 1: Function call apply-blocks
+	print "1. Function Call Apply-Blocks:" ln
+	println:
+		"First line output"
+		"Second line output"
+		"Third line output"
+	
+	print:
+		"Print without newline 1"
+		"Print without newline 2"
+	
+	// Test 2: Variable declaration apply-blocks
+	print "2. Variable Declaration Apply-Blocks:" ln
+	integer:
+		count = 0
+		maxSize = 100
+		currentIndex = -1
+	
+	string:
+		name = "Alice"
+		version = "1.0.0"
+		status = "active"
+	
+	boolean:
+		isActive = true
+		hasPermission = false
+		isComplete = true
+	
+	// Test 3: Constant declaration apply-blocks
+	print "3. Constant Declaration Apply-Blocks:" ln
+	constant:
+		integer MAX_USERS = 1000
+		string API_VERSION = "v2.1"
+		number PI_VALUE = 3.14159
+		boolean DEBUG_MODE = true
+	
+	// Test 4: Verify variables work correctly
+	print "4. Testing Declared Variables:" ln
+	print "Count: " + count.toString( ln)
+	print "Name: " + name ln
+	print "Max Users: " + MAX_USERS.toString( ln)
+	print "API Version: " + API_VERSION ln
+	print "Active: " + isActive.toString( ln)
+	print "PI Value: " + PI_VALUE.toString( ln)
+	
+	print "Apply-blocks specification compliance test completed successfully" ln

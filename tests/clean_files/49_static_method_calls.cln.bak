@@ -1,0 +1,68 @@
+// Comprehensive QA Test for Lowercase Namespace Calls
+// Tests simplified lowercase namespace syntax: namespace.method()
+
+functions:
+
+	void testLowercaseMethods()
+
+		// Test math namespace methods - using operators for basic math
+		number result = 5.0 + 3.0
+		print "5.0 + 3.0: " ln
+		print result.toString( ln)
+		
+		number maximum = math.max(10.5, 7.2)
+		print "math.max(10.5, 7.2 ln: ")
+		print maximum.toString( ln)
+		
+		number absolute = math.abs(-42.5)
+		print "math.abs(-42.5 ln: ")
+		print absolute.toString( ln)
+		
+		// Test string namespace methods
+		integer textLength = string.length("Hello World")
+		print "string.length('Hello World' ln: ")
+		print textLength.toString( ln)
+		
+		string upperText = string.toUpperCase("hello")
+		print "string.toUpperCase('hello' ln: ")
+		print upperText ln
+		
+		string lowerText = string.toLowerCase("WORLD")
+		print "string.toLowerCase('WORLD' ln: ")
+		print lowerText ln
+		
+		boolean contains = string.contains("Hello World", "World")
+		print "string.contains('Hello World', 'World' ln: ")
+		print contains.toString( ln)
+		
+		string trimmed = string.trim("  spaced  ")
+		print "string.trim('  spaced  ' ln: '")
+		print trimmed ln
+		print "'" ln
+		
+		// Test list namespace methods
+		list<integer> numbers = [1, 2, 3, 4, 5]
+		integer myListLength = list.length(numbers)
+		print "list.length([1,2,3,4,5] ln: ")
+		print myListLength.toString( ln)
+		
+		integer firstItem = list.get(numbers, 0)
+		print "list.get(numbers, 0 ln: ")
+		print firstItem.toString( ln)
+		
+		boolean hasItem = list.contains(numbers, 3)
+		print "list.contains(numbers, 3 ln: ")
+		print hasItem.toString( ln)
+		
+		// Test file namespace methods
+		boolean myFileExists = file.exists("test.txt")
+		print "file.exists('test.txt' ln: ")
+		print myFileExists.toString( ln)
+		
+		print "Lowercase namespace calls test completed successfully!" ln
+
+start()
+
+	print "Lowercase Namespace Calls QA Test" ln
+	testLowercaseMethods()
+	print "Test completed" ln

@@ -1,4 +1,5 @@
 functions:
 	void main()
-		result = obj.prop.greaterThan(5)
+		integer obj = 10
+		boolean result = compare.integer.greaterThan(obj, 5)
 		print(result)

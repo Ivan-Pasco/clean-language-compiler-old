@@ -38,18 +38,9 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
             }
             Rule::indented_class_body => {
                 for class_item in item.into_inner() {
-                    println!(
-                        "DEBUG: Found class_item with rule: {:?}",
-                        class_item.as_rule()
-                    );
-
                     // The class_item is actually class_body_item, we need to look at its inner content
                     if class_item.as_rule() == Rule::class_body_item {
                         for body_item in class_item.into_inner() {
-                            println!(
-                                "DEBUG: Processing body_item with rule: {:?}",
-                                body_item.as_rule()
-                            );
                             match body_item.as_rule() {
                                 Rule::class_field => {
                                     let field = parse_class_field(body_item, ast_location.clone())?;
@@ -59,11 +50,8 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
                                     // println!("DEBUG: Found constructor in class {name}");
                                     constructor =
                                         Some(parse_constructor(body_item, ast_location.clone())?);
-                                    println!(
-                                        "DEBUG: Constructor parsed successfully for class {name}"
-                                    );
                                 }
-                                Rule::functions_block => {
+                                Rule::functions_block | Rule::class_functions_block => {
                                     // println!("DEBUG: Found functions_block in class {name}");
                                     // Create class context for preprocessor with all fields collected so far
                                     let class_context = ClassContext {
@@ -77,10 +65,6 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
                                         body_item,
                                         Some(class_context),
                                     )?;
-                                    println!(
-                                        "DEBUG: Got {} methods from functions_block",
-                                        class_methods.len()
-                                    );
                                     methods.extend(class_methods);
                                 }
                                 _ => {}
@@ -99,7 +83,7 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
                                     Some(parse_constructor(class_item, ast_location.clone())?);
                                 // println!("DEBUG: Constructor parsed successfully for class {name}");
                             }
-                            Rule::functions_block => {
+                            Rule::functions_block | Rule::class_functions_block => {
                                 // println!("DEBUG: Found functions_block in class {name}");
                                 // Create class context for preprocessor with all fields collected so far
                                 let class_context = ClassContext {
@@ -113,10 +97,6 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
                                     class_item,
                                     Some(class_context),
                                 )?;
-                                println!(
-                                    "DEBUG: Got {} methods from functions_block",
-                                    class_methods.len()
-                                );
                                 methods.extend(class_methods);
                             }
                             _ => {}

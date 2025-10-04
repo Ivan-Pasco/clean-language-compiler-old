@@ -2,7 +2,7 @@
 // According to Clean Language Specification, apply-blocks apply identifier: to each indented item
 
 functions:
-	testApplyBlocks()
+	void testApplyBlocks()
 		// Test apply-block for function calls
 		println:
 			"Apply-block function call test"

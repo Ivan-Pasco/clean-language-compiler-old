@@ -1,0 +1,17 @@
+class Vehicle
+	string name
+	
+	constructor(string vehicleName)
+		name = vehicleName
+	
+	functions:
+		string getInfo()
+			return name
+
+class Car is Vehicle
+	constructor(string carName)
+		base(carName)
+
+start()
+	Car myCar = Car("Toyota")
+	print(myCar.getInfo()) ln

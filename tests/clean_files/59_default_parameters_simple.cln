@@ -23,7 +23,7 @@ functions:
 		else
 			print("[" + level + "] " + message)
 	
-	testDefaultParameters()
+	void testDefaultParameters()
 		// Test functions with manual default handling
 		print(greet(""))        // Should use default "World"
 		print(greet("Alice"))   // Should use "Alice"

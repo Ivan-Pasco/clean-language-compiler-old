@@ -1,0 +1,78 @@
+// Test 77: Comprehensive String Module Operations
+// Tests all string functions: length, concat, contains, split, case operations, trim, replace, etc.
+
+start()
+	// Basic string operations
+	string text = "  Hello, World!  "
+	integer len = string.length(text)
+	string trimmed = string.trim(text)
+	print "Original: '" + text + "'" ln
+	print "Length: " + len.toString() ln
+	print "Trimmed: '" + trimmed + "'" ln
+	
+	// Case operations
+	string upper = string.toUpperCase(trimmed)
+	string lower = string.toLowerCase(trimmed)
+	print "Uppercase: " + upper ln
+	print "Lowercase: " + lower ln
+	
+	// String concatenation
+	string part1 = "Hello"
+	string part2 = "World"
+	string concatenated = string.concat(part1, ", " + part2 + "!")
+	print "Concatenated: " + concatenated ln
+	
+	// Substring operations
+	string sub = string.substring(concatenated, 0, 5)
+	print "Substring(0, 5): " + sub ln
+	
+	// Search operations
+	boolean contains = string.contains(concatenated, "World")
+	integer index = string.indexOf(concatenated, "World")
+	integer lastIndex = string.lastIndexOf(concatenated, "l")
+	print "Contains 'World': " + contains.toString() ln
+	print "Index of 'World': " + index.toString() ln
+	print "Last index of 'l': " + lastIndex.toString() ln
+	
+	// Prefix/suffix checks
+	boolean starts = string.startsWith(concatenated, "Hello")
+	boolean ends = string.endsWith(concatenated, "!")
+	print "Starts with 'Hello': " + starts.toString() ln
+	print "Ends with '!': " + ends.toString() ln
+	
+	// String replacement
+	string original = "Hello Hello World"
+	string replaced = string.replace(original, "Hello", "Hi")
+	string replacedAll = string.replaceAll(original, "Hello", "Hi")
+	print "Replace first: " + replaced ln
+	print "Replace all: " + replacedAll ln
+	
+	// String splitting and joining
+	string csvData = "apple,banana,orange,grape"
+	list<string> fruits = string.split(csvData, ",")
+	string joined = string.join(fruits, " | ")
+	print "Split result: " + fruits.size().toString() + " items" ln
+	print "Joined: " + joined ln
+	
+	// Character operations
+	string word = "Clean"
+	string firstChar = string.charAt(word, 0)
+	integer charCode = string.charCodeAt(word, 0)
+	print "First character: " + firstChar ln
+	print "Character code: " + charCode.toString() ln
+	
+	// Validation functions
+	string empty = ""
+	string blank = "   "
+	string valid = "text"
+	print "Is empty '': " + string.isEmpty(empty).toString() ln
+	print "Is blank '   ': " + string.isBlank(blank).toString() ln
+	print "Is empty 'text': " + string.isEmpty(valid).toString() ln
+	
+	// Padding operations
+	string number = "42"
+	string padded = string.padStart(number, 5, "0")
+	string name = "Alice"
+	string rightPadded = string.padEnd(name, 10, " ")
+	print "Padded number: '" + padded + "'" ln
+	print "Right padded name: '" + rightPadded + "'" ln

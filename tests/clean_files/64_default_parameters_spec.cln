@@ -18,12 +18,11 @@ functions:
 		// Default exponent of 2 for squaring
 		return base ^ exponent
 	
-	// Test 4: Function with input block and defaults
+	// Test 4: Function with defaults - input block converted to regular variables
 	integer calculateArea()
 		description "Calculate area with default dimensions"
-		input
-			integer width = 10
-			integer height = 5
+		integer width = 10
+		integer height = 5
 		return width * height
 	
 	// Test 5: Complex default values

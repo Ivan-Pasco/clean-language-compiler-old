@@ -1,4 +1,4 @@
-function start()
+start()
 	string text = "Hello"
 	print("Text: " + text)
 	

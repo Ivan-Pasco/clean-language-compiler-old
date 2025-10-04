@@ -1,0 +1,41 @@
+// Default parameters simple test - demonstrates basic function parameter patterns
+// Note: Full default parameter syntax requires parser implementation
+
+functions:
+	// Standard functions with explicit parameters for now
+	string greet(string name)
+		if name == ""
+			return "Hello, World"  // Manual default handling
+		else
+			return "Hello, " + name
+	
+	integer power(integer base, integer exponent)
+		if exponent == 0
+			return 1
+		else if exponent == 1
+			return base
+		else
+			return base * base  // Simple case for testing
+	
+	void logMessage(string message, string level)
+		if level == ""
+			print "[INFO] " + message ln  // Manual default handling
+		else
+			print "[" + level + "] " + message ln
+	
+	testDefaultParameters()
+		// Test functions with manual default handling
+		print greet("" ln)        // Should use default "World"
+		print greet("Alice" ln)   // Should use "Alice"
+		
+		integer squared = power(5, 2)   // 25
+		integer identity = power(7, 1)  // 7
+		print "Squared: " + squared.toString( ln)
+		print "Identity: " + identity.toString( ln)
+		
+		logMessage("System started", "")      // Should use default INFO
+		logMessage("Error occurred", "ERROR") // Should use ERROR
+
+start()
+	testDefaultParameters()
+	print "Default parameters test completed successfully" ln
