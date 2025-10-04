@@ -1394,28 +1394,41 @@ impl NameResolver {
 
                             // Check parent class fields if inheritance is involved
                             if let Some(parent_class_id) = parent {
-                                if let Some(parent_symbol) = self.symbol_table.get_symbol(*parent_class_id) {
-                                    if let SymbolKind::Class { fields: parent_fields, .. } = &parent_symbol.kind {
+                                if let Some(parent_symbol) =
+                                    self.symbol_table.get_symbol(*parent_class_id)
+                                {
+                                    if let SymbolKind::Class {
+                                        fields: parent_fields,
+                                        ..
+                                    } = &parent_symbol.kind
+                                    {
                                         for &field_id in parent_fields {
-                                            if let Some(field_symbol) = self.symbol_table.get_symbol(field_id) {
+                                            if let Some(field_symbol) =
+                                                self.symbol_table.get_symbol(field_id)
+                                            {
                                                 if field_symbol.name == *namespace {
                                                     eprintln!("DEBUG RESOLVER: Converting NamespaceCall '{}::{}' to MethodCall - '{}' is a parent field", namespace, function, namespace);
 
                                                     // Create field access for the receiver
-                                                    let receiver = ResolvedHirExpression::FieldAccess {
-                                                        object: Box::new(ResolvedHirExpression::This {
-                                                            class_symbol_id: current_class_id,
+                                                    let receiver =
+                                                        ResolvedHirExpression::FieldAccess {
+                                                            object: Box::new(
+                                                                ResolvedHirExpression::This {
+                                                                    class_symbol_id:
+                                                                        current_class_id,
+                                                                    location: location.clone(),
+                                                                },
+                                                            ),
+                                                            field: namespace.clone(),
+                                                            field_symbol_id: field_id,
                                                             location: location.clone(),
-                                                        }),
-                                                        field: namespace.clone(),
-                                                        field_symbol_id: field_id,
-                                                        location: location.clone(),
-                                                    };
+                                                        };
 
                                                     // Resolve arguments
                                                     let mut resolved_arguments = Vec::new();
                                                     for arg in arguments {
-                                                        resolved_arguments.push(self.resolve_expression(arg)?);
+                                                        resolved_arguments
+                                                            .push(self.resolve_expression(arg)?);
                                                     }
 
                                                     // Return as a method call
@@ -1459,12 +1472,12 @@ impl NameResolver {
                             eprintln!("DEBUG RESOLVER: NamespaceCall '{}::{}' - '{}' is a Class, looking for static method", namespace, function, namespace);
 
                             // Look for the method in the class
-                            let method_symbol_id = methods.iter()
-                                .find_map(|&method_id| {
-                                    self.symbol_table.get_symbol(method_id)
-                                        .filter(|s| s.name == *function)
-                                        .map(|_| method_id)
-                                });
+                            let method_symbol_id = methods.iter().find_map(|&method_id| {
+                                self.symbol_table
+                                    .get_symbol(method_id)
+                                    .filter(|s| s.name == *function)
+                                    .map(|_| method_id)
+                            });
 
                             if let Some(method_id) = method_symbol_id {
                                 // Resolve arguments
@@ -1484,7 +1497,10 @@ impl NameResolver {
                                 });
                             } else {
                                 return Err(self.error(
-                                    &format!("Static method '{}' not found in class '{}'", function, namespace),
+                                    &format!(
+                                        "Static method '{}' not found in class '{}'",
+                                        function, namespace
+                                    ),
                                     location.clone(),
                                 ));
                             }
@@ -1820,7 +1836,11 @@ impl NameResolver {
         );
         self.register_builtin_fn(
             "list_set",
-            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer, HirType::Integer],
+            vec![
+                HirType::List(Box::new(HirType::Integer)),
+                HirType::Integer,
+                HirType::Integer,
+            ],
             Some(HirType::Void),
             builtin_location.clone(),
         );
@@ -1904,19 +1924,30 @@ impl NameResolver {
         );
         self.register_builtin_fn(
             "list_insert",
-            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer, HirType::Integer],
+            vec![
+                HirType::List(Box::new(HirType::Integer)),
+                HirType::Integer,
+                HirType::Integer,
+            ],
             Some(HirType::List(Box::new(HirType::Integer))),
             builtin_location.clone(),
         );
         self.register_builtin_fn(
             "list_slice",
-            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer, HirType::Integer],
+            vec![
+                HirType::List(Box::new(HirType::Integer)),
+                HirType::Integer,
+                HirType::Integer,
+            ],
             Some(HirType::List(Box::new(HirType::Integer))),
             builtin_location.clone(),
         );
         self.register_builtin_fn(
             "list_concat",
-            vec![HirType::List(Box::new(HirType::Integer)), HirType::List(Box::new(HirType::Integer))],
+            vec![
+                HirType::List(Box::new(HirType::Integer)),
+                HirType::List(Box::new(HirType::Integer)),
+            ],
             Some(HirType::List(Box::new(HirType::Integer))),
             builtin_location.clone(),
         );
