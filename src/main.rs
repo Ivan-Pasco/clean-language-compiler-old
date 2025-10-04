@@ -262,7 +262,7 @@ async fn handle_compile(
     output: String,
     _opt_level: u8,
     test: bool,
-    include_tests: bool,
+    _include_tests: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Compiling {input} to {output}");
 

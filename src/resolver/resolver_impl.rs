@@ -1064,7 +1064,7 @@ impl NameResolver {
                                 "DEBUG RESOLVER: Found symbol '{}' with kind: {:?}",
                                 class_name, class_symbol.kind
                             );
-                            if let SymbolKind::Class { methods, .. } = &class_symbol.kind {
+                            if let SymbolKind::Class { .. } = &class_symbol.kind {
                                 eprintln!("DEBUG RESOLVER: '{}' is a class! Converting to static method call", class_name);
                                 // This is a static method call on a class
                                 let mut resolved_arguments = Vec::new();

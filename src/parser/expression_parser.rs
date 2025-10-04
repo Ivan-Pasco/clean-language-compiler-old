@@ -2073,7 +2073,7 @@ pub fn parse_argument_power(pair: Pair<Rule>) -> Result<Expression, CompilerErro
 
 pub fn parse_argument_unary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let location = get_location(&pair);
-    let mut inner = pair.into_inner();
+    let inner = pair.into_inner();
 
     // Collect unary operators
     let mut operators = Vec::new();
