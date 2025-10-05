@@ -65,14 +65,12 @@ jobs:
     - name: Create archive (Unix)
       if: matrix.os != 'windows-latest'
       run: |
-        cd target/${{ matrix.target }}/release
-        tar -czf ../../../${{ matrix.name }}.tar.gz cln
+        mkdir -p release-package
+        cp target/${{ matrix.target }}/release/cln release-package/
+        cp compile-options.json release-package/
+        tar -czf ${{ matrix.name }}.tar.gz -C release-package .
         # Also copy direct binary for cleanmanager compatibility
-        cp cln ../../../${{ matrix.name }}
-        cd -
-        # Include compile-options.json in the archive
-        tar -rf ${{ matrix.name }}.tar.gz compile-options.json
-        gzip -f ${{ matrix.name }}.tar
+        cp target/${{ matrix.target }}/release/cln ${{ matrix.name }}
 
     - name: Create archive (Windows)
       if: matrix.os == 'windows-latest'
