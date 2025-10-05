@@ -230,8 +230,7 @@ impl ModuleResolver {
             }
         }
 
-        // Reverse to get correct dependency order
-        result.reverse();
+        // Result is already in correct order: dependencies come before dependents
         Ok(result)
     }
 
@@ -426,7 +425,7 @@ mod tests {
         let b_pos = result.iter().position(|x| x == "B").unwrap();
         let a_pos = result.iter().position(|x| x == "A").unwrap();
 
-        assert!(c_pos < b_pos);
-        assert!(b_pos < a_pos);
+        assert!(c_pos < b_pos, "C should come before B");
+        assert!(b_pos < a_pos, "B should come before A");
     }
 }

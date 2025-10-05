@@ -94,7 +94,8 @@ fn test_add_global() {
 
 #[test]
 fn test_memory_utils() {
-    let mut memory_utils = memory::MemoryUtils::new(65536); // Use literal instead of removed constant
+    let heap_start = 1024; // Start heap at 1KB, leaving room for allocations
+    let mut memory_utils = memory::MemoryUtils::new(heap_start);
 
     // Test string allocation
     let string_result = memory_utils.allocate_string("hello");
@@ -105,7 +106,7 @@ fn test_memory_utils() {
     );
     let string_ptr = string_result.unwrap();
     assert!(
-        string_ptr >= 65536,
+        string_ptr >= heap_start,
         "String pointer should be >= heap start"
     );
 
