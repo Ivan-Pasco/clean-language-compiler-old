@@ -14,8 +14,15 @@ impl DiagnosticsProvider {
         Self
     }
 
-    pub async fn convert_compiler_errors(&self, errors: &[CompilerError], _source: &str) -> Vec<Diagnostic> {
-        errors.iter().map(|error| self.convert_error(error)).collect()
+    pub async fn convert_compiler_errors(
+        &self,
+        errors: &[CompilerError],
+        _source: &str,
+    ) -> Vec<Diagnostic> {
+        errors
+            .iter()
+            .map(|error| self.convert_error(error))
+            .collect()
     }
 
     fn convert_error(&self, error: &CompilerError) -> Diagnostic {
@@ -36,8 +43,14 @@ impl DiagnosticsProvider {
 
     fn analyze_error(&self, error: &CompilerError) -> (DiagnosticSeverity, String, Range) {
         let default_range = Range {
-            start: Position { line: 0, character: 0 },
-            end: Position { line: 0, character: 0 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
         };
 
         match error {
@@ -57,7 +70,11 @@ impl DiagnosticsProvider {
                     })
                     .unwrap_or(default_range);
 
-                (DiagnosticSeverity::ERROR, self.enhance_syntax_message(&context.message), range)
+                (
+                    DiagnosticSeverity::ERROR,
+                    self.enhance_syntax_message(&context.message),
+                    range,
+                )
             }
             CompilerError::Type { context } => {
                 let range = context
@@ -75,7 +92,11 @@ impl DiagnosticsProvider {
                     })
                     .unwrap_or(default_range);
 
-                (DiagnosticSeverity::ERROR, self.enhance_type_message(&context.message), range)
+                (
+                    DiagnosticSeverity::ERROR,
+                    self.enhance_type_message(&context.message),
+                    range,
+                )
             }
             CompilerError::Validation { context } => {
                 let range = context
@@ -93,7 +114,11 @@ impl DiagnosticsProvider {
                     })
                     .unwrap_or(default_range);
 
-                (DiagnosticSeverity::ERROR, self.enhance_semantic_message(&context.message), range)
+                (
+                    DiagnosticSeverity::ERROR,
+                    self.enhance_semantic_message(&context.message),
+                    range,
+                )
             }
             CompilerError::Module { context } => {
                 let range = context
@@ -111,38 +136,54 @@ impl DiagnosticsProvider {
                     })
                     .unwrap_or(default_range);
 
-                (DiagnosticSeverity::ERROR, self.enhance_resolver_message(&context.message), range)
+                (
+                    DiagnosticSeverity::ERROR,
+                    self.enhance_resolver_message(&context.message),
+                    range,
+                )
             }
-            CompilerError::Codegen { context } => {
-                (DiagnosticSeverity::ERROR, format!("Code generation error: {}", context.message), default_range)
-            }
-            CompilerError::IO { context } => {
-                (DiagnosticSeverity::ERROR, format!("I/O error: {}", context.message), default_range)
-            }
-            CompilerError::Runtime { context } => {
-                (DiagnosticSeverity::ERROR, format!("Runtime error: {}", context.message), default_range)
-            }
-            CompilerError::Memory { context } => {
-                (DiagnosticSeverity::ERROR, format!("Memory error: {}", context.message), default_range)
-            }
-            CompilerError::Testing { context } => {
-                (DiagnosticSeverity::WARNING, format!("Testing: {}", context.message), default_range)
-            }
-            CompilerError::LexError(_) => {
-                (DiagnosticSeverity::ERROR, "Lexical analysis error".to_string(), default_range)
-            }
+            CompilerError::Codegen { context } => (
+                DiagnosticSeverity::ERROR,
+                format!("Code generation error: {}", context.message),
+                default_range,
+            ),
+            CompilerError::IO { context } => (
+                DiagnosticSeverity::ERROR,
+                format!("I/O error: {}", context.message),
+                default_range,
+            ),
+            CompilerError::Runtime { context } => (
+                DiagnosticSeverity::ERROR,
+                format!("Runtime error: {}", context.message),
+                default_range,
+            ),
+            CompilerError::Memory { context } => (
+                DiagnosticSeverity::ERROR,
+                format!("Memory error: {}", context.message),
+                default_range,
+            ),
+            CompilerError::Testing { context } => (
+                DiagnosticSeverity::WARNING,
+                format!("Testing: {}", context.message),
+                default_range,
+            ),
+            CompilerError::LexError(_) => (
+                DiagnosticSeverity::ERROR,
+                "Lexical analysis error".to_string(),
+                default_range,
+            ),
         }
     }
 
     fn enhance_syntax_message(&self, msg: &str) -> String {
         if msg.contains("expected") {
-            format!("{}\n\n💡 Tip: Check for missing colons (:) after keywords like 'functions', 'class', 'if', etc.", msg)
+            format!("{msg}\n\n💡 Tip: Check for missing colons (:) after keywords like 'functions', 'class', 'if', etc.")
         } else if msg.contains("unexpected") {
-            format!("{}\n\n💡 Tip: Ensure proper Clean Language syntax is used", msg)
+            format!("{msg}\n\n💡 Tip: Ensure proper Clean Language syntax is used")
         } else if msg.contains("function") {
-            format!("{}\n\n💡 Tip: Functions should be inside a 'functions:' block or be a standalone 'start()' function", msg)
+            format!("{msg}\n\n💡 Tip: Functions should be inside a 'functions:' block or be a standalone 'start()' function")
         } else if msg.contains("indentation") || msg.contains("tab") {
-            format!("{}\n\n💡 Tip: Clean Language uses tab-based indentation", msg)
+            format!("{msg}\n\n💡 Tip: Clean Language uses tab-based indentation")
         } else {
             msg.to_string()
         }
@@ -150,11 +191,11 @@ impl DiagnosticsProvider {
 
     fn enhance_semantic_message(&self, msg: &str) -> String {
         if msg.contains("undefined") {
-            format!("{}\n\n💡 Tip: Make sure variables and functions are declared before use", msg)
+            format!("{msg}\n\n💡 Tip: Make sure variables and functions are declared before use")
         } else if msg.contains("scope") {
-            format!("{}\n\n💡 Tip: Check variable and function visibility scopes", msg)
+            format!("{msg}\n\n💡 Tip: Check variable and function visibility scopes")
         } else if msg.contains("return") {
-            format!("{}\n\n💡 Tip: Functions with return types must have return statements", msg)
+            format!("{msg}\n\n💡 Tip: Functions with return types must have return statements")
         } else {
             msg.to_string()
         }
@@ -162,11 +203,11 @@ impl DiagnosticsProvider {
 
     fn enhance_type_message(&self, msg: &str) -> String {
         if msg.contains("mismatch") {
-            format!("{}\n\n💡 Tip: Check that variable and function types match their usage", msg)
+            format!("{msg}\n\n💡 Tip: Check that variable and function types match their usage")
         } else if msg.contains("inference") {
-            format!("{}\n\n💡 Tip: Consider adding explicit type annotations", msg)
+            format!("{msg}\n\n💡 Tip: Consider adding explicit type annotations")
         } else if msg.contains("constraint") {
-            format!("{}\n\n💡 Tip: Review type relationships and generic constraints", msg)
+            format!("{msg}\n\n💡 Tip: Review type relationships and generic constraints")
         } else {
             msg.to_string()
         }
@@ -174,11 +215,11 @@ impl DiagnosticsProvider {
 
     fn enhance_resolver_message(&self, msg: &str) -> String {
         if msg.contains("not found") {
-            format!("{}\n\n💡 Tip: Check spelling and ensure the symbol is imported or defined", msg)
+            format!("{msg}\n\n💡 Tip: Check spelling and ensure the symbol is imported or defined")
         } else if msg.contains("ambiguous") {
-            format!("{}\n\n💡 Tip: Use fully qualified names to resolve ambiguity", msg)
+            format!("{msg}\n\n💡 Tip: Use fully qualified names to resolve ambiguity")
         } else if msg.contains("circular") {
-            format!("{}\n\n💡 Tip: Break circular dependencies between modules or types", msg)
+            format!("{msg}\n\n💡 Tip: Break circular dependencies between modules or types")
         } else {
             msg.to_string()
         }

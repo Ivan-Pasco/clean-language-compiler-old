@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use clean_language_compiler::{compile_with_file, error::CompilerError};
+use clean_language_compiler::compile_with_file;
 use dashmap::DashMap;
 use ropey::Rope;
 use tower_lsp::jsonrpc::Result;
@@ -22,16 +22,17 @@ use tracing::{debug, info, warn};
 
 mod completion;
 mod diagnostics;
-mod hover;
 mod formatting;
+mod hover;
 
 use completion::CompletionProvider;
 use diagnostics::DiagnosticsProvider;
-use hover::HoverProvider;
 use formatting::FormattingProvider;
+use hover::HoverProvider;
 
 #[derive(Debug)]
 struct TextDocumentItem {
+    #[allow(dead_code)]
     uri: Url,
     text: Rope,
     version: i32,
@@ -135,7 +136,10 @@ impl LanguageServer for Backend {
         info!("Clean Language Server initialized successfully");
 
         self.client
-            .log_message(MessageType::INFO, "Clean Language Server ready - integrated with compiler v0.7.0")
+            .log_message(
+                MessageType::INFO,
+                "Clean Language Server ready - integrated with compiler v0.8.2",
+            )
             .await;
     }
 
@@ -153,7 +157,8 @@ impl LanguageServer for Backend {
             version: params.text_document.version,
         };
 
-        self.documents.insert(params.text_document.uri.clone(), document);
+        self.documents
+            .insert(params.text_document.uri.clone(), document);
 
         // Parse and analyze the document
         self.analyze_document(&params.text_document.uri).await;
@@ -173,10 +178,16 @@ impl LanguageServer for Backend {
                         let end_char = range.end.character as usize;
 
                         if let (Ok(start_idx), Ok(end_idx)) = (
-                            document.text.try_line_to_char(start_line)
-                                .map(|line_start| line_start + start_char.min(document.text.line(start_line).len_chars())),
-                            document.text.try_line_to_char(end_line)
-                                .map(|line_start| line_start + end_char.min(document.text.line(end_line).len_chars()))
+                            document
+                                .text
+                                .try_line_to_char(start_line)
+                                .map(|line_start| {
+                                    line_start
+                                        + start_char.min(document.text.line(start_line).len_chars())
+                                }),
+                            document.text.try_line_to_char(end_line).map(|line_start| {
+                                line_start + end_char.min(document.text.line(end_line).len_chars())
+                            }),
                         ) {
                             if end_idx >= start_idx && end_idx <= document.text.len_chars() {
                                 document.text.remove(start_idx..end_idx);
@@ -214,13 +225,19 @@ impl LanguageServer for Backend {
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        debug!("Completion requested at {:?}", params.text_document_position);
+        debug!(
+            "Completion requested at {:?}",
+            params.text_document_position
+        );
 
-        if let Some(document) = self.documents.get(&params.text_document_position.text_document.uri) {
-            let completions = self.completion_provider.provide_completions(
-                &document.text,
-                params.text_document_position.position,
-            ).await;
+        if let Some(document) = self
+            .documents
+            .get(&params.text_document_position.text_document.uri)
+        {
+            let completions = self
+                .completion_provider
+                .provide_completions(&document.text, params.text_document_position.position)
+                .await;
 
             Ok(Some(CompletionResponse::Array(completions)))
         } else {
@@ -229,13 +246,22 @@ impl LanguageServer for Backend {
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        debug!("Hover requested at {:?}", params.text_document_position_params);
+        debug!(
+            "Hover requested at {:?}",
+            params.text_document_position_params
+        );
 
-        if let Some(document) = self.documents.get(&params.text_document_position_params.text_document.uri) {
-            let hover_info = self.hover_provider.provide_hover(
-                &document.text,
-                params.text_document_position_params.position,
-            ).await;
+        if let Some(document) = self
+            .documents
+            .get(&params.text_document_position_params.text_document.uri)
+        {
+            let hover_info = self
+                .hover_provider
+                .provide_hover(
+                    &document.text,
+                    params.text_document_position_params.position,
+                )
+                .await;
 
             Ok(hover_info)
         } else {
@@ -247,10 +273,10 @@ impl LanguageServer for Backend {
         debug!("Formatting requested for: {}", params.text_document.uri);
 
         if let Some(document) = self.documents.get(&params.text_document.uri) {
-            let edits = self.formatting_provider.format_document(
-                &document.text,
-                &params.options,
-            ).await;
+            let edits = self
+                .formatting_provider
+                .format_document(&document.text, &params.options)
+                .await;
 
             Ok(edits)
         } else {
@@ -258,15 +284,20 @@ impl LanguageServer for Backend {
         }
     }
 
-    async fn range_formatting(&self, params: DocumentRangeFormattingParams) -> Result<Option<Vec<TextEdit>>> {
-        debug!("Range formatting requested for: {}", params.text_document.uri);
+    async fn range_formatting(
+        &self,
+        params: DocumentRangeFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        debug!(
+            "Range formatting requested for: {}",
+            params.text_document.uri
+        );
 
         if let Some(document) = self.documents.get(&params.text_document.uri) {
-            let edits = self.formatting_provider.format_range(
-                &document.text,
-                &params.range,
-                &params.options,
-            ).await;
+            let edits = self
+                .formatting_provider
+                .format_range(&document.text, &params.range, &params.options)
+                .await;
 
             Ok(edits)
         } else {
@@ -285,8 +316,14 @@ impl LanguageServer for Backend {
         }
     }
 
-    async fn semantic_tokens_full(&self, params: SemanticTokensParams) -> Result<Option<SemanticTokensResult>> {
-        debug!("Semantic tokens requested for: {}", params.text_document.uri);
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        debug!(
+            "Semantic tokens requested for: {}",
+            params.text_document.uri
+        );
 
         if let Some(document) = self.documents.get(&params.text_document.uri) {
             let tokens = self.generate_semantic_tokens(&document.text).await;
@@ -324,9 +361,16 @@ impl Backend {
                 }
                 Err(errors) => {
                     // Convert compiler errors to LSP diagnostics
-                    let diagnostics = self.diagnostics_provider.convert_compiler_errors(&errors, &text).await;
+                    let diagnostics = self
+                        .diagnostics_provider
+                        .convert_compiler_errors(&errors, &text)
+                        .await;
 
-                    debug!("Found {} diagnostics for document: {}", diagnostics.len(), uri);
+                    debug!(
+                        "Found {} diagnostics for document: {}",
+                        diagnostics.len(),
+                        uri
+                    );
                     self.client
                         .publish_diagnostics(uri.clone(), diagnostics, Some(document.version))
                         .await;
@@ -335,7 +379,11 @@ impl Backend {
         }
     }
 
-    async fn generate_code_actions(&self, text: &Rope, params: &CodeActionParams) -> CodeActionResponse {
+    async fn generate_code_actions(
+        &self,
+        text: &Rope,
+        params: &CodeActionParams,
+    ) -> CodeActionResponse {
         let mut actions = vec![];
 
         // Add common code actions for Clean Language
@@ -390,9 +438,27 @@ impl Backend {
 
     fn tokenize_line(&self, line: &str, line_number: u32, data: &mut Vec<SemanticToken>) {
         let keywords = [
-            "functions", "class", "start", "if", "else", "while", "for", "return",
-            "integer", "number", "string", "boolean", "void", "any",
-            "constants", "types", "extends", "base", "onError", "try", "catch"
+            "functions",
+            "class",
+            "start",
+            "if",
+            "else",
+            "while",
+            "for",
+            "return",
+            "integer",
+            "number",
+            "string",
+            "boolean",
+            "void",
+            "any",
+            "constants",
+            "types",
+            "extends",
+            "base",
+            "onError",
+            "try",
+            "catch",
         ];
 
         let mut char_offset = 0u32;
@@ -425,7 +491,8 @@ impl Backend {
     fn needs_functions_block(&self, text: &Rope) -> bool {
         // Check if there are function definitions not wrapped in functions: block
         let text_str = text.to_string();
-        text_str.contains("(") && text_str.contains(")")
+        text_str.contains("(")
+            && text_str.contains(")")
             && !text_str.contains("functions:")
             && !text_str.starts_with("start()")
     }
@@ -434,7 +501,10 @@ impl Backend {
         let formatted_text = self.fix_indentation(text);
 
         let full_range = Range {
-            start: Position { line: 0, character: 0 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
             end: Position {
                 line: text.len_lines() as u32 - 1,
                 character: text.line(text.len_lines() - 1).len_chars() as u32,
@@ -442,10 +512,13 @@ impl Backend {
         };
 
         let mut changes = std::collections::HashMap::new();
-        changes.insert(uri.clone(), vec![TextEdit {
-            range: full_range,
-            new_text: formatted_text,
-        }]);
+        changes.insert(
+            uri.clone(),
+            vec![TextEdit {
+                range: full_range,
+                new_text: formatted_text,
+            }],
+        );
 
         WorkspaceEdit {
             changes: Some(changes),
@@ -458,7 +531,10 @@ impl Backend {
         let wrapped_text = self.wrap_in_functions_block(text);
 
         let full_range = Range {
-            start: Position { line: 0, character: 0 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
             end: Position {
                 line: text.len_lines() as u32 - 1,
                 character: text.line(text.len_lines() - 1).len_chars() as u32,
@@ -466,10 +542,13 @@ impl Backend {
         };
 
         let mut changes = std::collections::HashMap::new();
-        changes.insert(uri.clone(), vec![TextEdit {
-            range: full_range,
-            new_text: wrapped_text,
-        }]);
+        changes.insert(
+            uri.clone(),
+            vec![TextEdit {
+                range: full_range,
+                new_text: wrapped_text,
+            }],
+        );
 
         WorkspaceEdit {
             changes: Some(changes),
@@ -500,10 +579,18 @@ impl Backend {
             return text_str;
         }
 
-        format!("functions:\n\t{}", text_str.lines()
-            .map(|line| if line.trim().is_empty() { line.to_string() } else { format!("\t{}", line) })
-            .collect::<Vec<_>>()
-            .join("\n"))
+        format!(
+            "functions:\n\t{}",
+            text_str
+                .lines()
+                .map(|line| if line.trim().is_empty() {
+                    line.to_string()
+                } else {
+                    format!("\t{line}")
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
     }
 }
 
@@ -513,16 +600,16 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .with_writer(std::io::stderr)
         .init();
 
-    info!("Starting Clean Language Server v0.7.0");
+    info!("Starting Clean Language Server v0.8.2");
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
-    let (service, socket) = LspService::new(|client| Backend::new(client));
+    let (service, socket) = LspService::new(Backend::new);
     Server::new(stdin, stdout, socket).serve(service).await;
 }

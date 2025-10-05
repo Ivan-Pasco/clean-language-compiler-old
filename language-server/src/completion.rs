@@ -9,8 +9,8 @@
  * - Language constructs
  */
 
-use tower_lsp::lsp_types::*;
 use ropey::Rope;
+use tower_lsp::lsp_types::*;
 
 pub struct CompletionProvider;
 
@@ -19,7 +19,11 @@ impl CompletionProvider {
         Self
     }
 
-    pub async fn provide_completions(&self, text: &Rope, position: Position) -> Vec<CompletionItem> {
+    pub async fn provide_completions(
+        &self,
+        text: &Rope,
+        position: Position,
+    ) -> Vec<CompletionItem> {
         let mut completions = Vec::new();
 
         // Get the current line and character context
@@ -99,9 +103,21 @@ impl CompletionProvider {
         vec![
             self.create_method_completion("length", "Get the length of the string", "property"),
             self.create_method_completion("charAt", "Get character at index", "charAt(${1:index})"),
-            self.create_method_completion("substring", "Extract substring", "substring(${1:start}, ${2:end})"),
-            self.create_method_completion("indexOf", "Find index of substring", "indexOf(${1:substring})"),
-            self.create_method_completion("replace", "Replace occurrences", "replace(${1:search}, ${2:replacement})"),
+            self.create_method_completion(
+                "substring",
+                "Extract substring",
+                "substring(${1:start}, ${2:end})",
+            ),
+            self.create_method_completion(
+                "indexOf",
+                "Find index of substring",
+                "indexOf(${1:substring})",
+            ),
+            self.create_method_completion(
+                "replace",
+                "Replace occurrences",
+                "replace(${1:search}, ${2:replacement})",
+            ),
             self.create_method_completion("toUpperCase", "Convert to uppercase", "toUpperCase()"),
             self.create_method_completion("toLowerCase", "Convert to lowercase", "toLowerCase()"),
             self.create_method_completion("trim", "Remove whitespace", "trim()"),
@@ -125,11 +141,27 @@ impl CompletionProvider {
             self.create_method_completion("push", "Add element to end", "push(${1:element})"),
             self.create_method_completion("pop", "Remove and return last element", "pop()"),
             self.create_method_completion("get", "Get element at index", "get(${1:index})"),
-            self.create_method_completion("set", "Set element at index", "set(${1:index}, ${2:value})"),
-            self.create_method_completion("indexOf", "Find index of element", "indexOf(${1:element})"),
-            self.create_method_completion("contains", "Check if contains element", "contains(${1:element})"),
+            self.create_method_completion(
+                "set",
+                "Set element at index",
+                "set(${1:index}, ${2:value})",
+            ),
+            self.create_method_completion(
+                "indexOf",
+                "Find index of element",
+                "indexOf(${1:element})",
+            ),
+            self.create_method_completion(
+                "contains",
+                "Check if contains element",
+                "contains(${1:element})",
+            ),
             self.create_method_completion("clear", "Remove all elements", "clear()"),
-            self.create_method_completion("slice", "Extract portion of list", "slice(${1:start}, ${2:end})"),
+            self.create_method_completion(
+                "slice",
+                "Extract portion of list",
+                "slice(${1:start}, ${2:end})",
+            ),
         ]
     }
 
@@ -143,12 +175,21 @@ impl CompletionProvider {
 
     fn get_apply_block_completions(&self) -> Vec<CompletionItem> {
         vec![
-            self.create_snippet_completion("apply_function", "Function call with apply block",
-                "\n\t${1:function_call}\n\t${2:another_call}"),
-            self.create_snippet_completion("apply_assignment", "Variable assignments",
-                "\n\t${1:variable} = ${2:value}\n\t${3:another_var} = ${4:value}"),
-            self.create_snippet_completion("apply_method_chain", "Method chain calls",
-                "\n\t${1:method}(${2:args})\n\t${3:method}(${4:args})"),
+            self.create_snippet_completion(
+                "apply_function",
+                "Function call with apply block",
+                "\n\t${1:function_call}\n\t${2:another_call}",
+            ),
+            self.create_snippet_completion(
+                "apply_assignment",
+                "Variable assignments",
+                "\n\t${1:variable} = ${2:value}\n\t${3:another_var} = ${4:value}",
+            ),
+            self.create_snippet_completion(
+                "apply_method_chain",
+                "Method chain calls",
+                "\n\t${1:method}(${2:args})\n\t${3:method}(${4:args})",
+            ),
         ]
     }
 
@@ -161,37 +202,74 @@ impl CompletionProvider {
             self.create_type_completion("void", "Void type (no return value)"),
             self.create_type_completion("any", "Any type"),
             self.create_snippet_completion("list_type", "List type", "list<${1:element_type}>"),
-            self.create_snippet_completion("matrix_type", "Matrix type", "matrix<${1:element_type}>"),
-            self.create_snippet_completion("pairs_type", "Pairs type", "pairs<${1:key_type}, ${2:value_type}>"),
+            self.create_snippet_completion(
+                "matrix_type",
+                "Matrix type",
+                "matrix<${1:element_type}>",
+            ),
+            self.create_snippet_completion(
+                "pairs_type",
+                "Pairs type",
+                "pairs<${1:key_type}, ${2:value_type}>",
+            ),
         ]
     }
 
     fn get_function_completions(&self) -> Vec<CompletionItem> {
         vec![
-            self.create_snippet_completion("function", "Function declaration",
-                "${1:return_type} ${2:function_name}(${3:parameters})\n\t${4:body}"),
-            self.create_snippet_completion("void_function", "Void function",
-                "${1:function_name}(${2:parameters})\n\t${3:body}"),
-            self.create_snippet_completion("start_function", "Start function",
-                "start()\n\t${1:body}"),
+            self.create_snippet_completion(
+                "function",
+                "Function declaration",
+                "${1:return_type} ${2:function_name}(${3:parameters})\n\t${4:body}",
+            ),
+            self.create_snippet_completion(
+                "void_function",
+                "Void function",
+                "${1:function_name}(${2:parameters})\n\t${3:body}",
+            ),
+            self.create_snippet_completion(
+                "start_function",
+                "Start function",
+                "start()\n\t${1:body}",
+            ),
         ]
     }
 
     fn get_keyword_completions(&self, prefix: &str) -> Vec<CompletionItem> {
         let keywords = [
-            ("functions", "Functions block", "functions:\n\t${1:function_definitions}"),
-            ("class", "Class declaration", "class ${1:ClassName}\n\t${2:body}"),
-            ("constants", "Constants block", "constants:\n\t${1:constant_definitions}"),
+            (
+                "functions",
+                "Functions block",
+                "functions:\n\t${1:function_definitions}",
+            ),
+            (
+                "class",
+                "Class declaration",
+                "class ${1:ClassName}\n\t${2:body}",
+            ),
+            (
+                "constants",
+                "Constants block",
+                "constants:\n\t${1:constant_definitions}",
+            ),
             ("types", "Types block", "types:\n\t${1:type_definitions}"),
             ("start", "Start function", "start()\n\t${1:body}"),
             ("if", "If statement", "if ${1:condition}\n\t${2:body}"),
             ("else", "Else statement", "else\n\t${1:body}"),
             ("while", "While loop", "while ${1:condition}\n\t${2:body}"),
-            ("for", "For loop", "for ${1:variable} in ${2:iterable}\n\t${3:body}"),
+            (
+                "for",
+                "For loop",
+                "for ${1:variable} in ${2:iterable}\n\t${3:body}",
+            ),
             ("return", "Return statement", "return ${1:value}"),
             ("extends", "Class inheritance", "extends ${1:BaseClass}"),
             ("base", "Base constructor call", "base(${1:arguments})"),
-            ("onError", "Error handling", "onError ${1:error_variable}\n\t${2:error_handling}"),
+            (
+                "onError",
+                "Error handling",
+                "onError ${1:error_variable}\n\t${2:error_handling}",
+            ),
         ];
 
         keywords
@@ -199,18 +277,16 @@ impl CompletionProvider {
             .filter(|(keyword, _, _)| {
                 prefix.is_empty() || keyword.starts_with(&prefix.to_lowercase())
             })
-            .map(|(keyword, description, snippet)| {
-                CompletionItem {
-                    label: keyword.to_string(),
-                    kind: Some(CompletionItemKind::KEYWORD),
-                    detail: Some(description.to_string()),
-                    documentation: Some(Documentation::String(format!(
-                        "Clean Language keyword: {}", description
-                    ))),
-                    insert_text: Some(snippet.to_string()),
-                    insert_text_format: Some(InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                }
+            .map(|(keyword, description, snippet)| CompletionItem {
+                label: keyword.to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some(description.to_string()),
+                documentation: Some(Documentation::String(format!(
+                    "Clean Language keyword: {description}"
+                ))),
+                insert_text: Some(snippet.to_string()),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                ..Default::default()
             })
             .collect()
     }
@@ -218,19 +294,28 @@ impl CompletionProvider {
     fn get_builtin_function_completions(&self) -> Vec<CompletionItem> {
         vec![
             self.create_function_completion("print", "Print to console", "print(${1:message})"),
-            self.create_function_completion("println", "Print line to console", "println(${1:message})"),
+            self.create_function_completion(
+                "println",
+                "Print line to console",
+                "println(${1:message})",
+            ),
             self.create_function_completion("input", "Get user input", "input(${1:prompt})"),
             self.create_function_completion("error", "Print error message", "error(${1:message})"),
         ]
     }
 
-    fn create_method_completion(&self, name: &str, description: &str, insert_text: &str) -> CompletionItem {
+    fn create_method_completion(
+        &self,
+        name: &str,
+        description: &str,
+        insert_text: &str,
+    ) -> CompletionItem {
         CompletionItem {
             label: name.to_string(),
             kind: Some(CompletionItemKind::METHOD),
             detail: Some(description.to_string()),
             documentation: Some(Documentation::String(format!(
-                "Method: {}\n\n{}", name, description
+                "Method: {name}\n\n{description}"
             ))),
             insert_text: if insert_text == "property" {
                 Some(name.to_string())
@@ -248,20 +333,25 @@ impl CompletionProvider {
             kind: Some(CompletionItemKind::TYPE_PARAMETER),
             detail: Some(description.to_string()),
             documentation: Some(Documentation::String(format!(
-                "Clean Language type: {}", description
+                "Clean Language type: {description}"
             ))),
             insert_text: Some(name.to_string()),
             ..Default::default()
         }
     }
 
-    fn create_function_completion(&self, name: &str, description: &str, insert_text: &str) -> CompletionItem {
+    fn create_function_completion(
+        &self,
+        name: &str,
+        description: &str,
+        insert_text: &str,
+    ) -> CompletionItem {
         CompletionItem {
             label: name.to_string(),
             kind: Some(CompletionItemKind::FUNCTION),
             detail: Some(description.to_string()),
             documentation: Some(Documentation::String(format!(
-                "Built-in function: {}\n\n{}", name, description
+                "Built-in function: {name}\n\n{description}"
             ))),
             insert_text: Some(insert_text.to_string()),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
@@ -269,13 +359,18 @@ impl CompletionProvider {
         }
     }
 
-    fn create_snippet_completion(&self, name: &str, description: &str, insert_text: &str) -> CompletionItem {
+    fn create_snippet_completion(
+        &self,
+        name: &str,
+        description: &str,
+        insert_text: &str,
+    ) -> CompletionItem {
         CompletionItem {
             label: name.to_string(),
             kind: Some(CompletionItemKind::SNIPPET),
             detail: Some(description.to_string()),
             documentation: Some(Documentation::String(format!(
-                "Code snippet: {}", description
+                "Code snippet: {description}"
             ))),
             insert_text: Some(insert_text.to_string()),
             insert_text_format: Some(InsertTextFormat::SNIPPET),

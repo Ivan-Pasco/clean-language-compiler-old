@@ -21,9 +21,12 @@ impl FormattingProvider {
     ) -> Option<Vec<TextEdit>> {
         let formatted = self.format_text(text);
 
-        if formatted != text.to_string() {
+        if formatted != *text {
             let full_range = Range {
-                start: Position { line: 0, character: 0 },
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
                 end: Position {
                     line: text.len_lines() as u32 - 1,
                     character: text.line(text.len_lines() - 1).len_chars() as u32,
@@ -94,7 +97,7 @@ impl FormattingProvider {
         // Format specific Clean Language constructs
         let formatted_content = self.format_clean_syntax(content);
 
-        format!("{}{}{}", tabs, remaining_spaces, formatted_content)
+        format!("{tabs}{remaining_spaces}{formatted_content}")
     }
 
     fn format_clean_syntax(&self, content: &str) -> String {
@@ -119,7 +122,9 @@ impl FormattingProvider {
         let mut result = content.to_string();
 
         // Binary operators (ensure single space on both sides)
-        let operators = ["=", "==", "!=", "<=", ">=", "<", ">", "+", "-", "*", "/", "%"];
+        let operators = [
+            "=", "==", "!=", "<=", ">=", "<", ">", "+", "-", "*", "/", "%",
+        ];
 
         for op in operators.iter() {
             // Skip if it's part of a string literal
@@ -129,11 +134,11 @@ impl FormattingProvider {
 
             // Add proper spacing around operators
             let _pattern = format!(r"\s*{}\s*", regex::escape(op));
-            let replacement = format!(" {} ", op);
+            let replacement = format!(" {op} ");
 
             // Simple string replacement for now (would use regex in production)
-            result = result.replace(&format!("{}=", op), &replacement);
-            result = result.replace(&format!("= {}", op), &replacement);
+            result = result.replace(&format!("{op}="), &replacement);
+            result = result.replace(&format!("= {op}"), &replacement);
         }
 
         result
@@ -162,15 +167,28 @@ impl FormattingProvider {
         let mut result = content.to_string();
 
         let block_keywords = [
-            "functions:", "class", "constants:", "types:", "if", "else", "while", "for",
+            "functions:",
+            "class",
+            "constants:",
+            "types:",
+            "if",
+            "else",
+            "while",
+            "for",
         ];
 
         for keyword in block_keywords.iter() {
             if content.starts_with(keyword) {
                 // Ensure proper spacing after block keywords
                 let colon_keyword = keyword.ends_with(':');
-                if !colon_keyword && !content.chars().nth(keyword.len()).unwrap_or(' ').is_whitespace() {
-                    result = result.replacen(keyword, &format!("{} ", keyword), 1);
+                if !colon_keyword
+                    && !content
+                        .chars()
+                        .nth(keyword.len())
+                        .unwrap_or(' ')
+                        .is_whitespace()
+                {
+                    result = result.replacen(keyword, &format!("{keyword} "), 1);
                 }
             }
         }
@@ -256,8 +274,9 @@ mod regex {
     pub fn escape(text: &str) -> String {
         text.chars()
             .map(|c| match c {
-                '\\' | '^' | '$' | '.' | '|' | '?' | '*' | '+' | '(' | ')' | '[' | ']' | '{' | '}' => {
-                    format!("\\{}", c)
+                '\\' | '^' | '$' | '.' | '|' | '?' | '*' | '+' | '(' | ')' | '[' | ']' | '{'
+                | '}' => {
+                    format!("\\{c}")
                 }
                 _ => c.to_string(),
             })

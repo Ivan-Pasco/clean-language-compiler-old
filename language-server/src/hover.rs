@@ -4,8 +4,8 @@
  * Provides hover information and documentation for Clean Language elements
  */
 
-use tower_lsp::lsp_types::*;
 use ropey::Rope;
+use tower_lsp::lsp_types::*;
 
 pub struct HoverProvider;
 
@@ -77,7 +77,7 @@ impl HoverProvider {
         }
 
         // Method information (after dot)
-        if line.contains(&format!(".{}", word)) {
+        if line.contains(&format!(".{word}")) {
             if let Some(method_info) = self.get_method_info(word, line) {
                 return Some(self.create_hover(method_info));
             }
@@ -174,8 +174,8 @@ impl HoverProvider {
 
     fn get_construct_info(&self, word: &str, line: &str) -> Option<String> {
         // Check for apply-block patterns
-        if line.contains(&format!("{}:", word)) {
-            Some(format!("**{}:** Apply Block\n\nApplies the identifier '{}' to each indented item below.\n\n**Pattern:**\n```clean\n{}:\n\titem1\n\titem2\n\titem3\n```\n\n**Usage:**\n- Function calls\n- Variable assignments\n- Method chains", word, word, word))
+        if line.contains(&format!("{word}:")) {
+            Some(format!("**{word}:** Apply Block\n\nApplies the identifier '{word}' to each indented item below.\n\n**Pattern:**\n```clean\n{word}:\n\titem1\n\titem2\n\titem3\n```\n\n**Usage:**\n- Function calls\n- Variable assignments\n- Method chains"))
         } else {
             None
         }
