@@ -265,7 +265,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             recover_errors,
         } => handle_parse(input, show_tree, recover_errors).await?,
         Commands::Run { input, debug } => handle_run(input, debug).await?,
-        Commands::Options { export_json, output } => {
+        Commands::Options {
+            export_json,
+            output,
+        } => {
             if export_json {
                 let output_path = output.map(PathBuf::from);
                 options_export::export_compile_options(output_path)?;

@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
@@ -91,7 +91,8 @@ impl CompileOptionsSchema {
             CompileOption {
                 id: "wasi".to_string(),
                 label: "🌍 WASI".to_string(),
-                description: "WebAssembly System Interface for portable system integration".to_string(),
+                description: "WebAssembly System Interface for portable system integration"
+                    .to_string(),
                 flag: Some("--target".to_string()),
                 default: false,
                 available: true,
@@ -258,7 +259,9 @@ impl CompileOptionsSchema {
 }
 
 /// Export compile options as JSON
-pub fn export_compile_options(output_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn export_compile_options(
+    output_path: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let schema = CompileOptionsSchema::generate();
     let path = output_path.unwrap_or_else(CompileOptionsSchema::get_default_install_path);
 
