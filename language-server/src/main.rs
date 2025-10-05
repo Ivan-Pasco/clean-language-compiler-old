@@ -138,7 +138,7 @@ impl LanguageServer for Backend {
         self.client
             .log_message(
                 MessageType::INFO,
-                "Clean Language Server ready - integrated with compiler v0.8.2",
+                "Clean Language Server ready - integrated with compiler v0.8.4",
             )
             .await;
     }
@@ -605,7 +605,7 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    info!("Starting Clean Language Server v0.8.2");
+    info!("Starting Clean Language Server v0.8.4");
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();

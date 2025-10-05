@@ -1,6 +1,6 @@
 [package]
 name = "clean-language-server"
-version = "0.8.2"
+version = "0.8.4"
 edition = "2021"
 authors = ["Clean Language Team"]
 description = "Language Server Protocol implementation for Clean Language"
