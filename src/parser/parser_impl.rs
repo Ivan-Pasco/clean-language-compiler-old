@@ -775,7 +775,7 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
 }
 
 pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program, CompilerError> {
-    let file_path = "unknown";
+    let _file_path = "unknown";
     let mut functions = Vec::new();
     let mut classes = Vec::new();
     let mut start_function = None;

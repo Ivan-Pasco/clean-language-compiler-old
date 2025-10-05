@@ -202,7 +202,7 @@ impl ModuleResolver {
         let module_path = self.find_module_file(module_name)?;
 
         // Read and parse the module
-        let source = fs::read_to_string(&module_path).map_err(|e| {
+        let _source = fs::read_to_string(&module_path).map_err(|e| {
             CompilerError::module_error(
                 format!("Failed to read module '{module_name}': {e}"),
                 Some(format!(

@@ -816,16 +816,15 @@ impl<'a> SpecificationLexer<'a> {
     /// Read precision modifier (8, 8u, 16, 16u, 32, 64)
     /// Check if what follows the current ':' looks like a valid precision modifier
     fn is_valid_precision_modifier_ahead(&self) -> bool {
-        let mut pos = 1; // Start after the ':'
+        let pos = 1; // Start after the ':'
         let mut has_digits = false;
 
         // Look ahead to see if we have a valid precision modifier pattern
         while let Some(ch) = self.peek_at_offset(pos) {
             if ch.is_ascii_digit() {
                 has_digits = true;
-                pos += 1;
+                let _ = pos + 1; // Validation only, don't advance
             } else if ch == 'u' && has_digits {
-                pos += 1;
                 break; // 'u' can only be at the end
             } else {
                 break;

@@ -235,7 +235,7 @@ start()
                 assert!(!wasm_binary.is_empty());
             }
             Err(error) => {
-                println!("✗ Function integration test failed: {error}");
+                println!("✗ Function integration test failed: {error:?}");
                 // Don't panic here as this might reveal integration issues we need to fix
             }
         }

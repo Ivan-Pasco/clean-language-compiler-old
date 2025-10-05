@@ -453,6 +453,7 @@ mod tests {
     use std::sync::Arc;
 
     struct TestPlugin {
+        #[allow(dead_code)]
         name: String,
         initialized: Arc<AtomicBool>,
     }

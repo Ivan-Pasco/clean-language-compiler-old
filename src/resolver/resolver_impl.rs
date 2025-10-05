@@ -87,7 +87,7 @@ impl NameResolver {
                     function.location.clone(),
                 );
             } else {
-                let symbol_id = self.symbol_table.create_symbol(
+                let _symbol_id = self.symbol_table.create_symbol(
                     function.name.clone(),
                     SymbolKind::Function {
                         parameters: function
@@ -115,7 +115,7 @@ impl NameResolver {
                     start_fn.location.clone(),
                 );
             } else {
-                let symbol_id = self.symbol_table.create_symbol(
+                let _symbol_id = self.symbol_table.create_symbol(
                     start_fn.name.clone(),
                     SymbolKind::Function {
                         parameters: start_fn
@@ -140,7 +140,7 @@ impl NameResolver {
                     class.location.clone(),
                 );
             } else {
-                let symbol_id = self.symbol_table.create_symbol(
+                let _symbol_id = self.symbol_table.create_symbol(
                     class.name.clone(),
                     SymbolKind::Class {
                         fields: Vec::new(),  // Will be filled in second pass

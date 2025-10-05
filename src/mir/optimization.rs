@@ -132,7 +132,7 @@ impl MirOptimizer {
             _ => 3,
         };
 
-        for iteration in 0..max_iterations {
+        for _iteration in 0..max_iterations {
             let mut changed = false;
 
             for pass in &mut self.passes {
@@ -257,9 +257,9 @@ impl OptimizationPass for ConstantFoldingPass {
 
         // Track constants through the function
         for block in function.blocks.values_mut() {
-            let instructions_to_remove: Vec<usize> = Vec::new();
+            let _instructions_to_remove: Vec<usize> = Vec::new();
 
-            for (i, instruction) in block.instructions.iter_mut().enumerate() {
+            for (_i, instruction) in block.instructions.iter_mut().enumerate() {
                 match &mut instruction.operation {
                     MirOperation::Copy {
                         source: MirOperand::Constant(constant),
@@ -500,7 +500,7 @@ impl OptimizationPass for ControlFlowSimplificationPass {
 
     fn optimize_function(
         &mut self,
-        function: &mut MirFunction,
+        _function: &mut MirFunction,
     ) -> Result<PassStats, CompilerError> {
         let stats = PassStats::default();
 
@@ -534,7 +534,7 @@ impl OptimizationPass for PeepholeOptimizationPass {
 
     fn optimize_function(
         &mut self,
-        function: &mut MirFunction,
+        _function: &mut MirFunction,
     ) -> Result<PassStats, CompilerError> {
         let stats = PassStats::default();
 
@@ -573,7 +573,7 @@ impl OptimizationPass for FunctionInliningPass {
 
     fn optimize_function(
         &mut self,
-        function: &mut MirFunction,
+        _function: &mut MirFunction,
     ) -> Result<PassStats, CompilerError> {
         let stats = PassStats::default();
 

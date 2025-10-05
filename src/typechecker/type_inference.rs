@@ -35,6 +35,7 @@ pub struct TypeInference<'a> {
     symbol_table: &'a GlobalSymbolTable,
 
     /// Built-in types and their methods
+    #[allow(dead_code)]
     builtins: BuiltinTypes,
 
     /// Map from function SymbolId to minimum required parameter count
@@ -1796,7 +1797,7 @@ impl<'a> TypeInference<'a> {
 
             ResolvedHirExpression::StaticMethodCall {
                 class_name,
-                class_symbol_id,
+                class_symbol_id: _,
                 method,
                 method_symbol_id,
                 arguments,
@@ -1916,7 +1917,7 @@ impl<'a> TypeInference<'a> {
                 let assignment_type = tast_value.expr_type.clone();
 
                 // Create TAST assignment expression - for now, convert target to a simple variable
-                let tast_target = match target {
+                let _tast_target = match target {
                     ResolvedHirLValue::Variable {
                         name,
                         symbol_id,
@@ -2741,7 +2742,7 @@ impl<'a> TypeInference<'a> {
     }
 
     /// Apply solved substitutions to type environment
-    fn apply_substitutions(&mut self, solver_result: &SolverResult) {
+    fn apply_substitutions(&mut self, _solver_result: &SolverResult) {
         // Would apply substitutions to finalize types
         // For now, types in type_env are already concrete
     }

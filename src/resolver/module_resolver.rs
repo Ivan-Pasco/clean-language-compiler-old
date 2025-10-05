@@ -334,6 +334,7 @@ mod tests {
     use super::*;
     use crate::ast::SourceLocation;
 
+    #[allow(dead_code)]
     fn test_location() -> SourceLocation {
         SourceLocation {
             file: "test.cln".to_string(),

@@ -122,7 +122,7 @@ impl WasmModuleBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wasm_encoder::{MemoryType, ValType};
+    use wasm_encoder::MemoryType;
 
     #[test]
     fn test_module_builder_creation() {

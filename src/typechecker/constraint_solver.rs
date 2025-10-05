@@ -682,7 +682,6 @@ impl Default for ConstraintSolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resolver::SymbolId;
 
     fn test_location() -> SourceLocation {
         SourceLocation {

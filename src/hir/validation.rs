@@ -779,7 +779,6 @@ impl HirValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::Value;
 
     /// Helper to create a test location
     fn test_location() -> SourceLocation {

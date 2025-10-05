@@ -915,7 +915,7 @@ impl CompilerError {
             CompilerError::Validation { context } => &context.message,
             CompilerError::Module { context } => &context.message,
             CompilerError::Testing { context } => &context.message,
-            CompilerError::LexError(lex_error) => "Lexical error",
+            CompilerError::LexError(_lex_error) => "Lexical error",
         }
     }
 }

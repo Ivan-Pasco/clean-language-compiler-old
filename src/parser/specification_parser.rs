@@ -51,13 +51,13 @@ impl SpecificationParser {
 
         // Fallback: reconstruct with proper spacing
         let mut result = String::new();
-        let mut current_line = 1;
+        let mut _current_line = 1;
 
         for (i, token) in self.token_stream.tokens.iter().enumerate() {
             match &token.kind {
                 crate::lexer::specification_token::TokenKind::Newline => {
                     result.push('\n');
-                    current_line += 1;
+                    _current_line += 1;
                 }
                 crate::lexer::specification_token::TokenKind::Indent(level) => {
                     for _ in 0..*level {
