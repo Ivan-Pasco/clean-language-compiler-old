@@ -55,6 +55,9 @@ jobs:
         OPENSSL_STATIC: 1
         OPENSSL_VENDOR: 1
 
+    - name: Generate compile-options.json
+      run: cargo run --release --bin clean-language-compiler --target ${{ matrix.target }} -- options --export-json
+
     - name: Strip binary (Unix)
       if: matrix.os != 'windows-latest'
       run: strip target/${{ matrix.target }}/release/cln || true
@@ -67,6 +70,9 @@ jobs:
         # Also copy direct binary for cleanmanager compatibility
         cp cln ../../../${{ matrix.name }}
         cd -
+        # Include compile-options.json in the archive
+        tar -rf ${{ matrix.name }}.tar.gz compile-options.json
+        gzip -f ${{ matrix.name }}.tar
 
     - name: Create archive (Windows)
       if: matrix.os == 'windows-latest'
@@ -77,6 +83,8 @@ jobs:
         # Also copy direct binary for cleanmanager compatibility
         Copy-Item cln.exe "../../../${{ matrix.name }}.exe"
         Set-Location "../../../"
+        # Include compile-options.json in the archive
+        7z a "${{ matrix.name }}.zip" compile-options.json
 
     - name: Upload binary artifact
       uses: actions/upload-artifact@v4
@@ -85,6 +93,7 @@ jobs:
         path: |
           ${{ matrix.name }}.${{ matrix.archive }}
           ${{ matrix.name }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+          compile-options.json
 
   release:
     name: Create Release
@@ -113,12 +122,16 @@ jobs:
         done
         find artifacts -name "cln-macos-*" -type f | while read file; do
           mv "$file" .
-        done  
+        done
         find artifacts -name "cln-windows-*.exe" -type f | while read file; do
           mv "$file" .
         done
+        # Move compile-options.json (use the first one found, they're all the same)
+        find artifacts -name "compile-options.json" -type f | head -1 | while read file; do
+          mv "$file" .
+        done
         # List what we have
-        ls -la *.tar.gz *.zip cln-* 2>/dev/null || echo "Some files may be missing"
+        ls -la *.tar.gz *.zip cln-* compile-options.json 2>/dev/null || echo "Some files may be missing"
 
     - name: Create Release
       uses: softprops/action-gh-release@v2
@@ -131,6 +144,7 @@ jobs:
           cln-macos-x86_64
           cln-macos-aarch64
           cln-windows-x86_64.exe
+          compile-options.json
         body: |
           ## Clean Language Compiler ${{ github.ref_name }}
           

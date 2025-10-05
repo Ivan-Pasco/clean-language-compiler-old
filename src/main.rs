@@ -17,7 +17,10 @@ use clap::{Parser, Subcommand};
 use clean_language_compiler::debug::DebugUtils;
 use clean_language_compiler::{compile_with_file, runtime::wasmtime_config::CleanWasmtimeConfig};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+mod cli;
+use cli::options_export;
 
 /// Clean Language Compiler and Test Runner
 #[derive(Parser, Debug)]
@@ -131,6 +134,16 @@ enum Commands {
         /// Enable debug output
         #[arg(short, long)]
         debug: bool,
+    },
+    /// Export compile options to JSON for IDE integration
+    Options {
+        /// Export compile options as JSON
+        #[arg(long)]
+        export_json: bool,
+
+        /// Output path for the JSON file (optional)
+        #[arg(short, long)]
+        output: Option<String>,
     },
 }
 
@@ -252,6 +265,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             recover_errors,
         } => handle_parse(input, show_tree, recover_errors).await?,
         Commands::Run { input, debug } => handle_run(input, debug).await?,
+        Commands::Options { export_json, output } => {
+            if export_json {
+                let output_path = output.map(PathBuf::from);
+                options_export::export_compile_options(output_path)?;
+            } else {
+                eprintln!("Use --export-json to export compile options");
+                std::process::exit(1);
+            }
+        }
     }
 
     Ok(())
