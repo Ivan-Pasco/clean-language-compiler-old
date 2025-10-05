@@ -6,6 +6,7 @@ use crate::stdlib::plugin::{
 use std::any::Any;
 
 /// List operations plugin
+#[allow(dead_code)]
 pub struct ListPlugin {
     default_capacity: usize,
     growth_factor: f32,

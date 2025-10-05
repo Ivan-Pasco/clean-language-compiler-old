@@ -1728,15 +1728,6 @@ pub fn parse_static_method_call(pair: Pair<Rule>) -> Result<Expression, Compiler
                     }
                 }
             }
-            Rule::argument_list => {
-                // Legacy: Parse argument list - contains argument_expression items (shouldn't occur with silent rule)
-                for arg_expr in arg.into_inner() {
-                    if let Rule::argument_expression = arg_expr.as_rule() {
-                        // Parse argument_expression directly
-                        arguments.push(parse_argument_expression(arg_expr)?);
-                    }
-                }
-            }
             Rule::logical_expression => {
                 // Fallback for direct logical expressions (if any)
                 arguments.push(parse_logical_expression(arg)?);

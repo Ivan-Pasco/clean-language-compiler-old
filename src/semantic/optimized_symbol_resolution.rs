@@ -3,6 +3,8 @@
 //! This module provides optimized data structures and algorithms to eliminate O(n²)
 //! performance bottlenecks in symbol lookup, function resolution, and type checking.
 
+#![allow(dead_code)]
+
 use crate::ast::{FunctionModifier, SourceLocation, Type, Visibility};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};

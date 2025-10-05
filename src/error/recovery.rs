@@ -2,6 +2,8 @@
 //!
 //! This module provides comprehensive error recovery strategies for each compilation phase.
 
+#![allow(dead_code)]
+
 use super::*;
 use std::collections::HashMap;
 

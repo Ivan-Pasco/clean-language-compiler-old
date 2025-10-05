@@ -3,6 +3,10 @@
 //! This module provides functionality to register all standard library
 //! functions including numeric operations, string operations, array/list operations,
 //! matrix operations, file I/O, HTTP operations, and type conversions.
+//!
+//! Note: Function registry and metadata methods are infrastructure for IDE integration.
+
+#![allow(dead_code)]
 
 use crate::error::CompilerError;
 use std::collections::HashMap;

@@ -3,6 +3,8 @@
 //! This module provides functionality to assemble WebAssembly modules from
 //! various sections (type, function, export, code, etc.) following WASM standards.
 
+#![allow(dead_code)]
+
 use crate::codegen::type_manager::TypeManager;
 use crate::error::CompilerError;
 use wasm_encoder::{

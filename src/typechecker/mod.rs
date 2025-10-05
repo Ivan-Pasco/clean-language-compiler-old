@@ -31,6 +31,7 @@ pub use type_inference::{BuiltinTypes, InferenceResult, TypeInference};
 /// This is the main interface for type checking that wraps the constraint-based
 /// type inference engine. It transforms resolved HIR into TAST.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct TypeChecker {
     /// The underlying type inference engine
     inference_engine: Option<TypeInference<'static>>,

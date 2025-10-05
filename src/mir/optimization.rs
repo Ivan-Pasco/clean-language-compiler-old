@@ -7,6 +7,8 @@
 //! - Control flow simplification
 //! - Peephole optimizations
 
+#![allow(dead_code)]
+
 use crate::error::CompilerError;
 use crate::mir::mir_types::{
     MirBinaryOp, MirConstant, MirFunction, MirOperand, MirOperation, MirProgram, MirTerminator,

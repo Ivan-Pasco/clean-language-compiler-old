@@ -37,6 +37,7 @@ pub use constraint_generator::{ClassTypeInfo, ConstraintGenerator};
 pub use constraints::{Constraint, ConstraintSet, ConstraintType, TypeProperty, TypeVar};
 pub use type_variables::{TypeVarMetadata, TypeVariableManager, Variance};
 
+#[allow(dead_code)]
 pub struct SemanticAnalyzer {
     // Enhanced symbol table with comprehensive scope management
     symbol_table: SymbolTable,

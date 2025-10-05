@@ -16,6 +16,7 @@ pub struct NameResolver {
     expression_recursion_depth: usize,
 }
 
+#[allow(dead_code)]
 impl NameResolver {
     /// Create a new name resolver
     pub fn new() -> Self {

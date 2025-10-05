@@ -2826,11 +2826,13 @@ impl BuiltinTypes {
     }
 }
 
-// Extension trait to get location from HIR statements
+// Extension trait to get location from HIR statements (currently unused but useful for error reporting)
+#[allow(dead_code)]
 trait StatementLocation {
     fn location(&self) -> &SourceLocation;
 }
 
+#[allow(dead_code)]
 impl StatementLocation for ResolvedHirStatement {
     fn location(&self) -> &SourceLocation {
         match self {

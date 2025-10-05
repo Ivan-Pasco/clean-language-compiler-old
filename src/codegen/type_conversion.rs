@@ -2,6 +2,10 @@
 //!
 //! This module handles conversion between Clean Language AST types and WebAssembly types,
 //! as well as runtime type conversion functions and compatibility checking.
+//!
+//! Note: Many conversion methods are infrastructure for future type system features.
+
+#![allow(dead_code)]
 
 use crate::ast::Type as AstType;
 use crate::error::CompilerError;

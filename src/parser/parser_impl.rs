@@ -1955,6 +1955,7 @@ fn _unused_parse_expression(_pair: Pair<Rule>) -> Result<Expression, CompilerErr
     ))
 }
 
+#[allow(dead_code)]
 impl ErrorRecoveringParser {
     /// Extract function signature from malformed function declaration
     fn extract_function_signature(&self, segment: &str) -> Option<(String, Type, Vec<Parameter>)> {

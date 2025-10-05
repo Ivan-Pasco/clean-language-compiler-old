@@ -6,6 +6,7 @@ use crate::stdlib::plugin::{
 use std::any::Any;
 
 /// Console I/O plugin
+#[allow(dead_code)]
 pub struct ConsolePlugin {
     buffer_size: usize,
     async_mode: bool,

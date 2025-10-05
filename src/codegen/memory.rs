@@ -1,4 +1,9 @@
 //! Module for memory operations during code generation with comprehensive safety validation.
+//!
+//! Note: Much of the memory safety infrastructure is currently unused but kept for future
+//! enhancements. The basic MemoryUtils is actively used for data segment management.
+
+#![allow(dead_code)]
 
 use crate::ast::Value;
 use crate::error::CompilerError;
@@ -9,9 +14,11 @@ use std::rc::Rc;
 use wasm_encoder::{ConstExpr, DataSection, Instruction, ValType};
 
 /// Memory safety configuration constants
+#[allow(dead_code)]
 const GUARD_PAGE_SIZE: usize = 512; // 512 bytes guard pages (reduced for single-page WASM)
 const MAX_MEMORY_SIZE: usize = 65536; // 64KB total limit (1 WASM page)
 const MEMORY_ALIGNMENT: usize = 8; // 8-byte alignment
+#[allow(dead_code)]
 const POISON_PATTERN: u8 = 0xDE; // Pattern for poisoned memory
 const CANARY_VALUE: u32 = 0xDEADBEEF; // Canary for overflow detection
 

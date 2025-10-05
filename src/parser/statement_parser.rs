@@ -735,6 +735,7 @@ fn parse_later_assignment_statement(
     })
 }
 
+#[allow(dead_code)]
 fn parse_print_statement(
     pair: Pair<Rule>,
     ast_location: crate::ast::SourceLocation,
@@ -835,6 +836,7 @@ fn parse_print_parenthesized_statement(
     }
 }
 
+#[allow(dead_code)]
 fn parse_printl_statement(
     pair: Pair<Rule>,
     ast_location: crate::ast::SourceLocation,
@@ -849,6 +851,7 @@ fn parse_printl_statement(
     })
 }
 
+#[allow(dead_code)]
 fn parse_println_statement(
     pair: Pair<Rule>,
     ast_location: crate::ast::SourceLocation,

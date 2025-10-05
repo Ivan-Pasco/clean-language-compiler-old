@@ -6,6 +6,7 @@ use crate::stdlib::plugin::{
 use std::any::Any;
 
 /// String operations plugin
+#[allow(dead_code)]
 pub struct StringPlugin {
     encoding: StringEncoding,
     max_length: Option<usize>,

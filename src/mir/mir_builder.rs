@@ -4,6 +4,8 @@
 //! to MIR (Medium-level Intermediate Representation). The builder converts high-level
 //! typed constructs into optimization-friendly SSA form with explicit control flow.
 
+#![allow(dead_code)]
+
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
 use crate::mir::mir_types::{

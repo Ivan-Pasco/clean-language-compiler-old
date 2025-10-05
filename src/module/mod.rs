@@ -54,6 +54,7 @@ impl Default for ModuleResolver {
     }
 }
 
+#[allow(dead_code)]
 impl ModuleResolver {
     /// Create a new module resolver
     pub fn new() -> Self {

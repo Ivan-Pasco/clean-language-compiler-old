@@ -3,6 +3,8 @@
 //! This lexer provides 100% compliance with the AST Specification, implementing
 //! all language constructs exactly as defined in the Clean Language Specification.
 
+#![allow(dead_code)]
+
 use super::specification_token::*;
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
