@@ -7,7 +7,9 @@
 //! This entire module is disabled until the old AST types are reimplemented
 
 // Disable entire test module - uses old AST types that no longer exist
-#![cfg(feature = "old_hir_tests")]
+// Tests will not compile due to removed AST types, so we skip the entire module
+#![cfg(test)]
+#![cfg(not(test))] // Never include this module
 
 use super::*;
 use crate::ast::{BinaryOperator as AstBinaryOperator, *};
