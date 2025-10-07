@@ -149,6 +149,45 @@ fn parse_assignment_statement(
     let target_part = parts.next().unwrap();
     let value = parse_expression(parts.next().unwrap())?;
 
+    // Check if this is an assignment_target with property access or array access
+    if target_part.as_rule() == Rule::assignment_target {
+        let target_parts: Vec<_> = target_part.clone().into_inner().collect();
+
+        // If we have more than just an identifier (i.e., we have property access or array access)
+        if target_parts.len() > 1 {
+            let identifier = target_parts[0].as_str().to_string();
+
+            // Check if it's a property access (second part is an identifier)
+            if target_parts[1].as_rule() == Rule::identifier {
+                let property_name = target_parts[1].as_str().to_string();
+
+                return Ok(Statement::Expression {
+                    expr: Expression::PropertyAssignment {
+                        object: Box::new(Expression::Variable(identifier)),
+                        property: property_name,
+                        value: Box::new(value),
+                        location: ast_location.clone(),
+                    },
+                    location: Some(ast_location),
+                });
+            }
+            // Check if it's an array access (second part is an expression for the index)
+            else if target_parts[1].as_rule() == Rule::additive_expression {
+                let index = parse_expression(target_parts[1].clone())?;
+
+                return Ok(Statement::Expression {
+                    expr: Expression::ListAssignment {
+                        list: Box::new(Expression::Variable(identifier)),
+                        index: Box::new(index),
+                        value: Box::new(value),
+                        location: ast_location.clone(),
+                    },
+                    location: Some(ast_location),
+                });
+            }
+        }
+    }
+
     // Check if this is a property assignment (e.g., list.type = "line")
     if target_part.as_rule() == Rule::property_access {
         // Parse as property assignment expression

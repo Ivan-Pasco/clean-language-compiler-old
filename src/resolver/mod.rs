@@ -252,6 +252,7 @@ pub enum ResolvedHirExpression {
 
     /// Static method call with resolved class and method symbol
     StaticMethodCall {
+        namespace: Vec<String>, // Empty for two-level, ["compare"] for three-level
         class_name: String,
         class_symbol_id: SymbolId,
         method: String,
@@ -307,6 +308,21 @@ pub enum ResolvedHirExpression {
     Assignment {
         target: ResolvedHirLValue,
         value: Box<ResolvedHirExpression>,
+        location: SourceLocation,
+    },
+
+    /// Error handling expression (expression onError fallback)
+    OnError {
+        expression: Box<ResolvedHirExpression>,
+        fallback: Box<ResolvedHirExpression>,
+        location: SourceLocation,
+    },
+
+    /// Conditional expression (if condition then value else value)
+    Conditional {
+        condition: Box<ResolvedHirExpression>,
+        then_expr: Box<ResolvedHirExpression>,
+        else_expr: Box<ResolvedHirExpression>,
         location: SourceLocation,
     },
 }

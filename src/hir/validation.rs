@@ -696,6 +696,32 @@ impl HirValidator {
                     Self::validate_expression(context, arg);
                 }
             }
+
+            HirExpression::StaticMethodCall { arguments, .. } => {
+                for arg in arguments {
+                    Self::validate_expression(context, arg);
+                }
+            }
+
+            HirExpression::OnError {
+                expression,
+                fallback,
+                ..
+            } => {
+                Self::validate_expression(context, expression);
+                Self::validate_expression(context, fallback);
+            }
+
+            HirExpression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+                ..
+            } => {
+                Self::validate_expression(context, condition);
+                Self::validate_expression(context, then_expr);
+                Self::validate_expression(context, else_expr);
+            }
         }
     }
 
@@ -798,11 +824,13 @@ mod tests {
                     HirParameter {
                         name: "a".to_string(),
                         param_type: HirType::Integer,
+                        default_value: None,
                         location: test_location(),
                     },
                     HirParameter {
                         name: "b".to_string(),
                         param_type: HirType::Integer,
+                        default_value: None,
                         location: test_location(),
                     },
                 ],

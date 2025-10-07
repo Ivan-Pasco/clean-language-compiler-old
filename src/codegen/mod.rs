@@ -3167,46 +3167,23 @@ impl CodeGenerator {
                 }
             }
             Expression::StaticMethodCall {
+                namespace,
                 class_name,
                 method,
                 arguments,
-                location,
+                location: _,
             } => {
-                // Check if this is actually a property access pattern like obj.prop.method()
-                if class_name.contains('.') {
-                    let parts: Vec<&str> = class_name.split('.').collect();
-                    if parts.len() == 2 {
-                        let obj_name = parts[0];
-                        let property_name = parts[1];
-
-                        // Check if the first part looks like a variable name (not a class name)
-                        let looks_like_variable =
-                            obj_name.chars().next().map_or(false, |c| c.is_lowercase());
-
-                        if looks_like_variable {
-                            // Convert to property access + method call
-                            let obj_expr = Expression::Variable(obj_name.to_string());
-                            let property_access = Expression::PropertyAccess {
-                                object: Box::new(obj_expr),
-                                property: property_name.to_string(),
-                                location: location.clone(),
-                            };
-                            let method_call = Expression::MethodCall {
-                                object: Box::new(property_access),
-                                method: method.clone(),
-                                arguments: arguments.clone(),
-                                location: location.clone(),
-                            };
-                            return self.generate_expression(&method_call, instructions);
-                        }
-                    }
-                }
-
-                // Handle static method calls - ClassName.method()
+                // Handle namespace.class.method() calls (e.g., compare.integer.greaterThan)
+                // For now, treat namespace calls as built-in methods
+                let full_class_name = if !namespace.is_empty() {
+                    format!("{}.{}", namespace.join("."), class_name)
+                } else {
+                    class_name.clone()
+                };
 
                 // Check if this is a built-in system class first
                 if let Some(return_type) = self.generate_builtin_static_method_call(
-                    class_name,
+                    &full_class_name,
                     method,
                     arguments,
                     instructions,

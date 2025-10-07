@@ -1346,6 +1346,27 @@ impl MirBuilder {
                 Ok(load_result_id)
             }
 
+            TastExpressionKind::OnError {
+                expression: expr,
+                fallback: _,
+            } => {
+                // For now, just evaluate the expression
+                // TODO: Implement proper error handling with fallback
+                // This requires runtime error handling support
+                self.build_expression(context, expr)
+            }
+
+            TastExpressionKind::Conditional {
+                condition: _,
+                then_expr,
+                else_expr: _,
+            } => {
+                // TODO: Implement proper conditional with branching
+                // For now, just evaluate the then branch
+                // This requires proper control flow support
+                self.build_expression(context, then_expr)
+            }
+
             _ => {
                 // TODO: Implement other expression types
                 Err(vec![CompilerError::validation_error(

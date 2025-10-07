@@ -1600,7 +1600,7 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
     // Parse the function signature and body
     for item in func_pair.into_inner() {
         match item.as_rule() {
-            Rule::function_type => {
+            Rule::function_type | Rule::function_return_type => {
                 let parsed_type = parse_type(item)?;
                 return_type = Some(parsed_type.clone());
 

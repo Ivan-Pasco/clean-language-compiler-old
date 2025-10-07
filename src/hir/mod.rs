@@ -44,6 +44,7 @@ pub struct HirFunction {
 pub struct HirParameter {
     pub name: String,
     pub param_type: HirType,
+    pub default_value: Option<HirExpression>,
     pub location: SourceLocation,
 }
 
@@ -313,6 +314,30 @@ pub enum HirExpression {
         arguments: Vec<HirExpression>,
         location: SourceLocation,
     },
+
+    /// Static method call (e.g., Math.abs, compare.integer.greaterThan)
+    StaticMethodCall {
+        namespace: Vec<String>, // Empty for two-level, ["compare"] for three-level
+        class_name: String,
+        method: String,
+        arguments: Vec<HirExpression>,
+        location: SourceLocation,
+    },
+
+    /// Error handling expression (expression onError fallback)
+    OnError {
+        expression: Box<HirExpression>,
+        fallback: Box<HirExpression>,
+        location: SourceLocation,
+    },
+
+    /// Conditional expression (if condition then value else value)
+    Conditional {
+        condition: Box<HirExpression>,
+        then_expr: Box<HirExpression>,
+        else_expr: Box<HirExpression>,
+        location: SourceLocation,
+    },
 }
 
 /// HIR L-value (left-hand side of assignment)
@@ -386,6 +411,9 @@ impl HirExpression {
             HirExpression::Cast { location, .. } => location,
             HirExpression::Assignment { location, .. } => location,
             HirExpression::NamespaceCall { location, .. } => location,
+            HirExpression::StaticMethodCall { location, .. } => location,
+            HirExpression::OnError { location, .. } => location,
+            HirExpression::Conditional { location, .. } => location,
         }
     }
 }

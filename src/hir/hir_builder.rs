@@ -227,10 +227,16 @@ impl HirBuilder {
     /// Convert AST parameter to HIR parameter
     fn build_parameter(&mut self, param: &Parameter) -> Result<HirParameter, CompilerError> {
         let param_type = self.build_type(&param.type_)?;
+        let default_value = if let Some(default_expr) = &param.default_value {
+            Some(self.build_expression(default_expr)?)
+        } else {
+            None
+        };
 
         Ok(HirParameter {
             name: param.name.clone(),
             param_type,
+            default_value,
             location: SourceLocation::default(),
         })
     }
@@ -299,10 +305,55 @@ impl HirBuilder {
 
     /// Convert statements to HIR block
     fn build_block(&mut self, statements: &[Statement]) -> Result<HirBlock, CompilerError> {
-        let hir_statements = statements
-            .iter()
-            .map(|stmt| self.build_statement(stmt))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut hir_statements = Vec::new();
+
+        for stmt in statements {
+            // Special handling for TypeApplyBlock - expand into multiple statements
+            if let Statement::TypeApplyBlock {
+                type_,
+                assignments,
+                location,
+            } = stmt
+            {
+                // Convert each assignment in the apply block to a variable declaration
+                for assignment in assignments {
+                    let var_type = self.build_type(type_)?;
+                    let init_expr = if let Some(init) = &assignment.initializer {
+                        Some(self.build_expression(init)?)
+                    } else {
+                        None
+                    };
+
+                    hir_statements.push(HirStatement::VariableDeclaration {
+                        name: assignment.name.clone(),
+                        var_type,
+                        initializer: init_expr,
+                        location: location.clone().unwrap_or_default(),
+                    });
+                }
+            } else if let Statement::ConstantApplyBlock {
+                constants,
+                location,
+            } = stmt
+            {
+                // Convert each constant in the apply block to a variable declaration
+                // Constants are treated as immutable variables in HIR
+                for constant in constants {
+                    let var_type = self.build_type(&constant.type_)?;
+                    let init_expr = Some(self.build_expression(&constant.value)?);
+
+                    hir_statements.push(HirStatement::VariableDeclaration {
+                        name: constant.name.clone(),
+                        var_type,
+                        initializer: init_expr,
+                        location: location.clone().unwrap_or_default(),
+                    });
+                }
+            } else {
+                // Regular statement processing
+                hir_statements.push(self.build_statement(stmt)?);
+            }
+        }
 
         Ok(HirBlock {
             statements: hir_statements,
@@ -453,6 +504,7 @@ impl HirBuilder {
                 })
             }
 
+            // TypeApplyBlock is handled in build_block() where it can expand into multiple statements
             _ => {
                 // For unsupported statements, create a dummy expression statement
                 Ok(HirStatement::Expression {
@@ -593,6 +645,60 @@ impl HirBuilder {
                     namespace: namespace.clone(),
                     function: function.clone(),
                     arguments: hir_args,
+                    location: location.clone(),
+                })
+            }
+
+            Expression::StaticMethodCall {
+                namespace,
+                class_name,
+                method,
+                arguments,
+                location,
+            } => {
+                let hir_args = arguments
+                    .iter()
+                    .map(|arg| self.build_expression(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                Ok(HirExpression::StaticMethodCall {
+                    namespace: namespace.clone(),
+                    class_name: class_name.clone(),
+                    method: method.clone(),
+                    arguments: hir_args,
+                    location: location.clone(),
+                })
+            }
+
+            Expression::OnError {
+                expression,
+                fallback,
+                location,
+            } => {
+                let hir_expression = self.build_expression(expression)?;
+                let hir_fallback = self.build_expression(fallback)?;
+
+                Ok(HirExpression::OnError {
+                    expression: Box::new(hir_expression),
+                    fallback: Box::new(hir_fallback),
+                    location: location.clone(),
+                })
+            }
+
+            Expression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+                location,
+            } => {
+                let hir_condition = self.build_expression(condition)?;
+                let hir_then = self.build_expression(then_expr)?;
+                let hir_else = self.build_expression(else_expr)?;
+
+                Ok(HirExpression::Conditional {
+                    condition: Box::new(hir_condition),
+                    then_expr: Box::new(hir_then),
+                    else_expr: Box::new(hir_else),
                     location: location.clone(),
                 })
             }

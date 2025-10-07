@@ -25,6 +25,15 @@ pub fn parse_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
                 Some("Variable type declarations must specify a type".to_string()),
             )
         })?
+    } else if pair.as_rule() == Rule::function_return_type {
+        // function_return_type is a wrapper, extract the inner type
+        pair.clone().into_inner().next().ok_or_else(|| {
+            CompilerError::parse_error(
+                "Empty function return type declaration".to_string(),
+                Some(convert_to_ast_location(&parser_location)),
+                Some("Function return type declarations must specify a type".to_string()),
+            )
+        })?
     } else {
         pair.clone()
     };

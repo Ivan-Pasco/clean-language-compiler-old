@@ -231,6 +231,15 @@ pub enum TastExpressionKind {
     AsyncBlock {
         body: TastBlock,
     },
+    OnError {
+        expression: Box<TastExpression>,
+        fallback: Box<TastExpression>,
+    },
+    Conditional {
+        condition: Box<TastExpression>,
+        then_expr: Box<TastExpression>,
+        else_expr: Box<TastExpression>,
+    },
 }
 
 /// Type-checked literal values

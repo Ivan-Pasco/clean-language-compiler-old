@@ -1712,7 +1712,7 @@ pub fn parse_static_method_call(pair: Pair<Rule>) -> Result<Expression, Compiler
 
     // Parse: ClassName.method(args...) or namespace.subnamespace.method(args...)
     let static_class_name_pair = inner.next().unwrap();
-    let class_name = static_class_name_pair.as_str().to_string();
+    let full_class_name = static_class_name_pair.as_str().to_string();
     let method_name = inner.next().unwrap().as_str().to_string();
     let mut arguments = Vec::new();
 
@@ -1738,7 +1738,24 @@ pub fn parse_static_method_call(pair: Pair<Rule>) -> Result<Expression, Compiler
         }
     }
 
+    // Split the full_class_name to handle multi-level namespaces
+    // e.g., "compare.integer" -> namespace=["compare"], class_name="integer"
+    //       "Math" -> namespace=[], class_name="Math"
+    let parts: Vec<&str> = full_class_name.split('.').collect();
+    let (namespace, class_name) = if parts.len() > 1 {
+        // Multi-level: all but last part is namespace, last part is class
+        let namespace_parts: Vec<String> = parts[..parts.len() - 1]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        (namespace_parts, parts[parts.len() - 1].to_string())
+    } else {
+        // Single level: no namespace, just class name
+        (vec![], full_class_name)
+    };
+
     Ok(Expression::StaticMethodCall {
+        namespace,
         class_name,
         method: method_name,
         arguments,
@@ -1778,11 +1795,10 @@ pub fn parse_three_level_method_call(pair: Pair<Rule>) -> Result<Expression, Com
         }
     }
 
-    // Combine namespace and subnamespace into class name like "compare.integer"
-    let class_name = format!("{}.{}", namespace, subnamespace);
-
+    // Keep namespace separate from class name for proper type resolution
     Ok(Expression::StaticMethodCall {
-        class_name,
+        namespace: vec![namespace], // Namespace hierarchy
+        class_name: subnamespace,   // Actual class name
         method: method_name,
         arguments,
         location: convert_to_ast_location(&location),

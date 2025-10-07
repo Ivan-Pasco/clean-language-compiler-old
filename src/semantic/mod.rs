@@ -3577,13 +3577,22 @@ impl SemanticAnalyzer {
             }
 
             Expression::StaticMethodCall {
+                namespace,
                 class_name,
                 method,
                 arguments,
                 location,
             } => {
+                // Handle namespace.class.method() calls
+                // For semantic analysis, we just need to validate the structure
+                let _full_class_name = if !namespace.is_empty() {
+                    format!("{}.{}", namespace.join("."), class_name)
+                } else {
+                    class_name.clone()
+                };
+
                 // Check if this is actually a property access pattern like obj.prop.method()
-                if class_name.contains('.') {
+                if namespace.len() == 1 && class_name.contains('.') {
                     let parts: Vec<&str> = class_name.split('.').collect();
                     if parts.len() == 2 {
                         let obj_name = parts[0];

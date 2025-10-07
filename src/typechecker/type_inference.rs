@@ -29,7 +29,7 @@ pub struct TypeInference<'a> {
     constraints: Vec<TypeConstraint>,
 
     /// Type variable generator
-    constraint_solver: ConstraintSolver,
+    constraint_solver: ConstraintSolver<'a>,
 
     /// Symbol table from resolution phase
     symbol_table: &'a GlobalSymbolTable,
@@ -80,7 +80,7 @@ impl<'a> TypeInference<'a> {
         Self {
             type_env: HashMap::new(),
             constraints: Vec::new(),
-            constraint_solver: ConstraintSolver::new(),
+            constraint_solver: ConstraintSolver::with_symbol_table(symbol_table),
             symbol_table,
             builtins: BuiltinTypes::new(),
             required_param_counts: HashMap::new(),
@@ -102,7 +102,10 @@ impl<'a> TypeInference<'a> {
         let tast_program = self.infer_program(&program);
 
         // Solve generated constraints
-        let mut solver = std::mem::replace(&mut self.constraint_solver, ConstraintSolver::new());
+        let mut solver = std::mem::replace(
+            &mut self.constraint_solver,
+            ConstraintSolver::with_symbol_table(self.symbol_table),
+        );
         solver.add_constraints(std::mem::take(&mut self.constraints));
         let solver_result = solver.solve();
 
@@ -1038,6 +1041,15 @@ impl<'a> TypeInference<'a> {
             });
         }
 
+        // Count required parameters (those without defaults) for validation
+        let required_param_count = function
+            .parameters
+            .iter()
+            .filter(|p| p.default_value.is_none())
+            .count();
+        self.required_param_counts
+            .insert(function.symbol_id, required_param_count);
+
         // Infer function body
         let tast_body = self.infer_block(&function.body)?;
 
@@ -1796,6 +1808,7 @@ impl<'a> TypeInference<'a> {
             }
 
             ResolvedHirExpression::StaticMethodCall {
+                namespace,
                 class_name,
                 class_symbol_id: _,
                 method,
@@ -1808,9 +1821,19 @@ impl<'a> TypeInference<'a> {
                     tast_arguments.push(self.infer_expression(arg)?);
                 }
 
+                // Handle namespace.class.method() calls (e.g., compare.integer.greaterThan)
+                let full_class_name = if !namespace.is_empty() {
+                    format!("{}.{}", namespace.join("."), class_name)
+                } else {
+                    class_name.clone()
+                };
+
                 // For now, use simple static method resolution based on class and method name
-                let return_type =
-                    self.infer_static_method_return_type(class_name, method, &tast_arguments)?;
+                let return_type = self.infer_static_method_return_type(
+                    &full_class_name,
+                    method,
+                    &tast_arguments,
+                )?;
 
                 // For now, represent static method calls as function calls
                 // since TAST doesn't have StaticMethodCall yet
@@ -1819,7 +1842,7 @@ impl<'a> TypeInference<'a> {
                         function: Box::new(TastExpression {
                             kind: TastExpressionKind::Variable {
                                 symbol_id: *method_symbol_id,
-                                name: format!("{}.{}", class_name, method),
+                                name: format!("{}.{}", full_class_name, method),
                             },
                             expr_type: ConcreteType::Function {
                                 parameters: tast_arguments
@@ -2047,67 +2070,73 @@ impl<'a> TypeInference<'a> {
                     target_concrete_type,
                     location.clone(),
                 )
-            } // OnError and Conditional expressions not yet implemented in refactored HIR
-              // These features will be added back when needed
-              /*
-              ResolvedHirExpression::OnError {
-                  expression,
-                  fallback,
-                  location,
-              } => {
-                  // Infer types for both the expression and fallback
-                  let tast_expression = self.infer_expression(expression)?;
-                  let _tast_fallback = self.infer_expression(fallback)?;
+            }
 
-                  // The onError expression returns the type of the main expression
-                  // The fallback is used if the expression fails at runtime
-                  let result_type = tast_expression.expr_type.clone();
+            ResolvedHirExpression::OnError {
+                expression,
+                fallback,
+                location,
+            } => {
+                // Infer types for both the expression and fallback
+                let tast_expression = self.infer_expression(expression)?;
+                let tast_fallback = self.infer_expression(fallback)?;
 
-                  // TODO: Add type compatibility checking between expression and fallback
-                  // TODO: Implement proper error handling in TAST and codegen
+                // The onError expression returns the type of the main expression
+                // The fallback should be compatible with the expression type
+                self.add_constraint(TypeConstraint::Equality {
+                    left: tast_expression.expr_type.clone(),
+                    right: tast_fallback.expr_type.clone(),
+                    location: location.clone(),
+                });
 
-                  // For now, represent onError as just the expression (fallback handled at runtime)
-                  (tast_expression.kind, result_type, location.clone())
-              }
+                let result_type = tast_expression.expr_type.clone();
 
-              ResolvedHirExpression::Conditional {
-                  condition,
-                  then_expr,
-                  else_expr,
-                  location,
-              } => {
-                  // Infer condition type and ensure it's boolean
-                  let tast_condition = self.infer_expression(condition)?;
-                  self.add_constraint(TypeConstraint::Equality {
-                      left: tast_condition.expr_type.clone(),
-                      right: ConcreteType::Boolean,
-                      location: location.clone(),
-                  });
+                // Create OnError TAST node
+                let kind = TastExpressionKind::OnError {
+                    expression: Box::new(tast_expression),
+                    fallback: Box::new(tast_fallback),
+                };
 
-                  // Infer types for both branches
-                  let tast_then = self.infer_expression(then_expr)?;
-                  let tast_else = self.infer_expression(else_expr)?;
+                (kind, result_type, location.clone())
+            }
 
-                  // Both branches must have compatible types
-                  self.add_constraint(TypeConstraint::Equality {
-                      left: tast_then.expr_type.clone(),
-                      right: tast_else.expr_type.clone(),
-                      location: location.clone(),
-                  });
+            ResolvedHirExpression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+                location,
+            } => {
+                // Infer condition type and ensure it's boolean
+                let tast_condition = self.infer_expression(condition)?;
+                self.add_constraint(TypeConstraint::Equality {
+                    left: tast_condition.expr_type.clone(),
+                    right: ConcreteType::Boolean,
+                    location: location.clone(),
+                });
 
-                  // Result type is the unified type of both branches
-                  let result_type = tast_then.expr_type.clone();
+                // Infer types for both branches
+                let tast_then = self.infer_expression(then_expr)?;
+                let tast_else = self.infer_expression(else_expr)?;
 
-                  // Create conditional TAST node
-                  let kind = TastExpressionKind::Conditional {
-                      condition: Box::new(tast_condition),
-                      then_expr: Box::new(tast_then),
-                      else_expr: Box::new(tast_else),
-                  };
+                // Both branches must have compatible types
+                self.add_constraint(TypeConstraint::Equality {
+                    left: tast_then.expr_type.clone(),
+                    right: tast_else.expr_type.clone(),
+                    location: location.clone(),
+                });
 
-                  (kind, result_type, location.clone())
-              }
-              */
+                // Result type is the unified type of both branches
+                let result_type = tast_then.expr_type.clone();
+
+                // Create conditional TAST node
+                let kind = TastExpressionKind::Conditional {
+                    condition: Box::new(tast_condition),
+                    then_expr: Box::new(tast_then),
+                    else_expr: Box::new(tast_else),
+                };
+
+                (kind, result_type, location.clone())
+            }
         };
 
         self.recursion_depth -= 1;
@@ -2598,6 +2627,22 @@ impl<'a> TypeInference<'a> {
             // Number static methods
             ("Number", "parse") => Ok(ConcreteType::Number),
             ("Number", "toString") => Ok(ConcreteType::String),
+
+            // compare.integer static methods
+            ("compare.integer", "equal") => Ok(ConcreteType::Boolean),
+            ("compare.integer", "notEqual") => Ok(ConcreteType::Boolean),
+            ("compare.integer", "lessThan") => Ok(ConcreteType::Boolean),
+            ("compare.integer", "greaterThan") => Ok(ConcreteType::Boolean),
+            ("compare.integer", "lessEqual") => Ok(ConcreteType::Boolean),
+            ("compare.integer", "greaterEqual") => Ok(ConcreteType::Boolean),
+
+            // compare.number static methods
+            ("compare.number", "equal") => Ok(ConcreteType::Boolean),
+            ("compare.number", "notEqual") => Ok(ConcreteType::Boolean),
+            ("compare.number", "lessThan") => Ok(ConcreteType::Boolean),
+            ("compare.number", "greaterThan") => Ok(ConcreteType::Boolean),
+            ("compare.number", "lessEqual") => Ok(ConcreteType::Boolean),
+            ("compare.number", "greaterEqual") => Ok(ConcreteType::Boolean),
 
             // For unknown static method/class combinations, return Unknown
             _ => Ok(ConcreteType::Unknown),

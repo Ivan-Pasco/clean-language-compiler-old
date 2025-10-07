@@ -191,8 +191,9 @@ pub enum Expression {
         location: SourceLocation,
     },
 
-    // Static method call (ClassName.method())
+    // Static method call (ClassName.method() or namespace.ClassName.method())
     StaticMethodCall {
+        namespace: Vec<String>, // Empty for two-level calls, ["compare"] for three-level
         class_name: String,
         method: String,
         arguments: Vec<Expression>,

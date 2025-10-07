@@ -18,7 +18,7 @@ pub type Substitution = HashMap<TypeVarId, ConcreteType>;
 /// Constraint solver for type inference
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct ConstraintSolver {
+pub struct ConstraintSolver<'a> {
     /// Current substitution being built
     substitution: Substitution,
 
@@ -36,6 +36,9 @@ pub struct ConstraintSolver {
 
     /// Errors encountered during solving
     errors: Vec<CompilerError>,
+
+    /// Symbol table for checking inheritance relationships
+    symbol_table: Option<&'a crate::resolver::GlobalSymbolTable>,
 }
 
 /// Result of constraint solving
@@ -46,7 +49,7 @@ pub struct SolverResult {
     pub errors: Vec<CompilerError>,
 }
 
-impl ConstraintSolver {
+impl<'a> ConstraintSolver<'a> {
     /// Create a new constraint solver
     pub fn new() -> Self {
         Self {
@@ -56,6 +59,20 @@ impl ConstraintSolver {
             solved_constraints: Vec::new(),
             type_var_bounds: HashMap::new(),
             errors: Vec::new(),
+            symbol_table: None,
+        }
+    }
+
+    /// Create a new constraint solver with symbol table access
+    pub fn with_symbol_table(symbol_table: &'a crate::resolver::GlobalSymbolTable) -> Self {
+        Self {
+            substitution: HashMap::new(),
+            type_var_counter: 0,
+            constraints: VecDeque::new(),
+            solved_constraints: Vec::new(),
+            type_var_bounds: HashMap::new(),
+            errors: Vec::new(),
+            symbol_table: Some(symbol_table),
         }
     }
 
@@ -236,12 +253,17 @@ impl ConstraintSolver {
                     type_args: args2,
                 },
             ) => {
+                // Check if they're the same class
                 if id1 != id2 {
-                    return Err(CompilerError::type_error(
-                        &format!("Cannot unify different classes: {} vs {}", id1.0, id2.0),
-                        None,
-                        Some(location.clone()),
-                    ));
+                    // Check for inheritance relationship
+                    // Allow unifying child class with parent class
+                    if !self.is_subclass_of(*id1, *id2) && !self.is_subclass_of(*id2, *id1) {
+                        return Err(CompilerError::type_error(
+                            &format!("Cannot unify incompatible classes: {} vs {}", id1.0, id2.0),
+                            None,
+                            Some(location.clone()),
+                        ));
+                    }
                 }
 
                 if args1.len() != args2.len() {
@@ -301,6 +323,16 @@ impl ConstraintSolver {
             // Null and Undefined can unify with each other (for function return types)
             (ConcreteType::Null, ConcreteType::Undefined)
             | (ConcreteType::Undefined, ConcreteType::Null) => Ok(()),
+
+            // Null can unify with reference types (strings, arrays, classes)
+            (ConcreteType::Null, ConcreteType::String)
+            | (ConcreteType::String, ConcreteType::Null) => Ok(()),
+
+            (ConcreteType::Null, ConcreteType::Array(_))
+            | (ConcreteType::Array(_), ConcreteType::Null) => Ok(()),
+
+            (ConcreteType::Null, ConcreteType::Class { .. })
+            | (ConcreteType::Class { .. }, ConcreteType::Null) => Ok(()),
 
             // Unknown type unifies with anything (error recovery)
             (ConcreteType::Unknown, _) | (_, ConcreteType::Unknown) => Ok(()),
@@ -671,9 +703,33 @@ impl ConstraintSolver {
             _ => {}
         }
     }
+
+    /// Check if child_id is a subclass of parent_id
+    fn is_subclass_of(
+        &self,
+        child_id: crate::resolver::SymbolId,
+        parent_id: crate::resolver::SymbolId,
+    ) -> bool {
+        if let Some(symbol_table) = self.symbol_table {
+            // Get the child class symbol
+            if let Some(child_symbol) = symbol_table.get_symbol(child_id) {
+                if let crate::resolver::SymbolKind::Class { parent, .. } = &child_symbol.kind {
+                    // Check immediate parent
+                    if let Some(parent_symbol_id) = parent {
+                        if *parent_symbol_id == parent_id {
+                            return true;
+                        }
+                        // Recursively check parent's ancestors
+                        return self.is_subclass_of(*parent_symbol_id, parent_id);
+                    }
+                }
+            }
+        }
+        false
+    }
 }
 
-impl Default for ConstraintSolver {
+impl<'a> Default for ConstraintSolver<'a> {
     fn default() -> Self {
         Self::new()
     }

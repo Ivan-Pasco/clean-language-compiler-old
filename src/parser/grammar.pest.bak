@@ -218,19 +218,19 @@ method_call = { method_call_base ~ method_call_segment }
 parenthesized_method_call = { "(" ~ parenthesized_expr ~ ")" ~ method_call_segment+ }
 
 // Three-level chained method call: namespace.class.method() patterns (most specific)
-three_level_method_call = { identifier ~ "." ~ identifier ~ "." ~ method_name ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
+three_level_method_call = { identifier ~ "." ~ identifier ~ "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
 
 // Chained property method call: property.access.method() patterns (two+ levels)
-property_method_call = { identifier ~ ("." ~ identifier) ~ ("." ~ identifier)+ ~ "." ~ method_name ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
+property_method_call = { identifier ~ ("." ~ identifier) ~ ("." ~ identifier)+ ~ "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
 
 // Static method call syntax for ClassName.method() patterns (single level)
-static_method_call = { static_class_name ~ "." ~ method_name ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
+static_method_call = { static_class_name ~ "." ~ method_name ~ "(" ~ argument_list? ~ ")" }
 
 // Namespace function call with optional method chaining (e.g., math.sqrt(x).toString())
-namespace_method_chain = { namespace_identifier ~ "." ~ identifier ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" ~ method_call_segment+ }
+namespace_method_chain = { namespace_identifier ~ "." ~ identifier ~ "(" ~ argument_list? ~ ")" ~ method_call_segment+ }
 
 // Namespace function call syntax for namespace.function() patterns (e.g., math.sin)
-namespace_function_call = { namespace_identifier ~ "." ~ identifier ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
+namespace_function_call = { namespace_identifier ~ "." ~ identifier ~ "(" ~ argument_list? ~ ")" }
 
 // Property access and list access
 property_access = { identifier ~ ("." ~ identifier)+ }
@@ -283,10 +283,10 @@ primary = {
 base_identifier = @{ "base" ~ !("(" | ASCII_ALPHANUMERIC | "_") }
 
 // Base constructor call
-base_call = { "base" ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
+base_call = { "base" ~ "(" ~ argument_list? ~ ")" }
 
 // Constructor call (object instantiation)
-constructor_call = { class_name ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
+constructor_call = { class_name ~ "(" ~ argument_list? ~ ")" }
 
 // Class name for constructor calls (capitalized identifier)
 class_name = { ('A'..'Z') ~ (ASCII_ALPHANUMERIC | "_")* }
@@ -412,8 +412,8 @@ variable_name = @{ identifier }
 variable_decl = { variable_decl_with_assignment | variable_decl_without_assignment }
 
 // Print statements (both parenthesized and bare forms)
-print_parenthesized_stmt = { "print" ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
-print_newline_stmt = { "print" ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" ~ WHITESPACE* ~ "+" }
+print_parenthesized_stmt = { "print" ~ "(" ~ argument_list ~ ")" }
+print_newline_stmt = { "print" ~ "(" ~ argument_list ~ ")" ~ WHITESPACE* ~ "+" }
 print_bare_stmt = { "print" ~ !(ASCII_ALPHANUMERIC | "_" | ":") ~ WHITESPACE* ~ single_line_expression }
 // Note: bare print using same pattern as return statement
 

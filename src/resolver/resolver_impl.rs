@@ -210,14 +210,19 @@ impl NameResolver {
                 param.location.clone(),
             );
 
-            // Default values removed from HIR - handled at AST level
+            // Resolve default value expression if present
+            let default_value = if let Some(default_expr) = &param.default_value {
+                Some(self.resolve_expression(default_expr)?)
+            } else {
+                None
+            };
 
             resolved_parameters.push(ResolvedHirParameter {
                 name: param.name.clone(),
                 symbol_id: param_symbol_id,
                 param_type: param.param_type.clone(),
-                default_value: None, // Default parameters handled at AST level
-                is_variadic: false,  // TODO: Handle variadic parameters
+                default_value,
+                is_variadic: false, // TODO: Handle variadic parameters
                 location: param.location.clone(),
             });
         }
@@ -463,12 +468,19 @@ impl NameResolver {
                 param.location.clone(),
             );
 
+            // Resolve default value expression if present
+            let default_value = if let Some(default_expr) = &param.default_value {
+                Some(self.resolve_expression(default_expr)?)
+            } else {
+                None
+            };
+
             resolved_parameters.push(ResolvedHirParameter {
                 name: param.name.clone(),
                 symbol_id: param_symbol_id,
                 param_type: param.param_type.clone(),
-                default_value: None, // TODO: Handle default values
-                is_variadic: false,  // TODO: Handle variadic parameters
+                default_value,
+                is_variadic: false, // TODO: Handle variadic parameters
                 location: param.location.clone(),
             });
         }
@@ -521,12 +533,19 @@ impl NameResolver {
                 param.location.clone(),
             );
 
+            // Resolve default value expression if present
+            let default_value = if let Some(default_expr) = &param.default_value {
+                Some(self.resolve_expression(default_expr)?)
+            } else {
+                None
+            };
+
             resolved_parameters.push(ResolvedHirParameter {
                 name: param.name.clone(),
                 symbol_id: param_symbol_id,
                 param_type: param.param_type.clone(),
-                default_value: None, // TODO: Handle default values
-                is_variadic: false,  // TODO: Handle variadic parameters
+                default_value,
+                is_variadic: false, // TODO: Handle variadic parameters
                 location: param.location.clone(),
             });
         }
@@ -1087,6 +1106,7 @@ impl NameResolver {
                                     class_name, method
                                 );
                                 return Ok(ResolvedHirExpression::StaticMethodCall {
+                                    namespace: vec![], // Two-level call
                                     class_name: class_name.clone(),
                                     class_symbol_id,
                                     method: method.clone(),
@@ -1484,6 +1504,7 @@ impl NameResolver {
 
                                 // Return as a static method call
                                 return Ok(ResolvedHirExpression::StaticMethodCall {
+                                    namespace: vec![], // Two-level call
                                     class_name: namespace.clone(),
                                     class_symbol_id: symbol_id,
                                     method: function.clone(),
@@ -1560,42 +1581,79 @@ impl NameResolver {
                     arguments: resolved_arguments,
                     location: location.clone(),
                 })
-            } // OnError and Conditional expressions not yet implemented in refactored HIR
-              // These features will be added back when needed
-              /*
-              HirExpression::OnError {
-                  expression,
-                  fallback,
-                  location,
-              } => {
-                  let resolved_expression = self.resolve_expression(expression)?;
-                  let resolved_fallback = self.resolve_expression(fallback)?;
+            }
 
-                  Ok(ResolvedHirExpression::OnError {
-                      expression: Box::new(resolved_expression),
-                      fallback: Box::new(resolved_fallback),
-                      location: location.clone(),
-                  })
-              }
+            HirExpression::StaticMethodCall {
+                namespace,
+                class_name,
+                method,
+                arguments,
+                location,
+            } => {
+                // Handle namespace.class.method() calls (e.g., compare.integer.greaterThan)
+                let full_class_name = if !namespace.is_empty() {
+                    format!("{}.{}", namespace.join("."), class_name)
+                } else {
+                    class_name.clone()
+                };
 
-              HirExpression::Conditional {
-                  condition,
-                  then_expr,
-                  else_expr,
-                  location,
-              } => {
-                  let resolved_condition = self.resolve_expression(condition)?;
-                  let resolved_then = self.resolve_expression(then_expr)?;
-                  let resolved_else = self.resolve_expression(else_expr)?;
+                // Look up the class symbol
+                let class_symbol_id = self
+                    .symbol_table
+                    .lookup_symbol(&full_class_name)
+                    .unwrap_or(SymbolId(0)); // Placeholder for built-in classes
 
-                  Ok(ResolvedHirExpression::Conditional {
-                      condition: Box::new(resolved_condition),
-                      then_expr: Box::new(resolved_then),
-                      else_expr: Box::new(resolved_else),
-                      location: location.clone(),
-                  })
-              }
-              */
+                let method_symbol_id = SymbolId(0); // Placeholder for built-in methods
+
+                // Resolve arguments
+                let mut resolved_arguments = Vec::new();
+                for arg in arguments {
+                    resolved_arguments.push(self.resolve_expression(arg)?);
+                }
+
+                Ok(ResolvedHirExpression::StaticMethodCall {
+                    namespace: namespace.clone(),
+                    class_name: class_name.clone(),
+                    class_symbol_id,
+                    method: method.clone(),
+                    method_symbol_id,
+                    arguments: resolved_arguments,
+                    location: location.clone(),
+                })
+            }
+
+            HirExpression::OnError {
+                expression,
+                fallback,
+                location,
+            } => {
+                let resolved_expression = self.resolve_expression(expression)?;
+                let resolved_fallback = self.resolve_expression(fallback)?;
+
+                Ok(ResolvedHirExpression::OnError {
+                    expression: Box::new(resolved_expression),
+                    fallback: Box::new(resolved_fallback),
+                    location: location.clone(),
+                })
+            }
+
+            HirExpression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+                location,
+            } => {
+                let resolved_condition = self.resolve_expression(condition)?;
+                let resolved_then = self.resolve_expression(then_expr)?;
+                let resolved_else = self.resolve_expression(else_expr)?;
+
+                Ok(ResolvedHirExpression::Conditional {
+                    condition: Box::new(resolved_condition),
+                    then_expr: Box::new(resolved_then),
+                    else_expr: Box::new(resolved_else),
+                    location: location.clone(),
+                })
+            }
         }
     }
 
