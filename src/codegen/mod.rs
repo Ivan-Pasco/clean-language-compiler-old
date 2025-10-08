@@ -290,6 +290,17 @@ impl CodeGenerator {
     }
 
     /// Generate the complete program
+    ///
+    /// # DEPRECATED
+    /// This method uses the old AST-based code generation path which has known issues.
+    /// **DO NOT USE** - Use `compile_with_file()` from the library root instead,
+    /// which uses the MIR pipeline with all optimizations and fixes.
+    ///
+    /// This method will be removed in v0.11.0.
+    #[deprecated(
+        since = "0.10.2",
+        note = "Use compile_with_file() instead. This old AST-based path generates invalid WASM."
+    )]
     pub fn generate(&mut self, program: &Program) -> Result<Vec<u8>, CompilerError> {
         // Clear previous state
         self.function_count = 0;
@@ -9709,6 +9720,14 @@ impl CodeGenerator {
 }
 
 /// Generate WebAssembly from AST using the IR pipeline
+///
+/// # DEPRECATED
+/// This function is unused and will be removed in v0.11.0.
+/// Use `compile_with_file()` from the library root instead.
+#[deprecated(
+    since = "0.10.2",
+    note = "Unused function. Use compile_with_file() instead."
+)]
 pub fn generate_wasm_from_ast(program: crate::ast::Program) -> Result<Vec<u8>, CompilerError> {
     use crate::ir::{IRPipeline, OptimizationLevel};
     use wasm_generator::WasmGenerator;
