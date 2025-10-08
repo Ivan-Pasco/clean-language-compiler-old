@@ -326,6 +326,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
+    // Add string_concat function: string_concat(ptr1: i32, len1: i32, ptr2: i32, len2: i32) -> i32
+    linker.func_wrap(
+        "env",
+        "string_concat",
+        |mut caller: Caller<'_, ()>, ptr1: i32, len1: i32, ptr2: i32, len2: i32| -> i32 {
+            // Get memory
+            let memory = match caller.get_export("memory") {
+                Some(Extern::Memory(mem)) => mem,
+                _ => return 0, // Return null on failure
+            };
+
+            // Read first string
+            let str1 = match memory
+                .data(&caller)
+                .get(ptr1 as usize..(ptr1 + len1) as usize)
+            {
+                Some(data) => match std::str::from_utf8(data) {
+                    Ok(s) => s.to_string(),
+                    Err(_) => return 0,
+                },
+                None => return 0,
+            };
+
+            // Read second string
+            let str2 = match memory
+                .data(&caller)
+                .get(ptr2 as usize..(ptr2 + len2) as usize)
+            {
+                Some(data) => match std::str::from_utf8(data) {
+                    Ok(s) => s.to_string(),
+                    Err(_) => return 0,
+                },
+                None => return 0,
+            };
+
+            // Concatenate strings
+            let result = str1 + &str2;
+
+            // Allocate and return result
+            allocate_string_in_memory(&memory, &mut caller, &result)
+        },
+    )?;
+
     linker.func_wrap("env", "string_to_int", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "string_to_float", |_: i32| -> f64 { 0.0 })?;
 
