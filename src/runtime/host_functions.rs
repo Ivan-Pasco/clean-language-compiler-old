@@ -402,6 +402,26 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
             )
         })?;
 
+    // string_concat(ptr1: i32, len1: i32, ptr2: i32, len2: i32) -> string_ptr: i32
+    linker
+        .func_wrap(
+            "env",
+            "string_concat",
+            |mut caller: Caller<'_, ()>, ptr1: i32, len1: i32, ptr2: i32, len2: i32| -> i32 {
+                let str1 = extract_string_from_memory(&mut caller, ptr1, len1);
+                let str2 = extract_string_from_memory(&mut caller, ptr2, len2);
+                let result = str1 + &str2;
+                allocate_string_in_memory(&mut caller, &result)
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string_concat function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
     Ok(())
 }
 

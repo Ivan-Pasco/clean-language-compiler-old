@@ -758,14 +758,14 @@ fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
         )
     })?;
 
-    // Call the start function
-    if let Some(start_func) = instance.get_func(&mut store, "start") {
+    // Call the _start function (Clean Language entry point)
+    if let Some(start_func) = instance.get_func(&mut store, "_start") {
         start_func
             .call(&mut store, &[], &mut [])
             .map_err(|e| CompilerError::runtime_error(format!("Runtime error: {e}"), None, None))?;
     } else {
         return Err(CompilerError::runtime_error(
-            "No 'start' function found in WebAssembly module".to_string(),
+            "No '_start' function found in WebAssembly module".to_string(),
             None,
             None,
         ));

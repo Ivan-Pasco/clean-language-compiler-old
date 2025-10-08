@@ -1479,6 +1479,13 @@ impl<'a> MirCodeGenerator<'a> {
                 start_func_index,
             );
 
+            // Export memory so host functions can access it
+            self.wasm_generator.export_section.export(
+                "memory",
+                wasm_encoder::ExportKind::Memory,
+                0,
+            );
+
             // Update function tracking
             self.wasm_generator
                 .function_names
@@ -1527,6 +1534,10 @@ impl<'a> MirCodeGenerator<'a> {
         // 6. Add code section - clone it
         let code_section = self.wasm_generator.code_section.clone();
         module.section(&code_section);
+
+        // 7. Add data section (contains string literals)
+        let data_section = self.wasm_generator.memory_utils.get_data_section();
+        module.section(data_section);
 
         Ok(module.finish())
     }
