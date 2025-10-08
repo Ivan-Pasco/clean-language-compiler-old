@@ -10,7 +10,6 @@
 
 #![allow(clippy::manual_inspect)]
 
-use clean_language_compiler::codegen::CodeGenerator;
 use clean_language_compiler::error::CompilerError;
 use clean_language_compiler::parser::CleanParser;
 use clean_language_compiler::runtime::runtime_manager::RuntimeManager;
@@ -623,19 +622,14 @@ fn compile_file(input_file: &str, output_file: &str) -> Result<(), CompilerError
     // Read the input file
     let source = read_source_file(input_file)?;
 
-    // Parse the program
-    let program = parse_source(&source, input_file)?;
-
-    // Semantic analysis
-    let mut semantic_analyzer = SemanticAnalyzer::new();
-    let analyzed_program = semantic_analyzer.analyze(&program).map_err(|e| {
-        display_error(&e, &source, input_file);
-        e
-    })?;
-
-    // Code generation
-    let mut code_generator = CodeGenerator::new();
-    let wasm_binary = code_generator.generate(&analyzed_program)?;
+    // Use the new MIR-based compilation pipeline with all fixes
+    let wasm_binary =
+        clean_language_compiler::compile_with_file(&source, input_file).map_err(|errors| {
+            for error in &errors {
+                display_error(error, &source, input_file);
+            }
+            errors.into_iter().next().unwrap()
+        })?;
 
     // Write the output file
     fs::write(output_file, wasm_binary).map_err(|e| {
