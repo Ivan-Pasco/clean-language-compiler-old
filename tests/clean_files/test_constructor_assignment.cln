@@ -1,9 +1,0 @@
-class TestClass
-	boolean flag
-	
-	constructor(boolean testFlag)
-		flag = testFlag
-
-start()
-	TestClass test = TestClass(true)
-	print("done")

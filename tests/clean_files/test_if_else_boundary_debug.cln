@@ -1,9 +1,0 @@
-functions:
-	string firstFunction()
-		if true
-			return "yes"
-		else
-			return "no"
-	
-	string secondFunction(string param)
-		return param

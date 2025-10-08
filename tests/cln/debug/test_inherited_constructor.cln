@@ -1,0 +1,17 @@
+// Test inherited constructor call
+class Point
+	integer x
+	integer y
+	constructor(integer x, integer y)
+		// Auto-stores matching parameter names
+
+class ColoredPoint is Point
+	string color
+	constructor(integer xParam, integer yParam, string colorParam)
+		base(xParam, yParam)
+		color = colorParam
+
+start()
+	Point p = Point(3, 4)
+	ColoredPoint cp = ColoredPoint(1, 2, "red")
+	print("Test")

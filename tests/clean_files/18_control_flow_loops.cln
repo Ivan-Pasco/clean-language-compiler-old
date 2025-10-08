@@ -1,9 +1,0 @@
-
-start()
-	list<integer> numbers = [1, 2, 3, 4, 5]
-	
-	iterate i in 0 to 3
-		print(i)
-	
-	iterate num in numbers
-		print(num)

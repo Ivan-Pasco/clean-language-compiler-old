@@ -1,0 +1,62 @@
+// Test 78: Comprehensive List Module Operations
+// Tests all list functions: basic operations, modifications, transformations, functional programming
+
+start()
+	// Basic list operations
+	list<integer> numbers = [1, 2, 3, 4, 5]
+	integer size = list.size(numbers)
+	integer first = list.get(numbers, 0)
+	integer last = list.get(numbers, 4)
+	print("List: [1, 2, 3, 4, 5]")
+	print("Length: " + size.toString())
+	print("First: " + first.toString())
+	print("Last: " + last.toString())
+	// List modification
+	list<integer> modified = list.add(numbers, 6)
+	list<integer> inserted = list.insert(modified, 2, 99)
+	integer removed = list.remove(inserted, 2)
+	print("After add 6: length = " + list.size(modified).toString())
+	print("After insert 99 at index 2: length = " + list.size(inserted).toString())
+	print("Removed value: " + removed.toString())
+	// Search operations
+	list<string> fruits = ["apple", "banana", "apple", "orange"]
+	boolean hasApple = list.contains(fruits, "apple")
+	integer appleIndex = list.indexOf(fruits, "apple")
+	integer lastAppleIndex = list.lastIndexOf(fruits, "apple")
+	print("Contains apple: " + hasApple.toString())
+	print("First apple index: " + appleIndex.toString())
+	print("Last apple index: " + lastAppleIndex.toString())
+	// List transformation
+	list<integer> data = [5, 2, 8, 1, 9, 3]
+	list<integer> sorted = list.sort(data)
+	list<integer> reversed = list.reverse(data)
+	list<integer> section = list.slice(data, 1, 4)
+	print("Original: [5, 2, 8, 1, 9, 3]")
+	print("Sorted length: " + list.size(sorted).toString())
+	print("Reversed length: " + list.size(reversed).toString())
+	print("Section (1-4) length: " + list.size(section).toString())
+	// List concatenation
+	list<string> list1 = ["a", "b"]
+	list<string> list2 = ["c", "d"]
+	list<string> combined = list.concat(list1, list2)
+	print("Combined length: " + list.size(combined).toString())
+	// Utility operations
+	list<integer> empty = [0]  // Initialize with dummy value
+	boolean isEmpty = list.isEmpty(empty)
+	boolean isNotEmpty = list.isNotEmpty(numbers)
+	print("Empty list is empty: " + isEmpty.toString())
+	print("Numbers list is not empty: " + isNotEmpty.toString())
+	// First and last element access
+	string firstFruit = list.first(fruits)
+	string lastFruit = list.last(fruits)
+	print("First fruit: " + firstFruit)
+	print("Last fruit: " + lastFruit)
+	// String joining
+	list<string> words = ["Clean", "Language", "is", "awesome"]
+	string sentence = list.join(words, " ")
+	print("Joined sentence: " + sentence)
+	// List creation helpers
+	list<string> filled = list.fill(3, "hello")
+	list<integer> range = list.range(1, 5)
+	print("Filled list length: " + list.size(filled).toString())
+	print("Range list length: " + list.size(range).toString())

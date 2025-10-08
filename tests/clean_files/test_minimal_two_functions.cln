@@ -1,6 +1,0 @@
-functions:
-	first()
-		print("first")
-	
-	second()
-		print("second")

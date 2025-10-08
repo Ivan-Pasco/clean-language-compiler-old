@@ -1,0 +1,64 @@
+// Default parameters specification compliance test
+// Tests default parameter values as defined in Clean Language Specification
+
+functions:
+	// Test 1: Basic default parameters
+	string greet(string name = "World")
+		return "Hello, " + name + "!"
+
+	// Test 2: Multiple default parameters
+	string formatMessage(string text = "Default", string prefix = ">> ", boolean uppercase = false)
+		if uppercase
+			return prefix + text.toUpperCase()
+		else
+			return prefix + text
+
+	// Test 3: Mixed required and default parameters
+	integer power(integer base, integer exponent = 2)
+		// Default exponent of 2 for squaring
+		return base ^ exponent
+
+	// Test 4: Function with defaults - input block converted to regular variables
+	integer calculateArea()
+		description "Calculate area with default dimensions"
+		integer width = 10
+		integer height = 5
+		return width * height
+
+	// Test 5: Complex default values
+	string processData(string data, string separator = ", ", integer maxLength = 100)
+		// Simulate processing with defaults
+		if data.length() > maxLength
+			return data.substring(0, maxLength) + "..."
+		else
+			return "Processed: " + data + separator + "done"
+
+start()
+	print("=== Default Parameters Specification Test ===")
+
+	// Test default parameter usage
+	print("1. Basic Default Parameters:")
+	print(greet())           // Uses default "World"
+	print(greet("Alice"))    // Overrides default
+
+	print("2. Multiple Default Parameters:")
+	print(formatMessage())                              // All defaults
+	print(formatMessage("Custom"))                      // One override
+	print(formatMessage("Custom", "*** ", true))       // All overrides
+
+	print("3. Power Function with Default Exponent:")
+	integer squared = power(5)        // Uses default exponent=2
+	integer cubed = power(5, 3)       // Overrides exponent
+	print("5^2 = " + squared.toString())
+	print("5^3 = " + cubed.toString())
+
+	print("4. Input Block with Defaults:")
+	integer area = calculateArea()    // Uses default width=10, height=5
+	print("Default area: " + area.toString())
+
+	print("5. Complex Default Processing:")
+	print(processData("test"))                           // Uses all defaults
+	print(processData("test", " | "))                   // Custom separator
+	print(processData("test", " | ", 50))               // Custom separator and length
+
+	print("Default parameters specification compliance test completed")

@@ -1,0 +1,29 @@
+// Test file for apply blocks
+
+functions:
+	void testApplyBlocks()
+		// Test println apply block
+		println:
+			"Line 1"
+			"Line 2"
+
+		// Test integer apply block
+		integer:
+			count = 0
+			maxSize = 100
+
+		// Test string apply block
+		string:
+			name = "Alice"
+			version = "1.0.0"
+
+		// Test constant apply block
+		constant:
+			integer MAX_SIZE = 100
+			number PI = 3.14159
+
+		print("Count: " + count.toString())
+
+start()
+	testApplyBlocks()
+	print("completed")

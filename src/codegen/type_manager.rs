@@ -33,24 +33,24 @@ impl TypeManager {
         self.type_section.clone()
     }
 
-    /// Add a function type to the type section
+    /// Add a function type to the type section (supports multi-value returns)
     pub(crate) fn add_function_type(
         &mut self,
         params: &[WasmType],
-        return_type: Option<WasmType>,
+        return_types: &[WasmType],
     ) -> Result<u32, CompilerError> {
         let param_val_types: Vec<ValType> = params.iter().map(|t| (*t).into()).collect();
-        let return_val_type: Vec<ValType> = return_type.map(|t| vec![t.into()]).unwrap_or_default();
+        let return_val_types: Vec<ValType> = return_types.iter().map(|t| (*t).into()).collect();
 
         self.type_section
-            .function(param_val_types.clone(), return_val_type.clone());
+            .function(param_val_types.clone(), return_val_types.clone());
         let type_index = self.function_types.len() as u32;
 
         let parser_param_types: Vec<wasmparser::ValType> = param_val_types
             .iter()
             .map(|vt| WasmType::from(*vt).to_parser_val_type())
             .collect();
-        let parser_result_types: Vec<wasmparser::ValType> = return_val_type
+        let parser_result_types: Vec<wasmparser::ValType> = return_val_types
             .iter()
             .map(|vt| WasmType::from(*vt).to_parser_val_type())
             .collect();
@@ -58,6 +58,16 @@ impl TypeManager {
             .push(FuncType::new(parser_param_types, parser_result_types));
 
         Ok(type_index)
+    }
+
+    /// Add a function type with single or no return value (convenience method)
+    pub(crate) fn add_function_type_single(
+        &mut self,
+        params: &[WasmType],
+        return_type: Option<WasmType>,
+    ) -> Result<u32, CompilerError> {
+        let return_types: Vec<WasmType> = return_type.map(|t| vec![t]).unwrap_or_default();
+        self.add_function_type(params, &return_types)
     }
 
     /// Get the function types stored in this manager

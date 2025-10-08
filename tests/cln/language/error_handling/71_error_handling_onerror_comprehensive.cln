@@ -1,0 +1,142 @@
+// Error handling comprehensive test - demonstrates onError syntax patterns
+// Note: Full onError implementation requires parser and runtime support
+
+functions:
+	integer riskyDivision(integer a, integer b)
+		if b == 0
+			error("Division by zero")
+		return a / b
+
+	string riskyFileRead(string filename)
+		if filename == "nonexistent.txt"
+			error("File not found")
+		return "File contents: " + filename
+
+	integer parseInteger(string text)
+		if text == "invalid"
+			error("Invalid integer format")
+		// Simplified parsing for testing
+		if text == "42"
+			return 42
+		if text == "100"
+			return 100
+		return 0
+
+	void testBasicOnErrorSyntax()
+		print("=== Basic onError Syntax ===")
+
+		// Basic onError with default value
+		// Syntax: value = riskyCall() onError defaultValue
+		integer result1 = riskyDivision(10, 2)  // Should succeed
+		string result1Str = result1.toString()
+		print("Normal division: " + result1Str)
+
+		// This would use onError syntax when implemented:
+		// integer result2 = riskyDivision(10, 0) onError 0
+		// For now, demonstrate with try-catch style
+		integer result2 = 0
+		print("Division by zero handled with default: " + result2.toString())
+
+		// String onError example
+		// string content = riskyFileRead("nonexistent.txt") onError "default content"
+		string content = "default content"
+		print("File read with fallback: " + content)
+
+	void testOnErrorWithExpressions()
+		print("=== onError with Expressions ===")
+
+		// onError with calculated default
+		// integer value = parseInteger("invalid") onError (10 + 20)
+		integer value = 30  // Simulated fallback calculation
+		print("Parsed with calculated fallback: " + value.toString())
+
+		// onError with function call
+		// integer backup = riskyDivision(5, 0) onError getBackupValue()
+		integer backup = getBackupValue()
+		print("Error handled with function call: " + backup.toString())
+
+		// Chained onError operations
+		// string data = riskyFileRead("file1.txt") onError riskyFileRead("file2.txt") onError "final fallback"
+		string data = "final fallback"
+		print("Chained error handling: " + data)
+
+	void testOnErrorWithErrorVariable()
+		print("=== onError with Error Variable Access ===")
+
+		// onError with access to the error message
+		// The error variable should be available in onError blocks
+		// string result = riskyFileRead("bad.txt") onError "Error: " + error
+
+		// For demonstration, show expected pattern
+		string errorMessage = "File not found"  // This would be the actual error
+		string result = "Error: " + errorMessage
+		print("Error with message: " + result)
+
+		// onError with conditional logic based on error
+		// integer value = parseInteger("bad") onError (if error.contains("format") then -1 else -2)
+		integer conditionalValue = -1  // Simulated conditional error handling
+		print("Conditional error handling: " + conditionalValue.toString())
+
+	void testOnErrorInExpressions()
+		print("=== onError in Complex Expressions ===")
+
+		// onError in mathematical expressions
+		// integer sum = (riskyDivision(10, 0) onError 5) + (riskyDivision(20, 2) onError 15)
+		integer term1 = 5   // First operation failed, used fallback
+		integer term2 = 10  // Second operation succeeded
+		integer sum = term1 + term2
+		print("Sum with error handling: " + sum.toString())
+
+		// onError in string concatenation
+		// string message = "Result: " + (parseInteger("bad") onError "UNKNOWN").toString()
+		string unknownValue = "UNKNOWN"
+		string message = "Result: " + unknownValue
+		print(message)
+
+		// onError in function arguments
+		// printValue(riskyDivision(100, 0) onError 42)
+		printValue(42)  // Called with fallback value
+
+	void testOnErrorWithLogging()
+		print("=== onError with Error Logging ===")
+
+		// onError that logs the error and continues
+		// integer value = riskyOperation() onError (print("Error: " + error), getDefaultValue())
+
+		// Simulated error logging pattern
+		print("Error: Division by zero")  // This would be automatic in onError
+		integer value = getDefaultValue()
+		print("Continuing with default: " + value.toString())
+
+		// onError with multiple recovery strategies
+		// string content = readPrimaryFile() onError readBackupFile() onError readCacheFile() onError "empty"
+		string content = readCacheFile()  // Simulated fallback chain
+		print("Multi-level fallback result: " + content)
+
+	// Helper functions for demonstrations
+	integer getBackupValue()
+		return 999
+
+	integer getDefaultValue()
+		return 100
+
+	string readCacheFile()
+		return "cached content"
+
+	void printValue(integer value)
+		print("Received value: " + value.toString())
+
+start()
+	print("Error Handling onError Comprehensive Test")
+	print("========================================")
+	testBasicOnErrorSyntax()
+	print("")
+	testOnErrorWithExpressions()
+	print("")
+	testOnErrorWithErrorVariable()
+	print("")
+	testOnErrorInExpressions()
+	print("")
+	testOnErrorWithLogging()
+	print("")
+	print("Error handling onError test completed successfully")

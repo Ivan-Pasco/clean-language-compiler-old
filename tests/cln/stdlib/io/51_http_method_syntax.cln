@@ -1,0 +1,70 @@
+// Comprehensive QA Test for HTTP Method Syntax
+// Tests http.method() calls for HTTP operations
+
+start()
+	// Test http.get() method
+	string getResponse = http.get("https://api.example.com/users")
+	print("GET response length: ")
+	integer getLength = string.size(getResponse)
+	print(getLength.toString())
+
+	// Test http.post() method
+	string postData = "name=John&email=john@example.com"
+	string postResponse = http.post("https://api.example.com/users", postData)
+	print("POST response length: ")
+	integer postLength = string.size(postResponse)
+	print(postLength.toString())
+
+	// Test http.put() method
+	string putData = "name=Jane&email=jane@example.com"
+	string putResponse = http.put("https://api.example.com/users/123", putData)
+	print("PUT response length: ")
+	integer putLength = string.size(putResponse)
+	print(putLength.toString())
+
+	// Test http.patch() method
+	string patchData = "email=newemail@example.com"
+	string patchResponse = http.patch("https://api.example.com/users/123", patchData)
+	print("PATCH response length: ")
+	integer patchLength = string.size(patchResponse)
+	print(patchLength.toString())
+
+	// Test http.delete() method
+	string deleteResponse = http.delete("https://api.example.com/users/123")
+	print("DELETE response length: ")
+	integer deleteLength = string.size(deleteResponse)
+	print(deleteLength.toString())
+
+	// Test method chaining with HTTP responses
+	string apiData = http.get("https://api.weather.com/current")
+	integer dataLength = string.size(apiData)
+	boolean hasData = dataLength > 0
+	print("Weather API has data: ")
+	print(hasData.toString())
+
+	// Test HTTP methods with validation
+	string userList = http.get("https://api.example.com/users")
+	boolean isEmpty = string.isEmpty(userList)
+	string message = if isEmpty then "Warning: User list is empty" else "User list retrieved successfully"
+	print(message)
+
+	// Test multiple HTTP operations
+	string endpoint = "https://api.example.com"
+	string userData = http.get(endpoint + "/user/profile")
+	string settingsData = http.get(endpoint + "/user/settings")
+
+	print("Profile data length: ")
+	integer userDataLength = string.size(userData)
+	print(userDataLength.toString())
+	print("Settings data length: ")
+	integer settingsLength = string.size(settingsData)
+	print(settingsLength.toString())
+
+	// Test HTTP with form data
+	string jsonPayload = "status=active&type=premium"
+	string updateResponse = http.post("https://api.example.com/account", jsonPayload)
+	print("Account update response: ")
+	integer updateLength = string.size(updateResponse)
+	print(updateLength.toString())
+
+	print("HTTP method syntax test completed successfully!")

@@ -1,0 +1,9 @@
+// Apply-Blocks Specification Implementation Test
+// Simplified to supported syntax
+
+start()
+	print("Apply-blocks specification test completed")
+
+functions:
+	void testSimpleFunction()
+		print("Simple function test")

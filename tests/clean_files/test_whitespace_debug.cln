@@ -1,5 +1,0 @@
-functions:
-
-	void testMethodStyle()
-
-		print("Testing method-style functions")

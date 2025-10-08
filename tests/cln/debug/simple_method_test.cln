@@ -1,0 +1,11 @@
+// Simple test to debug method return types
+
+class Animal
+	functions:
+		string getName()
+			return "Animal"
+
+start()
+	Animal a = Animal()
+	string name = a.getName()
+	print(name)

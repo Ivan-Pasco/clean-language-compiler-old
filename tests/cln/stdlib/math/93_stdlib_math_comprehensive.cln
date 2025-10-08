@@ -1,0 +1,148 @@
+// Standard Library Math Module Comprehensive Test
+// Tests all mathematical functions and constants as specified
+
+functions:
+	void testCoreMathOperations()
+		print("=== Core Math Operations ===")
+		// Basic mathematical functions
+		number sqrtResult = math.sqrt(16.0)
+		number absNumber = math.abs(-5.7)
+		integer absInteger = math.abs(-42)
+		number maxResult = math.max(10.5, 7.2)
+		number minResult = math.min(10.5, 7.2)
+
+		print("sqrt(16.0) = " + sqrtResult.toString())
+		print("abs(-5.7) = " + absNumber.toString())
+		print("abs(-42) = " + absInteger.toString())
+		print("max(10.5, 7.2) = " + maxResult.toString())
+		print("min(10.5, 7.2) = " + minResult.toString())
+	void testRoundingFunctions()
+		print("=== Rounding and Precision Functions ===")
+		number testValue = 3.7
+		number negativeValue = -2.3
+
+		number floorResult = math.floor(testValue)
+		number ceilResult = math.ceil(testValue)
+		number roundResult = math.round(testValue)
+
+		number floorNeg = math.floor(negativeValue)
+		number ceilNeg = math.ceil(negativeValue)
+		number roundNeg = math.round(negativeValue)
+
+		print("floor(3.7) = " + floorResult.toString())
+		print("ceil(3.7) = " + ceilResult.toString())
+		print("round(3.7) = " + roundResult.toString())
+		print("floor(-2.3) = " + floorNeg.toString())
+		print("ceil(-2.3) = " + ceilNeg.toString())
+		print("round(-2.3) = " + roundNeg.toString())
+	void testTrigonometricFunctions()
+		print("=== Trigonometric Functions ===")
+		number pi = math.pi()
+		number angle = pi / 4.0  // 45 degrees in radians
+
+		number sinResult = math.sin(angle)
+		number cosResult = math.cos(angle)
+		number tanResult = math.tan(angle)
+
+		// Inverse trigonometric functions
+		number asinResult = math.asin(0.7071)  // approximately sin(π/4)
+		number acosResult = math.acos(0.7071)  // approximately cos(π/4)
+		number atanResult = math.atan(1.0)     // atan(1) = π/4
+		number atan2Result = math.atan2(1.0, 1.0)  // atan2(1,1) = π/4
+
+		print("sin(π/4) = " + sinResult.toString())
+		print("cos(π/4) = " + cosResult.toString())
+		print("tan(π/4) = " + tanResult.toString())
+		print("asin(0.7071) = " + asinResult.toString())
+		print("acos(0.7071) = " + acosResult.toString())
+		print("atan(1.0) = " + atanResult.toString())
+		print("atan2(1.0, 1.0) = " + atan2Result.toString())
+	void testLogarithmicFunctions()
+		print("=== Logarithmic and Exponential Functions ===")
+		number e = math.e()
+		number value = 10.0
+
+		// Logarithmic functions
+		number lnResult = math.ln(e)        // ln(e) = 1
+		number log10Result = math.log10(100.0)  // log10(100) = 2
+		number log2Result = math.log2(8.0)      // log2(8) = 3
+
+		// Exponential functions
+		number expResult = math.exp(1.0)    // e^1 = e
+		number exp2Result = math.exp2(3.0)  // 2^3 = 8
+
+		print("ln(e) = " + lnResult.toString())
+		print("log10(100) = " + log10Result.toString())
+		print("log2(8) = " + log2Result.toString())
+		print("exp(1) = " + expResult.toString())
+		print("exp2(3) = " + exp2Result.toString())
+	void testHyperbolicFunctions()
+		print("=== Hyperbolic Functions ===")
+		number x = 1.0
+
+		number sinhResult = math.sinh(x)
+		number coshResult = math.cosh(x)
+		number tanhResult = math.tanh(x)
+
+		print("sinh(1.0) = " + sinhResult.toString())
+		print("cosh(1.0) = " + coshResult.toString())
+		print("tanh(1.0) = " + tanhResult.toString())
+	void testMathematicalConstants()
+		print("=== Mathematical Constants ===")
+		number piValue = math.pi()
+		number eValue = math.e()
+		number tauValue = math.tau()
+
+		print("π (pi) = " + piValue.toString())
+		print("e (Euler's number) = " + eValue.toString())
+		print("τ (tau) = " + tauValue.toString())
+		// Verify tau = 2π
+		number calculatedTau = 2.0 * piValue
+		number difference = tauValue - calculatedTau
+		number absResult = math.abs(difference)
+		boolean tauCorrect = absResult < 0.0001
+		print("τ = 2π verification: " + tauCorrect.toString())
+	void testPracticalCalculations()
+		print("=== Practical Math Applications ===")
+		// Circle area calculation
+		number radius = 5.0
+		number pi3 = math.pi()
+		number area = pi3 * (radius ^ 2.0)
+		print("Circle area (radius=5): " + area.toString())
+		// Distance calculation (Pythagorean theorem)
+		number dx = 3.0
+		number dy = 4.0
+		number distance = math.sqrt((dx ^ 2.0) + (dy ^ 2.0))
+		print("Distance (3,4 to origin): " + distance.toString())
+		// Trigonometry - find triangle sides
+		number pi2 = math.pi()
+		number angleRad = pi2 / 6.0  // 30 degrees
+		number hypotenuse = 10.0
+		number opposite = hypotenuse * math.sin(angleRad)
+		number adjacent = hypotenuse * math.cos(angleRad)
+		print("Triangle opposite side: " + opposite.toString())
+		print("Triangle adjacent side: " + adjacent.toString())
+		// Exponential growth
+		number principal = 1000.0
+		number rate = 0.05  // 5% growth
+		number time = 2.0
+		number growth = principal * math.exp(rate * time)
+		print("Exponential growth: " + growth.toString())
+start()
+	print("Standard Library Math Module Test")
+	print("=================================")
+	testCoreMathOperations()
+	print("")
+	testRoundingFunctions()
+	print("")
+	testTrigonometricFunctions()
+	print("")
+	testLogarithmicFunctions()
+	print("")
+	testHyperbolicFunctions()
+	print("")
+	testMathematicalConstants()
+	print("")
+	testPracticalCalculations()
+	print("")
+	print("Math module comprehensive test completed")

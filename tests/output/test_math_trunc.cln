@@ -1,0 +1,4 @@
+start()
+	// Test math.trunc function
+	number result = math.trunc(3.7)
+	print("Math.trunc test complete")

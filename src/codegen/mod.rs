@@ -517,12 +517,14 @@ impl CodeGenerator {
         // ------------------------------------------------------------------
         // 5. Setup memory (1 page minimum for basic operations)
         // ------------------------------------------------------------------
+        println!("DEBUG: Setting up memory section with 1 page minimum");
         self.memory_section.memory(MemoryType {
             minimum: 1,
             maximum: Some(16), // Limit to 16 pages (1MB) for safety
             memory64: false,
             shared: false,
         });
+        println!("DEBUG: Memory section configured");
 
         // ------------------------------------------------------------------
         // 6. Generate getter functions for integration testing
@@ -665,8 +667,18 @@ impl CodeGenerator {
         params: &[WasmType],
         return_type: Option<WasmType>,
     ) -> Result<u32, CompilerError> {
-        // Use the type manager to add the function type
-        self.type_manager.add_function_type(params, return_type)
+        // Use the type manager to add the function type (single return value)
+        self.type_manager
+            .add_function_type_single(params, return_type)
+    }
+
+    fn add_function_type_multi(
+        &mut self,
+        params: &[WasmType],
+        return_types: &[WasmType],
+    ) -> Result<u32, CompilerError> {
+        // Use the type manager to add the function type (multi-value returns)
+        self.type_manager.add_function_type(params, return_types)
     }
 
     pub fn register_import_function(
@@ -5897,6 +5909,78 @@ impl CodeGenerator {
         Ok(function_index)
     }
 
+    /// Register a function with multiple return values (for WebAssembly multi-value returns)
+    pub fn register_function_multi(
+        &mut self,
+        name: &str,
+        params: &[WasmType],
+        return_types: &[WasmType],
+        instructions: &[Instruction],
+    ) -> Result<u32, CompilerError> {
+        // Get the current function index
+        let function_index = self.function_count;
+
+        // Add the function type to the type section using multi-value support
+        let type_index = self.add_function_type_multi(params, return_types)?;
+
+        // Add the function to the function section
+        self.function_section.function(type_index);
+
+        // Create a Function - parameters are automatically available as locals 0, 1, 2, ...
+        // Determine how many locals are needed based on the highest LocalGet index in instructions
+        let max_local_index = instructions
+            .iter()
+            .filter_map(|inst| match inst {
+                Instruction::LocalGet(idx)
+                | Instruction::LocalSet(idx)
+                | Instruction::LocalTee(idx) => Some(*idx),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+
+        // Calculate how many locals we need beyond the parameters
+        let param_count = params.len() as u32;
+        let locals_needed: Vec<(u32, wasm_encoder::ValType)> = if max_local_index >= param_count {
+            // We need additional locals beyond parameters
+            let additional_locals = max_local_index - param_count + 1;
+            // Default additional locals to I32, but this could be improved with type inference
+            (0..additional_locals)
+                .map(|_| (1u32, wasm_encoder::ValType::I32))
+                .collect()
+        } else {
+            // No additional locals needed beyond parameters
+            vec![]
+        };
+
+        let mut func = Function::new(locals_needed);
+
+        // Add all generated instructions
+        for inst in instructions {
+            func.instruction(inst);
+        }
+
+        // Always add END instruction to close the function body
+        func.instruction(&Instruction::End);
+
+        // Add the function to the code section
+        self.code_section.function(&func);
+
+        // Update tracking data
+        self.function_names.push(name.to_string());
+        self.function_map.insert(name.to_string(), function_index);
+        self.function_count += 1;
+
+        // Also register with instruction_generator for internal tracking
+        // For now, use first return type for compatibility
+        let single_return = return_types.first().copied();
+        self.instruction_generator
+            .register_function(name, params, single_return, instructions)?;
+
+        // Return the function index
+        Ok(function_index)
+    }
+
     pub fn generate_error_handler_blocks(
         &mut self,
         try_block: &[Statement],
@@ -8324,6 +8408,23 @@ impl CodeGenerator {
             .insert("string_to_float".to_string());
         self.function_count += 1;
 
+        // string_concat(str1_ptr: i32, str1_len: i32, str2_ptr: i32, str2_len: i32) -> i32
+        // Returns result_ptr (pointer to concatenated string)
+        // Length can be calculated by the caller if needed
+        let string_concat_type = self.type_manager.add_function_type_single(
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+        self.import_section.import(
+            "env",
+            "string_concat",
+            wasm_encoder::EntityType::Function(string_concat_type),
+        );
+        self.function_map
+            .insert("string_concat".to_string(), self.function_count);
+        self.imported_functions.insert("string_concat".to_string());
+        self.function_count += 1;
+
         Ok(())
     }
 
@@ -9565,7 +9666,7 @@ impl CodeGenerator {
         if let Some(&start_index) = self.function_map.get("start") {
             // CRITICAL FIX: Declare the _start function in the function section FIRST
             // The _start function has no parameters and no return value
-            let type_index = self.type_manager.add_function_type(&[], None)?;
+            let type_index = self.type_manager.add_function_type_single(&[], None)?;
             self.function_section.function(type_index);
 
             let mut instructions = Vec::new();

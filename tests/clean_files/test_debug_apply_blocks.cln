@@ -1,7 +1,0 @@
-functions:
-	void test()
-		println:
-			"Hello"
-		
-		integer:
-			count = 0

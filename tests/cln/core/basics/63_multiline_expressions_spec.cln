@@ -1,0 +1,57 @@
+// Multi-line expressions specification compliance test
+// Tests parentheses requirement for multi-line expressions as per Clean Language Specification
+
+functions:
+	integer calculate(integer a, integer b)
+		return a + b
+
+	number multiply(number x, number y)
+		return x * y
+
+start()
+	print("=== Multi-Line Expressions Specification Test ===")
+
+	// Test 1: Single line expressions (no parentheses required)
+	print("1. Single Line Expressions (no parentheses needed):")
+	integer simple = 5 + 3 + 2
+	number basic = 3.14 * 2.0 + 1.0
+	string concat = "Hello" + " " + "World"
+	print("Simple: " + simple.toString())
+	print("Basic: " + basic.toString())
+	print("Concat: " + concat)
+
+	// Test 2: Multi-line expressions (parentheses required)
+	print("2. Multi-Line Expressions (parentheses required):")
+	integer total = (10 + 20 + 30
+	                 40 + 50 + 60)
+	print("Total: " + total.toString())
+
+	// Test 3: Complex multi-line arithmetic
+	print("3. Complex Multi-Line Arithmetic:")
+	number result = (3.14 * 5.0 * 5.0
+	                 2.71 * 3.0 * 3.0
+	                 (1.0 + 2.0 + 3.0))
+	print("Complex result: " + result.toString())
+
+	// Test 4: Multi-line function calls
+	print("4. Multi-Line Function Calls:")
+	integer sum = (calculate(5, 6)
+	               calculate(3, 4)
+	               calculate(2, 1))
+	print("Function sum: " + sum.toString())
+
+	// Test 5: Nested multi-line expressions
+	print("5. Nested Multi-Line Expressions:")
+	integer nested = (((10 + 20) * 2)
+	                 ((30 + 40) * 3)
+	                 ((50 + 60) * 4))
+	print("Nested result: " + nested.toString())
+
+	// Test 6: Multi-line string concatenation
+	print("6. Multi-Line String Operations:")
+	string combined = ("Clean " + "Language "
+	                  "supports " + "multi-line "
+	                  "expressions " + "correctly")
+	print("Combined: " + combined)
+
+	print("Multi-line expressions specification compliance test completed")

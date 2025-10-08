@@ -1,7 +1,0 @@
-functions:
-	void test()
-		integer:
-			x = 5
-
-	void start()
-	void test()

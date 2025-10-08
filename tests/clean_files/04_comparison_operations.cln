@@ -1,7 +1,0 @@
-
-start()
-	integer x = 5
-	integer y = 10
-	
-	boolean equal = x == y
-	print(equal)

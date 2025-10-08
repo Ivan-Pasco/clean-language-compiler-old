@@ -1,0 +1,17 @@
+start()
+	// Test string namespace functions
+	string text = "Hello World"
+
+	// Test string.length
+	number length = string.length(text)
+	print("String length test")
+
+	// Test string.contains
+	boolean contains = string.contains(text, "World")
+	print("String contains test")
+
+	// Test string.substring
+	string substr = string.substring(text, 0, 5)
+	print("String substring test")
+
+	print("String namespace tests complete")

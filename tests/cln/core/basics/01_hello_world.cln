@@ -1,0 +1,7 @@
+// Test Description: Basic hello world program
+// Category: core
+// Dependencies: none
+// Expected: PASS
+
+start()
+	print("Hello, World!")

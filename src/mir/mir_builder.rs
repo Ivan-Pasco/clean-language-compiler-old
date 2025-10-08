@@ -1123,34 +1123,73 @@ impl MirBuilder {
                 left,
                 right,
             } => {
-                let left_id = self.build_expression(context, left)?;
-                let right_id = self.build_expression(context, right)?;
-                let result_id = ValueId(context.function.next_value_id);
-                context.function.next_value_id += 1;
+                // Check if this is string concatenation (String + String or String + other)
+                let is_string_concat = matches!(operator, BinaryOperator::Add)
+                    && (matches!(left.expr_type, ConcreteType::String)
+                        || matches!(right.expr_type, ConcreteType::String));
 
-                // Register the result as a temporary local for codegen
-                let result_type =
-                    self.infer_binary_operation_type(&left.expr_type, &right.expr_type);
-                self.register_temp_local(
-                    context,
-                    result_id,
-                    result_type,
-                    expression.location.clone(),
-                );
+                if is_string_concat {
+                    // String concatenation uses runtime string_concat function
+                    // string_concat(str1_ptr, str1_len, str2_ptr, str2_len) -> (result_ptr, result_len)
+                    let left_id = self.build_expression(context, left)?;
+                    let right_id = self.build_expression(context, right)?;
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
 
-                let mir_op = self.convert_binary_op(operator);
-                let instruction = MirInstruction {
-                    dest: Some(result_id),
-                    operation: MirOperation::BinaryOp {
-                        op: mir_op,
-                        left: MirOperand::Value(left_id),
-                        right: MirOperand::Value(right_id),
-                    },
-                    location: expression.location.clone(),
-                };
+                    // Result is a StringTuple (ptr, len)
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        MirType::StringTuple,
+                        expression.location.clone(),
+                    );
 
-                self.add_instruction(context, instruction);
-                Ok(result_id)
+                    // Generate call to string_concat runtime function
+                    // Use SymbolId(1000) as a fixed ID for string_concat built-in
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::Call {
+                            function: MirOperand::Function(SymbolId(1000)),
+                            arguments: vec![
+                                MirOperand::Value(left_id),
+                                MirOperand::Value(right_id),
+                            ],
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, instruction);
+                    Ok(result_id)
+                } else {
+                    // Regular binary operation (arithmetic, comparison, etc.)
+                    let left_id = self.build_expression(context, left)?;
+                    let right_id = self.build_expression(context, right)?;
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    // Register the result as a temporary local for codegen
+                    let result_type =
+                        self.infer_binary_operation_type(&left.expr_type, &right.expr_type);
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        result_type,
+                        expression.location.clone(),
+                    );
+
+                    let mir_op = self.convert_binary_op(operator);
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::BinaryOp {
+                            op: mir_op,
+                            left: MirOperand::Value(left_id),
+                            right: MirOperand::Value(right_id),
+                        },
+                        location: expression.location.clone(),
+                    };
+
+                    self.add_instruction(context, instruction);
+                    Ok(result_id)
+                }
             }
 
             TastExpressionKind::UnaryOperation { operator, operand } => {
@@ -1207,6 +1246,16 @@ impl MirBuilder {
                 // Create result value for function return
                 let result_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
+
+                // CRITICAL FIX: Register the result ValueId as a temporary local
+                // This ensures constructor calls and function calls have a local to store the result
+                let result_type = self.convert_concrete_type(&expression.expr_type);
+                self.register_temp_local(
+                    context,
+                    result_id,
+                    result_type,
+                    expression.location.clone(),
+                );
 
                 let instruction = MirInstruction {
                     dest: Some(result_id),

@@ -1,0 +1,43 @@
+=== QUICK ERROR ANALYSIS ===
+Date: Tue Sep 30 18:42:36 -05 2025
+
+Testing: tests/cln/stdlib/console/50_input_method_syntax.cln
+  ✗ OTHER ERROR
+918 |             CompilerError::LexError(lex_error) => "Lexical error",
+   = note: `MemorySafetyError` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `MemorySafetyError` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+Testing: tests/cln/language/functions/64_default_parameters_spec.cln
+  ✗ DEFAULT PARAMETER ERROR
+Error 1: Type error: Function expects 1 arguments, got 0
+
+Testing: tests/cln/language/control_flow/36_conditionals.cln
+  ✗ MISSING NAMESPACE FUNCTION
+Error 1: Validation error: Namespace function 'conditional::integer' not found
+
+Testing: tests/cln/debug/test_no_return_type.cln
+  ✗ DEFAULT PARAMETER ERROR
+Error 1: Type error: Function expects 1 arguments, got 0
+
+Testing: tests/cln/debug/test_static_method.cln
+  ✗ NULL TYPE INFERENCE ERROR
+Error 1: Type error: Cannot unify types: null and boolean
+
+Testing: tests/cln/stdlib/string/69_string_interpolation_comprehensive.cln
+  ✗ NULL TYPE INFERENCE ERROR
+Error 1: Type error: Cannot unify types: null and string
+
+Testing: tests/cln/core/basics/56_apply_blocks_comprehensive.cln
+  ✓ SUCCESS
+
+=== ERROR CATEGORY SUMMARY ===
+
+Missing Namespace Functions:
+1
+
+Default Parameter Errors:
+2
+
+Null Type Inference Errors:
+2
+

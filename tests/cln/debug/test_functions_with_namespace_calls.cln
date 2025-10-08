@@ -1,0 +1,10 @@
+functions:
+
+	void testFunc()
+		integer a = 10
+		integer b = 5
+		boolean comparison = compare.integer.greaterThan(a, b)
+		print("Done")
+
+start()
+	testFunc()

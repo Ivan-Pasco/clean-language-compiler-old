@@ -1,0 +1,25 @@
+start()
+	// Basic arithmetic operations (working fine)
+	number val1 = 16.0
+	number val2 = 2.0
+	number sum_val = val1 + val2
+	number diff_val = val1 - val2
+	number mult_val = val1 * val2
+	number div_val = val1 / val2
+
+	print(sum_val.toString())
+	print(diff_val.toString())
+	print(mult_val.toString())
+	print(div_val.toString())
+
+	// String operations (working)
+	string text = "Hello World"
+	print(text)
+
+	// List operations (working)
+	list<integer> numbers = [3, 1, 4, 1, 5, 9]
+	integer first_num = numbers[0]
+	integer second_num = numbers[1]
+
+	print(first_num.toString())
+	print(second_num.toString())

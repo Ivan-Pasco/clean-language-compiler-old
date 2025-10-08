@@ -1,7 +1,0 @@
-functions:
-	integer power(integer value, integer exponent = 2)
-		return value * value
-
-void start()
-	integer result = power(5)
-	print(result.toString())

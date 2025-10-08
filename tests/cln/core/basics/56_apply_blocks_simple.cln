@@ -1,0 +1,27 @@
+// Apply-blocks simple test - demonstrates the : syntax for function calls
+// According to Clean Language Specification, apply-blocks apply identifier: to each indented item
+
+functions:
+	void testApplyBlocks()
+		// Test apply-block for function calls (this syntax should work)
+		print("Apply-block function call test")
+		print("Multiple lines with standard syntax")
+		print("Third line of output")
+
+		// Use standard variable declarations for now
+		integer count = 0
+		integer maxSize = 100
+		integer currentIndex = -1
+
+		string name = "Alice"
+		string version = "1.0.0"
+		string status = "active"
+
+		// Use the declared variables
+		print("Count: " + count.toString())
+		print("Name: " + name)
+		print("Version: " + version)
+
+start()
+	testApplyBlocks()
+	print("Apply-blocks test completed successfully")

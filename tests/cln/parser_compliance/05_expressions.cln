@@ -1,0 +1,100 @@
+// Parser Compliance Test - Expressions
+// This test verifies all expression types and operator precedence
+
+start()
+	// Arithmetic expressions
+	integer a = 10
+	integer b = 5
+	number x = 2.5
+	number y = 1.5
+
+	// Basic arithmetic (precedence: ^ > */% > +-)
+	integer add_result = a + b
+	integer sub_result = a - b
+	integer mul_result = a * b
+	integer div_result = a / b
+	integer mod_result = a % b
+	integer pow_result = a ^ 2
+
+	// Mixed arithmetic
+	number mixed = x * 2 + y / 3
+	number complex = (x + y) * (a - b) / 2
+	number power_chain = 2 ^ 3
+
+	// Comparison expressions
+	boolean eq = a == b
+	boolean ne = a != b
+	boolean lt = a < b
+	boolean le = a <= b
+	boolean gt = a > b
+	boolean ge = a >= b
+	boolean is_val = (a == 10)
+
+	// Logical expressions (precedence: not > and > or)
+	boolean flag1 = true
+	boolean flag2 = false
+
+	boolean and_result = flag1 and flag2
+	boolean or_result = flag1 or flag2
+	boolean complex_logic = flag1 and flag2 or (a > b)
+
+	//Unary expressions
+	integer neg = -a
+
+	//Conditional expressions (not yet implemented)
+	// integer conditional = if a > b then a else b
+	// string conditional_str = if flag1 then "yes" else "no"
+
+	//Parenthesized expressions (test precedence override)
+	integer paren_arith = (a + b) * (x + y)
+	boolean paren_logic = (flag1 and flag2)
+
+	//Complex expressions (single-line due to current parser limitations)
+	integer complex_arith = (a + b * 2)
+	boolean complex_logic = (flag1 and flag2 or (a > b))
+
+	//Function call expressions
+	integer func_result = calculateSum(a, b)
+
+	//Method call expressions
+	string hello = "hello"
+	integer length = hello.length()
+	string world = "world"
+	string upper = world.toUpperCase()
+
+	//Chained method calls
+	string test_str = "test"
+	string chained = test_str.toUpperCase().toLowerCase()
+
+	//Property access
+	TestObject obj = TestObject()
+	integer prop_val = obj.value
+	string prop_name = obj.data.name
+
+	//List access
+	list<integer> numbers = [1, 2, 3, 4, 5]
+	integer first = numbers[0]
+	integer calculated_index = numbers[a - b]
+
+	//Complex nested expressions
+	boolean complex_expr = (a + b * 2) > (x * y) and (flag1 or flag2)
+
+	print("All expression types parsed successfully")
+
+functions:
+	integer calculateSum(integer x, integer y)
+		return x + y
+
+class TestObject
+	integer value
+	TestData data
+
+	constructor()
+		value = 42
+		data = TestData()
+
+class TestData
+	string name
+
+	constructor()
+		name = "test"

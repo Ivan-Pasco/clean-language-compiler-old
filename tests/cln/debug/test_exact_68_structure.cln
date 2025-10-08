@@ -1,0 +1,21 @@
+functions:
+	void testQueueBehavior()
+		print("=== Queue Behavior (FIFO - First In, First Out) ===")
+		list<string> tasks = []
+		tasks.type = "line"
+
+		// Add tasks to the back
+		tasks.add("Task 1")
+		tasks.add("Task 2")
+		tasks.add("Task 3")
+		print("Added three tasks to queue")
+
+		// Process tasks from the front
+		print("Processing tasks in FIFO order:")
+		while tasks.size() > 0
+			string currentTask = tasks.remove()  // Gets from front
+			string temp = "done"
+		print("Queue processing complete")
+
+	void testStackBehavior()
+		print("=== Stack Behavior (LIFO - Last In, First Out) ===")

@@ -1,0 +1,32 @@
+// Test Description: Array creation, access, and chained operations
+// Category: core
+// Dependencies: none
+// Expected: PASS
+
+start()
+	// Basic array creation
+	list<integer> numbers = [1, 2, 3, 4, 5]
+	list<number> floats = [1.1, 2.2, 3.3]
+
+	// Array access
+	integer first = numbers[0]
+	integer last = numbers[4]
+
+	// Multi-dimensional arrays
+	list<list<integer>> nested_array = [[10, 20], [30, 40]]
+	integer chain_result = nested_array[0][1]
+
+	// Variable index chained access
+	integer i = 1
+	integer j = 0
+	integer var_result = nested_array[i][j]
+
+	// Three-dimensional arrays
+	list<list<list<integer>>> three_d = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
+	integer deep_result = three_d[0][1][0]
+
+	print("Array operations test successful!")
+	print("First: " + first.toString())
+	print("Chained: " + chain_result.toString())
+	print("Variable indexed: " + var_result.toString())
+	print("3D result: " + deep_result.toString())

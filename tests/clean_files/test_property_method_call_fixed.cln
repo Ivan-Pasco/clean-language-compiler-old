@@ -1,3 +1,0 @@
-functions:
-	integer main()
-		compare.integer.greaterThan(5, 3)

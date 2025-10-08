@@ -1,0 +1,44 @@
+// Multi-line expressions comprehensive test
+// According to Clean Language Specification, multi-line expressions must be wrapped in parentheses
+
+functions:
+	void testMultilineExpressions()
+		// Single line expressions (no parentheses required)
+		integer result = 5 + 3 + 2
+		number value = 3.14 * 2.0 + 1.0
+
+		// Multi-line expressions (parentheses required)
+		integer total = (10 + 20 + 30
+			40 + 50 + 60)
+		print("Total: " + total.toString())
+
+		// Complex multi-line expression
+		number calculation = (3.14 * 5.0 * 5.0
+			2.71 * 3.0 * 3.0
+			(1.0 + 2.0 + 3.0))
+		print("Complex calculation: " + calculation.toString())
+
+		// Multi-line function call
+		integer product = (multiply(5, 6)
+			multiply(3, 4)
+			multiply(2, 1))
+		print("Multi-line product: " + product.toString())
+
+		// Nested multi-line expressions
+		integer nested = (((10 + 20) * 2)
+			((30 + 40) * 3)
+			((50 + 60) * 4))
+		print("Nested calculation: " + nested.toString())
+
+		// Multi-line with method calls
+		string combined = ("Hello " + "World "
+			"from " + "Clean "
+			"Language")
+		print("Combined string: " + combined)
+
+	integer multiply(integer a, integer b)
+		return a * b
+
+start()
+	testMultilineExpressions()
+	print("Multi-line expressions test completed successfully")

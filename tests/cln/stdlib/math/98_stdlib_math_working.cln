@@ -1,0 +1,84 @@
+// Standard Library Math Module Working Test
+// Tests only the currently implemented mathematical functions
+
+functions:
+	void testBasicMathOperations()
+		print("=== Basic Math Operations ===")
+		// Core mathematical functions that work
+		number sqrtResult = math.sqrt(16.0)
+		integer absInteger = math.abs(-42)
+		number maxResult = math.max(10.5, 7.2)
+		number minResult = math.min(10.5, 7.2)
+
+		print("sqrt(16.0) = " + sqrtResult.toString())
+		print("abs(-42) = " + absInteger.toString())
+		print("max(10.5, 7.2) = " + maxResult.toString())
+		print("min(10.5, 7.2) = " + minResult.toString())
+	void testMathConstants()
+		print("=== Mathematical Constants ===")
+		number piValue = math.pi()
+		number eValue = math.e()
+
+		print("π (pi) = " + piValue.toString())
+		print("e (Euler's number) = " + eValue.toString())
+	void testPracticalCalculations()
+		print("=== Practical Math Applications ===")
+		// Circle area calculation
+		number radius = 5.0
+		number pi = math.pi()
+		number radiusSquared = radius * radius
+		number area = pi * radiusSquared
+		print("Circle area (radius=5): " + area.toString())
+		// Distance calculation (Pythagorean theorem)
+		number dx = 3.0
+		number dy = 4.0
+		number dxSquared = dx * dx
+		number dySquared = dy * dy
+		number distanceSquared = dxSquared + dySquared
+		number distance = math.sqrt(distanceSquared)
+		print("Distance (3,4 to origin): " + distance.toString())
+	void testBasicArithmetic()
+		print("=== Basic Arithmetic (using operators) ===")
+		// Basic arithmetic should use operators, not math functions
+		number a = 5.0
+		number b = 3.0
+
+		number sum = a + b              // Use + operator, not math.add()
+		number difference = a - b       // Use - operator, not math.subtract()
+		number product = a * b          // Use * operator, not math.multiply()
+		number quotient = a / b         // Use / operator, not math.divide()
+		number power = a ^ 2.0          // Use ^ operator, not math.pow()
+
+		print("5.0 + 3.0 = " + sum.toString())
+		print("5.0 - 3.0 = " + difference.toString())
+		print("5.0 * 3.0 = " + product.toString())
+		print("5.0 / 3.0 = " + quotient.toString())
+		print("5.0 ^ 2.0 = " + power.toString())
+	void testAbsoluteValues()
+		print("=== Absolute Value Tests ===")
+		// Test different absolute value scenarios
+		integer negativeInt = -25
+		integer positiveInt = 42
+		integer zeroInt = 0
+
+		integer absNeg = math.abs(negativeInt)
+		integer absPos = math.abs(positiveInt)
+		integer absZero = math.abs(zeroInt)
+
+		print("abs(-25) = " + absNeg.toString())
+		print("abs(42) = " + absPos.toString())
+		print("abs(0) = " + absZero.toString())
+start()
+	print("Math Module Working Test")
+	print("========================")
+	testBasicMathOperations()
+	print("")
+	testMathConstants()
+	print("")
+	testPracticalCalculations()
+	print("")
+	testBasicArithmetic()
+	print("")
+	testAbsoluteValues()
+	print("")
+	print("Math module working test completed")

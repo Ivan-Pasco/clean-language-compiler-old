@@ -1,3 +1,0 @@
-functions:
-	string stop()
-		return "stopped"

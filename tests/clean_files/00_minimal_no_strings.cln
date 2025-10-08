@@ -1,4 +1,0 @@
-
-start()
-	integer x = 42
-	integer y = x + 1

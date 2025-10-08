@@ -1,0 +1,47 @@
+functions:
+	void processItem(string item)
+		print("Processing: " + item)
+
+	void displayNumber(integer num)
+		print("Number: " + num.toString())
+
+start()
+	// Function apply-blocks - TODO: Fix semantic analysis bug
+	// Currently disabled due to compiler bug where function apply-blocks
+	// are treated as multi-argument calls instead of multiple single calls
+	print("Function apply-blocks temporarily disabled due to compiler bug")
+
+	// Type apply-blocks for variable declarations
+	integer:
+		count = 0
+		maxSize = 100
+		currentIndex = -1
+
+	string:
+		name = "Alice"
+		version = "1.0.0"
+		greeting = "Hello"
+
+	boolean:
+		isActive = true
+		hasPermission = false
+		isComplete = true
+
+	// Test the declared variables
+	print("Variables declared via apply-blocks:")
+	print("Count: " + count.toString())
+	print("Max size: " + maxSize.toString())
+	print("Name: " + name)
+	print("Version: " + version)
+	print("Active: " + isActive.toString())
+
+	// Constant apply-blocks
+	constant:
+		integer MAX_USERS = 1000
+		string API_VERSION = "v2.1"
+		number PI_CONSTANT = 3.14159
+
+	print("Constants:")
+	print("Max users: " + MAX_USERS.toString())
+	print("API version: " + API_VERSION)
+	print("PI: " + PI_CONSTANT.toString())

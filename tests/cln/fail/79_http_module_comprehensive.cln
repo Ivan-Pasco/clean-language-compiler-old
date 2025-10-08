@@ -1,0 +1,36 @@
+// Test 79: Comprehensive HTTP Module Operations
+// Tests all HTTP methods: GET, POST, PUT, PATCH, DELETE
+
+start()
+	// Test GET request - fetch data from server
+	string getUserData = http.get("https://jsonplaceholder.typicode.com/users/1")
+	print("GET user data received: ")
+	print(getUserData)
+	// Test POST request - create new data
+	string newPostData = "test post data"
+	string postResponse = http.post("https://jsonplaceholder.typicode.com/posts", newPostData)
+	print("POST response: ")
+	print(postResponse)
+	// Test PUT request - update existing data
+	string updateData = "test update data"
+	string putResponse = http.put("https://jsonplaceholder.typicode.com/posts/1", updateData)
+	print("PUT response: ")
+	print(putResponse)
+	// Test PATCH request - partial update
+	string patchData = "test patch data"
+	string patchResponse = http.patch("https://jsonplaceholder.typicode.com/posts/1", patchData)
+	print("PATCH response: ")
+	print(patchResponse)
+	// Test DELETE request - remove data
+	string deleteResponse = http.delete("https://jsonplaceholder.typicode.com/posts/1")
+	print("DELETE response: ")
+	print(deleteResponse)
+	// Test API endpoints
+	string allPosts = http.get("https://jsonplaceholder.typicode.com/posts")
+	boolean hasData = string.size(allPosts) > 0
+	print("All posts data size > 0: " + hasData.toString())
+	// Test with JSON data
+	string userData = "test user data"
+	string userResponse = http.post("https://jsonplaceholder.typicode.com/users", userData)
+	boolean userResponseReceived = string.size(userResponse) > 0
+	print("User creation response received: " + userResponseReceived.toString())

@@ -1,7 +1,0 @@
-functions:
-	integer multiply(integer base, integer exponent)
-		return base * exponent
-
-start()
-	integer result = multiply(5, 2)
-	print result.toString() ln

@@ -1,0 +1,14 @@
+// Quick test - minimal OOP features
+class Point
+	integer x
+
+	constructor(integer xParam)
+		x = xParam
+
+	functions:
+		integer getX()
+			return x
+
+start()
+	Point p = Point(5)
+	print("Test complete")

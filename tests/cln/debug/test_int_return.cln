@@ -1,0 +1,7 @@
+functions:
+	integer getNumber()
+		return 42
+
+start()
+	integer result = getNumber()
+	print(result.toString())

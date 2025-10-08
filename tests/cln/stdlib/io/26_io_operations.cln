@@ -1,0 +1,10 @@
+
+start()
+	string content = "Hello, Clean Language!"
+	print("Content: " + content)
+
+	string name = input("Enter your name: ")
+	print("Hello, " + name + "!")
+
+	integer age = input.integer("Enter your age: ")
+	print("You are " + age.toString() + " years old")

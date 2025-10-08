@@ -1,0 +1,18 @@
+// Test Description: Method calls as statements and property access
+// Category: functions
+// Dependencies: none
+// Expected: PASS
+
+start()
+	// Method calls as statements
+	list<integer> numbers = [1, 2, 3]
+	numbers.push(42)
+	numbers.push(99)
+
+	// Property access
+	string text = "hello"
+	integer length = text.length
+
+	print("Method calls test successful!")
+	print("List length: " + numbers.length.toString())
+	print("String length: " + length.toString())

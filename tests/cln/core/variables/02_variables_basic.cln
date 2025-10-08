@@ -1,0 +1,11 @@
+
+start()
+	integer x = 42
+	number y = 3.14
+	string name = "Clean"
+	boolean flag = true
+
+	print(x)
+	print(y)
+	print(name)
+	print(flag)

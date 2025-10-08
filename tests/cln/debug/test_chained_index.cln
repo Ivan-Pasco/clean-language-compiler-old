@@ -1,0 +1,5 @@
+// Simple chained index test
+start()
+	list<list<integer>> nested = [[10, 20], [30, 40]]
+	integer result = nested[0][1]
+	print("Result: " + result.toString())

@@ -1,0 +1,13 @@
+start()
+	// Test list namespace functions
+	list<number> numbers = [1.0, 2.0, 3.0]
+
+	// Test list.size
+	number size = list.size(numbers)
+	print("List size test")
+
+	// Test list.push
+	list.push(numbers, 4.0)
+	print("List push test")
+
+	print("List namespace tests complete")

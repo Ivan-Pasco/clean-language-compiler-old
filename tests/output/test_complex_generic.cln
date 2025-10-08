@@ -1,0 +1,12 @@
+class Shape
+	string name
+
+functions:
+	list<any> filterLargeShapes(list<Shape> shapes, number:64 minArea)
+		list<any> result = []
+		return result
+	any findShapeByName(list<Shape> shapes, string targetName)
+		return ""
+
+start()
+	print("Testing complex generic parsing")

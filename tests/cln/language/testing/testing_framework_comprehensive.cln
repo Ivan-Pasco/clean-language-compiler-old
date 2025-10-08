@@ -1,0 +1,49 @@
+// Testing Framework Comprehensive Test
+// Tests the 'tests:' block functionality according to Clean Language Specification
+
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+	integer multiply(integer a, integer b)
+		return a * b
+
+	string concatenate(string a, string b)
+		return a + b
+
+tests:
+	// Basic arithmetic tests
+	test "addition works correctly"
+		integer result = add(2, 3)
+		assert result == 5
+
+	test "multiplication works correctly"
+		integer result = multiply(4, 5)
+		assert result == 20
+
+	test "string concatenation works"
+		string result = concatenate("Hello", " World")
+		assert result == "Hello World"
+
+	// Edge case tests
+	test "addition with zero"
+		integer result = add(5, 0)
+		assert result == 5
+
+	test "multiplication by zero"
+		integer result = multiply(10, 0)
+		assert result == 0
+
+	test "empty string concatenation"
+		string result = concatenate("test", "")
+		assert result == "test"
+
+	// Negative number tests
+	test "negative addition"
+		integer result = add(-5, 3)
+		assert result == -2
+
+functions:
+	void start()
+		print("Testing framework comprehensive test")
+		print("All test blocks defined successfully")

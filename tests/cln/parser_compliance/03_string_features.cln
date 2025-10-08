@@ -1,0 +1,50 @@
+// Parser Compliance Test - String Features
+// This test verifies string literals, escaping, and interpolation
+
+start()
+	// Basic string literals
+	string simple = "hello world"
+	string empty = ""
+	string single_char = "a"
+
+	// Escaped characters
+	string with_quotes = "He said \"hello\""
+	string with_backslash = "Path\\to\\file"
+	string with_newline = "Line 1\nLine 2"
+	string with_tab = "Column 1\tColumn 2"
+	string with_return = "Text\rReturn"
+
+	// String interpolation
+	integer count = 42
+	string name = "Alice"
+	boolean active = true
+
+	string interpolated_simple = "Count: {count}"
+	string interpolated_multiple = "Name: {name}, Count: {count}, Active: {active}"
+	string interpolated_expression = "Sum: {count + 8}"
+	string interpolated_nested = "Result: {count * 2 + 1}"
+
+	// Complex interpolation
+	string complex_interp = "User {name} has {count} items and is {active}"
+
+	// Escaped braces (should not interpolate)
+	string escaped_braces = "Not interpolated: \\{count\\}"
+
+	// Mixed content
+	string mixed = "Start {name} middle text {count} end"
+
+	// Print all strings
+	print("Simple:", simple)
+	print("Empty:", empty)
+	print("Escaped quotes:", with_quotes)
+	print("Escaped backslash:", with_backslash)
+	print("With newline:", with_newline)
+	print("With tab:", with_tab)
+
+	print("Simple interpolation:", interpolated_simple)
+	print("Multiple interpolation:", interpolated_multiple)
+	print("Expression interpolation:", interpolated_expression)
+	print("Nested interpolation:", interpolated_nested)
+	print("Complex interpolation:", complex_interp)
+	print("Escaped braces:", escaped_braces)
+	print("Mixed content:", mixed)

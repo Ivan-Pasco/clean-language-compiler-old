@@ -1,3 +1,0 @@
-functions:
-	integer test(integer x=5)
-		return x

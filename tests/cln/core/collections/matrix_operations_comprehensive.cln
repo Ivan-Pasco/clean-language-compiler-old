@@ -1,0 +1,28 @@
+// Matrix Operations Comprehensive Test
+// Tests matrix literals, arithmetic, and methods according to Clean Language Specification
+
+functions:
+	void start()
+		// Matrix literal creation
+		matrix<integer> mat1 = [[1, 2], [3, 4]]
+		matrix<integer> mat2 = [[5, 6], [7, 8]]
+
+		// Matrix arithmetic operations
+		matrix<integer> sum = mat1 + mat2
+		matrix<integer> diff = mat2 - mat1
+		matrix<integer> product = mat1 * mat2
+
+		// Matrix element access
+		integer element = mat1[0][1]
+
+		// Matrix properties and methods
+		integer rows = mat1.rows()
+		integer cols = mat1.columns()
+
+		// Matrix utility operations
+		matrix<integer> transposed = mat1.transpose()
+
+		// Print results for verification
+		print("Matrix operations test completed")
+		print("Element access: " + element.toString())
+		print("Matrix dimensions: " + rows.toString() + "x" + cols.toString())

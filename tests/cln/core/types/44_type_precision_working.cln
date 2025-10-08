@@ -1,0 +1,8 @@
+// Test type precision modifiers
+
+start()
+	print("Type precision test completed")
+
+functions:
+	void testTypePrecision()
+		print("Testing type precision")

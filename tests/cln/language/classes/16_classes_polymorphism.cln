@@ -1,0 +1,151 @@
+
+class Vehicle
+	string make
+	string model
+	integer year
+
+	constructor(string vehicleMake, string vehicleModel, integer vehicleYear)
+		make = vehicleMake
+		model = vehicleModel
+		year = vehicleYear
+
+	functions:
+		string getInfo()
+			return year.toString() + " " + make + " " + model
+
+		string startEngine()
+			return "Vehicle starting..."
+
+		string stopEngine()
+			return "Vehicle stopping..."
+
+		integer getMaxSpeed()
+			return 60
+
+class Car is Vehicle
+	integer doors
+	boolean isElectric
+
+	constructor(string carMake, string carModel, integer carYear, integer carDoors, boolean electric)
+		base(carMake, carModel, carYear)
+		doors = carDoors
+		isElectric = electric
+
+	functions:
+		string startEngine()
+			if isElectric
+				return make + " " + model + " starting silently (electric)"
+			else
+				return make + " " + model + " engine starting"
+
+		string stopEngine()
+			return make + " " + model + " parking"
+
+		integer getMaxSpeed()
+			if isElectric
+				return 120
+			else
+				return 100
+
+		string getCarDetails()
+			string electric_status = ""
+			if isElectric
+				electric_status = "Electric"
+			else
+				electric_status = "Gasoline"
+			return getInfo() + ", " + doors.toString() + " doors, " + electric_status
+
+class Motorcycle is Vehicle
+	boolean hasSidecar
+
+	constructor(string bikeMake, string bikeModel, integer bikeYear, boolean sidecar)
+		base(bikeMake, bikeModel, bikeYear)
+		hasSidecar = sidecar
+
+	functions:
+		string startEngine()
+			return make + " " + model + " motorcycle roaring to life"
+
+		string stopEngine()
+			return make + " " + model + " motorcycle stopping"
+
+		integer getMaxSpeed()
+			if hasSidecar
+				return 80
+			else
+				return 140
+
+		string getBikeDetails()
+			string sidecar_status = ""
+			if hasSidecar
+				sidecar_status = "with sidecar"
+			else
+				sidecar_status = "solo bike"
+			return getInfo() + " (" + sidecar_status + ")"
+
+functions:
+	void demonstratePolymorphism(Vehicle vehicle)
+		print("=== Vehicle Demonstration ===")
+		print("Info: " + vehicle.getInfo())
+		print("Starting: " + vehicle.startEngine())
+		print("Max Speed: " + vehicle.getMaxSpeed().toString() + " km/h")
+		print("Stopping: " + vehicle.stopEngine())
+		print("")
+	void testVehicleArray(list<Vehicle> vehicles)
+		print("Testing polymorphic behavior with vehicle array:")
+		iterate vehicle in vehicles
+			print("- " + vehicle.startEngine())
+			print("  Max speed: " + vehicle.getMaxSpeed().toString() + " km/h")
+		print("")
+
+start()
+	print("Polymorphism Test - Vehicle System")
+	print("=================================")
+
+	// Create different types of vehicles
+	Car tesla = Car("Tesla", "Model 3", 2023, 4, true)
+	Car honda = Car("Honda", "Civic", 2022, 4, false)
+	Motorcycle harley = Motorcycle("Harley-Davidson", "Street 750", 2021, false)
+	Motorcycle sidecarBike = Motorcycle("BMW", "R1250GS", 2023, true)
+
+	// Demonstrate polymorphism - same method call, different behavior
+	demonstratePolymorphism(tesla)
+	demonstratePolymorphism(honda)
+	demonstratePolymorphism(harley)
+	demonstratePolymorphism(sidecarBike)
+
+	// Create array of vehicles (polymorphic collection)
+	list<Vehicle> fleet
+	fleet.add(tesla)
+	fleet.add(honda)
+	fleet.add(harley)
+	fleet.add(sidecarBike)
+
+	// Test polymorphic behavior with collection
+	testVehicleArray(fleet)
+
+	// Demonstrate method overriding with specific types
+	print("Specific vehicle details:")
+	print("Car: " + tesla.getCarDetails())
+	print("Motorcycle: " + harley.getBikeDetails())
+	print("")
+
+	// Test polymorphic method calls in expressions
+	integer totalMaxSpeed = 0
+	iterate vehicle in fleet
+		totalMaxSpeed = totalMaxSpeed + vehicle.getMaxSpeed()
+
+	integer averageSpeed = totalMaxSpeed / fleet.length()
+	print("Fleet analysis:")
+	print("Total vehicles: " + fleet.length().toString())
+	print("Average max speed: " + averageSpeed.toString() + " km/h")
+
+	// Demonstrate dynamic behavior
+	print("Dynamic polymorphic calls:")
+	iterate vehicle in fleet
+		if vehicle.getMaxSpeed() > 100
+			print("Fast vehicle: " + vehicle.getInfo() + " (" + vehicle.getMaxSpeed().toString() + " km/h)")
+		else
+			print("Standard vehicle: " + vehicle.getInfo() + " (" + vehicle.getMaxSpeed().toString() + " km/h)")
+
+	print("Polymorphism demonstration completed!")

@@ -1,0 +1,67 @@
+// Test 83: Comprehensive Memory Management
+// Tests ARC (Automatic Reference Counting) and memory safety
+
+class LargeObject
+	list<integer> data
+	string name
+
+	constructor(string objectName, integer size)
+		name = objectName
+		data = []
+		print("Created " + name + " with " + size.toString() + " elements")
+	functions:
+		string getName()
+			return name
+
+		integer getSize()
+			return data.size()
+
+functions:
+	void processObjects()
+		// Create objects in local scope - using constructor directly
+		LargeObject obj1 = LargeObject("LocalObject1", 1000)
+		LargeObject obj2 = LargeObject("LocalObject2", 2000)
+
+		print("Processing objects in function scope")
+		print(obj1.getName() + " size: " + obj1.getSize().toString())
+		print(obj2.getName() + " size: " + obj2.getSize().toString())
+		// Objects should be automatically deallocated when function exits
+
+start()
+	print("Starting memory management test")
+	// Test object creation and deallocation
+	LargeObject mainObj = LargeObject("MainObject", 5000)
+	print("Main object created: " + mainObj.getName())
+	// Test function scope memory management
+	processObjects()
+
+	// Test list memory management
+	list<LargeObject> objectList = []
+
+	// Create multiple objects
+	integer i = 0
+	while i < 3
+		LargeObject tempObj = LargeObject("TempObject" + i.toString(), 100)
+		objectList = list.add(objectList, tempObj)
+		i = i + 1
+
+	print("Created " + objectList.size().toString() + " objects in list")
+	// Test large data structures
+	list<list<integer>> nestedList = []
+	integer j = 0
+	while j < 10
+		list<integer> innerList = list.fill(100, j)
+		nestedList = list.add(nestedList, innerList)
+		j = j + 1
+
+	print("Created nested list structure")
+	// Test string memory management
+	string largeString = ""
+	integer k = 0
+	while k < 100
+		largeString = largeString + "This is line " + k.toString() + "\n"
+		k = k + 1
+
+	integer strLength = string.length(largeString)
+	print("Large string length: " + strLength.toString())
+	print("Memory management test complete")

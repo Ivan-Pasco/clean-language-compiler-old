@@ -330,6 +330,10 @@ pub enum MirType {
 
     /// Structure type
     Struct(Vec<MirType>),
+
+    /// String tuple type (pointer, length) for WebAssembly compatibility
+    /// Strings in WASM are represented as (i32 ptr, i32 len) pairs
+    StringTuple,
 }
 
 /// Binary operations in MIR
@@ -409,6 +413,7 @@ impl MirType {
             MirType::I16 | MirType::U16 => 2,
             MirType::I32 | MirType::U32 | MirType::F32 => 4,
             MirType::I64 | MirType::U64 | MirType::F64 | MirType::Ptr(_) => 8,
+            MirType::StringTuple => 8, // Two i32 values (ptr + len)
             MirType::Array(element_type, count) => element_type.size_bytes() * count,
             MirType::Function { .. } => 8, // Function pointer
             MirType::Struct(fields) => fields.iter().map(|f| f.size_bytes()).sum(),
@@ -423,6 +428,7 @@ impl MirType {
             MirType::I16 | MirType::U16 => 2,
             MirType::I32 | MirType::U32 | MirType::F32 => 4,
             MirType::I64 | MirType::U64 | MirType::F64 | MirType::Ptr(_) => 8,
+            MirType::StringTuple => 4, // Aligned to i32
             MirType::Array(element_type, _) => element_type.alignment(),
             MirType::Function { .. } => 8,
             MirType::Struct(fields) => fields.iter().map(|f| f.alignment()).max().unwrap_or(1),
@@ -450,9 +456,9 @@ impl MirType {
     /// Convert from TAST ConcreteType to MIR type
     pub fn from_concrete_type(concrete_type: &ConcreteType) -> Self {
         match concrete_type {
-            ConcreteType::Integer => MirType::I64,
+            ConcreteType::Integer => MirType::I32, // CRITICAL FIX: Integers are i32 in WASM, not i64
             ConcreteType::Number => MirType::F64,
-            ConcreteType::String => MirType::Ptr(Box::new(MirType::U8)), // String as byte pointer
+            ConcreteType::String => MirType::StringTuple, // String as (ptr, len) tuple for WASM
             ConcreteType::Boolean => MirType::Bool,
             ConcreteType::Null => MirType::Ptr(Box::new(MirType::Void)),
             ConcreteType::Undefined => MirType::Void,
@@ -471,6 +477,15 @@ impl MirType {
             ConcreteType::Class { .. } => {
                 // Classes as opaque pointers for now
                 MirType::Ptr(Box::new(MirType::Void))
+            }
+            ConcreteType::Generic { name, .. } => {
+                // Generic types that haven't been resolved should be void for function returns
+                // This handles cases like start() which may have unresolved generic return types
+                if name == "0" {
+                    MirType::Void
+                } else {
+                    MirType::Ptr(Box::new(MirType::Void)) // Fallback for other generics
+                }
             }
             _ => MirType::Ptr(Box::new(MirType::Void)), // Fallback for complex types
         }
@@ -513,6 +528,7 @@ impl fmt::Display for MirType {
                     .join(", ");
                 write!(f, "{{{}}}", field_types)
             }
+            MirType::StringTuple => write!(f, "string"),
         }
     }
 }

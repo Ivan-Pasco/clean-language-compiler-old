@@ -1,0 +1,18 @@
+functions:
+	string formatTask()
+		string status = "✓"
+		return status + " Learn Clean Language"
+
+start()
+	string task1 = formatTask()
+	string task2 = "○ Write tests"
+	string task3 = "✓ Build project"
+
+	print("Tasks:")
+	print(task1)
+	print(task2)
+	print(task3)
+
+	integer completedCount = 2
+	integer totalCount = 3
+	print("Completed: " + completedCount.toString() + "/" + totalCount.toString())

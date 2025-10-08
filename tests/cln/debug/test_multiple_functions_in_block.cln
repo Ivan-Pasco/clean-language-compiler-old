@@ -1,0 +1,11 @@
+functions:
+
+	void testFunc1()
+		print("Func 1")
+
+	void testFunc2()
+		print("Func 2")
+
+start()
+	testFunc1()
+	testFunc2()

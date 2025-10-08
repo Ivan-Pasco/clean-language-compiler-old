@@ -1,0 +1,58 @@
+// Error handling onError specification compliance test
+// Tests onError syntax as defined in Clean Language Specification
+
+functions:
+	integer riskyDivision(integer a, integer b)
+		if b == 0
+			error("Division by zero")
+		return a / b
+
+	string readFileContent(string filename)
+		if filename == "nonexistent.txt"
+			error("File not found")
+		return "File content for " + filename
+
+	integer parseNumber(string text)
+		if text == "invalid"
+			error("Invalid number format")
+		return 42  // Simplified - would parse actual number
+
+start()
+	print("=== Error Handling onError Specification Test ===")
+
+	// Test 1: Basic onError with default value
+	print("1. Basic onError with Default Value:")
+	integer result1 = riskyDivision(10, 2) onError 0
+	print("10 / 2 = " + result1.toString())
+
+	integer result2 = riskyDivision(10, 0) onError -1
+	print("10 / 0 with onError = " + result2.toString())
+
+	// Test 2: onError with expression
+	print("2. onError with Expression:")
+	integer backup = 99
+	integer result3 = riskyDivision(5, 0) onError (backup + 1)
+	print("Error result with expression = " + result3.toString())
+
+	// Test 3: onError with string operations
+	print("3. onError with String Operations:")
+	string content1 = readFileContent("valid.txt") onError "Default content"
+	print("Valid file: " + content1)
+
+	string content2 = readFileContent("nonexistent.txt") onError "File not available"
+	print("Invalid file: " + content2)
+
+	// Test 4: onError with function calls
+	print("4. onError with Function Calls:")
+	integer parsed1 = parseNumber("123") onError 0
+	print("Parse '123': " + parsed1.toString())
+
+	integer parsed2 = parseNumber("invalid") onError parseNumber("42")
+	print("Parse 'invalid' with fallback: " + parsed2.toString())
+
+	// Test 5: Nested onError handling
+	print("5. Nested onError Handling:")
+	integer complex = (riskyDivision(20, 0) onError riskyDivision(15, 3)) onError 999
+	print("Nested onError result: " + complex.toString())
+
+	print("Error handling onError specification compliance test completed")

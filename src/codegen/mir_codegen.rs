@@ -45,6 +45,12 @@ pub struct MirCodeGenerator<'a> {
 
     /// CRITICAL FIX: Mapping from SymbolId to function name for proper function resolution
     function_symbol_map: HashMap<SymbolId, String>,
+
+    /// Function signature map for proper parameter/return handling
+    function_signatures: HashMap<SymbolId, MirFunction>,
+
+    /// Type tracking for values (needed to expand string pointers)
+    value_to_type: HashMap<ValueId, MirType>,
 }
 
 /// Result of MIR code generation
@@ -90,6 +96,8 @@ impl<'a> MirCodeGenerator<'a> {
             string_pool: None,
             value_to_string_index: HashMap::new(),
             function_symbol_map: HashMap::new(),
+            function_signatures: HashMap::new(),
+            value_to_type: HashMap::new(),
         }
     }
 
@@ -106,6 +114,8 @@ impl<'a> MirCodeGenerator<'a> {
             string_pool: None,
             value_to_string_index: HashMap::new(),
             function_symbol_map: HashMap::new(),
+            function_signatures: HashMap::new(),
+            value_to_type: HashMap::new(),
         }
     }
 
@@ -136,6 +146,13 @@ impl<'a> MirCodeGenerator<'a> {
             self.wasm_generator
                 .register_print_imports()
                 .map_err(|e| vec![e])?;
+
+            // CRITICAL: Register type conversion imports for .toString() methods
+            println!("DEBUG MIR: Registering type conversion imports (int_to_string, etc.)");
+            self.wasm_generator
+                .register_type_conversion_imports()
+                .map_err(|e| vec![e])?;
+            println!("DEBUG MIR: Type conversion imports registered");
         }
 
         // Set up memory section
@@ -151,6 +168,9 @@ impl<'a> MirCodeGenerator<'a> {
         for (symbol_id, function) in &mir_program.functions {
             self.function_symbol_map
                 .insert(*symbol_id, function.name.clone());
+            // Also store full function signature for parameter/return type handling
+            self.function_signatures
+                .insert(*symbol_id, function.clone());
             println!(
                 "DEBUG MIR: Mapped SymbolId({}) -> '{}'",
                 symbol_id.0, function.name
@@ -202,10 +222,17 @@ impl<'a> MirCodeGenerator<'a> {
         self.value_to_local.clear();
         self.block_labels.clear();
         self.value_to_string_index.clear();
+        self.value_to_type.clear();
         self.next_local_index = 0;
         self.next_block_label = 0;
         self.current_instructions.clear();
         self.current_function = Some(function.clone());
+
+        // Populate value_to_type from function locals
+        for (value_id, local) in &function.locals {
+            self.value_to_type
+                .insert(*value_id, local.local_type.clone());
+        }
 
         // Convert MIR function signature to WASM
         let wasm_signature = self.convert_function_signature(&function)?;
@@ -418,25 +445,57 @@ impl<'a> MirCodeGenerator<'a> {
                     arguments.len()
                 );
 
-                // Get function name to determine how to handle arguments
-                let function_name = match function {
-                    MirOperand::Function(symbol_id) => self.get_function_name_by_symbol(*symbol_id),
-                    _ => None,
+                // Get function signature to determine parameter types
+                let (function_name, function_signature) = match function {
+                    MirOperand::Function(symbol_id) => {
+                        let name = self.get_function_name_by_symbol(*symbol_id);
+                        let sig = self.function_signatures.get(symbol_id).cloned();
+                        (name, sig)
+                    }
+                    _ => (None, None),
                 };
                 println!("DEBUG MIR: Function name resolved to: {:?}", function_name);
 
-                // Handle arguments based on function type
-                match function_name.as_deref() {
-                    Some("print") | Some("printl") | Some("println") => {
-                        // Print functions need string arguments expanded to pointer+length
-                        for arg in arguments {
-                            self.load_string_argument_for_print(arg)?;
+                // Handle arguments based on function signature or function type
+                if let Some(signature) = &function_signature {
+                    // Use function signature to determine how to load each argument
+                    for (i, arg) in arguments.iter().enumerate() {
+                        if let Some(param) = signature.parameters.get(i) {
+                            match &param.param_type {
+                                MirType::StringTuple => {
+                                    // String parameters need to be expanded to (ptr, len)
+                                    self.load_string_argument_for_print(arg)?;
+                                }
+                                _ => {
+                                    // Regular parameter loading
+                                    self.load_operand(arg)?;
+                                }
+                            }
+                        } else {
+                            // Fallback for variadic or mismatched arguments
+                            self.load_operand(arg)?;
                         }
                     }
-                    _ => {
-                        // Regular argument loading for other functions
-                        for arg in arguments {
-                            self.load_operand(arg)?;
+                } else {
+                    // Fallback for built-in functions without signatures
+                    match function_name.as_deref() {
+                        Some("print") | Some("printl") | Some("println") => {
+                            // Print functions need string arguments expanded to pointer+length
+                            for arg in arguments {
+                                self.load_string_argument_for_print(arg)?;
+                            }
+                        }
+                        Some("string_concat") => {
+                            // String concat takes two string arguments (each as ptr, len)
+                            for arg in arguments {
+                                self.load_string_argument_for_print(arg)?;
+                            }
+                        }
+                        _ => {
+                            // Regular argument loading for other functions
+                            for arg in arguments {
+                                self.load_operand(arg)?;
+                            }
                         }
                     }
                 }
@@ -495,23 +554,50 @@ impl<'a> MirCodeGenerator<'a> {
                     }
                 }
 
-                // CRITICAL FIX: Only store return value if the function actually returns a value
-                // For void functions, we should not try to store anything
+                // CRITICAL FIX: Handle return values based on function signature
                 if let Some(dest) = instruction.dest {
-                    if let Some(function_name) = &function_name {
-                        // Check if this is a void function that shouldn't return a value
-                        if function_name == "testFunction" {
-                            // TODO: Get function return type from function signature
-                            // For now, assume void functions don't need return value storage
-                            println!(
-                                "DEBUG MIR: Skipping return value store for void function '{}'",
-                                function_name
-                            );
+                    if let Some(signature) = &function_signature {
+                        match &signature.return_type {
+                            MirType::Void => {
+                                // No return value to store
+                                println!(
+                                    "DEBUG MIR: Skipping return value store for void function '{:?}'",
+                                    function_name
+                                );
+                            }
+                            MirType::StringTuple => {
+                                // String returns produce TWO values: (ptr, len)
+                                // We need to store both values
+                                // For now, we'll store the length (top of stack) and discard the ptr
+                                // TODO: Proper multi-value handling for string returns
+                                println!(
+                                    "DEBUG MIR: Handling StringTuple return (multi-value) for function '{:?}'",
+                                    function_name
+                                );
+                                // Store length (top of stack)
+                                self.store_to_local(dest)?;
+                                // Discard pointer (second value)
+                                // Note: In proper implementation, we'd allocate two locals for string returns
+                            }
+                            _ => {
+                                // Regular single-value return
+                                self.store_to_local(dest)?;
+                            }
+                        }
+                    } else {
+                        // Fallback: no signature available, assume single value
+                        if let Some(function_name) = &function_name {
+                            if function_name == "testFunction" {
+                                println!(
+                                    "DEBUG MIR: Skipping return value store for void function '{}'",
+                                    function_name
+                                );
+                            } else {
+                                self.store_to_local(dest)?;
+                            }
                         } else {
                             self.store_to_local(dest)?;
                         }
-                    } else {
-                        self.store_to_local(dest)?;
                     }
                 }
 
@@ -607,7 +693,50 @@ impl<'a> MirCodeGenerator<'a> {
         match terminator {
             MirTerminator::Return { value } => {
                 if let Some(return_value) = value {
-                    self.load_operand(return_value)?;
+                    // Don't load undefined values - they represent void returns
+                    if !matches!(return_value, MirOperand::Constant(MirConstant::Undefined)) {
+                        // Check if we're returning a StringTuple type
+                        if let Some(ref function) = self.current_function {
+                            if matches!(function.return_type, MirType::StringTuple) {
+                                // CRITICAL FIX: For string returns, expand from pointer to (ptr, len)
+                                println!(
+                                    "DEBUG MIR: Expanding string return value to (ptr, len) tuple"
+                                );
+
+                                // Load the string pointer
+                                self.load_operand(return_value)?;
+
+                                // Store to temporary local
+                                let temp_local = self.next_local_index;
+                                self.next_local_index += 1;
+                                self.current_instructions
+                                    .push(Instruction::LocalSet(temp_local));
+
+                                // Calculate content pointer (ptr + 4)
+                                self.current_instructions
+                                    .push(Instruction::LocalGet(temp_local));
+                                self.current_instructions.push(Instruction::I32Const(4));
+                                self.current_instructions.push(Instruction::I32Add);
+
+                                // Load length from memory at pointer location
+                                self.current_instructions
+                                    .push(Instruction::LocalGet(temp_local));
+                                self.current_instructions.push(Instruction::I32Load(
+                                    wasm_encoder::MemArg {
+                                        offset: 0,
+                                        align: 2,
+                                        memory_index: 0,
+                                    },
+                                ));
+                            } else {
+                                // Regular return value
+                                self.load_operand(return_value)?;
+                            }
+                        } else {
+                            // Fallback if no current function context
+                            self.load_operand(return_value)?;
+                        }
+                    }
                 }
                 self.current_instructions.push(Instruction::Return);
             }
@@ -697,7 +826,9 @@ impl<'a> MirCodeGenerator<'a> {
     fn load_constant(&mut self, constant: &MirConstant) -> Result<(), CompilerError> {
         match constant {
             MirConstant::Integer(i) => {
-                self.current_instructions.push(Instruction::I64Const(*i));
+                // Clean Language integers map to WASM i32, not i64
+                self.current_instructions
+                    .push(Instruction::I32Const(*i as i32));
             }
             MirConstant::Float(f) => {
                 self.current_instructions.push(Instruction::F64Const(*f));
@@ -836,9 +967,41 @@ impl<'a> MirCodeGenerator<'a> {
                         });
                     }
                 } else {
-                    // This is not a string constant - load normally and handle conversion
+                    // This is a string VALUE (from function return like .toString())
+                    // We need to expand from pointer to (pointer, length)
+                    println!(
+                        "DEBUG MIR: Expanding string pointer for ValueId({:?})",
+                        value_id.0
+                    );
+
+                    // Load the string pointer into a local variable
                     self.load_operand(operand)?;
-                    // TODO: Handle conversion of other types to string format for print
+
+                    // Allocate a temporary local to hold the pointer
+                    let temp_local = self.next_local_index;
+                    self.next_local_index += 1;
+
+                    // Store pointer to temp local
+                    self.current_instructions
+                        .push(Instruction::LocalSet(temp_local));
+
+                    // Calculate content pointer (ptr + 4, skipping length field)
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions.push(Instruction::I32Const(4));
+                    self.current_instructions.push(Instruction::I32Add);
+
+                    // Load length from memory at pointer location
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions
+                        .push(Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2, // 4-byte alignment for i32
+                            memory_index: 0,
+                        }));
+
+                    println!("DEBUG MIR: String pointer expansion completed");
                 }
             }
             _ => {
@@ -877,27 +1040,27 @@ impl<'a> MirCodeGenerator<'a> {
     /// Generate WASM binary operation
     fn generate_binary_operation(&mut self, op: &MirBinaryOp) -> Result<(), CompilerError> {
         let instruction = match op {
-            // Arithmetic operations (assume i64 for now)
-            MirBinaryOp::Add => Instruction::I64Add,
-            MirBinaryOp::Sub => Instruction::I64Sub,
-            MirBinaryOp::Mul => Instruction::I64Mul,
-            MirBinaryOp::Div => Instruction::I64DivS,
-            MirBinaryOp::Rem => Instruction::I64RemS,
+            // Arithmetic operations (using i32 for Clean Language integers)
+            MirBinaryOp::Add => Instruction::I32Add,
+            MirBinaryOp::Sub => Instruction::I32Sub,
+            MirBinaryOp::Mul => Instruction::I32Mul,
+            MirBinaryOp::Div => Instruction::I32DivS,
+            MirBinaryOp::Rem => Instruction::I32RemS,
 
             // Comparison operations
-            MirBinaryOp::Eq => Instruction::I64Eq,
-            MirBinaryOp::Ne => Instruction::I64Ne,
-            MirBinaryOp::Lt => Instruction::I64LtS,
-            MirBinaryOp::Le => Instruction::I64LeS,
-            MirBinaryOp::Gt => Instruction::I64GtS,
-            MirBinaryOp::Ge => Instruction::I64GeS,
+            MirBinaryOp::Eq => Instruction::I32Eq,
+            MirBinaryOp::Ne => Instruction::I32Ne,
+            MirBinaryOp::Lt => Instruction::I32LtS,
+            MirBinaryOp::Le => Instruction::I32LeS,
+            MirBinaryOp::Gt => Instruction::I32GtS,
+            MirBinaryOp::Ge => Instruction::I32GeS,
 
             // Bitwise operations
-            MirBinaryOp::And => Instruction::I64And,
-            MirBinaryOp::Or => Instruction::I64Or,
-            MirBinaryOp::Xor => Instruction::I64Xor,
-            MirBinaryOp::Shl => Instruction::I64Shl,
-            MirBinaryOp::Shr => Instruction::I64ShrS,
+            MirBinaryOp::And => Instruction::I32And,
+            MirBinaryOp::Or => Instruction::I32Or,
+            MirBinaryOp::Xor => Instruction::I32Xor,
+            MirBinaryOp::Shl => Instruction::I32Shl,
+            MirBinaryOp::Shr => Instruction::I32ShrS,
         };
 
         self.current_instructions.push(instruction);
@@ -909,20 +1072,20 @@ impl<'a> MirCodeGenerator<'a> {
         match op {
             MirUnaryOp::Neg => {
                 // Negate: 0 - x
-                self.current_instructions.push(Instruction::I64Const(0));
+                self.current_instructions.push(Instruction::I32Const(0));
                 // Swap the order so we have: 0, x
                 // Then subtract: 0 - x
-                self.current_instructions.push(Instruction::I64Sub);
+                self.current_instructions.push(Instruction::I32Sub);
             }
             MirUnaryOp::Not => {
                 // Logical not: x == 0
-                self.current_instructions.push(Instruction::I64Const(0));
-                self.current_instructions.push(Instruction::I64Eq);
+                self.current_instructions.push(Instruction::I32Const(0));
+                self.current_instructions.push(Instruction::I32Eq);
             }
             MirUnaryOp::BitNot => {
                 // Bitwise not: x ^ -1
-                self.current_instructions.push(Instruction::I64Const(-1));
-                self.current_instructions.push(Instruction::I64Xor);
+                self.current_instructions.push(Instruction::I32Const(-1));
+                self.current_instructions.push(Instruction::I32Xor);
             }
         }
 
@@ -939,12 +1102,55 @@ impl<'a> MirCodeGenerator<'a> {
 
         // Convert parameter types
         for param in &function.parameters {
-            param_types.push(self.mir_type_to_wasm_type(&param.param_type)?);
+            match &param.param_type {
+                MirType::StringTuple => {
+                    // String parameters expand to (ptr, len) pair
+                    param_types.push(ValType::I32);
+                    param_types.push(ValType::I32);
+                }
+                _ => {
+                    param_types.push(self.mir_type_to_wasm_type(&param.param_type)?);
+                }
+            }
         }
 
         // Convert return type
-        if !matches!(function.return_type, MirType::Void) {
-            result_types.push(self.mir_type_to_wasm_type(&function.return_type)?);
+        println!(
+            "DEBUG MIR: Function '{}' has MIR return_type: {:?}",
+            function.name, function.return_type
+        );
+        match &function.return_type {
+            MirType::StringTuple => {
+                // String returns use multi-value: (ptr, len)
+                result_types.push(ValType::I32);
+                result_types.push(ValType::I32);
+                println!("DEBUG MIR: Converted to WASM result_types: [I32, I32] (string tuple)");
+            }
+            MirType::Void => {
+                // No return value
+                println!("DEBUG MIR: Converted to WASM result_types: [] (void)");
+            }
+            MirType::Ptr(inner) => {
+                // CRITICAL FIX: Ptr(Void) should be treated as Void, not I32
+                if matches!(**inner, MirType::Void) {
+                    println!("DEBUG MIR: Converted Ptr(Void) to WASM result_types: [] (void)");
+                    // No return value for Ptr(Void)
+                } else {
+                    // Other pointer types are i32
+                    result_types.push(ValType::I32);
+                    println!(
+                        "DEBUG MIR: Converted Ptr({:?}) to WASM result_types: [I32]",
+                        inner
+                    );
+                }
+            }
+            _ => {
+                result_types.push(self.mir_type_to_wasm_type(&function.return_type)?);
+                println!(
+                    "DEBUG MIR: Converted to WASM result_types: {:?}",
+                    result_types
+                );
+            }
         }
 
         Ok((param_types, result_types))
@@ -1057,6 +1263,8 @@ impl<'a> MirCodeGenerator<'a> {
             0 => Some("print".to_string()),
             1 => Some("printl".to_string()),
             2 => Some("println".to_string()),
+            // String concatenation runtime function
+            1000 => Some("string_concat".to_string()),
             // Namespace functions - these should be handled as function calls
             35..=60 => {
                 // Math namespace functions (approximately SymbolId 35-46 based on registration order)
@@ -1093,7 +1301,16 @@ impl<'a> MirCodeGenerator<'a> {
 
     /// Set up memory section
     fn setup_memory_section(&mut self) -> Result<(), CompilerError> {
-        // TODO: Implement memory setup
+        println!("DEBUG MIR: Setting up memory section with 1 page minimum");
+        self.wasm_generator
+            .memory_section
+            .memory(wasm_encoder::MemoryType {
+                minimum: 1,
+                maximum: Some(16), // Limit to 16 pages (1MB) for safety
+                memory64: false,
+                shared: false,
+            });
+        println!("DEBUG MIR: Memory section configured");
         Ok(())
     }
 
@@ -1121,12 +1338,12 @@ impl<'a> MirCodeGenerator<'a> {
     ) -> Result<(), CompilerError> {
         // Convert signature to the format expected by register_function
         let (param_types, return_types) = signature;
-        let return_type = if return_types.is_empty() {
-            None
-        } else {
-            // For now, take the first return type (WASM functions can only return one value in MVP)
-            Some(self.val_type_to_wasm_type(&return_types[0])?)
-        };
+
+        // Convert all return types (supports multi-value returns)
+        let return_wasm_types: Vec<_> = return_types
+            .iter()
+            .map(|vt| self.val_type_to_wasm_type(vt))
+            .collect::<Result<Vec<_>, _>>()?;
 
         let param_wasm_types: Vec<_> = param_types
             .iter()
@@ -1151,12 +1368,33 @@ impl<'a> MirCodeGenerator<'a> {
         }
 
         // Register the function in the underlying WASM generator
-        let function_index = self.wasm_generator.register_function(
-            &name,
-            &param_wasm_types,
-            return_type,
-            &instructions,
-        )?;
+        // Use multi-value registration for functions with multiple return values
+        let function_index = if return_wasm_types.len() > 1 {
+            println!(
+                "DEBUG MIR: Function '{}' has {} return values, using multi-value registration",
+                name,
+                return_wasm_types.len()
+            );
+            self.wasm_generator.register_function_multi(
+                &name,
+                &param_wasm_types,
+                &return_wasm_types,
+                &instructions,
+            )?
+        } else {
+            // Single or no return value - use standard registration
+            let single_return = if return_wasm_types.is_empty() {
+                None
+            } else {
+                Some(return_wasm_types[0])
+            };
+            self.wasm_generator.register_function(
+                &name,
+                &param_wasm_types,
+                single_return,
+                &instructions,
+            )?
+        };
 
         println!(
             "DEBUG MIR: Function '{}' registered with index {}",
@@ -1211,7 +1449,7 @@ impl<'a> MirCodeGenerator<'a> {
             let type_index = self
                 .wasm_generator
                 .type_manager
-                .add_function_type(&[], None)?;
+                .add_function_type_single(&[], None)?;
             self.wasm_generator.function_section.function(type_index);
 
             let mut instructions = Vec::new();

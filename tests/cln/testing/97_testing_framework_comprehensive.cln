@@ -1,0 +1,119 @@
+// Testing Framework Comprehensive Test
+// Tests the built-in testing framework syntax as specified
+
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+	integer multiply(integer x, integer y)
+		return x * y
+
+	string formatName(string first, string last)
+		return first + " " + last
+
+	boolean isEven(integer n)
+		return n % 2 == 0
+
+	number calculateArea(number radius)
+		return 3.14159 * radius * radius
+
+	string processInput(string input)
+		if string.isEmpty(input)
+			error("Input cannot be empty")
+		return "processed: " + input
+
+// Built-in testing framework syntax demonstration
+tests:
+	// Named tests with descriptions
+	"adds two positive numbers": add(2, 3) = 5
+	"adds positive and negative": add(5, -2) = 3
+	"adds two negative numbers": add(-3, -4) = -7
+	"adds zero": add(0, 5) = 5
+
+	"multiplies positive numbers": multiply(3, 4) = 12
+	"multiplies by zero": multiply(5, 0) = 0
+	"multiplies negative numbers": multiply(-2, -3) = 6
+	"multiplies positive and negative": multiply(4, -2) = -8
+
+	"formats full name": formatName("John", "Doe") = "John Doe"
+	"formats single character names": formatName("A", "B") = "A B"
+	"formats empty last name": formatName("Alice", "") = "Alice "
+
+	"detects even numbers": isEven(4) = true
+	"detects odd numbers": isEven(3) = false
+	"zero is even": isEven(0) = true
+	"negative even number": isEven(-2) = true
+	"negative odd number": isEven(-1) = false
+
+	"calculates circle area": calculateArea(2.0) = 12.56636
+	"calculates area for radius 1": calculateArea(1.0) = 3.14159
+	"calculates area for radius 0": calculateArea(0.0) = 0.0
+
+	// Anonymous tests (no description)
+	add(10, 15) = 25
+	multiply(7, 8) = 56
+	formatName("Test", "User") = "Test User"
+	isEven(100) = true
+	calculateArea(3.0) = 28.27431
+
+	// String operations testing
+	string.length("Hello") = 5
+	string.toUpperCase("hello") = "HELLO"
+	string.toLowerCase("WORLD") = "world"
+	string.contains("Hello World", "World") = true
+	string.startsWith("Clean Language", "Clean") = true
+	string.endsWith("test.txt", ".txt") = true
+
+	// List operations testing
+	[1, 2, 3].length() = 3
+	[].isEmpty() = true
+	[1, 2, 3].contains(2) = true
+	[1, 2, 3].contains(5) = false
+
+	// Mathematical function testing
+	math.abs(-5) = 5
+	math.max(10, 7) = 10
+	math.min(10, 7) = 7
+	math.sqrt(16.0) = 4.0
+
+	// Error handling testing
+	"valid input processing": processInput("valid") = "processed: valid"
+	"empty input throws error": processInput("") = error("Input cannot be empty")
+
+	// Complex expression testing
+	"complex calculation": (add(5, 3) * multiply(2, 4)) = 64
+	"nested function calls": formatName(string.toUpperCase("john"), string.toLowerCase("DOE")) = "JOHN doe"
+
+	// Boolean logic testing
+	"logical and true": (true and true) = true
+	"logical and false": (true and false) = false
+	"logical or true": (false or true) = true
+	"logical or false": (false or false) = false
+
+	// Comparison testing
+	"equality comparison": (5 == 5) = true
+	"inequality comparison": (3 != 5) = true
+	"greater than": (10 > 5) = true
+	"less than": (3 < 7) = true
+	"greater equal": (5 >= 5) = true
+	"less equal": (3 <= 5) = true
+
+// Demonstration of test execution context
+start()
+	print("Testing Framework Comprehensive Test")
+	print("====================================")
+	print("This test demonstrates the built-in testing syntax:")
+	print("")
+	print("Named tests: \"description\": expression = expected")
+	print("Anonymous tests: expression = expected")
+	print("")
+	print("Test expressions can include:")
+	print("- Function calls: add(2, 3) = 5")
+	print("- Method calls: string.length(\"text\") = 4")
+	print("- Complex expressions: (a + b) * c = result")
+	print("- Error conditions: func(\"\") = error(\"message\")")
+	print("")
+	print("When run with --test flag, these tests will be executed")
+	print("and results will show pass/fail status for each test.")
+	print("")
+	print("Testing framework demonstration completed")

@@ -1,0 +1,8 @@
+functions:
+	string first()
+		if true
+			print("test")
+			return "success"
+
+	string second()
+		return "hello"

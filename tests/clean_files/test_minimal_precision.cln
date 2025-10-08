@@ -1,4 +1,0 @@
-functions:
-	number:64 testNumber()
-		number:64 value = 42.0
-		return value

@@ -1,0 +1,7 @@
+functions:
+	boolean test()
+		return 2 == 0
+
+start()
+	test()
+	print("done")

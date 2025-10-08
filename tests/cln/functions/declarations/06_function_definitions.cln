@@ -1,0 +1,24 @@
+// Test Description: Function declarations and calls
+// Category: functions
+// Dependencies: none
+// Expected: PASS
+
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+	number multiply(number:32 x, number:32 y)
+		return x * y
+
+	string joinStrings(string first, string second)
+		return first + second
+
+start()
+	integer sum = add(5, 10)
+	number product = multiply(3.14, 2.0)
+	string text = joinStrings("Hello, ", "World!")
+
+	print("Function definitions test successful!")
+	print("Sum: " + sum.toString())
+	print("Product: " + product.toString())
+	print("Text: " + text)

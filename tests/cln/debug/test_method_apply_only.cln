@@ -1,0 +1,13 @@
+// Test method apply block only
+class Test
+	functions:
+		void process(string data)
+			print(data)
+
+start()
+	// Test method apply block (if supported)
+	Test obj = Test()
+	obj.process:
+		"Apply block data"
+
+	print("Apply blocks test complete")

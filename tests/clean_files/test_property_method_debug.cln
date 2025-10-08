@@ -1,3 +1,0 @@
-functions:
-	string simple()
-		return compare.integer.toString()

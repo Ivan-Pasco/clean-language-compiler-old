@@ -1,3 +1,0 @@
-functions:
-	string greet(string name)
-		return "Hello, " + name

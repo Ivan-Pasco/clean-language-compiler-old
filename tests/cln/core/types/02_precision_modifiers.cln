@@ -1,0 +1,19 @@
+// Test Description: Type precision modifiers functionality
+// Category: core
+// Dependencies: none
+// Expected: PASS
+
+start()
+	// Test precision modifiers for integers
+	integer:8 small_int = 42
+	integer:16 medium_int = 1000
+	integer:32 large_int = 100000
+
+	// Test precision modifiers for numbers
+	number:32 float_val = 3.14
+
+	print("Precision modifiers test successful!")
+	print("Small: " + small_int.toString())
+	print("Medium: " + medium_int.toString())
+	print("Large: " + large_int.toString())
+	print("Float: " + float_val.toString())

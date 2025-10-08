@@ -1,0 +1,67 @@
+// Testing Framework Simple Test
+// Tests the basic testing framework syntax
+
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+	integer multiply(integer x, integer y)
+		return x * y
+
+	boolean isEven(integer n)
+		return n % 2 == 0
+
+// Built-in testing framework - basic tests only
+tests:
+	// Named tests with descriptions
+	"adds two positive numbers": add(2, 3) = 5
+	"adds positive and negative": add(5, -2) = 3
+	"adds two negative numbers": add(-3, -4) = -7
+	"adds zero": add(0, 5) = 5
+
+	"multiplies positive numbers": multiply(3, 4) = 12
+	"multiplies by zero": multiply(5, 0) = 0
+	"multiplies negative numbers": multiply(-2, -3) = 6
+	"multiplies positive and negative": multiply(4, -2) = -8
+
+	"detects even numbers": isEven(4) = true
+	"detects odd numbers": isEven(3) = false
+	"zero is even": isEven(0) = true
+	"negative even number": isEven(-2) = true
+	"negative odd number": isEven(-1) = false
+
+	// Anonymous tests (no description)
+	add(10, 15) = 25
+	multiply(7, 8) = 56
+	isEven(100) = true
+
+	// Mathematical operations
+	math.abs(-5) = 5
+	math.max(10, 7) = 10
+	math.min(10, 7) = 7
+	math.sqrt(16.0) = 4.0
+
+	// Boolean logic
+	(true and true) = true
+	(true and false) = false
+	(false or true) = true
+	(false or false) = false
+
+	// Comparisons
+	(5 == 5) = true
+	(3 != 5) = true
+	(10 > 5) = true
+	(3 < 7) = true
+	(5 >= 5) = true
+	(3 <= 5) = true
+
+start()
+	print("Simple Testing Framework Test")
+	print("=============================")
+	print("This test demonstrates basic testing syntax:")
+	print("")
+	print("Named tests: \"description\": expression = expected")
+	print("Anonymous tests: expression = expected")
+	print("")
+	print("Run with --test flag to execute tests")
+	print("Simple testing framework test completed")

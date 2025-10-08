@@ -1,3 +1,0 @@
-functions:
-	void test()
-		integer result = compare.integer

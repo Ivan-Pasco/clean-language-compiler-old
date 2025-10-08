@@ -1,6 +1,0 @@
-functions:
-	integer test(integer x=5)
-		return x
-
-start()
-	print("test")

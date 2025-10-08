@@ -1,0 +1,19 @@
+// Test chained onError expressions - currently not supported
+functions:
+	integer riskyFunction1()
+		error("First error")
+		return 0  // Will never be reached
+
+	integer riskyFunction2()
+		error("Second error")
+		return 0  // Will never be reached
+
+	integer safeFunction()
+		return 42
+
+	void testChainedOnError()
+		// Test chained onError: first fails -> second fails -> use fallback
+		integer result = riskyFunction1() onError riskyFunction2() onError 999
+		print("Chained result: " + result.toString())
+start()
+	testChainedOnError()

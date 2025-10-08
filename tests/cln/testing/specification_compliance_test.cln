@@ -1,0 +1,56 @@
+// Clean Language Specification Compliance Test
+// Tests core features according to the specification
+
+// Test 1: Basic class with functions block
+class Point
+	integer x
+	integer y
+
+	constructor(integer xParam, integer yParam)
+		x = xParam
+		y = yParam
+
+	functions:
+		integer getX()
+			return x
+
+		void move(integer dx, integer dy)
+			x = x + dx
+			y = y + dy
+
+// Test 2: Inheritance with base constructor
+class ColoredPoint is Point
+	string color
+
+	constructor(integer xParam, integer yParam, string colorParam)
+		base(xParam, yParam)
+		color = colorParam
+
+	functions:
+		string getInfo()
+			return color + " point at " + x.toString() + "," + y.toString()
+
+// Test 3: Static-style methods (class methods)
+class MathUtils
+	functions:
+		integer add(integer a, integer b)
+			return a + b
+
+start()
+	// Test constructor calls
+	Point p = Point(3, 4)
+	ColoredPoint cp = ColoredPoint(1, 2, "red")
+
+	// Test method calls with parentheses
+	integer xValue = p.getX()
+
+	// Test method calls that modify state
+	p.move(1, 1)
+
+	// Test inheritance and method calls
+	string info = cp.getInfo()
+
+	// Test static method calls (if supported)
+	integer sum = MathUtils.add(5, 3)
+
+	print("Compliance test complete")

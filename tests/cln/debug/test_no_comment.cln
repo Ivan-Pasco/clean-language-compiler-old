@@ -1,0 +1,18 @@
+class Point
+	integer x
+	integer y
+
+	constructor(integer px, integer py)
+		x = px
+		y = py
+
+class ColoredPoint is Point
+	string color
+
+	constructor(integer px, integer py, string c)
+		base(px, py)
+		color = c
+
+start()
+	Point p = Point(3, 4)
+	ColoredPoint cp = ColoredPoint(1, 2, "red")

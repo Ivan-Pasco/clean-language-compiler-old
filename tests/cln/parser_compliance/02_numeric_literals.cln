@@ -1,0 +1,50 @@
+// Parser Compliance Test - Numeric Literals
+// This test verifies all numeric literal formats are properly parsed
+
+start()
+	// Decimal integers
+	integer decimal_pos = 42
+	integer decimal_neg = -17
+	integer decimal_zero = 0
+
+	// Hexadecimal integers
+	integer hex_lower = 0xff
+	integer hex_upper = 0XFF
+	integer hex_mixed = 0xABcd
+	integer hex_neg = -0x10
+
+	// Binary integers
+	integer bin_lower = 0b1010
+	integer bin_upper = 0B1010
+	integer bin_neg = -0b101
+
+	// Octal integers
+	integer oct_lower = 0o777
+	integer oct_upper = 0O777
+	integer oct_neg = -0o123
+
+	// Basic floating point
+	number float_basic = 3.14159
+	number float_neg = -2.718
+	number float_zero = 0.0
+
+	// Scientific notation - new feature
+	number scientific_pos = 6.02e23
+	number scientific_neg = -1.6e-19
+	number scientific_upper = 2.99E8
+	number scientific_pos_exp = 1.23e+10
+	number scientific_neg_exp = 4.56e-7
+
+	// Edge cases
+	number very_small = 1e-100
+	number very_large = 9.99e99
+
+	// Print all values to verify parsing
+	print("Decimals:", decimal_pos, decimal_neg, decimal_zero)
+	print("Hex:", hex_lower, hex_upper, hex_mixed, hex_neg)
+	print("Binary:", bin_lower, bin_upper, bin_neg)
+	print("Octal:", oct_lower, oct_upper, oct_neg)
+	print("Floats:", float_basic, float_neg, float_zero)
+	print("Scientific:", scientific_pos, scientific_neg, scientific_upper)
+	print("Scientific exp:", scientific_pos_exp, scientific_neg_exp)
+	print("Edge cases:", very_small, very_large)

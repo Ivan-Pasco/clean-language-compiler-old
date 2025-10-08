@@ -1,7 +1,0 @@
-functions:
-	string greet(string name="World")
-		return "Hello, " + name
-
-start()
-	string message = greet()
-	print message ln

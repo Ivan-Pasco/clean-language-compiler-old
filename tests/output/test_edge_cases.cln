@@ -1,0 +1,29 @@
+// Testing edge cases and error scenarios
+
+start()
+	// Test empty matrix
+	matrix<integer> emptyMatrix = []
+	print("Empty matrix created")
+
+	// Test single element matrix
+	matrix<number> singleMatrix = [[1.0]]
+	print("Single element matrix created")
+
+	// Test mixed numeric operations
+	matrix<integer> intMatrix = [[1, 2], [3, 4]]
+	matrix<number> numMatrix = [[1.5, 2.5], [3.5, 4.5]]
+
+	// Test type promotion in operations
+	matrix<number> mixedResult = intMatrix + numMatrix
+	print("Mixed type operation successful")
+
+	// Test scalar operations with different types
+	matrix<number> scaledInt = intMatrix * 2.5
+	matrix<number> scaledNum = numMatrix * 3
+	print("Scalar operations with type promotion successful")
+
+	// Test chained operations
+	matrix<number> chainedResult = (intMatrix * 2) + (numMatrix * 3)
+	print("Chained operations successful")
+
+	print("All edge cases passed!")

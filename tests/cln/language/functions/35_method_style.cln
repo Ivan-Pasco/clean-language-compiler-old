@@ -1,0 +1,58 @@
+// Test method-style syntax - Clean Language Specification compliance
+
+functions:
+
+	void testStringMethods()
+		print("=== Testing String Method-Style Syntax ===")
+		string text = "Hello World"
+		integer textLength = text.length()
+		print("Text length: " + textLength.toString())
+
+		// Test string operations with method-style syntax
+		string upperText = text.toUpperCase()
+		print("Uppercase: " + upperText)
+
+		string lowerText = text.toLowerCase()
+		print("Lowercase: " + lowerText)
+
+	void testNumberMethods()
+		print("=== Testing Number Method-Style Syntax ===")
+		integer num = 123
+		string numStr = num.toString()
+		print("Integer to string: " + numStr)
+
+		number decimal = 42.0
+		string decimalStr = decimal.toString()
+		print("Number to string: " + decimalStr)
+
+		// Test type conversions
+		integer fromNumber = decimal.toInteger()
+		print("Number to integer: " + fromNumber.toString())
+
+		number fromInteger = num.toNumber()
+		print("Integer to number: " + fromInteger.toString())
+
+	void testBooleanMethods()
+		print("=== Testing Boolean Method-Style Syntax ===")
+		boolean flag = true
+		string boolStr = flag.toString()
+		print("Boolean to string: " + boolStr)
+
+		integer boolValue = 1
+		boolean converted = boolValue.toBoolean()
+		print("Integer to boolean (1): " + converted.toString())
+
+		integer zeroValue = 0
+		boolean zeroConverted = zeroValue.toBoolean()
+		print("Integer to boolean (0): " + zeroConverted.toString())
+
+start()
+	print("Clean Language Method-Style Syntax Test")
+	print("======================================")
+	testStringMethods()
+	print("")
+	testNumberMethods()
+	print("")
+	testBooleanMethods()
+	print("")
+	print("All method-style tests completed!")

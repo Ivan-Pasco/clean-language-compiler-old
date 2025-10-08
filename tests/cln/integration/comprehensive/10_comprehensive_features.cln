@@ -1,0 +1,61 @@
+// Test Description: Comprehensive integration of multiple language features
+// Category: integration
+// Dependencies: all core features
+// Expected: PASS
+
+functions:
+	list<integer> processNumbers(list<integer> input)
+		list<integer> result = [0]  // Initialize with dummy value
+		iterate i in 0 to input.length - 1
+			integer value = input[i]
+			if value > 0
+				result.push(value * 2)
+		return result
+
+class Calculator
+	string name
+
+	constructor(string name)
+		name = name
+
+	functions:
+		integer calculate(integer a, integer b, string operation)
+			if operation == "add"
+				return a + b
+			else if operation == "multiply"
+				return a * b
+			else
+				return 0
+
+start()
+	// Test precision modifiers
+	integer:16 precision_val = 500
+
+	// Test arrays and chaining
+	list<integer> numbers = [1, 2, 3, 4, 5]
+	list<list<integer>> nested = [[10, 20], [30, 40]]
+	integer chain_result = nested[0][1]
+
+	// Test method calls
+	numbers.push(precision_val)
+
+	// Test functions
+	list<integer> processed = processNumbers(numbers)
+
+	// Test classes
+	Calculator calc = Calculator("TestCalc")
+	integer calc_result = calc.calculate(10, 5, "add")
+
+	// Test control flow
+	if calc_result > 0
+		print("Comprehensive test successful!")
+		print("Chain result: " + chain_result.toString())
+		print("Calculation: " + calc_result.toString())
+		print("Processed count: " + processed.length.toString())
+	else
+		print("Test failed!")
+
+	// Test loops with complex operations
+	iterate item in processed
+		if item > 10
+			print("Large item: " + item.toString())

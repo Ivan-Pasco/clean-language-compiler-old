@@ -1,0 +1,104 @@
+// Calculator Application - Real-world Integration Test
+// Comprehensive test demonstrating practical Clean Language usage
+
+class Calculator
+	number memory
+
+	constructor()
+		memory = 0.0
+
+	functions:
+		number add(number a, number b)
+			return a + b
+
+		number subtract(number a, number b)
+			return a - b
+
+		number multiply(number a, number b)
+			return a * b
+
+		number divide(number a, number b)
+			if b == 0.0
+				print("Error: Division by zero")
+				return 0.0
+			return a / b
+
+		number power(number base, number exponent)
+			return math.pow(base, exponent)
+
+		number sqrt(number value)
+			return math.sqrt(value)
+
+		void storeInMemory(number value)
+			memory = value
+
+		number recallFromMemory()
+			return memory
+
+		void clearMemory()
+			memory = 0.0
+
+functions:
+	void performBasicOperations()
+		Calculator calc = Calculator()
+
+		// Basic arithmetic
+		number sum = calc.add(15.5, 7.3)
+		number diff = calc.subtract(20.0, 8.5)
+		number product = calc.multiply(4.5, 6.0)
+		number quotient = calc.divide(100.0, 4.0)
+
+		print("Addition: 15.5 + 7.3 = " + sum.toString())
+		print("Subtraction: 20.0 - 8.5 = " + diff.toString())
+		print("Multiplication: 4.5 * 6.0 = " + product.toString())
+		print("Division: 100.0 / 4.0 = " + quotient.toString())
+
+		// Advanced operations
+		number squared = calc.power(5.0, 2.0)
+		number cubed = calc.power(3.0, 3.0)
+		number squareRoot = calc.sqrt(16.0)
+
+		print("5 squared = " + squared.toString())
+		print("3 cubed = " + cubed.toString())
+		print("Square root of 16 = " + squareRoot.toString())
+
+		// Memory operations
+		calc.storeInMemory(42.0)
+		number memoryValue = calc.recallFromMemory()
+		print("Memory recall: " + memoryValue.toString())
+
+		calc.clearMemory()
+		number clearedMemory = calc.recallFromMemory()
+		print("Cleared memory: " + clearedMemory.toString())
+
+	void performComplexCalculations()
+		Calculator calc = Calculator()
+
+		// Compound calculations
+		number result1 = calc.add(
+			calc.multiply(3.0, 4.0),
+			calc.divide(15.0, 3.0)
+		)
+		print("(3 * 4) + (15 / 3) = " + result1.toString())
+
+		// Error handling test
+		number errorResult = calc.divide(10.0, 0.0)
+		print("Division by zero result: " + errorResult.toString())
+
+		// Scientific calculations
+		number scientificResult = calc.multiply(
+			calc.power(2.0, 3.0),
+			calc.sqrt(9.0)
+		)
+		print("(2^3) * sqrt(9) = " + scientificResult.toString())
+
+	void start()
+		print("Calculator Application - Real-world Integration Test")
+		print("================================================")
+
+		performBasicOperations()
+		print("")
+		performComplexCalculations()
+
+		print("")
+		print("Calculator application test completed successfully")

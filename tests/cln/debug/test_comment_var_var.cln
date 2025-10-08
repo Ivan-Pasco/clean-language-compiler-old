@@ -1,0 +1,4 @@
+start()
+	// Comment
+	integer a = 1
+	integer b = 2

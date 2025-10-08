@@ -1,0 +1,18 @@
+// Test instance method calls
+// Classes in Clean Language use instance methods, not static methods
+
+class MathUtils
+	functions:
+		integer add(integer a, integer b)
+			return a + b
+
+		integer multiply(integer x, integer y)
+			return x * y
+
+start()
+	// Create instance and call methods
+	MathUtils utils = MathUtils()
+	integer sum = utils.add(5, 3)
+	integer product = utils.multiply(4, 7)
+
+	print("Instance method test complete")

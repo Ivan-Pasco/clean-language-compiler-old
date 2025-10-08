@@ -1,0 +1,25 @@
+// Test Description: Class definitions with methods
+// Category: oop
+// Dependencies: none
+// Expected: PASS
+
+class Animal
+	string name
+	integer age
+
+	constructor(string name, integer age)
+		name = name
+		age = age
+
+	functions:
+		string getName()
+			return name
+
+		integer getAge()
+			return age
+
+start()
+	Animal animal = Animal("Fluffy", 5)
+
+	print("Class definitions test successful!")
+	print("Animal: " + animal.getName() + ", Age: " + animal.getAge().toString())

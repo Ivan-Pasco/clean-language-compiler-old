@@ -1,0 +1,9 @@
+class Shape
+	string name
+
+functions:
+	any testFunction(list<Shape> shapes)
+		return ""
+
+start()
+	print("Testing function with generic parameters")

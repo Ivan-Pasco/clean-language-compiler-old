@@ -61,7 +61,9 @@ impl WasmModuleBuilder {
         }
 
         // Always add memory section
+        println!("DEBUG assemble_module: Adding memory section to module");
         module.section(memory_section);
+        println!("DEBUG assemble_module: Memory section added");
 
         // Add exports section
         module.section(export_section);

@@ -1,0 +1,33 @@
+// Parser Compliance Test - Numeric Literals (Simplified)
+// This test verifies all numeric literal formats are properly parsed
+
+start()
+	// Test each major numeric format
+	integer decimal_pos = 42
+	print(decimal_pos)
+
+	integer hex_value = 0xff
+	print(hex_value)
+
+	integer binary_value = 0b1010
+	print(binary_value)
+
+	integer octal_value = 0o777
+	print(octal_value)
+
+	// Test scientific notation
+	number scientific = 6.02e23
+	print(scientific)
+
+	number scientific_neg = -1.6e-19
+	print(scientific_neg)
+
+	number scientific_upper = 2.99E8
+	print(scientific_upper)
+
+	// Test basic floats
+	number float_basic = 3.14159
+	print(float_basic)
+
+	number float_neg = -2.718
+	print(float_neg)

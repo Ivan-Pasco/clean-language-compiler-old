@@ -1,0 +1,30 @@
+// Console input simple test - demonstrates basic input functionality
+// Note: Full input.integer(), input.yesNo() requires runtime implementation
+
+functions:
+	void testConsoleInput()
+		// Test basic text input (if available)
+		print("Console input functionality test")
+		print("Note: Full input functionality requires runtime implementation")
+
+		// Demonstrate the expected syntax for when implemented
+		// string name = input("What's your name? ")
+		// integer age = input.integer("How old are you? ")
+		// boolean confirmed = input.yesNo("Are you sure? ")
+
+		// For now, demonstrate with static values
+		string name = "TestUser"
+		integer age = 25
+		boolean confirmed = true
+
+		print("Hello, " + name + "!")
+		print("You are " + age.toString() + " years old.")
+
+		if confirmed
+			print("You confirmed the action.")
+		else
+			print("You declined the action.")
+
+start()
+	testConsoleInput()
+	print("Console input test completed successfully")

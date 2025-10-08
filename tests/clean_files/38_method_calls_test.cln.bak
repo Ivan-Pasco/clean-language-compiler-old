@@ -1,9 +1,0 @@
-// Test method-style calls
-
-functions:
-	testMethodCalls()
-		number result = math.max(5.0, 3.0)
-		print "math.max result: " + result.toString( ln)
-
-start()
-	testMethodCalls()

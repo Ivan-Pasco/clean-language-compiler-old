@@ -1,0 +1,20 @@
+// Simple test of list behavior functions
+
+functions:
+	void testListBehaviors()
+		print("Testing list behaviors")
+		list<integer> myList = [1, 2, 3]
+
+		integer size = list.size(myList)
+		print("List size: " + size.toString())
+
+		boolean empty = list.isEmpty(myList)
+		print("Is empty: " + empty.toString())
+
+		boolean notEmpty = list.isNotEmpty(myList)
+		print("Is not empty: " + notEmpty.toString())
+
+start()
+	print("List Behavior Simple Test")
+	testListBehaviors()
+	print("Test completed")

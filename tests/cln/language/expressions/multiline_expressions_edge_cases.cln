@@ -1,0 +1,62 @@
+// Multiline Expressions Edge Cases Test
+// Tests parentheses requirements and complex expression handling
+
+functions:
+	integer complexCalculation(integer a, integer b, integer c)
+		// Test multiline arithmetic with required parentheses
+		integer result = (
+			a * b
+			c / 2 -
+			(a + b) * c
+		)
+		return result
+
+	boolean complexLogical(boolean x, boolean y, boolean z)
+		// Test multiline logical expressions
+		boolean result = (
+			x and y or
+			(not z and x) or
+			(y and not x)
+		)
+		return result
+
+	string complexStringOp(string a, string b, string c)
+		// Test multiline string concatenation
+		string result = (
+			a + " "
+			b + " "
+			c
+		)
+		return result
+
+	void start()
+		print("Testing multiline expressions edge cases")
+
+		// Test complex arithmetic
+		integer mathResult = complexCalculation(5, 3, 2)
+		print("Complex calculation result: " + mathResult.toString())
+
+		// Test complex logical operations
+		boolean logicResult = complexLogical(true, false, true)
+		print("Complex logical result: " + logicResult.toString())
+
+		// Test complex string operations
+		string stringResult = complexStringOp("Hello", "from", "Clean")
+		print("Complex string result: " + stringResult)
+
+		// Test inline multiline expressions
+		integer inlineResult = (
+			10 + 20 *
+			3 - 5
+		)
+		print("Inline multiline result: " + inlineResult.toString())
+
+		// Test method chaining across lines
+		string chainResult = (
+			"testing"
+			.toUpperCase()
+			.substring(0, 4)
+		)
+		print("Method chain result: " + chainResult)
+
+		print("Multiline expressions edge cases test completed")

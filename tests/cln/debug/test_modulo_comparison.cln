@@ -1,0 +1,3 @@
+start()
+	boolean result = 4 % 2 == 0
+	print(result)

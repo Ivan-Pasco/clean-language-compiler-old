@@ -1,7 +1,0 @@
-class TestClass
-	functions:
-		string test()
-			return "hello"
-		
-		string test2()
-			return "world"

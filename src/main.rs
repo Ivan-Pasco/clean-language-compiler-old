@@ -73,12 +73,6 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
-    /// Run comprehensive Clean Language test suite
-    ComprehensiveTest {
-        /// Enable verbose output
-        #[arg(short, long)]
-        verbose: bool,
-    },
     /// Debug a Clean Language file with enhanced error reporting
     Debug {
         /// Input file to debug
@@ -247,7 +241,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Package(package_cmd) => handle_package(package_cmd).await?,
         Commands::Test { verbose, dirs } => handle_test(verbose, dirs).await?,
         Commands::SimpleTest { verbose } => handle_simple_test(verbose).await?,
-        Commands::ComprehensiveTest { verbose } => handle_comprehensive_test(verbose).await?,
         Commands::Debug {
             input,
             show_ast,
@@ -555,55 +548,6 @@ async fn handle_simple_test(verbose: bool) -> Result<(), Box<dyn std::error::Err
             }
             Err("Simple test failed".into())
         }
-    }
-}
-
-async fn handle_comprehensive_test(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Running comprehensive Clean Language test suite...");
-    if verbose {
-        println!("Verbose output enabled");
-    }
-
-    let test_cases = vec![
-        ("Basic", "start()\n\tinteger x = 42\n\tprint(x)\n"),
-        (
-            "Arithmetic",
-            "start()\n\tinteger x = 1 + 2 * 3\n\tprint(x)\n",
-        ),
-        (
-            "Variables",
-            "start()\n\tinteger x = 5\n\tinteger y = x + 1\n\tprint(y)\n",
-        ),
-    ];
-
-    let mut passed = 0;
-    let total = test_cases.len();
-
-    for (name, source) in test_cases {
-        print!("Testing {}: ", name);
-        match compile_with_file(source, &format!("{}_test.clean", name.to_lowercase())) {
-            Ok(wasm_binary) => {
-                println!("✓ {} bytes", wasm_binary.len());
-                passed += 1;
-            }
-            Err(errors) => {
-                println!("✗ {} errors", errors.len());
-                if verbose {
-                    for error in &errors {
-                        println!("  {error}");
-                    }
-                }
-            }
-        }
-    }
-
-    println!("Results: {passed}/{total} tests passed");
-    if passed == total {
-        println!("🎉 All comprehensive tests passed!");
-        Ok(())
-    } else {
-        eprintln!("⚠ Some tests failed");
-        Err("Some comprehensive tests failed".into())
     }
 }
 

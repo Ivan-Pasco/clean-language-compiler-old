@@ -1,7 +1,0 @@
-
-start()
-	boolean x = true
-	boolean y = false
-	
-	boolean result1 = x and y
-	print(result1)

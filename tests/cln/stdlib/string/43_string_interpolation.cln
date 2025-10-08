@@ -1,0 +1,26 @@
+// Test string interpolation - Clean Language Specification compliance
+
+functions:
+	void testStringInterpolation()
+		string name = "World"
+		integer count = 42
+
+		// Test basic string interpolation with variable
+		string greeting = "Hello, {name}!"
+		print("Basic interpolation: " + greeting)
+
+		// Test interpolation with integer
+		string countMessage = "Count is {count}"
+		print("Integer interpolation: " + countMessage)
+
+		// Test interpolation with expression
+		string calculation = "Sum: {count + 8}"
+		print("Expression interpolation: " + calculation)
+
+		// Test multiple interpolations in one string
+		string complex = "Hello {name}, your count is {count}!"
+		print("Complex interpolation: " + complex)
+
+start()
+	testStringInterpolation()
+	print("String interpolation test completed")

@@ -1,0 +1,18 @@
+// Test list<T> generic syntax
+// Tests list_type rule: "list" ~ "<" ~ type_ ~ ">"
+
+start()
+	// Test typed lists
+	list<integer> numbers = [1, 2, 3, 4, 5]
+	list<string> words = ["hello", "world", "test"]
+	list<any> mixed = [1, "two", true, 4]
+
+	// Test list access
+	integer first = numbers[0]
+	string greeting = words[0]
+	any mixedItem = mixed[1]
+
+	// Test list methods (if implemented)
+	integer count = numbers.length()
+
+	print("List generics test complete")

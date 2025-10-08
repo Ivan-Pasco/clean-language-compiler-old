@@ -1,0 +1,62 @@
+
+class Animal
+	string name
+	integer age
+
+	constructor(string animalName, integer animalAge)
+		name = animalName
+		age = animalAge
+
+	functions:
+		string getName()
+			return name
+
+		string makeSound()
+			return name + " makes a sound"
+
+		string getInfo()
+			return name + " is " + age.toString() + " years old"
+
+class Dog is Animal
+	string breed
+
+	constructor(string dogName, integer dogAge, string dogBreed)
+		base(dogName, dogAge)
+		breed = dogBreed
+
+	functions:
+		string makeSound()
+			return name + " barks"
+
+		string getBreed()
+			return breed
+
+		string getInfo()
+			return name + " is a " + breed + ", " + age.toString() + " years old"
+
+class Cat is Animal
+	boolean isIndoor
+
+	constructor(string catName, integer catAge, boolean indoorFlag)
+		base(catName, catAge)
+		isIndoor = indoorFlag
+
+	functions:
+		string makeSound()
+			return name + " meows"
+
+		string getHabitat()
+			if isIndoor
+				return "indoor cat"
+			else
+				return "outdoor cat"
+
+start()
+	Dog buddy = Dog("Buddy", 3, "Golden Retriever")
+	Cat whiskers = Cat("Whiskers", 2, true)
+
+	print(buddy.makeSound())
+	print(whiskers.makeSound())
+	print(buddy.getInfo())
+	print(whiskers.getInfo())
+	print("Whiskers is an " + whiskers.getHabitat())

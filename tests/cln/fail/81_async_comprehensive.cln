@@ -1,0 +1,39 @@
+// Test 81: Comprehensive Async Programming
+// Tests start/later/background async patterns as per specification
+
+functions:
+	string fetchData(string url)
+		// Simulate async data fetching
+		print("Fetching data from: " + url)
+		return "Data from " + url
+
+	void logAction(string action)
+		// Simulate logging action
+		print("Logged: " + action)
+
+	void syncCache()
+		// Function marked as background to always run asynchronously
+		print("Syncing cache...")
+		print("Cache sync complete")
+
+start()
+	// Test basic async with start/later pattern
+	later string data = start fetchData("https://api.example.com/data")
+	print("Working while data loads...")
+	print "Received: " + data ln  // blocks here only when accessed
+
+	// Test background execution without keeping result
+	background logAction("user_login")  // runs and ignores result
+
+	// Test multiple async operations
+	later string user = start fetchData("https://api.example.com/user")
+	later string posts = start fetchData("https://api.example.com/posts")
+
+	print("Processing other tasks...")
+	// Access async results (blocks if not ready)
+	print("User data: " + user)
+	print("Posts data: " + posts)
+	// Test background function (automatically async)
+	syncCache()  // runs in background automatically
+
+	print("Async operations complete")

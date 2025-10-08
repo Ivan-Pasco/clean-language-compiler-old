@@ -1,9 +1,0 @@
-functions:
-	void test()
-		integer:
-			x = 5
-		string:
-			name = "test"
-
-	void start()
-	void test()

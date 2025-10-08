@@ -1,8 +1,0 @@
-functions:
-	string test1()
-		if true
-			return "has if"
-		return "fallback"
-	
-	string test2()
-		return "simple"

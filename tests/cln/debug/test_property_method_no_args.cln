@@ -1,0 +1,6 @@
+// Test property access and method calls
+functions:
+	void test()
+		integer value = 42
+		string result = value.toString()
+		print(result)

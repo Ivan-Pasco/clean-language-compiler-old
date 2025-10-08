@@ -1,0 +1,10 @@
+// Minimal test for method apply block
+class Test
+	functions:
+		void process(string data)
+			print(data)
+
+start()
+	Test obj = Test()
+	obj.process:
+		"test data"

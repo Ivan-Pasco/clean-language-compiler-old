@@ -1,5 +1,0 @@
-start()
-	// Test different argument patterns
-	string result1 = math.sqrt(16.0)
-	string result2 = file.read("test.txt")
-	string result3 = http.post("url", "data")

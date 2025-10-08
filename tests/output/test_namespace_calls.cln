@@ -1,0 +1,19 @@
+start()
+	// Test math namespace
+	number pi = math.pi()
+	number result1 = math.sqrt(16.0)
+	number result2 = math.pow(2.0, 3.0)
+	print("Math namespace calls work")
+
+	// Test string namespace
+	string text = "Hello World"
+	boolean contains = string.contains(text, "World")
+	number length = string.length(text)
+	print("String namespace calls work")
+
+	// Test list namespace
+	list<number> numbers = [1.0, 2.0, 3.0]
+	number size = list.size(numbers)
+	print("List namespace calls work")
+
+	print("All namespace calls successful")

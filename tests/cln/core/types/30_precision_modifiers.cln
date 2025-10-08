@@ -1,0 +1,44 @@
+// Test file for integer and number types (Clean Language doesn't support precision modifiers)
+
+start()
+	// Test basic integer types
+	integer smallInt = 127
+	integer mediumInt = 32767
+	integer standardInt = 2147483647
+	integer largeInt = 1000000000
+
+	print("Integer tests:")
+	print("Small: " + smallInt.toString())
+	print("Medium: " + mediumInt.toString())
+	print("Standard: " + standardInt.toString())
+	print("Large: " + largeInt.toString())
+
+	// Test arithmetic with integers
+	integer result1 = standardInt / 1000000
+	integer result2 = largeInt / 1000000
+
+	print("Division results:")
+	print("Result 1: " + result1.toString())
+	print("Result 2: " + result2.toString())
+
+	// Test number (floating point) types
+	number smallFloat = 3.14
+	number mediumFloat = 123.456789
+	number largeFloat = 1234567.89
+
+	print("Number tests:")
+	print("Small float: " + smallFloat.toString())
+	print("Medium float: " + mediumFloat.toString())
+	print("Large float: " + largeFloat.toString())
+
+	// Test floating point arithmetic
+	number floatResult1 = largeFloat / 1000.0
+	number floatResult2 = smallFloat * mediumFloat
+
+	print("Float calculations:")
+	print("Division result: " + floatResult1.toString())
+	print("Multiplication result: " + floatResult2.toString())
+
+	// Test mixing integers and numbers
+	number mixedResult = smallInt + smallFloat
+	print("Mixed arithmetic: " + mixedResult.toString())

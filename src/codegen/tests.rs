@@ -145,8 +145,8 @@ fn test_type_manager() {
 
     // Test adding a function type
     let params = vec![WasmType::I32, WasmType::I32];
-    let return_type = Some(WasmType::I32);
-    let result = type_manager.add_function_type(&params, return_type);
+    let return_types = vec![WasmType::I32];
+    let result = type_manager.add_function_type(&params, &return_types);
     assert!(
         result.is_ok(),
         "Failed to add function type: {:?}",

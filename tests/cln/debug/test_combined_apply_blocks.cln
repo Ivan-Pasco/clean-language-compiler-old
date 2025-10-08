@@ -1,0 +1,9 @@
+functions:
+	void test()
+		println:
+			"First line"
+			"Second line"
+
+		integer:
+			count = 0
+			maxSize = 100

@@ -1,0 +1,28 @@
+// Test Description: If/else conditional statements
+// Category: control
+// Dependencies: none
+// Expected: PASS
+
+start()
+	integer x = 10
+	integer y = 5
+
+	// Basic if/else
+	if x > y
+		print("x is greater than y")
+	else
+		print("x is not greater than y")
+
+	// Complex conditions
+	boolean flag = true
+	if flag and (x > 0)
+		print("Complex condition true")
+
+	// Nested conditions
+	if x > 5
+		if y < 10
+			print("Nested condition met")
+		else
+			print("Inner condition failed")
+	else
+		print("Outer condition failed")

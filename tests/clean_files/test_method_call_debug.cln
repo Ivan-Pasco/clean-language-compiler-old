@@ -1,5 +1,0 @@
-functions:
-	void test()
-		string text = "Hello"
-		integer len = text.length()
-		print("Done")

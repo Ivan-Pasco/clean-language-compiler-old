@@ -1,0 +1,42 @@
+// Test Description: Class inheritance with base constructor calls
+// Category: oop
+// Dependencies: none
+// Expected: PASS
+
+class Animal
+	string name
+	integer age
+
+	constructor(string name, integer age)
+		name = name
+		age = age
+
+	functions:
+		string getName()
+			return name
+
+		integer getAge()
+			return age
+
+class Dog is Animal
+	string breed
+
+	constructor(string name, integer age, string breed)
+		base(name, age)
+		breed = breed
+
+	functions:
+		string getBreed()
+			return breed
+
+		string speak()
+			return "Woof!"
+
+start()
+	Animal animal = Animal("Fluffy", 5)
+	Dog dog = Dog("Rex", 3, "Labrador")
+
+	print("Class inheritance test successful!")
+	print("Animal: " + animal.getName() + ", Age: " + animal.getAge().toString())
+	print("Dog: " + dog.getName() + ", Breed: " + dog.getBreed())
+	print("Dog says: " + dog.speak())

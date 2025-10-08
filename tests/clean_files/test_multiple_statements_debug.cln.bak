@@ -1,8 +1,0 @@
-functions:
-
-	void testMethodStyle()
-
-		print "Testing method-style functions" ln
-		string text = "Hello"
-		integer len = text.length()
-		print "Text length: " + len.toString( ln)

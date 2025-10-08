@@ -1,0 +1,35 @@
+// Console Input Comprehensive Test
+// Tests input.integer(), input.number(), input.yesNo() according to Clean Language Specification
+
+functions:
+	void start()
+		print("Console input functionality test")
+
+		// Test integer input
+		print("Testing integer input parsing:")
+		integer userAge = input.integer("Enter your age: ")
+		print("Age entered: " + userAge.toString())
+
+		// Test number input
+		print("Testing number input parsing:")
+		number userHeight = input.number("Enter your height: ")
+		print("Height entered: " + userHeight.toString())
+
+		// Test yes/no input
+		print("Testing yes/no input parsing:")
+		boolean userChoice = input.yesNo("Do you like programming? (y/n): ")
+		if userChoice
+			print("User likes programming!")
+		else
+			print("User doesn't like programming")
+
+		// Test string input with validation
+		print("Testing string input:")
+		string userName = input.string("Enter your name: ")
+		print("Name entered: " + userName)
+
+		// Test input with default values
+		integer defaultAge = input.integerWithDefault("Enter age (default 25): ", 25)
+		print("Age with default: " + defaultAge.toString())
+
+		print("Console input test completed")

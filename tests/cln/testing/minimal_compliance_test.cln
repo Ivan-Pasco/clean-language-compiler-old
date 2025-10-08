@@ -1,0 +1,19 @@
+// Minimal Clean Language Specification Compliance Test
+// Testing core features one by one
+
+class Point
+	integer x
+	integer y
+
+	constructor(integer xParam, integer yParam)
+		x = xParam
+		y = yParam
+
+	functions:
+		integer getX()
+			return x
+
+start()
+	Point p = Point(3, 4)
+	integer value = p.getX()
+	print("Test complete")

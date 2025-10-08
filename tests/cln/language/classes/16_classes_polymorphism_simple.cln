@@ -1,0 +1,66 @@
+class Vehicle
+	string make
+	string model
+	integer year
+
+	constructor(string vehicleMake, string vehicleModel, integer vehicleYear)
+		make = vehicleMake
+		model = vehicleModel
+		year = vehicleYear
+
+	functions:
+		string getInfo()
+			return year.toString() + " " + make + " " + model
+
+		string startEngine()
+			return "Vehicle starting..."
+
+		integer getMaxSpeed()
+			return 60
+
+class Car is Vehicle
+	integer doors
+	boolean isElectric
+
+	constructor(string carMake, string carModel, integer carYear, integer carDoors, boolean electric)
+		base(carMake, carModel, carYear)
+		doors = carDoors
+		isElectric = electric
+
+	functions:
+		string startEngine()
+			if isElectric
+				return make + " " + model + " starting silently (electric)"
+			else
+				return make + " " + model + " engine starting"
+
+		integer getMaxSpeed()
+			if isElectric
+				return 120
+			else
+				return 100
+
+start()
+	print("Polymorphism Test - Vehicle System")
+	print("=================================")
+
+	// Create different types of vehicles
+	Car tesla = Car("Tesla", "Model 3", 2023, 4, true)
+	Car honda = Car("Honda", "Civic", 2022, 4, false)
+
+	// Demonstrate polymorphism - same method call, different behavior
+	print("=== Tesla Demonstration ===")
+	print("Info: " + tesla.getInfo())
+	print("Starting: " + tesla.startEngine())
+	print("Max Speed: " + tesla.getMaxSpeed().toString() + " km/h")
+
+	print("=== Honda Demonstration ===")
+	print("Info: " + honda.getInfo())
+	print("Starting: " + honda.startEngine())
+	print("Max Speed: " + honda.getMaxSpeed().toString() + " km/h")
+
+	// Test polymorphic assignment
+	Vehicle myVehicle = tesla
+	print("=== Polymorphic Vehicle ===")
+	print("Type: " + myVehicle.getInfo())
+	print("Starting: " + myVehicle.startEngine())

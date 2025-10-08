@@ -1,0 +1,16 @@
+class Vehicle
+	string make
+
+	constructor(string vehicleMake)
+		make = vehicleMake
+
+	functions:
+		string getInfo()
+			return make
+
+functions:
+	void test(Vehicle vehicle)
+		print(vehicle.getInfo())
+start()
+	Vehicle car = Vehicle("Toyota")
+	test(car)

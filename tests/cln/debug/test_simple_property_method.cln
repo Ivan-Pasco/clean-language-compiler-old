@@ -1,0 +1,6 @@
+// Test simple property and method access
+functions:
+	void test()
+		integer value = 123
+		string result = value.toString()
+		print(result)

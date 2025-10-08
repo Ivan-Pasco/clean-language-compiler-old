@@ -1,0 +1,13 @@
+// Test precision modifiers in standalone functions
+functions:
+	number:64 testPrecision()
+		number:64 value = 42.5
+		return value
+
+	void usePrecision()
+		number:64 result = testPrecision()
+		print("Result: " + result.toString())
+
+start()
+	print("Testing standalone precision")
+	usePrecision()
