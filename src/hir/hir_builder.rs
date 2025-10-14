@@ -18,6 +18,7 @@ use crate::hir::*;
 pub struct HirBuilder {
     type_inference_counter: usize,
     warnings: Vec<CompilerError>,
+    constant_bindings: std::collections::HashSet<String>,
 }
 
 impl HirBuilder {
@@ -26,6 +27,7 @@ impl HirBuilder {
         Self {
             type_inference_counter: 0,
             warnings: Vec::new(),
+            constant_bindings: std::collections::HashSet::new(),
         }
     }
 
@@ -61,13 +63,27 @@ impl HirBuilder {
                     ..
                 } => {
                     for import_item in import_list {
-                        imports.push(HirImport {
-                            module_name: import_item.name.clone(),
-                            items: if let Some(alias) = &import_item.alias {
-                                Some(vec![alias.clone()])
+                        // Parse import name to separate module and symbol
+                        // Examples:
+                        //   "Math" → module: "Math", items: None (whole module)
+                        //   "math.sqrt" → module: "math", items: Some(["sqrt"]) (specific symbol)
+                        //   "Utils as U" → module: "Utils", items: None, (alias handled separately)
+                        //   "Json.decode as jd" → module: "Json", items: Some(["decode"]), (alias handled separately)
+
+                        let (module_name, symbol_items) =
+                            if let Some(dot_pos) = import_item.name.find('.') {
+                                // Contains dot - import specific symbol(s)
+                                let module = &import_item.name[..dot_pos];
+                                let symbol = &import_item.name[dot_pos + 1..];
+                                (module.to_string(), Some(vec![symbol.to_string()]))
                             } else {
-                                None
-                            },
+                                // No dot - import whole module
+                                (import_item.name.clone(), None)
+                            };
+
+                        imports.push(HirImport {
+                            module_name,
+                            items: symbol_items,
                             location: SourceLocation::default(),
                         });
                     }
@@ -315,6 +331,11 @@ impl HirBuilder {
                 location,
             } = stmt
             {
+                tracing::debug!(
+                    type_ = ?type_,
+                    assignments_count = assignments.len(),
+                    "Expanding TypeApplyBlock into variable declarations"
+                );
                 // Convert each assignment in the apply block to a variable declaration
                 for assignment in assignments {
                     let var_type = self.build_type(type_)?;
@@ -324,10 +345,17 @@ impl HirBuilder {
                         None
                     };
 
+                    tracing::debug!(
+                        variable_name = %assignment.name,
+                        var_type = ?var_type,
+                        "Created VariableDeclaration from TypeApplyBlock"
+                    );
+
                     hir_statements.push(HirStatement::VariableDeclaration {
                         name: assignment.name.clone(),
                         var_type,
                         initializer: init_expr,
+                        is_mutable: true, // Apply blocks create mutable variables
                         location: location.clone().unwrap_or_default(),
                     });
                 }
@@ -342,10 +370,14 @@ impl HirBuilder {
                     let var_type = self.build_type(&constant.type_)?;
                     let init_expr = Some(self.build_expression(&constant.value)?);
 
+                    // Track this as a constant binding for resolver
+                    self.constant_bindings.insert(constant.name.clone());
+
                     hir_statements.push(HirStatement::VariableDeclaration {
                         name: constant.name.clone(),
                         var_type,
                         initializer: init_expr,
+                        is_mutable: false, // Constant apply blocks create immutable variables
                         location: location.clone().unwrap_or_default(),
                     });
                 }
@@ -381,6 +413,7 @@ impl HirBuilder {
                     name: name.clone(),
                     var_type,
                     initializer: init_expr,
+                    is_mutable: true, // Regular variable declarations are mutable by default
                     location: location.clone().unwrap_or_default(),
                 })
             }

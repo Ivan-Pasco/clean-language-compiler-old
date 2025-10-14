@@ -1,4 +1,9 @@
 //! Comprehensive tests for the semantic analysis and type system
+//!
+//! NOTE: These tests use the deprecated SemanticAnalyzer.
+//! They will be migrated to use the modern pipeline (Resolver + TypeChecker) before v0.11.0.
+
+#![allow(deprecated)]
 
 use crate::ast::SourceLocation;
 use crate::semantic::SemanticAnalyzer;

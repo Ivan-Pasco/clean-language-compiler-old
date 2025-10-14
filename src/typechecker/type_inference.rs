@@ -1939,37 +1939,20 @@ impl<'a> TypeInference<'a> {
                 // For assignment expressions, the type is the type of the assigned value
                 let assignment_type = tast_value.expr_type.clone();
 
-                // Create TAST assignment expression - for now, convert target to a simple variable
-                let _tast_target = match target {
-                    ResolvedHirLValue::Variable {
-                        name,
-                        symbol_id,
-                        location: _,
-                    } => TastExpression {
-                        kind: TastExpressionKind::Variable {
-                            symbol_id: *symbol_id,
-                            name: name.clone(),
-                        },
-                        expr_type: assignment_type.clone(),
-                        location: location.clone(),
-                    },
+                // Validate assignment target - complex LValues not yet fully supported
+                match target {
+                    ResolvedHirLValue::Variable { .. } => {
+                        // Simple variable assignment is supported
+                    }
                     _ => {
-                        // For complex LValues, create a placeholder for now
+                        // For complex LValues (field access, array indexing, etc.), emit error
                         self.errors.push(CompilerError::type_error(
                             "Complex assignment targets not yet fully supported in type inference",
                             None,
                             Some(location.clone()),
                         ));
-                        TastExpression {
-                            kind: TastExpressionKind::Variable {
-                                symbol_id: crate::resolver::symbol_table::SymbolId(0),
-                                name: "unknown".to_string(),
-                            },
-                            expr_type: ConcreteType::Unknown,
-                            location: location.clone(),
-                        }
                     }
-                };
+                }
 
                 // In Clean Language, assignment expressions return the assigned value
                 // For now, we'll represent this as the value itself
@@ -2389,6 +2372,14 @@ impl<'a> TypeInference<'a> {
                 false
             };
 
+        // Check if this is a variadic print function that accepts any number of arguments
+        let is_variadic_print_fn =
+            if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
+                matches!(symbol.name.as_str(), "print" | "println" | "printl")
+            } else {
+                false
+            };
+
         match function_type {
             ConcreteType::Function {
                 parameters,
@@ -2415,7 +2406,8 @@ impl<'a> TypeInference<'a> {
                     ));
                 }
 
-                if arguments.len() > parameters.len() {
+                // Skip argument count check for variadic print functions
+                if !is_variadic_print_fn && arguments.len() > parameters.len() {
                     return Err(CompilerError::type_error(
                         &format!(
                             "Function accepts at most {} arguments, got {}",
@@ -2428,8 +2420,8 @@ impl<'a> TypeInference<'a> {
                 }
 
                 // Check argument types match parameters (only for provided arguments)
-                // Skip type checking for generic list functions that accept any element type
-                if !is_generic_list_fn {
+                // Skip type checking for generic list functions and variadic print functions
+                if !is_generic_list_fn && !is_variadic_print_fn {
                     for (param_type, arg) in parameters.iter().zip(arguments.iter()) {
                         self.add_constraint(TypeConstraint::Equality {
                             left: arg.expr_type.clone(),
@@ -2683,15 +2675,69 @@ impl<'a> TypeInference<'a> {
         object_type: &ConcreteType,
         field_name: &str,
     ) -> Result<ConcreteType, CompilerError> {
-        match (object_type, field_name) {
+        match object_type {
             // Array fields
-            (ConcreteType::Array(_element_type), "length") => Ok(ConcreteType::Integer),
+            ConcreteType::Array(_element_type) if field_name == "length" => {
+                Ok(ConcreteType::Integer)
+            }
 
             // String fields
-            (ConcreteType::String, "length") => Ok(ConcreteType::Integer),
+            ConcreteType::String if field_name == "length" => Ok(ConcreteType::Integer),
 
-            // For class types, we'd look up the field in the class definition
-            // For now, return Unknown for unrecognized field accesses
+            // CRITICAL FIX: For class types, look up the field in the class definition
+            ConcreteType::Class {
+                symbol_id,
+                type_args: _,
+            } => {
+                // Look up the class symbol to get its fields
+                if let Some(class_symbol) = self.symbol_table.get_symbol(*symbol_id) {
+                    if let SymbolKind::Class {
+                        fields,
+                        methods: _,
+                        parent: _,
+                    } = &class_symbol.kind
+                    {
+                        // Search for the field with the matching name
+                        for field_symbol_id in fields {
+                            if let Some(field_symbol) =
+                                self.symbol_table.get_symbol(*field_symbol_id)
+                            {
+                                if field_symbol.name == field_name {
+                                    // Found the field! Return its type
+                                    if let SymbolKind::Field {
+                                        class_id: _,
+                                        field_type,
+                                    } = &field_symbol.kind
+                                    {
+                                        return Ok(self.hir_type_to_concrete(field_type));
+                                    }
+                                }
+                            }
+                        }
+                        // Field not found in class
+                        return Err(CompilerError::type_error(
+                            &format!(
+                                "Field '{}' not found in class '{}'",
+                                field_name, class_symbol.name
+                            ),
+                            None,
+                            None,
+                        ));
+                    }
+                }
+                // Class symbol not found - return error
+                Err(CompilerError::type_error(
+                    &format!(
+                        "Cannot resolve class type for field access '{}'",
+                        field_name
+                    ),
+                    None,
+                    None,
+                ))
+            }
+
+            // For unrecognized field accesses, return Unknown
+            // This handles cases where field access is used on non-class types
             _ => Ok(ConcreteType::Unknown),
         }
     }
@@ -2721,15 +2767,22 @@ impl<'a> TypeInference<'a> {
                 // Matrix is a first-class type
                 ConcreteType::Matrix(Box::new(self.hir_type_to_concrete(element_type)))
             }
-            HirType::Named { name, .. } => {
+            HirType::Named { name, location: _ } => {
                 // Look up the named type in the symbol table
                 if let Some(symbol_id) = self.symbol_table.lookup_symbol(name) {
                     if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
                         match &symbol.kind {
                             SymbolKind::Class { .. } => {
+                                // Note: Generic type arguments are not yet supported
+                                // Clean Language uses 'any' for generic placeholder types
+                                // Full generic instantiation (e.g., List<String>) requires:
+                                // 1. Parser support for type argument syntax
+                                // 2. HIR support for carrying type arguments
+                                // 3. Type inference for generic parameters
+                                // For now, classes are instantiated without type arguments
                                 ConcreteType::Class {
                                     symbol_id,
-                                    type_args: Vec::new(), // TODO: Handle generics
+                                    type_args: Vec::new(),
                                 }
                             }
                             _ => {
@@ -2741,6 +2794,16 @@ impl<'a> TypeInference<'a> {
                         ConcreteType::Unknown
                     }
                 } else {
+                    // Check for generic placeholder 'any'
+                    if name == "any" {
+                        // 'any' is the generic placeholder type in Clean Language
+                        // It represents a value of any type, determined at usage
+                        return ConcreteType::Generic {
+                            name: "any".to_string(),
+                            bounds: Vec::new(),
+                        };
+                    }
+
                     // If not found in symbol table, could be a built-in type
                     match name.as_str() {
                         "integer" => ConcreteType::Integer,
@@ -2748,7 +2811,11 @@ impl<'a> TypeInference<'a> {
                         "string" => ConcreteType::String,
                         "boolean" => ConcreteType::Boolean,
                         "void" => ConcreteType::Undefined,
-                        _ => ConcreteType::Unknown,
+                        _ => {
+                            // Unknown type - return Unknown
+                            // Diagnostics should be emitted by callers in specific contexts
+                            ConcreteType::Unknown
+                        }
                     }
                 }
             }

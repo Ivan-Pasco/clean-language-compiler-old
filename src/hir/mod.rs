@@ -157,6 +157,7 @@ pub enum HirStatement {
         name: String,
         var_type: HirType,
         initializer: Option<HirExpression>,
+        is_mutable: bool, // false for constants, true for variables
         location: SourceLocation,
     },
 

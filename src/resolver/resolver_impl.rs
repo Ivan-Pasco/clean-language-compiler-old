@@ -176,7 +176,6 @@ impl NameResolver {
 
     /// Resolve a single function
     fn resolve_function(&mut self, function: HirFunction) -> Result<ResolvedHirFunction, ()> {
-        eprintln!("DEBUG RESOLVER: Resolving function '{}'", function.name);
         // Find function symbol
         let function_symbol_id =
             self.symbol_table
@@ -271,12 +270,7 @@ impl NameResolver {
             })?;
 
         // Resolve parent class if exists
-        eprintln!(
-            "DEBUG RESOLVER: Class '{}' parent in HIR: {:?}",
-            class.name, class.parent
-        );
         let parent_symbol_id = if let Some(parent_name) = &class.parent {
-            eprintln!("DEBUG RESOLVER: Looking up parent class '{}'", parent_name);
             let parent_id = self
                 .symbol_table
                 .lookup_symbol(parent_name)
@@ -286,13 +280,8 @@ impl NameResolver {
                         class.location.clone(),
                     );
                 })?;
-            eprintln!(
-                "DEBUG RESOLVER: Found parent class '{}' with ID {:?}",
-                parent_name, parent_id
-            );
             Some(parent_id)
         } else {
-            eprintln!("DEBUG RESOLVER: Class '{}' has no parent", class.name);
             None
         };
 
@@ -310,17 +299,7 @@ impl NameResolver {
         let mut resolved_fields = Vec::new();
         let mut field_symbol_ids = Vec::new();
 
-        eprintln!(
-            "DEBUG RESOLVER: Resolving {} fields for class '{}'",
-            class.fields.len(),
-            class.name
-        );
-
         for field in &class.fields {
-            eprintln!(
-                "DEBUG RESOLVER: Creating field symbol for '{}' in class '{}'",
-                field.name, class.name
-            );
             let field_symbol_id = self.symbol_table.create_symbol(
                 field.name.clone(),
                 SymbolKind::Field {
@@ -332,10 +311,6 @@ impl NameResolver {
             );
 
             field_symbol_ids.push(field_symbol_id);
-            eprintln!(
-                "DEBUG RESOLVER: Added field '{}' with symbol ID {:?}",
-                field.name, field_symbol_id
-            );
 
             let resolved_initializer = if let Some(init) = &field.initializer {
                 Some(self.resolve_expression(init)?)
@@ -353,19 +328,10 @@ impl NameResolver {
         }
 
         // Update class symbol with fields and parent immediately after creating them
-        eprintln!("DEBUG RESOLVER: Updating class '{}' symbol with {} fields and parent {:?} (immediate update)", class.name, field_symbol_ids.len(), parent_symbol_id);
         if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_symbol_id) {
             if let SymbolKind::Class { fields, parent, .. } = &mut class_symbol.kind {
-                eprintln!(
-                    "DEBUG RESOLVER: Before immediate update - fields: {:?}, parent: {:?}",
-                    fields, parent
-                );
                 *fields = field_symbol_ids.clone();
                 *parent = parent_symbol_id;
-                eprintln!(
-                    "DEBUG RESOLVER: After immediate update - fields: {:?}, parent: {:?}",
-                    fields, parent
-                );
             }
         }
 
@@ -404,12 +370,6 @@ impl NameResolver {
         }
 
         // Update class symbol with fields and methods
-        eprintln!(
-            "DEBUG RESOLVER: Updating class '{}' symbol with {} fields and {} methods",
-            class.name,
-            field_symbol_ids.len(),
-            method_symbol_ids.len()
-        );
         if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_symbol_id) {
             if let SymbolKind::Class {
                 fields,
@@ -417,11 +377,9 @@ impl NameResolver {
                 parent,
             } = &mut class_symbol.kind
             {
-                eprintln!("DEBUG RESOLVER: Before update - fields: {:?}", fields);
                 *fields = field_symbol_ids.clone();
                 *methods = method_symbol_ids;
                 *parent = parent_symbol_id;
-                eprintln!("DEBUG RESOLVER: After update - fields: {:?}", fields);
             }
         }
 
@@ -656,12 +614,12 @@ impl NameResolver {
 
     /// Resolve a statement
     fn resolve_statement(&mut self, statement: &HirStatement) -> Result<ResolvedHirStatement, ()> {
-        eprintln!("DEBUG RESOLVER: Resolving statement: {:?}", statement);
         match statement {
             HirStatement::VariableDeclaration {
                 name,
                 var_type,
                 initializer,
+                is_mutable,
                 location,
             } => {
                 let initializer_resolved = if let Some(init) = initializer {
@@ -674,6 +632,7 @@ impl NameResolver {
                     name.clone(),
                     SymbolKind::Variable {
                         var_type: var_type.clone(),
+                        is_mutable: *is_mutable,
                     },
                     self.symbol_table.current_scope_id(),
                     location.clone(),
@@ -784,6 +743,7 @@ impl NameResolver {
                             id: 0,
                             location: location.clone(),
                         },
+                        is_mutable: true, // Loop variables are mutable
                     },
                     loop_scope,
                     location.clone(),
@@ -828,6 +788,7 @@ impl NameResolver {
                     variable.clone(),
                     SymbolKind::Variable {
                         var_type: HirType::Void, // Type will be inferred later
+                        is_mutable: true,        // Later assignments make variables mutable
                     },
                     self.symbol_table.current_scope_id(),
                     location.clone(),
@@ -887,29 +848,14 @@ impl NameResolver {
             }),
 
             HirExpression::Variable { name, location } => {
-                eprintln!(
-                    "DEBUG RESOLVER: Looking up variable '{}', current_class: {:?}",
-                    name, self.current_class
-                );
-
                 // If we're in a class method, check for class fields first (implicit field access)
                 if let Some(current_class_id) = self.current_class {
                     if let Some(class_symbol) = self.symbol_table.get_symbol(current_class_id) {
                         if let SymbolKind::Class { fields, parent, .. } = &class_symbol.kind {
-                            eprintln!(
-                                "DEBUG RESOLVER: Checking fields in class '{}', fields: {:?}",
-                                class_symbol.name, fields
-                            );
-
                             // Check current class fields
                             for &field_id in fields {
                                 if let Some(field_symbol) = self.symbol_table.get_symbol(field_id) {
-                                    eprintln!(
-                                        "DEBUG RESOLVER: Checking field '{}' against '{}'",
-                                        field_symbol.name, name
-                                    );
                                     if field_symbol.name == *name {
-                                        eprintln!("DEBUG RESOLVER: Found field '{}' - converting to field access", name);
                                         // Convert variable access to field access
                                         return Ok(ResolvedHirExpression::FieldAccess {
                                             object: Box::new(ResolvedHirExpression::This {
@@ -925,15 +871,7 @@ impl NameResolver {
                             }
 
                             // Check parent class fields if inheritance is involved
-                            eprintln!(
-                                "DEBUG RESOLVER: Parent class for '{}': {:?}",
-                                class_symbol.name, parent
-                            );
                             if let Some(parent_class_id) = parent {
-                                eprintln!(
-                                    "DEBUG RESOLVER: Checking parent class fields for '{}'",
-                                    name
-                                );
                                 if let Some(parent_symbol) =
                                     self.symbol_table.get_symbol(*parent_class_id)
                                 {
@@ -942,17 +880,11 @@ impl NameResolver {
                                         ..
                                     } = &parent_symbol.kind
                                     {
-                                        eprintln!(
-                                            "DEBUG RESOLVER: Parent class '{}' has fields: {:?}",
-                                            parent_symbol.name, parent_fields
-                                        );
                                         for &parent_field_id in parent_fields {
                                             if let Some(parent_field_symbol) =
                                                 self.symbol_table.get_symbol(parent_field_id)
                                             {
-                                                eprintln!("DEBUG RESOLVER: Checking parent field '{}' against '{}'", parent_field_symbol.name, name);
                                                 if parent_field_symbol.name == *name {
-                                                    eprintln!("DEBUG RESOLVER: Found inherited field '{}' - converting to field access", name);
                                                     // Convert variable access to inherited field access
                                                     return Ok(
                                                         ResolvedHirExpression::FieldAccess {
@@ -972,23 +904,11 @@ impl NameResolver {
                                             }
                                         }
                                     }
-                                } else {
-                                    eprintln!("DEBUG RESOLVER: Parent symbol not found for parent_class_id: {:?}", parent_class_id);
                                 }
-                            } else {
-                                eprintln!(
-                                    "DEBUG RESOLVER: No parent class for '{}'",
-                                    class_symbol.name
-                                );
                             }
                         }
                     }
                 }
-
-                eprintln!(
-                    "DEBUG RESOLVER: Not found as field, trying normal symbol lookup for '{}'",
-                    name
-                );
 
                 // If not a field, try to find the variable in normal scope
                 if let Some(symbol_id) = self.symbol_table.lookup_symbol(name) {
@@ -1073,19 +993,10 @@ impl NameResolver {
                     name: class_name, ..
                 } = receiver.as_ref()
                 {
-                    eprintln!(
-                        "DEBUG RESOLVER: Checking if '{}' is a class for static method call '{}'",
-                        class_name, method
-                    );
                     // Check if this variable name is actually a class symbol
                     if let Some(class_symbol_id) = self.symbol_table.lookup_symbol(class_name) {
                         if let Some(class_symbol) = self.symbol_table.get_symbol(class_symbol_id) {
-                            eprintln!(
-                                "DEBUG RESOLVER: Found symbol '{}' with kind: {:?}",
-                                class_name, class_symbol.kind
-                            );
                             if let SymbolKind::Class { .. } = &class_symbol.kind {
-                                eprintln!("DEBUG RESOLVER: '{}' is a class! Converting to static method call", class_name);
                                 // This is a static method call on a class
                                 let mut resolved_arguments = Vec::new();
                                 for arg in arguments {
@@ -1093,18 +1004,15 @@ impl NameResolver {
                                 }
 
                                 // Look up the static method in the class
-                                let method_symbol_id = self.symbol_table.lookup_class_member(class_symbol_id, method)
+                                let method_symbol_id = self
+                                    .symbol_table
+                                    .lookup_class_member(class_symbol_id, method)
                                     .unwrap_or_else(|| {
-                                        eprintln!("DEBUG RESOLVER: Method '{}' not found in class '{}', using placeholder", method, class_name);
                                         // Create a placeholder symbol for built-in static methods if not found
                                         // This allows built-in static methods to work even if not explicitly defined
                                         SymbolId(0)
                                     });
 
-                                eprintln!(
-                                    "DEBUG RESOLVER: Created StaticMethodCall for {}.{}",
-                                    class_name, method
-                                );
                                 return Ok(ResolvedHirExpression::StaticMethodCall {
                                     namespace: vec![], // Two-level call
                                     class_name: class_name.clone(),
@@ -1115,7 +1023,6 @@ impl NameResolver {
                                     location: location.clone(),
                                 });
                             } else if let SymbolKind::Namespace { .. } = &class_symbol.kind {
-                                eprintln!("DEBUG RESOLVER: '{}' is a namespace! Converting to namespace call", class_name);
                                 // This is a namespace function call (e.g., logical.and, conditional.integer)
                                 let qualified_name = format!("{}_{}", class_name, method);
 
@@ -1146,23 +1053,8 @@ impl NameResolver {
                                     arguments: resolved_arguments,
                                     location: location.clone(),
                                 });
-                            } else {
-                                eprintln!(
-                                    "DEBUG RESOLVER: '{}' is not a class, it's: {:?}",
-                                    class_name, class_symbol.kind
-                                );
                             }
-                        } else {
-                            eprintln!(
-                                "DEBUG RESOLVER: Symbol '{}' found but no symbol data",
-                                class_name
-                            );
                         }
-                    } else {
-                        eprintln!(
-                            "DEBUG RESOLVER: Symbol '{}' not found in symbol table",
-                            class_name
-                        );
                     }
                 }
 
@@ -1329,8 +1221,6 @@ impl NameResolver {
 
                         if !is_namespace {
                             // This is a variable with field accesses - convert to field access chain
-                            eprintln!("DEBUG RESOLVER: NamespaceCall '{}::{}' starts with variable '{}' - converting to field access + method call", namespace, function, base_name);
-
                             let mut receiver = ResolvedHirExpression::Variable {
                                 name: base_name.to_string(),
                                 symbol_id: base_symbol_id,
@@ -1361,8 +1251,6 @@ impl NameResolver {
                                 arguments: resolved_arguments,
                                 location: location.clone(),
                             });
-                        } else {
-                            eprintln!("DEBUG RESOLVER: NamespaceCall '{}::{}' starts with namespace '{}' - keeping as namespace call", namespace, function, base_name);
                         }
                     }
                     // If base_name not found, continue with normal namespace processing below
@@ -1377,8 +1265,6 @@ impl NameResolver {
                             for &field_id in fields {
                                 if let Some(field_symbol) = self.symbol_table.get_symbol(field_id) {
                                     if field_symbol.name == *namespace {
-                                        eprintln!("DEBUG RESOLVER: Converting NamespaceCall '{}::{}' to MethodCall - '{}' is a field", namespace, function, namespace);
-
                                         // Create field access for the receiver
                                         let receiver = ResolvedHirExpression::FieldAccess {
                                             object: Box::new(ResolvedHirExpression::This {
@@ -1423,8 +1309,6 @@ impl NameResolver {
                                                 self.symbol_table.get_symbol(field_id)
                                             {
                                                 if field_symbol.name == *namespace {
-                                                    eprintln!("DEBUG RESOLVER: Converting NamespaceCall '{}::{}' to MethodCall - '{}' is a parent field", namespace, function, namespace);
-
                                                     // Create field access for the receiver
                                                     let receiver =
                                                         ResolvedHirExpression::FieldAccess {
@@ -1480,13 +1364,10 @@ impl NameResolver {
                     match symbol_kind {
                         Some(SymbolKind::Namespace { .. }) => {
                             // This is a legitimate namespace, continue with normal namespace processing
-                            eprintln!("DEBUG RESOLVER: Keeping NamespaceCall '{}::{}' as namespace - '{}' is a Namespace symbol", namespace, function, namespace);
                             // Continue to normal namespace processing below
                         }
                         Some(SymbolKind::Class { methods, .. }) => {
                             // This is a static method call on a class (e.g., MathUtils.add(5, 3))
-                            eprintln!("DEBUG RESOLVER: NamespaceCall '{}::{}' - '{}' is a Class, looking for static method", namespace, function, namespace);
-
                             // Look for the method in the class
                             let method_symbol_id = methods.iter().find_map(|&method_id| {
                                 self.symbol_table
@@ -1524,8 +1405,6 @@ impl NameResolver {
                         }
                         Some(_) => {
                             // This is actually a method call on a variable, not a namespace call
-                            eprintln!("DEBUG RESOLVER: Converting NamespaceCall '{}::{}' to MethodCall - '{}' is a variable", namespace, function, namespace);
-
                             // Create a variable expression for the receiver
                             let receiver = ResolvedHirExpression::Variable {
                                 name: namespace.clone(),

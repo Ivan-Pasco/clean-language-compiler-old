@@ -5,5 +5,5 @@ functions:
 		number result = math.max(5.0, 3.0)
 		print("math.max result: " + result.toString())
 
-void start()
+start()
 	testMethodCalls()

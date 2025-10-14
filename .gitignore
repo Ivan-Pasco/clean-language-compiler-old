@@ -1,5 +1,6 @@
 # Rust build artifacts
 /target/
+language-server/target/
 **/*.rs.bk
 Cargo.lock
 
@@ -33,6 +34,15 @@ function.wasm
 *.tmp
 *.temp
 *.log
+
+# Backup and disabled files
+*.bak
+*.corrupt
+*.disabled
+
+# Test results and QA artifacts
+tests/results/
+tests/output/*.wasm
 
 # Build outputs
 --output

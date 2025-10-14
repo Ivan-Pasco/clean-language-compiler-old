@@ -299,12 +299,16 @@ impl MemoryUtils {
             return Err(MemorySafetyError::InvalidPointer { address });
         }
 
-        // Check alignment - allow 4-byte alignment for small allocations (strings and small data)
-        let required_alignment = if size <= 64 { 4 } else { MEMORY_ALIGNMENT };
-        if address % required_alignment != 0 {
+        // Check alignment - WASM data sections only require 1-byte alignment
+        // The alignment check for 4/8 bytes is overly strict for data segments
+        // Only check that address is not completely misaligned (allow any natural alignment)
+        // For data segments, WASM doesn't enforce strict alignment requirements
+        if address % 4 != 0 && size > 4 {
+            // Only enforce 4-byte alignment for larger allocations
+            // This is a relaxed check compared to the previous 8-byte requirement
             return Err(MemorySafetyError::UnalignedAccess {
                 address,
-                alignment: required_alignment,
+                alignment: 4,
             });
         }
 

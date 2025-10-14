@@ -9,12 +9,12 @@
  */
 
 #![allow(clippy::manual_inspect)]
+#![allow(deprecated)]
 
 use clean_language_compiler::error::CompilerError;
 use clean_language_compiler::parser::CleanParser;
 use clean_language_compiler::runtime::runtime_manager::RuntimeManager;
 use clean_language_compiler::runtime::runtime_trait::{RuntimeConfig, RuntimeType};
-use clean_language_compiler::semantic::SemanticAnalyzer;
 use clean_language_compiler::targets::{TargetManager, TargetOptimizer};
 use std::env;
 use std::fs;
@@ -24,6 +24,15 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() -> Result<(), CompilerError> {
     let args: Vec<String> = env::args().collect();
+
+    // Initialize logging early (can be overridden by RUST_LOG environment variable)
+    // Default to "warn" to keep output clean, use --verbose for "debug"
+    let log_level = if args.contains(&"--verbose".to_string()) || args.contains(&"-v".to_string()) {
+        "debug"
+    } else {
+        "warn"
+    };
+    clean_language_compiler::init_logging(log_level);
 
     if args.len() < 2 {
         print_usage();
@@ -674,13 +683,35 @@ fn check_file(input_file: &str) -> Result<(), CompilerError> {
     println!("🔍 Type checking {input_file}");
 
     let source = read_source_file(input_file)?;
+
+    // Use the modern 7-stage pipeline for type checking
+    // Stage 1-2: Lexing and Parsing
     let program = parse_source(&source, input_file)?;
 
-    // Semantic analysis
-    let mut semantic_analyzer = SemanticAnalyzer::new();
-    let _analyzed_program = semantic_analyzer.analyze(&program).map_err(|e| {
+    // Stage 3: AST to HIR
+    use clean_language_compiler::hir::hir_builder::HirBuilder;
+    let mut hir_builder = HirBuilder::new();
+    let hir_result = hir_builder.build_hir(program).map_err(|e| {
         display_error(&e, &source, input_file);
         e
+    })?;
+
+    // Stage 4: Name Resolution
+    use clean_language_compiler::resolver::Resolver;
+    let resolution_result = Resolver::resolve(hir_result.hir).map_err(|errors| {
+        for error in &errors {
+            display_error(error, &source, input_file);
+        }
+        errors.into_iter().next().unwrap()
+    })?;
+
+    // Stage 5: Type Checking
+    use clean_language_compiler::typechecker::TypeChecker;
+    let _type_result = TypeChecker::check(resolution_result.resolved_hir).map_err(|errors| {
+        for error in &errors {
+            display_error(error, &source, input_file);
+        }
+        errors.into_iter().next().unwrap()
     })?;
 
     println!("✅ Type checking successful! All types are valid.");

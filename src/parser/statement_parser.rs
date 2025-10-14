@@ -299,6 +299,18 @@ pub fn parse_indented_block_statements(
 ) -> Result<(), CompilerError> {
     for stmt_pair in block.into_inner() {
         match stmt_pair.as_rule() {
+            Rule::simple_indented_block => {
+                // Handle simple_indented_block -> indented_statement -> statement
+                for indented in stmt_pair.into_inner() {
+                    if indented.as_rule() == Rule::indented_statement {
+                        for stmt in indented.into_inner() {
+                            if stmt.as_rule() == Rule::statement {
+                                statements.push(parse_statement(stmt)?);
+                            }
+                        }
+                    }
+                }
+            }
             Rule::statement => {
                 statements.push(parse_statement(stmt_pair)?);
             }
@@ -329,23 +341,8 @@ fn parse_if_statement(
     for part in parts {
         match part.as_rule() {
             Rule::indented_block => {
-                // This is the then branch (first indented block)
-                for stmt_pair in part.into_inner() {
-                    match stmt_pair.as_rule() {
-                        Rule::statement => {
-                            then_branch.push(parse_statement(stmt_pair)?);
-                        }
-                        Rule::function_nested_block => {
-                            // Handle statements within function_nested_block
-                            for nested_stmt in stmt_pair.into_inner() {
-                                if nested_stmt.as_rule() == Rule::statement {
-                                    then_branch.push(parse_statement(nested_stmt)?);
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                // This is the then branch - use the shared parsing function
+                parse_indented_block_statements(part, &mut then_branch)?;
             }
             Rule::else_block => {
                 // Parse the else block recursively to handle else if chains

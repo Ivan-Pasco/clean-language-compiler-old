@@ -93,6 +93,7 @@ pub enum Type {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BinaryOperator {
+    // Arithmetic
     Add,
     Subtract,
     Multiply,
@@ -516,6 +517,12 @@ pub enum Statement {
     // Class definition statement
     ClassDefinition {
         class: Class,
+        location: Option<SourceLocation>,
+    },
+
+    // Description statement (function metadata)
+    Description {
+        text: String,
         location: Option<SourceLocation>,
     },
 }

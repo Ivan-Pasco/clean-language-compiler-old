@@ -24,6 +24,7 @@ pub struct ScopeId(pub usize);
 pub enum SymbolKind {
     Variable {
         var_type: HirType,
+        is_mutable: bool,
     },
     Parameter {
         param_type: HirType,
@@ -573,9 +574,10 @@ impl GlobalSymbolTable {
         const MAX_SCOPE_DEPTH: usize = 50; // Prevent infinite recursion in scope chains
 
         if depth > MAX_SCOPE_DEPTH {
-            eprintln!(
-                "WARNING: Maximum scope depth exceeded looking up symbol '{}'",
-                name
+            tracing::warn!(
+                symbol_name = %name,
+                max_depth = MAX_SCOPE_DEPTH,
+                "Maximum scope depth exceeded looking up symbol"
             );
             return None;
         }

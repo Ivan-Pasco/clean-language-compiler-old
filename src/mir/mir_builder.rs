@@ -491,13 +491,13 @@ impl MirBuilder {
 
                         // TODO: Implement proper array element assignment
                         // For now, just ignore this assignment
-                        eprintln!("WARNING: Array index assignment not fully implemented");
+                        tracing::warn!("Array index assignment not fully implemented");
                     }
                     _ => {
                         // Handle any other complex assignment targets
-                        eprintln!(
-                            "WARNING: Complex assignment target not implemented: {:?}",
-                            target.kind
+                        tracing::warn!(
+                            target_kind = ?target.kind,
+                            "Complex assignment target not implemented"
                         );
                         // Don't error out, just ignore the assignment for now
                     }
@@ -536,15 +536,78 @@ impl MirBuilder {
                 // Build the expression to print
                 let value_id = self.build_expression(context, expression)?;
 
-                // CRITICAL FIX: Generate proper function call to print/printl
-                let _function_name = if *newline { "printl" } else { "print" };
-                let function_symbol = SymbolId(0); // Use fixed symbol IDs for built-in functions
+                // AUTO-CONVERSION: Convert non-string types to string before printing
+                use crate::typechecker::tast::ConcreteType;
+                let string_value_id = match &expression.expr_type {
+                    ConcreteType::String => {
+                        // Already a string, use directly
+                        value_id
+                    }
+                    ConcreteType::Integer => {
+                        // Convert integer to string using int_to_string (SymbolId(5))
+                        let conversion_instruction = MirInstruction {
+                            dest: Some(ValueId(context.function.next_value_id)),
+                            operation: MirOperation::Call {
+                                function: MirOperand::Function(SymbolId(5)), // int_to_string
+                                arguments: vec![MirOperand::Value(value_id)],
+                            },
+                            location: location.clone(),
+                        };
+                        let converted_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+                        self.add_instruction(context, conversion_instruction);
+                        converted_id
+                    }
+                    ConcreteType::Number => {
+                        // Convert float to string using float_to_string (SymbolId(6))
+                        let conversion_instruction = MirInstruction {
+                            dest: Some(ValueId(context.function.next_value_id)),
+                            operation: MirOperation::Call {
+                                function: MirOperand::Function(SymbolId(6)), // float_to_string
+                                arguments: vec![MirOperand::Value(value_id)],
+                            },
+                            location: location.clone(),
+                        };
+                        let converted_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+                        self.add_instruction(context, conversion_instruction);
+                        converted_id
+                    }
+                    ConcreteType::Boolean => {
+                        // Convert boolean to string using bool_to_string (SymbolId(7))
+                        let conversion_instruction = MirInstruction {
+                            dest: Some(ValueId(context.function.next_value_id)),
+                            operation: MirOperation::Call {
+                                function: MirOperand::Function(SymbolId(7)), // bool_to_string
+                                arguments: vec![MirOperand::Value(value_id)],
+                            },
+                            location: location.clone(),
+                        };
+                        let converted_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+                        self.add_instruction(context, conversion_instruction);
+                        converted_id
+                    }
+                    _ => {
+                        // For other types (objects, arrays, etc.), use the value as-is for now
+                        // In a complete implementation, these would also have toString() methods
+                        value_id
+                    }
+                };
+
+                // CRITICAL FIX: Use correct function based on newline flag
+                // SymbolId(0) = print (no newline), SymbolId(1) = printl (with newline)
+                let function_symbol = if *newline {
+                    SymbolId(1) // printl
+                } else {
+                    SymbolId(0) // print
+                };
 
                 let instruction = MirInstruction {
                     dest: None, // Print doesn't return a value
                     operation: MirOperation::Call {
                         function: MirOperand::Function(function_symbol),
-                        arguments: vec![MirOperand::Value(value_id)],
+                        arguments: vec![MirOperand::Value(string_value_id)],
                     },
                     location: location.clone(),
                 };
@@ -1123,6 +1186,54 @@ impl MirBuilder {
                 left,
                 right,
             } => {
+                // CRITICAL FIX: Handle Power operator as runtime function call
+                if matches!(operator, BinaryOperator::Power) {
+                    // Power operation requires runtime pow function
+                    // For integers: pow_i32(base, exponent) -> i32
+                    // For floats: pow_f64(base, exponent) -> f64
+                    let left_id = self.build_expression(context, left)?;
+                    let right_id = self.build_expression(context, right)?;
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    // Determine result type based on operand types
+                    let result_type = if matches!(left.expr_type, ConcreteType::Number)
+                        || matches!(right.expr_type, ConcreteType::Number)
+                    {
+                        MirType::F64 // Float power
+                    } else {
+                        MirType::I32 // Integer power
+                    };
+
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        result_type.clone(),
+                        expression.location.clone(),
+                    );
+
+                    // Use SymbolId(1001) for pow_f64, SymbolId(1002) for pow_i32
+                    let pow_function = if matches!(result_type, MirType::F64) {
+                        SymbolId(1001) // pow_f64
+                    } else {
+                        SymbolId(1002) // pow_i32
+                    };
+
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::Call {
+                            function: MirOperand::Function(pow_function),
+                            arguments: vec![
+                                MirOperand::Value(left_id),
+                                MirOperand::Value(right_id),
+                            ],
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, instruction);
+                    return Ok(result_id);
+                }
+
                 // Check if this is string concatenation (String + String or String + other)
                 let is_string_concat = matches!(operator, BinaryOperator::Add)
                     && (matches!(left.expr_type, ConcreteType::String)
@@ -1193,6 +1304,32 @@ impl MirBuilder {
             }
 
             TastExpressionKind::UnaryOperation { operator, operand } => {
+                // CRITICAL FIX: Handle unary Plus as a no-op (identity operation)
+                if matches!(operator, UnaryOperator::Plus) {
+                    // Unary plus is a no-op - just return the operand value unchanged
+                    return self.build_expression(context, operand);
+                }
+
+                // CRITICAL FIX: Increment/Decrement operators need special desugaring
+                // These operators should have been desugared by the TAST phase, but if they reach here,
+                // we need to handle them properly with proper state mutation
+                match operator {
+                    UnaryOperator::PreIncrement
+                    | UnaryOperator::PostIncrement
+                    | UnaryOperator::PreDecrement
+                    | UnaryOperator::PostDecrement => {
+                        return Err(vec![CompilerError::validation_error(
+                            &format!(
+                                "Increment/decrement operators must be desugared before MIR lowering. \
+                                 Operator {:?} cannot be directly lowered to MIR.",
+                                operator
+                            ),
+                            expression.location.clone(),
+                        )]);
+                    }
+                    _ => {}
+                }
+
                 let operand_id = self.build_expression(context, operand)?;
                 let result_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
@@ -1272,7 +1409,7 @@ impl MirBuilder {
 
             TastExpressionKind::MethodCall {
                 receiver,
-                method_name: _,
+                method_name,
                 method_symbol,
                 arguments,
                 type_args: _,
@@ -1280,16 +1417,43 @@ impl MirBuilder {
                 // Build the receiver (object) first
                 let receiver_id = self.build_expression(context, receiver)?;
 
-                // Build argument operands
-                let mut mir_arguments = Vec::new();
-                // For instance methods, the receiver becomes the first argument
-                mir_arguments.push(MirOperand::Value(receiver_id));
-
-                // Add the rest of the arguments
-                for arg in arguments {
-                    let arg_id = self.build_expression(context, arg)?;
-                    mir_arguments.push(MirOperand::Value(arg_id));
-                }
+                // Check if this is a built-in method that should be mapped to a conversion function
+                // SymbolId(0) is used as a placeholder for built-in methods that don't have real symbols
+                let (function_symbol, mir_arguments) = if method_symbol.0 == 0 {
+                    // This is a built-in method - determine the correct function based on receiver type and method name
+                    let receiver_type = &receiver.expr_type;
+                    match (receiver_type, method_name.as_str()) {
+                        (ConcreteType::Integer, "toString") => {
+                            // Call int_to_string (SymbolId 5) with the integer value
+                            (SymbolId(5), vec![MirOperand::Value(receiver_id)])
+                        }
+                        (ConcreteType::Number, "toString") => {
+                            // Call float_to_string (SymbolId 6) with the float value
+                            (SymbolId(6), vec![MirOperand::Value(receiver_id)])
+                        }
+                        (ConcreteType::Boolean, "toString") => {
+                            // Call bool_to_string (SymbolId 7) with the boolean value
+                            (SymbolId(7), vec![MirOperand::Value(receiver_id)])
+                        }
+                        // For other built-in methods, fall back to treating as instance method
+                        _ => {
+                            let mut args = vec![MirOperand::Value(receiver_id)];
+                            for arg in arguments {
+                                let arg_id = self.build_expression(context, arg)?;
+                                args.push(MirOperand::Value(arg_id));
+                            }
+                            (*method_symbol, args)
+                        }
+                    }
+                } else {
+                    // This is a user-defined method - receiver becomes first argument
+                    let mut args = vec![MirOperand::Value(receiver_id)];
+                    for arg in arguments {
+                        let arg_id = self.build_expression(context, arg)?;
+                        args.push(MirOperand::Value(arg_id));
+                    }
+                    (*method_symbol, args)
+                };
 
                 let result_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
@@ -1306,7 +1470,7 @@ impl MirBuilder {
                 let instruction = MirInstruction {
                     dest: Some(result_id),
                     operation: MirOperation::Call {
-                        function: MirOperand::Function(*method_symbol),
+                        function: MirOperand::Function(function_symbol),
                         arguments: mir_arguments,
                     },
                     location: expression.location.clone(),
@@ -1482,62 +1646,139 @@ impl MirBuilder {
         right_type: &ConcreteType,
     ) -> MirType {
         match (left_type, right_type) {
+            // Arithmetic operations between numeric types
             (ConcreteType::Integer, ConcreteType::Integer) => MirType::I32,
             (ConcreteType::Number, ConcreteType::Number) => MirType::F64,
             (ConcreteType::Number, ConcreteType::Integer) => MirType::F64,
             (ConcreteType::Integer, ConcreteType::Number) => MirType::F64,
+
+            // Boolean operations
             (ConcreteType::Boolean, ConcreteType::Boolean) => MirType::Bool,
-            _ => MirType::I32, // Default fallback
+
+            // String operations (concatenation) - result is string
+            (ConcreteType::String, ConcreteType::String) => MirType::StringTuple,
+            (ConcreteType::String, _) => MirType::StringTuple, // String + any = String
+            (_, ConcreteType::String) => MirType::StringTuple, // Any + String = String
+
+            // Array operations (if supported) - result is array pointer
+            (ConcreteType::Array(elem_type), ConcreteType::Array(_)) => {
+                MirType::Ptr(Box::new(MirType::from_concrete_type(elem_type)))
+            }
+
+            // Comparison operations always produce boolean
+            // This is a simplified heuristic - ideally we'd know the operator type here
+            // For now, if both operands are the same type and not numeric/bool, assume comparison
+            (left, right) if left == right => {
+                // Same type operations - use the type's MIR representation
+                MirType::from_concrete_type(left)
+            }
+
+            // Mixed types or unknown - use left operand type as fallback
+            // This handles cases like Class operations, Function operations, etc.
+            (left, _) => MirType::from_concrete_type(left),
         }
     }
 
     /// Infer the result type of a unary operation
     fn infer_unary_operation_type(&self, operand_type: &ConcreteType) -> MirType {
         match operand_type {
+            // Numeric operations preserve type
             ConcreteType::Integer => MirType::I32,
             ConcreteType::Number => MirType::F64,
+
+            // Boolean operations preserve type
             ConcreteType::Boolean => MirType::Bool,
-            _ => MirType::I32, // Default fallback
+
+            // String operations preserve type
+            ConcreteType::String => MirType::StringTuple,
+
+            // Array operations preserve pointer type
+            ConcreteType::Array(elem_type) => {
+                MirType::Ptr(Box::new(MirType::from_concrete_type(elem_type)))
+            }
+
+            // Matrix operations preserve pointer type
+            ConcreteType::Matrix(elem_type) => {
+                MirType::Ptr(Box::new(MirType::from_concrete_type(elem_type)))
+            }
+
+            // Function, Class, and other complex types - use from_concrete_type
+            // This handles all remaining ConcreteType variants properly
+            other => MirType::from_concrete_type(other),
         }
     }
 
     /// Convert TAST binary operator to MIR binary operator
+    ///
+    /// Note: Some operators cannot be directly represented in MIR and should be
+    /// handled specially in build_expression (Power, Concatenate).
     fn convert_binary_op(&self, op: &BinaryOperator) -> MirBinaryOp {
         match op {
+            // Arithmetic operators
             BinaryOperator::Add => MirBinaryOp::Add,
             BinaryOperator::Subtract => MirBinaryOp::Sub,
             BinaryOperator::Multiply => MirBinaryOp::Mul,
             BinaryOperator::Divide => MirBinaryOp::Div,
             BinaryOperator::Modulo => MirBinaryOp::Rem,
+
+            // Comparison operators
             BinaryOperator::Equal => MirBinaryOp::Eq,
             BinaryOperator::NotEqual => MirBinaryOp::Ne,
             BinaryOperator::LessThan => MirBinaryOp::Lt,
             BinaryOperator::GreaterThan => MirBinaryOp::Gt,
             BinaryOperator::LessThanOrEqual => MirBinaryOp::Le,
             BinaryOperator::GreaterThanOrEqual => MirBinaryOp::Ge,
+
+            // Logical operators (And/Or work on booleans, lowered to i32.and/i32.or in WASM)
+            // The type system ensures these are used on boolean types
             BinaryOperator::And => MirBinaryOp::And,
             BinaryOperator::Or => MirBinaryOp::Or,
-            BinaryOperator::Power => MirBinaryOp::Mul, // TODO: Implement proper power operation
-            BinaryOperator::BitwiseAnd => MirBinaryOp::And, // TODO: Distinguish from logical and
-            BinaryOperator::BitwiseOr => MirBinaryOp::Or, // TODO: Distinguish from logical or
-            BinaryOperator::BitwiseXor => MirBinaryOp::Add, // TODO: Implement XOR
-            BinaryOperator::LeftShift => MirBinaryOp::Mul, // TODO: Implement left shift
-            BinaryOperator::RightShift => MirBinaryOp::Div, // TODO: Implement right shift
-            BinaryOperator::Concatenate => MirBinaryOp::Add, // TODO: Implement string concat
+
+            // Bitwise operators (And/Or work on integers, lowered to i32.and/i32.or in WASM)
+            // The type system ensures these are used on integer types
+            BinaryOperator::BitwiseAnd => MirBinaryOp::And,
+            BinaryOperator::BitwiseOr => MirBinaryOp::Or,
+            BinaryOperator::BitwiseXor => MirBinaryOp::Xor,
+            BinaryOperator::LeftShift => MirBinaryOp::Shl,
+            BinaryOperator::RightShift => MirBinaryOp::Shr,
+
+            // CRITICAL: These operators should NEVER reach here - they must be handled in build_expression
+            BinaryOperator::Power => {
+                panic!("BUG: Power operator should be handled in build_expression as runtime function call, not converted to MIR operator")
+            }
+            BinaryOperator::Concatenate => {
+                panic!("BUG: String concatenation should be handled in build_expression as string_concat call, not converted to MIR operator")
+            }
         }
     }
 
     /// Convert TAST unary operator to MIR unary operator
+    ///
+    /// Note: Some unary operators (Plus, Increment, Decrement) cannot be directly
+    /// represented in MIR and should be handled specially in build_expression.
     fn convert_unary_op(&self, op: &UnaryOperator) -> MirUnaryOp {
         match op {
+            // Direct unary operators
             UnaryOperator::Negate => MirUnaryOp::Neg,
             UnaryOperator::Not => MirUnaryOp::Not,
             UnaryOperator::BitwiseNot => MirUnaryOp::BitNot,
-            UnaryOperator::Plus => MirUnaryOp::Neg, // TODO: Implement proper unary plus (no-op)
-            UnaryOperator::PreIncrement => MirUnaryOp::Neg, // TODO: Implement increment as separate instruction
-            UnaryOperator::PostIncrement => MirUnaryOp::Neg, // TODO: Implement increment as separate instruction
-            UnaryOperator::PreDecrement => MirUnaryOp::Neg, // TODO: Implement decrement as separate instruction
-            UnaryOperator::PostDecrement => MirUnaryOp::Neg, // TODO: Implement decrement as separate instruction
+
+            // CRITICAL: These operators should NEVER reach here - they must be handled in build_expression
+            UnaryOperator::Plus => {
+                panic!("BUG: Unary plus should be handled in build_expression as no-op, not converted to MIR operator")
+            }
+            UnaryOperator::PreIncrement => {
+                panic!("BUG: Pre-increment should be desugared to assignment (x = x + 1) in build_expression, not converted to MIR operator")
+            }
+            UnaryOperator::PostIncrement => {
+                panic!("BUG: Post-increment should be desugared to assignment (temp = x; x = x + 1; temp) in build_expression, not converted to MIR operator")
+            }
+            UnaryOperator::PreDecrement => {
+                panic!("BUG: Pre-decrement should be desugared to assignment (x = x - 1) in build_expression, not converted to MIR operator")
+            }
+            UnaryOperator::PostDecrement => {
+                panic!("BUG: Post-decrement should be desugared to assignment (temp = x; x = x - 1; temp) in build_expression, not converted to MIR operator")
+            }
         }
     }
 

@@ -1,0 +1,2005 @@
+{
+  "timestamp": "2025-10-10T15:10:13.687880Z",
+  "total_files": 285,
+  "passed": 37,
+  "compile_failed": 192,
+  "exec_failed": 56,
+  "pass_rate": 12.98,
+  "results": [
+    {
+      "file": "advanced/async/19_async_basic.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/advanced/async/19_async_basic.wasm"
+    },
+    {
+      "file": "advanced/async/20_async_parallel.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/advanced/as",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/advanced/async/20_async_parallel.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/te"
+    },
+    {
+      "file": "advanced/async/52_async_keywords.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/advanced/as",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/advanced/async/52_async_keywords.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/te"
+    },
+    {
+      "file": "advanced/memory/24_memory_management.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/advanced/me",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/advanced/memory/24_memory_management.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compile"
+    },
+    {
+      "file": "advanced/modules/53_import_export_blocks.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/advanced/modules/53_import_export_blocks.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-com"
+    },
+    {
+      "file": "advanced/modules/67_import_export_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/advanced/modules/67_import_export_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-langu"
+    },
+    {
+      "file": "control/conditionals/04_if_else_statements.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/control/con",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/control/conditionals/04_if_else_statements.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-c"
+    },
+    {
+      "file": "control/loops/05_loop_constructs.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/control/loo",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/control/loops/05_loop_constructs.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/te"
+    },
+    {
+      "file": "core/basics/00_empty_start.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "core/basics/00_minimal.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "core/basics/00_minimal_no_strings.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "core/basics/00_minimal_test.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "core/basics/01_hello_world.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "core/basics/29_apply_blocks.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/basics",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/basics/29_apply_blocks.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/o"
+    },
+    {
+      "file": "core/basics/29_apply_blocks_fixed.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/basics",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/basics/29_apply_blocks_fixed.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/t"
+    },
+    {
+      "file": "core/basics/56_apply_blocks_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/basics",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/basics/56_apply_blocks_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-co"
+    },
+    {
+      "file": "core/basics/56_apply_blocks_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/basics",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/basics/56_apply_blocks_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/"
+    },
+    {
+      "file": "core/basics/61_multiline_expressions.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/basics/61_multiline_expressions.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compile"
+    },
+    {
+      "file": "core/basics/61_multiline_expressions_simple.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "core/basics/62_apply_blocks_specification.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "core/basics/63_multiline_expressions_spec.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/basics/63_multiline_expressions_spec.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-co"
+    },
+    {
+      "file": "core/basics/90_comments_multiline.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/core/basics/90_comments_multiline.wasm"
+    },
+    {
+      "file": "core/basics/91_identifiers_validation.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/core/basics/91_identifiers_validation.wasm"
+    },
+    {
+      "file": "core/basics/95_apply_blocks_specification.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "core/collections/03_array_operations.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/collec",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/collections/03_array_operations.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compile"
+    },
+    {
+      "file": "core/collections/matrix_operations_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/collec",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/collections/matrix_operations_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-lang"
+    },
+    {
+      "file": "core/operators/03_arithmetic_operations.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/operat",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/operators/03_arithmetic_operations.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-comp"
+    },
+    {
+      "file": "core/operators/04_comparison_operations.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "core/operators/05_logical_operations.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/operat",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/operators/05_logical_operations.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compile"
+    },
+    {
+      "file": "core/types/02_precision_modifiers.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "precision_modifiers",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/02_precision_modifiers.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/t"
+    },
+    {
+      "file": "core/types/06_type_conversions.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "core/types/07_lists_basic.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/07_lists_basic.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/out"
+    },
+    {
+      "file": "core/types/08_matrices.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "core/types/09_type_inference.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/core/types/09_type_inference.wasm"
+    },
+    {
+      "file": "core/types/30_precision_modifiers.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/core/types/30_precision_modifiers.wasm"
+    },
+    {
+      "file": "core/types/34_list_behaviors.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/34_list_behaviors.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/"
+    },
+    {
+      "file": "core/types/34_list_behaviors_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/34_list_behaviors_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"
+    },
+    {
+      "file": "core/types/44_type_precision.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "precision_modifiers",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/44_type_precision.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/"
+    },
+    {
+      "file": "core/types/44_type_precision_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "precision_modifiers",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/44_type_precision_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"
+    },
+    {
+      "file": "core/types/44_type_precision_working.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "core/types/45_numeric_literals.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/45_numeric_literals.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/test"
+    },
+    {
+      "file": "core/types/45_numeric_literals_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/45_numeric_literals_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compil"
+    },
+    {
+      "file": "core/types/46_matrix_literals.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/46_matrix_literals.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests"
+    },
+    {
+      "file": "core/types/46_matrix_literals_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/46_matrix_literals_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compile"
+    },
+    {
+      "file": "core/types/66_type_precision_spec.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "precision_modifiers",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/66_type_precision_spec.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/t"
+    },
+    {
+      "file": "core/types/68_list_behaviors_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/68_list_behaviors_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-c"
+    },
+    {
+      "file": "core/types/70_type_precision_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "precision_modifiers",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/70_type_precision_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-c"
+    },
+    {
+      "file": "core/types/92_numeric_literals_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/core/types/92_numeric_literals_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language"
+    },
+    {
+      "file": "core/variables/02_variables_basic.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/double_test.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/double_test.wasm"
+    },
+    {
+      "file": "debug/simple_method_test.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/simpl",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/simple_method_test.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/outp"
+    },
+    {
+      "file": "debug/simple_test.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/simple_test.wasm"
+    },
+    {
+      "file": "debug/static_method_args_test.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/static_method_args_test.wasm"
+    },
+    {
+      "file": "debug/test_apply_block_conflict.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_apply_block_conflict.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes"
+    },
+    {
+      "file": "debug/test_apply_blocks.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_apply_blocks.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/outpu"
+    },
+    {
+      "file": "debug/test_args_comprehensive.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_args_comprehensive.wasm"
+    },
+    {
+      "file": "debug/test_arith_return.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_base_param.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_boolean_assignment.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_boolean_assignment.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests"
+    },
+    {
+      "file": "debug/test_boolean_return_minimal.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_boolean_return_minimal.wasm"
+    },
+    {
+      "file": "debug/test_cat_only.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_cat_only.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/de"
+    },
+    {
+      "file": "debug/test_chained_index.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_chained_index.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/outp"
+    },
+    {
+      "file": "debug/test_chained_minimal.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_chained_minimal.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/ou"
+    },
+    {
+      "file": "debug/test_chained_onerror.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_chained_onerror.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/ou"
+    },
+    {
+      "file": "debug/test_chained_property_method.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_chained_property_method.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/"
+    },
+    {
+      "file": "debug/test_chained_static.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_chained_static.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/out"
+    },
+    {
+      "file": "debug/test_combined_apply_blocks.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_combined_apply_blocks.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/te"
+    },
+    {
+      "file": "debug/test_comment_parsing.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_comment_parsing.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/ou"
+    },
+    {
+      "file": "debug/test_comment_var_var.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_comparison.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_comparison_minimal.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_complex_method_chain.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_complex_method_chain.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes"
+    },
+    {
+      "file": "debug/test_complex_onerror.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_complex_onerror.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/ou"
+    },
+    {
+      "file": "debug/test_conditional_namespace.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_conditional_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_conditional_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests"
+    },
+    {
+      "file": "debug/test_consecutive_variables.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_consecutive_with_comment.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_constructor_assignment.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_constructor_assignment.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/t"
+    },
+    {
+      "file": "debug/test_constructor_base_minimal.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_constructor_base_minimal.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"
+    },
+    {
+      "file": "debug/test_constructor_complex_functions.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_constructor_complex_functions.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-com"
+    },
+    {
+      "file": "debug/test_constructor_with_base.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_constructor_with_base.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/te"
+    },
+    {
+      "file": "debug/test_default_params.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_default_params.wasm"
+    },
+    {
+      "file": "debug/test_different_name.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_different_name.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/out"
+    },
+    {
+      "file": "debug/test_different_property_chain.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_different_property_chain.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"
+    },
+    {
+      "file": "debug/test_equality_only.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_equality_only.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/outp"
+    },
+    {
+      "file": "debug/test_error_handling.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_error_handling.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/out"
+    },
+    {
+      "file": "debug/test_exact_68_structure.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_exact_68_structure.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests"
+    },
+    {
+      "file": "debug/test_exact_comparison.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_exact_conditionals_copy.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_exact_failing_pattern.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_exact_failing_pattern.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/te"
+    },
+    {
+      "file": "debug/test_existing_method_call.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_existing_method_call.wasm"
+    },
+    {
+      "file": "debug/test_explicit_method_chained.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_explicit_method_chained.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/"
+    },
+    {
+      "file": "debug/test_exponent_pattern.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_exponent_pattern.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/o"
+    },
+    {
+      "file": "debug/test_final_onerror.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_final_onerror.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/outp"
+    },
+    {
+      "file": "debug/test_function_apply_block.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_function_apply_block.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes"
+    },
+    {
+      "file": "debug/test_function_apply_only.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_function_apply_only.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/test"
+    },
+    {
+      "file": "debug/test_function_decl_only.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_function_decl_only.wasm"
+    },
+    {
+      "file": "debug/test_function_return_only.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_function_return_only.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes"
+    },
+    {
+      "file": "debug/test_functions_with_empty_line.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_functions_with_namespace_calls.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_functions_with_namespace_calls.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-co"
+    },
+    {
+      "file": "debug/test_generic_any.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_generic_any.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output"
+    },
+    {
+      "file": "debug/test_http_basic.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_http_basic.wasm"
+    },
+    {
+      "file": "debug/test_identifier_method_call.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_identifier_method_call.wasm"
+    },
+    {
+      "file": "debug/test_if_only_boundary.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_if_only_boundary.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/o"
+    },
+    {
+      "file": "debug/test_if_with_else.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_if_with_else.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/outpu"
+    },
+    {
+      "file": "debug/test_inheritance.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_inheritance.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output"
+    },
+    {
+      "file": "debug/test_inheritance_fields_and_functions.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_inheritance_fields_and_functions.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-"
+    },
+    {
+      "file": "debug/test_inheritance_function_minimal.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_inheritance_function_minimal.wasm"
+    },
+    {
+      "file": "debug/test_inheritance_minimal.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_inheritance_minimal.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/test"
+    },
+    {
+      "file": "debug/test_inheritance_polymorphism.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_inheritance_polymorphism.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"
+    },
+    {
+      "file": "debug/test_inheritance_with_constructor.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_inheritance_with_constructor.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-comp"
+    },
+    {
+      "file": "debug/test_inherited_constructor.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_inherited_constructor.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/te"
+    },
+    {
+      "file": "debug/test_int_return.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_io_validation.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_io_validation.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/outp"
+    },
+    {
+      "file": "debug/test_is_prefix.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_is_prefix.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/d"
+    },
+    {
+      "file": "debug/test_list_generics.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_list_generics.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/outp"
+    },
+    {
+      "file": "debug/test_list_type.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_list_type.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/d"
+    },
+    {
+      "file": "debug/test_literal_method_call.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_literal_method_call.wasm"
+    },
+    {
+      "file": "debug/test_logical.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_logical.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/deb"
+    },
+    {
+      "file": "debug/test_match_59_structure.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_match_59_structure.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests"
+    },
+    {
+      "file": "debug/test_method_apply_minimal.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_method_apply_minimal.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes"
+    },
+    {
+      "file": "debug/test_method_apply_only.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_method_apply_only.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/"
+    },
+    {
+      "file": "debug/test_method_call_in_args.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_method_call_in_args.wasm"
+    },
+    {
+      "file": "debug/test_method_call_pattern.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_method_call_pattern.wasm"
+    },
+    {
+      "file": "debug/test_method_override.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_method_override.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/ou"
+    },
+    {
+      "file": "debug/test_minimal_functions_block.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_mixed_return_types.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_mixed_return_types.wasm"
+    },
+    {
+      "file": "debug/test_mixed_return_types_reverse.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_mixed_return_types_reverse.wasm"
+    },
+    {
+      "file": "debug/test_modulo_comparison.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_modulo_minimal.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_multiple_functions_after_fix.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_multiple_functions_after_fix.wasm"
+    },
+    {
+      "file": "debug/test_multiple_functions_in_block.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_multiple_functions_in_block.wasm"
+    },
+    {
+      "file": "debug/test_nested_method_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_nested_method_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes"
+    },
+    {
+      "file": "debug/test_no_comment.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_no_comment.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/"
+    },
+    {
+      "file": "debug/test_no_if_else_baseline.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_no_if_else_baseline.wasm"
+    },
+    {
+      "file": "debug/test_no_return_type.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_no_return_type.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/out"
+    },
+    {
+      "file": "debug/test_no_static.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_number_method.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_number_method.wasm"
+    },
+    {
+      "file": "debug/test_onerror_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_onerror_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/out"
+    },
+    {
+      "file": "debug/test_parser_backtrack_issue.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_parser_backtrack_issue.wasm"
+    },
+    {
+      "file": "debug/test_polymorphism_param.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_polymorphism_param.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests"
+    },
+    {
+      "file": "debug/test_precision_standalone.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "precision_modifiers",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_precision_standalone.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes"
+    },
+    {
+      "file": "debug/test_print_without_parens.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_print_without_parens.wasm"
+    },
+    {
+      "file": "debug/test_priority_2_fixes.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_priority_2_fixes.wasm"
+    },
+    {
+      "file": "debug/test_proper_indent.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_proper_indent.wasm"
+    },
+    {
+      "file": "debug/test_property_method_no_args.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_property_method_no_args.wasm"
+    },
+    {
+      "file": "debug/test_property_method_one_arg.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_property_method_one_arg.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/"
+    },
+    {
+      "file": "debug/test_regular_method_multiarg.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_regular_method_multiarg.wasm"
+    },
+    {
+      "file": "debug/test_return_issue.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_return_issue.wasm"
+    },
+    {
+      "file": "debug/test_simple.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_simple.wasm"
+    },
+    {
+      "file": "debug/test_simple_chain.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_simple_chain.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/outpu"
+    },
+    {
+      "file": "debug/test_simple_chained_property.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_simple_chained_property.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/"
+    },
+    {
+      "file": "debug/test_simple_default_params.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_simple_default_params.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/te"
+    },
+    {
+      "file": "debug/test_simple_input.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_simple_input.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/outpu"
+    },
+    {
+      "file": "debug/test_simple_math.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_simple_math.wasm"
+    },
+    {
+      "file": "debug/test_simple_method.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_simple_method.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/outp"
+    },
+    {
+      "file": "debug/test_simple_method_multiarg.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_simple_method_multiarg.wasm"
+    },
+    {
+      "file": "debug/test_simple_polymorphism.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_simple_polymorphism.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/test"
+    },
+    {
+      "file": "debug/test_simple_property_method.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_simple_property_method.wasm"
+    },
+    {
+      "file": "debug/test_simple_return.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_simple_three_level.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_simple_three_level.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests"
+    },
+    {
+      "file": "debug/test_simplest_if.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_simplest_if.wasm"
+    },
+    {
+      "file": "debug/test_single_boolean.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_single_boolean.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/out"
+    },
+    {
+      "file": "debug/test_statement_sequencing.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_statement_sequencing.wasm"
+    },
+    {
+      "file": "debug/test_static_method.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_static_method.wasm"
+    },
+    {
+      "file": "debug/test_static_methods.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_static_methods.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/out"
+    },
+    {
+      "file": "debug/test_string_concat.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_string_concat.wasm"
+    },
+    {
+      "file": "debug/test_tab_indentation.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_tab_indentation.wasm"
+    },
+    {
+      "file": "debug/test_tab_with_two_statements.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_tab_with_two_statements.wasm"
+    },
+    {
+      "file": "debug/test_three_level.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_three_level.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output"
+    },
+    {
+      "file": "debug/test_top_level_apply.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_top_level_apply.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/ou"
+    },
+    {
+      "file": "debug/test_two_statements.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_two_statements.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/out"
+    },
+    {
+      "file": "debug/test_two_statements_only.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_two_statements_only.wasm"
+    },
+    {
+      "file": "debug/test_two_vars_only.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_two_vars_only.wasm"
+    },
+    {
+      "file": "debug/test_type_apply_block.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_type_apply_block.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/o"
+    },
+    {
+      "file": "debug/test_type_apply_only.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_type_apply_only.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/ou"
+    },
+    {
+      "file": "debug/test_type_only_apply.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_type_only_apply.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/ou"
+    },
+    {
+      "file": "debug/test_validation_only.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_validation_only.wasm"
+    },
+    {
+      "file": "debug/test_var_arith_return.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "debug/test_variable_name.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_variable_name.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/outp"
+    },
+    {
+      "file": "debug/test_while_concat.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/debug/test_while_concat.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/outpu"
+    },
+    {
+      "file": "debug/test_without_method_call.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/debug/test_without_method_call.wasm"
+    },
+    {
+      "file": "examples/28_complex_example.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/examples/28",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/examples/28_complex_example.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/o"
+    },
+    {
+      "file": "examples/54_integration_test.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/examples/54_integration_test.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/"
+    },
+    {
+      "file": "examples/75_parser_verification.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "examples/99_spec_basic_features.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/examples/99",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/examples/99_spec_basic_features.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes"
+    },
+    {
+      "file": "examples/final_test.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "examples/quick_test.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/examples/quick_test.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/ex"
+    },
+    {
+      "file": "examples/simple_class_test.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/examples/simple_class_test.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/ou"
+    },
+    {
+      "file": "examples/simple_method_test.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/examples/simple_method_test.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/o"
+    },
+    {
+      "file": "examples/simple_test.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "examples/super_minimal.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "fail/33_complex_integration.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/fail/33_complex_integration.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/o"
+    },
+    {
+      "file": "fail/79_http_module_comprehensive.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/fail/79_http_module_comprehensive.wasm"
+    },
+    {
+      "file": "fail/81_async_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/fail/81_asy",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/fail/81_async_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/o"
+    },
+    {
+      "file": "fail/82_matrix_operations_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/fail/82_mat",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/fail/82_matrix_operations_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-comp"
+    },
+    {
+      "file": "fail/83_memory_management_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/fail/83_memory_management_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-comp"
+    },
+    {
+      "file": "functions/calls/09_method_calls.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/functions/c",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/functions/calls/09_method_calls.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes"
+    },
+    {
+      "file": "functions/declarations/06_function_definitions.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/functions/declarations/06_function_definitions.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-langua"
+    },
+    {
+      "file": "integration/comprehensive/10_comprehensive_features.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "precision_modifiers",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/integration/comprehensive/10_comprehensive_features.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-l"
+    },
+    {
+      "file": "integration/real_world/calculator_application.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/integration/real_world/calculator_application.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-languag"
+    },
+    {
+      "file": "language/classes/07_class_definitions.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/07_class_definitions.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compil"
+    },
+    {
+      "file": "language/classes/08_class_inheritance.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/08_class_inheritance.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compil"
+    },
+    {
+      "file": "language/classes/14_classes_basic.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/14_classes_basic.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/t"
+    },
+    {
+      "file": "language/classes/15_classes_inheritance.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/15_classes_inheritance.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-comp"
+    },
+    {
+      "file": "language/classes/16_classes_polymorphism.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/16_classes_polymorphism.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-com"
+    },
+    {
+      "file": "language/classes/16_classes_polymorphism_fixed.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/16_classes_polymorphism_fixed.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-langua"
+    },
+    {
+      "file": "language/classes/16_classes_polymorphism_new.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/16_classes_polymorphism_new.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language"
+    },
+    {
+      "file": "language/classes/16_classes_polymorphism_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/16_classes_polymorphism_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-langu"
+    },
+    {
+      "file": "language/classes/37_property_assignment.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/cl",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/37_property_assignment.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-comp"
+    },
+    {
+      "file": "language/classes/37_property_assignment_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/cl",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/37_property_assignment_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-langua"
+    },
+    {
+      "file": "language/classes/38_method_calls_test.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/cl",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/38_method_calls_test.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compil"
+    },
+    {
+      "file": "language/classes/41_static_methods_test.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/cl",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/41_static_methods_test.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-comp"
+    },
+    {
+      "file": "language/classes/49_static_method_calls.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/cl",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/49_static_method_calls.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-comp"
+    },
+    {
+      "file": "language/classes/49_static_method_calls_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/cl",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/49_static_method_calls_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-langua"
+    },
+    {
+      "file": "language/classes/80_chained_method_calls.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/cl",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/classes/80_chained_method_calls.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-com"
+    },
+    {
+      "file": "language/control_flow/17_control_flow_if.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/co",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/control_flow/17_control_flow_if.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-com"
+    },
+    {
+      "file": "language/control_flow/18_control_flow_loops.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/co",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/control_flow/18_control_flow_loops.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-"
+    },
+    {
+      "file": "language/control_flow/36_conditionals.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/control_flow/36_conditionals.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compil"
+    },
+    {
+      "file": "language/control_flow/36_conditionals_fixed.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/co",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/control_flow/36_conditionals_fixed.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-"
+    },
+    {
+      "file": "language/control_flow/36_conditionals_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/co",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/control_flow/36_conditionals_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language"
+    },
+    {
+      "file": "language/control_flow/39_conditional_expressions_test.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/co",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/control_flow/39_conditional_expressions_test.cln to /Users/earcandy/Documents/Dev/Clean Language/clean"
+    },
+    {
+      "file": "language/error_handling/21_error_handling_try_catch.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/er",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/error_handling/21_error_handling_try_catch.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-l"
+    },
+    {
+      "file": "language/error_handling/22_error_handling_onerror.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/er",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/error_handling/22_error_handling_onerror.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-lan"
+    },
+    {
+      "file": "language/error_handling/23_error_handling_async.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/er",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/error_handling/23_error_handling_async.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-langu"
+    },
+    {
+      "file": "language/error_handling/40_onerror_test.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/er",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/error_handling/40_onerror_test.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-comp"
+    },
+    {
+      "file": "language/error_handling/55_error_handling_test.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/language/error_handling/55_error_handling_test.wasm"
+    },
+    {
+      "file": "language/error_handling/58_error_handling_onerror.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/er",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/error_handling/58_error_handling_onerror.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-lan"
+    },
+    {
+      "file": "language/error_handling/58_error_handling_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/er",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/error_handling/58_error_handling_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-lang"
+    },
+    {
+      "file": "language/error_handling/65_error_handling_onerror_spec.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/er",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/error_handling/65_error_handling_onerror_spec.cln to /Users/earcandy/Documents/Dev/Clean Language/clea"
+    },
+    {
+      "file": "language/error_handling/71_error_handling_onerror_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/er",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/error_handling/71_error_handling_onerror_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Lang"
+    },
+    {
+      "file": "language/expressions/multiline_expressions_edge_cases.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/ex",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/expressions/multiline_expressions_edge_cases.cln to /Users/earcandy/Documents/Dev/Clean Language/clean"
+    },
+    {
+      "file": "language/functions/10_functions_basic.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/language/functions/10_functions_basic.wasm"
+    },
+    {
+      "file": "language/functions/11_functions_overloading.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "language/functions/12_functions_recursion.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/fu",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/functions/12_functions_recursion.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-co"
+    },
+    {
+      "file": "language/functions/13_functions_generics.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/fu",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/functions/13_functions_generics.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-com"
+    },
+    {
+      "file": "language/functions/35_method_style.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/language/functions/35_method_style.wasm"
+    },
+    {
+      "file": "language/functions/35_method_style_simple.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/language/functions/35_method_style_simple.wasm"
+    },
+    {
+      "file": "language/functions/48_method_style_syntax.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/fu",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/functions/48_method_style_syntax.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-co"
+    },
+    {
+      "file": "language/functions/48_method_style_syntax_fixed.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/fu",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/functions/48_method_style_syntax_fixed.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-langu"
+    },
+    {
+      "file": "language/functions/48_method_style_syntax_simple.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/language/functions/48_method_style_syntax_simple.wasm"
+    },
+    {
+      "file": "language/functions/59_default_parameters.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/functions/59_default_parameters.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-com"
+    },
+    {
+      "file": "language/functions/59_default_parameters_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/fu",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/functions/59_default_parameters_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-langu"
+    },
+    {
+      "file": "language/functions/59_default_parameters_working.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/language/functions/59_default_parameters_working.wasm"
+    },
+    {
+      "file": "language/functions/60_automatic_return.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/fu",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/functions/60_automatic_return.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compi"
+    },
+    {
+      "file": "language/functions/64_default_parameters_spec.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/functions/64_default_parameters_spec.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-languag"
+    },
+    {
+      "file": "language/functions/72_default_parameters_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/functions/72_default_parameters_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clea"
+    },
+    {
+      "file": "language/testing/testing_framework_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/te",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/language/testing/testing_framework_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-lang"
+    },
+    {
+      "file": "parser_compliance/01_all_keywords.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "not_implemented",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/parser_compliance/01_all_keywords.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/t"
+    },
+    {
+      "file": "parser_compliance/02_numeric_literals.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/parser_comp",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/parser_compliance/02_numeric_literals.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compil"
+    },
+    {
+      "file": "parser_compliance/02_numeric_literals_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/parser_comp",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/parser_compliance/02_numeric_literals_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language"
+    },
+    {
+      "file": "parser_compliance/03_string_features.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/parser_compliance/03_string_features.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compile"
+    },
+    {
+      "file": "parser_compliance/04_type_system.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "precision_modifiers",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/parser_compliance/04_type_system.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/te"
+    },
+    {
+      "file": "parser_compliance/05_expressions.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/parser_comp",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/parser_compliance/05_expressions.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/te"
+    },
+    {
+      "file": "parser_compliance/06_statements.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/parser_comp",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/parser_compliance/06_statements.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes"
+    },
+    {
+      "file": "stdlib/25_stdlib_functions.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/25_s",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/25_stdlib_functions.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/ou"
+    },
+    {
+      "file": "stdlib/25_stdlib_functions_original_modules.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/25_stdlib_functions_original_modules.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-"
+    },
+    {
+      "file": "stdlib/32_comprehensive_stdlib.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/32_c",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/32_comprehensive_stdlib.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/test"
+    },
+    {
+      "file": "stdlib/78_list_module_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/78_l",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/78_list_module_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"
+    },
+    {
+      "file": "stdlib/80_host_functions_test.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/80_h",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/80_host_functions_test.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests"
+    },
+    {
+      "file": "stdlib/console/50_input_method_syntax.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/cons",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/console/50_input_method_syntax.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compil"
+    },
+    {
+      "file": "stdlib/console/57_console_input_comprehensive.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/stdlib/console/57_console_input_comprehensive.wasm"
+    },
+    {
+      "file": "stdlib/console/57_console_input_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/cons",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/console/57_console_input_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compi"
+    },
+    {
+      "file": "stdlib/console/73_console_input_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/cons",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/console/73_console_input_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-languag"
+    },
+    {
+      "file": "stdlib/console/96_console_input_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/cons",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/console/96_console_input_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-languag"
+    },
+    {
+      "file": "stdlib/console/console_input_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/cons",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/console/console_input_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-c"
+    },
+    {
+      "file": "stdlib/io/26_io_operations.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/io/2",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/io/26_io_operations.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/ou"
+    },
+    {
+      "file": "stdlib/io/27_http_networking.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/io/2",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/io/27_http_networking.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/"
+    },
+    {
+      "file": "stdlib/io/51_http_method_syntax.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/io/5",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/io/51_http_method_syntax.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes"
+    },
+    {
+      "file": "stdlib/io/74_file_module_comprehensive.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/stdlib/io/74_file_module_comprehensive.wasm"
+    },
+    {
+      "file": "stdlib/math/76_math_module_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/math",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/math/76_math_module_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-com"
+    },
+    {
+      "file": "stdlib/math/93_stdlib_math_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/math",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/math/93_stdlib_math_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-com"
+    },
+    {
+      "file": "stdlib/math/98_stdlib_math_working.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/math",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/math/98_stdlib_math_working.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/"
+    },
+    {
+      "file": "stdlib/math/99_math_minimal_working.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/math",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/math/99_math_minimal_working.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"
+    },
+    {
+      "file": "stdlib/string/43_string_interpolation.cln",
+      "status": "PASS",
+      "error_type": null,
+      "error_pattern": null,
+      "error_message": null
+    },
+    {
+      "file": "stdlib/string/47_string_interpolation.cln",
+      "status": "EXEC_FAIL",
+      "error_type": "type_error",
+      "error_pattern": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes",
+      "error_message": "\ud83d\ude80 Loading WebAssembly file: /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/output/stdlib/string/47_string_interpolation.wasm"
+    },
+    {
+      "file": "stdlib/string/69_string_interpolation_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/stri",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/string/69_string_interpolation_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-l"
+    },
+    {
+      "file": "stdlib/string/77_string_module_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/stri",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/string/77_string_module_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language"
+    },
+    {
+      "file": "stdlib/string/94_stdlib_string_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/stri",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/stdlib/string/94_stdlib_string_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language"
+    },
+    {
+      "file": "testing/100_testing_framework_simple.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/testing/100",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/testing/100_testing_framework_simple.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compile"
+    },
+    {
+      "file": "testing/31_testing_framework.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/testing/31_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/testing/31_testing_framework.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/"
+    },
+    {
+      "file": "testing/42_test_framework.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "parse_error",
+      "error_pattern": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/testing/42_",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/testing/42_test_framework.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/out"
+    },
+    {
+      "file": "testing/97_testing_framework_comprehensive.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/testing/97_testing_framework_comprehensive.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-c"
+    },
+    {
+      "file": "testing/minimal_compliance_test.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/testing/minimal_compliance_test.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tes"
+    },
+    {
+      "file": "testing/specification_compliance_test.cln",
+      "status": "COMPILE_FAIL",
+      "error_type": "codegen_error",
+      "error_pattern": "type_mismatch",
+      "error_message": "Compiling /Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/tests/cln/testing/specification_compliance_test.cln to /Users/earcandy/Documents/Dev/Clean Language/clean-language-compil"
+    }
+  ]
+}

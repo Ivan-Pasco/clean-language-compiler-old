@@ -37,6 +37,44 @@ pub use constraint_generator::{ClassTypeInfo, ConstraintGenerator};
 pub use constraints::{Constraint, ConstraintSet, ConstraintType, TypeProperty, TypeVar};
 pub use type_variables::{TypeVarMetadata, TypeVariableManager, Variance};
 
+/// **DEPRECATED**: This analyzer is replaced by the modern 7-stage compilation pipeline.
+///
+/// The SemanticAnalyzer maintained parallel legacy structures alongside modern components,
+/// causing technical debt and potential inconsistencies. The modern pipeline uses:
+///
+/// **Modern Pipeline (use this instead)**:
+/// 1. `Lexer` → Tokenization
+/// 2. `Parser` → AST generation
+/// 3. `HirBuilder` → High-level IR with validation
+/// 4. `Resolver` → Name and module resolution (replaces SemanticAnalyzer's symbol resolution)
+/// 5. `TypeChecker` → Type inference and checking (replaces SemanticAnalyzer's type checking)
+/// 6. `MIR Lowering` → Medium-level IR with optimizations
+/// 7. `CodeGenerator` → WebAssembly generation
+///
+/// **Migration Guide**:
+/// - For type checking: Use `TypeChecker::check()` instead of `SemanticAnalyzer::analyze()`
+/// - For symbol resolution: Use `Resolver::resolve()` instead of SemanticAnalyzer's symbol tracking
+/// - For full compilation: Use `compile_with_file()` which uses the complete modern pipeline
+///
+/// **Production Status**: ⚠️ NOT USED IN PRODUCTION
+/// - All production compilation uses the modern pipeline (Resolver + TypeChecker + MIR)
+/// - `compile_with_file()` uses modern pipeline exclusively
+/// - `cln check` command uses modern pipeline (Resolver + TypeChecker) since v0.10.0
+/// - This analyzer does NOT affect production compilation behavior
+///
+/// **Current Usage**: TESTING AND BENCHMARKING ONLY
+/// - `src/bin/test_runner.rs` - legacy test runner (will be migrated)
+/// - `src/testing/test_harness.rs` - test infrastructure (will be migrated)
+/// - `src/bin/performance_benchmark.rs` - benchmarking tool (will be migrated)
+/// - `src/semantic/tests.rs` - unit tests for this deprecated module
+///
+/// **Removal Timeline**: Scheduled for removal in v0.11.0 (next major version)
+///
+/// This struct is only kept for backward compatibility with legacy tests.
+#[deprecated(
+    since = "0.10.0",
+    note = "Use the modern pipeline: Resolver::resolve() + TypeChecker::check() instead. See struct documentation for migration guide."
+)]
 #[allow(dead_code)]
 pub struct SemanticAnalyzer {
     // Enhanced symbol table with comprehensive scope management
@@ -57,9 +95,8 @@ pub struct SemanticAnalyzer {
     constraint_generator: ConstraintGenerator,
     type_variable_manager: TypeVariableManager,
 
-    // Legacy compatibility - gradually being replaced by SymbolTable
-    #[allow(dead_code)]
-    legacy_symbol_table: HashMap<String, Type>,
+    // Legacy compatibility structures (DEPRECATED - part of why this entire analyzer is deprecated)
+    // These caused drift and duplication with the modern symbol_table system
     function_table: HashMap<String, Vec<(Vec<Type>, Type, usize)>>, // Multiple overloads per function name
     class_table: HashMap<String, Class>,
     current_class: Option<String>,
@@ -69,23 +106,14 @@ pub struct SemanticAnalyzer {
     type_environment: HashSet<String>,
     variable_environment: HashSet<String>,
     function_environment: HashSet<String>,
-    #[allow(dead_code)]
-    class_environment: HashSet<String>,
     current_scope: Scope, // Legacy scope - being replaced
     current_function_return_type: Option<Type>,
     warnings: Vec<CompilerWarning>,
     used_variables: HashSet<String>,
     used_functions: HashSet<String>,
-    #[allow(dead_code)]
     error_context_depth: i32,
     module_resolver: ModuleResolver,
     current_imports: Option<ImportResolution>,
-    #[allow(dead_code)]
-    scope_stack: Vec<Scope>,
-    #[allow(dead_code)]
-    errors: Vec<CompilerError>,
-    #[allow(dead_code)]
-    imported_modules: HashSet<String>,
 }
 
 impl Default for SemanticAnalyzer {
@@ -105,7 +133,6 @@ impl SemanticAnalyzer {
             enhanced_error_collector: EnhancedErrorCollector::new(),
             constraint_generator: ConstraintGenerator::new(),
             type_variable_manager: TypeVariableManager::new(),
-            legacy_symbol_table: HashMap::new(),
             function_table: HashMap::new(),
             class_table: HashMap::new(),
             current_class: None,
@@ -115,7 +142,6 @@ impl SemanticAnalyzer {
             type_environment: HashSet::new(),
             variable_environment: HashSet::new(),
             function_environment: HashSet::new(),
-            class_environment: HashSet::new(),
             current_scope: Scope::new(),
             current_function_return_type: None,
             warnings: Vec::new(),
@@ -124,9 +150,6 @@ impl SemanticAnalyzer {
             error_context_depth: 0,
             module_resolver: ModuleResolver::new(),
             current_imports: None,
-            scope_stack: Vec::new(),
-            errors: Vec::new(),
-            imported_modules: HashSet::new(),
         };
 
         analyzer.register_builtin_functions();
@@ -2678,6 +2701,11 @@ impl SemanticAnalyzer {
                 for item in items {
                     self.check_statement(item)?;
                 }
+                Ok(())
+            }
+
+            Statement::Description { .. } => {
+                // Description statements are metadata only - no semantic checking needed
                 Ok(())
             }
 

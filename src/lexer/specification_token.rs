@@ -274,6 +274,19 @@ impl TokenStream {
     }
 }
 
+impl Default for TokenStream {
+    fn default() -> Self {
+        Self {
+            tokens: Vec::new(),
+            source_map: SourceMap {
+                file_path: String::new(),
+                line_starts: vec![0],
+                total_bytes: 0,
+            },
+        }
+    }
+}
+
 /// Source map for tracking original source positions
 #[derive(Debug, Clone)]
 pub struct SourceMap {

@@ -2,7 +2,7 @@
 
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
-    ImportSection, Instruction, MemArg, MemorySection, MemoryType, ValType,
+    ImportSection, Instruction, MemArg, MemorySection, ValType,
 };
 
 use crate::ast::{
@@ -24,7 +24,7 @@ pub mod optimizations;
 mod stdlib_generator;
 mod type_conversion;
 mod type_manager;
-pub mod wasm_generator;
+// Legacy wasm_generator module removed - use mir_codegen instead
 mod wasm_module_builder;
 
 #[cfg(test)]
@@ -252,6 +252,16 @@ impl CodeGenerator {
         Ok(codegen)
     }
 
+    /// Configure the memory section with standard settings
+    fn setup_memory_section(&mut self) {
+        self.memory_section.memory(wasm_encoder::MemoryType {
+            minimum: 1,
+            maximum: Some(16), // Limit to 16 pages (1MB) for safety
+            memory64: false,
+            shared: false,
+        });
+    }
+
     /// Helper method for tests to set up memory and exports
     pub fn setup_for_testing(&mut self) -> Result<(), CompilerError> {
         // Register imports FIRST (they get indices 0-13) - just like in generate()
@@ -265,12 +275,7 @@ impl CodeGenerator {
         self.register_method_style_imports()?;
 
         // Set up memory section
-        self.memory_section.memory(wasm_encoder::MemoryType {
-            minimum: 1,
-            maximum: Some(16),
-            memory64: false,
-            shared: false,
-        });
+        self.setup_memory_section();
 
         // Export all registered functions
         for (func_name, &func_index) in &self.function_map.clone() {
@@ -529,12 +534,7 @@ impl CodeGenerator {
         // 5. Setup memory (1 page minimum for basic operations)
         // ------------------------------------------------------------------
         println!("DEBUG: Setting up memory section with 1 page minimum");
-        self.memory_section.memory(MemoryType {
-            minimum: 1,
-            maximum: Some(16), // Limit to 16 pages (1MB) for safety
-            memory64: false,
-            shared: false,
-        });
+        self.setup_memory_section();
         println!("DEBUG: Memory section configured");
 
         // ------------------------------------------------------------------
@@ -1312,6 +1312,11 @@ impl CodeGenerator {
                 for item in items {
                     self.generate_statement(item, instructions)?;
                 }
+            }
+
+            Statement::Description { .. } => {
+                // Description statements are metadata only - no code generation needed
+                // They are used for documentation and should be skipped during execution
             }
 
             Statement::StandaloneErrorHandler { body, .. } => {
@@ -7645,17 +7650,34 @@ impl CodeGenerator {
             return Ok(existing_offset);
         }
 
-        // Create new string entry
+        // Create new string entry WITH length prefix for proper runtime format
+        // String format in memory: [4-byte length][string content]
         let string_bytes = s.as_bytes();
+        let string_len = string_bytes.len() as u32;
         let current_offset = self.string_offset_counter;
 
-        // Add the string data directly to the data section at this offset
-        let _ = self
-            .memory_utils
-            .add_data_segment(current_offset, string_bytes);
+        // Build string data with 4-byte little-endian length prefix
+        let mut string_data = Vec::with_capacity(4 + string_bytes.len());
+        string_data.extend_from_slice(&string_len.to_le_bytes()); // 4-byte length
+        string_data.extend_from_slice(string_bytes); // String content
+
+        // Add the complete string structure to the data section
+        self.memory_utils
+            .add_data_segment(current_offset, &string_data)
+            .map_err(|e| {
+                CompilerError::codegen_error(
+                    &format!("Failed to add string '{}' to data section: {:?}", s, e),
+                    None,
+                    None,
+                )
+            })?;
 
         // Update offset counter with padding for next string
-        self.string_offset_counter += string_bytes.len() as u32 + 16; // Add padding
+        // CRITICAL FIX: Ensure 4-byte alignment for next string
+        let total_size = 4 + string_bytes.len() as u32; // length prefix + content
+        let string_size_with_padding = total_size + 16;
+        let aligned_size = (string_size_with_padding + 3) & !3; // Round up to nearest multiple of 4
+        self.string_offset_counter += aligned_size;
 
         // Store in string pool for reuse
         self.string_pool.insert(s.to_string(), current_offset);
@@ -9285,12 +9307,7 @@ impl CodeGenerator {
     /// Helper method for tests to generate complete WASM module without imports
     pub fn generate_test_module_without_imports(&mut self) -> Result<Vec<u8>, CompilerError> {
         // Set up memory section
-        self.memory_section.memory(wasm_encoder::MemoryType {
-            minimum: 1,
-            maximum: Some(16),
-            memory64: false,
-            shared: false,
-        });
+        self.setup_memory_section();
 
         // Export all registered functions
         for (func_name, &func_index) in &self.function_map.clone() {
@@ -9717,40 +9734,6 @@ impl CodeGenerator {
 
         Ok(())
     }
-}
-
-/// Generate WebAssembly from AST using the IR pipeline
-///
-/// # DEPRECATED
-/// This function is unused and will be removed in v0.11.0.
-/// Use `compile_with_file()` from the library root instead.
-#[deprecated(
-    since = "0.10.2",
-    note = "Unused function. Use compile_with_file() instead."
-)]
-pub fn generate_wasm_from_ast(program: crate::ast::Program) -> Result<Vec<u8>, CompilerError> {
-    use crate::ir::{IRPipeline, OptimizationLevel};
-    use wasm_generator::WasmGenerator;
-
-    // Create IR pipeline
-    let pipeline = IRPipeline::new(false, OptimizationLevel::Speed);
-
-    // Transform through IR levels: AST → HIR → MIR → LIR
-    let lir_program = pipeline.transform_program(program)?;
-
-    // Generate WebAssembly from LIR
-    let mut wasm_generator = WasmGenerator::new();
-    wasm_generator.generate_wasm_module(lir_program)
-}
-
-/// Generate WebAssembly directly from LIR (for advanced use cases)
-pub fn generate_wasm_from_lir(
-    lir_program: crate::ir::LIRProgram,
-) -> Result<Vec<u8>, CompilerError> {
-    use wasm_generator::WasmGenerator;
-
-    let mut wasm_generator = WasmGenerator::new();
-    wasm_generator.generate_wasm_module(lir_program)
 }
 
 /// Generate WebAssembly from MIR using the new MIR code generator

@@ -286,11 +286,8 @@ async fn handle_compile(
 
     let source = fs::read_to_string(&input)?;
 
-    eprintln!(
-        "DEBUG: About to call compile_with_file with {} characters of source",
-        source.len()
-    );
-    eprintln!("DEBUG: Source content: {}", source);
+    tracing::debug!(source_len = source.len(), "Calling compile_with_file");
+    tracing::trace!(source_content = %source, "Source code to compile");
 
     // Use the 7-stage pipeline for compilation
     let wasm_binary = match compile_with_file(&source, &input) {

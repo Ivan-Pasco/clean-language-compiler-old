@@ -1,0 +1,3033 @@
+//! Token-driven parser for Clean Language
+//!
+//! This parser consumes tokens directly from the lexer without source reconstruction,
+//! following the architecture of rustc's parser (see rust-lang/rustc-dev-guide).
+//!
+//! Architecture:
+//! - Maintains a cursor into the token stream
+//! - Uses utility methods: bump(), check(), eat(), expect(), look_ahead()
+//! - Recursive descent parsing
+//! - Error recovery with diagnostic generation
+
+use crate::ast::{
+    BinaryOperator, Class, ConstantAssignment, Constructor, Expression, Field, Function,
+    FunctionModifier, FunctionSyntax, ImportItem, Parameter, Program, Statement, TestCase, Type,
+    Value, VariableAssignment, Visibility,
+};
+use crate::error::CompilerError;
+use crate::lexer::specification_token::{Token, TokenKind, TokenStream};
+
+/// Token-driven parser for Clean Language
+pub struct TokenParser {
+    tokens: Vec<Token>,
+    cursor: usize,
+    #[allow(dead_code)] // Used for future error reporting enhancements
+    file_path: String,
+    errors: Vec<CompilerError>,
+}
+
+impl TokenParser {
+    pub fn new(token_stream: TokenStream, file_path: String) -> Self {
+        Self {
+            tokens: token_stream.tokens,
+            cursor: 0,
+            file_path,
+            errors: Vec::new(),
+        }
+    }
+
+    /// Parse a complete program
+    pub fn parse_program(&mut self) -> Result<Program, CompilerError> {
+        self.skip_whitespace();
+
+        let mut functions = Vec::new();
+        let mut classes = Vec::new();
+        let mut tests = Vec::new();
+        let mut imports = Vec::new();
+        let mut statements = Vec::new();
+
+        while !self.is_at_end() {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Skip any Dedent tokens at top level (they mark the end of blocks)
+            if matches!(self.current_kind(), TokenKind::Dedent(_)) {
+                self.bump();
+                continue;
+            }
+
+            // Parse top-level declarations
+            match self.current_kind() {
+                TokenKind::Function => match self.parse_function() {
+                    Ok(func) => functions.push(func),
+                    Err(e) => self.errors.push(e),
+                },
+                TokenKind::Class => match self.parse_class() {
+                    Ok(class) => classes.push(class),
+                    Err(e) => self.errors.push(e),
+                },
+                TokenKind::Tests => match self.parse_tests_block() {
+                    Ok(test_cases) => tests.extend(test_cases),
+                    Err(e) => self.errors.push(e),
+                },
+                TokenKind::Import => match self.parse_import() {
+                    Ok(mut import_items) => imports.append(&mut import_items),
+                    Err(e) => self.errors.push(e),
+                },
+                TokenKind::Private => match self.parse_private() {
+                    Ok(private_stmt) => statements.push(private_stmt),
+                    Err(e) => self.errors.push(e),
+                },
+                TokenKind::Start => {
+                    // Parse start() function (special case - no 'function' keyword)
+                    match self.parse_start_function() {
+                        Ok(func) => functions.push(func),
+                        Err(e) => self.errors.push(e),
+                    }
+                }
+                TokenKind::Functions => {
+                    // Parse functions: block
+                    match self.parse_functions_block() {
+                        Ok(mut block_functions) => functions.append(&mut block_functions),
+                        Err(e) => self.errors.push(e),
+                    }
+                }
+                _ => {
+                    let token = self.current();
+                    self.errors.push(CompilerError::parse_error(
+                        format!("Unexpected token at top level: {:?}", token.kind),
+                        Some(token.location.clone()),
+                        None,
+                    ));
+                    self.bump(); // Skip unexpected token
+                }
+            }
+
+            self.skip_whitespace();
+        }
+
+        if !self.errors.is_empty() {
+            // Return first error with all subsequent errors as related_errors
+            // This allows IDE tools to access all parser errors for better diagnostics
+            let mut first_error = self.errors[0].clone();
+
+            // Add remaining errors as related messages
+            if self.errors.len() > 1 {
+                // Extract the context and add related errors
+                match &mut first_error {
+                    CompilerError::Syntax { context }
+                    | CompilerError::Type { context }
+                    | CompilerError::Memory { context }
+                    | CompilerError::Codegen { context }
+                    | CompilerError::IO { context }
+                    | CompilerError::Runtime { context }
+                    | CompilerError::Validation { context }
+                    | CompilerError::Module { context }
+                    | CompilerError::Testing { context } => {
+                        for error in &self.errors[1..] {
+                            context.related_errors.push(error.to_string());
+                        }
+                    }
+                    CompilerError::LexError(_) => {
+                        // LexError doesn't have ErrorContext, skip related errors
+                    }
+                }
+            }
+
+            return Err(first_error);
+        }
+
+        let start_function = functions.iter().find(|f| f.name == "start").cloned();
+
+        Ok(Program {
+            imports,
+            statements,
+            functions,
+            classes,
+            start_function,
+            tests,
+            location: None,
+        })
+    }
+
+    // ============================================================================
+    // Token cursor utilities (following rustc pattern)
+    // ============================================================================
+
+    /// Get the current token without consuming it
+    fn current(&self) -> &Token {
+        &self.tokens[self.cursor.min(self.tokens.len() - 1)]
+    }
+
+    /// Get the kind of the current token
+    fn current_kind(&self) -> &TokenKind {
+        &self.current().kind
+    }
+
+    /// Check if we're at EOF
+    fn is_at_end(&self) -> bool {
+        matches!(self.current_kind(), TokenKind::Eof)
+    }
+
+    /// Peek at the next token kind without consuming
+    #[allow(dead_code)] // Parser utility method - kept for API completeness
+    fn peek_kind(&self) -> Option<&TokenKind> {
+        if self.cursor + 1 < self.tokens.len() {
+            Some(&self.tokens[self.cursor + 1].kind)
+        } else {
+            None
+        }
+    }
+
+    /// Consume the current token and advance (rustc: bump())
+    fn bump(&mut self) -> Token {
+        let token = self.tokens[self.cursor].clone();
+        if self.cursor < self.tokens.len() - 1 {
+            self.cursor += 1;
+        }
+        token
+    }
+
+    /// Check if the current token matches without consuming (rustc: check())
+    fn check(&self, kind: &TokenKind) -> bool {
+        std::mem::discriminant(self.current_kind()) == std::mem::discriminant(kind)
+    }
+
+    /// Consume the token if it matches, return whether it matched (rustc: eat())
+    fn eat(&mut self, kind: &TokenKind) -> bool {
+        if self.check(kind) {
+            self.bump();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Expect a specific token, error if not found (rustc: expect())
+    fn expect(&mut self, kind: &TokenKind) -> Result<Token, CompilerError> {
+        if self.check(kind) {
+            Ok(self.bump())
+        } else {
+            let current = self.current();
+            Err(CompilerError::parse_error(
+                format!("Expected {:?}, found {:?}", kind, current.kind),
+                Some(current.location.clone()),
+                None,
+            ))
+        }
+    }
+
+    /// Look ahead at token N positions forward (rustc: look_ahead())
+    #[allow(dead_code)] // Parser utility method - kept for API completeness
+    fn look_ahead(&self, n: usize) -> &Token {
+        let pos = (self.cursor + n).min(self.tokens.len() - 1);
+        &self.tokens[pos]
+    }
+
+    /// Get the current block's indentation level by looking at recent Indent tokens
+    /// Returns 0 if no Indent token found (top-level)
+    fn get_current_indent_level(&self) -> usize {
+        // Look backwards from current position to find the most recent Indent token
+        for i in (0..self.cursor).rev() {
+            if let TokenKind::Indent(level) = &self.tokens[i].kind {
+                return *level;
+            }
+            // Stop if we hit a Dedent (we've gone too far back)
+            if matches!(&self.tokens[i].kind, TokenKind::Dedent(_)) {
+                break;
+            }
+        }
+        0 // Default to level 0 if no Indent found
+    }
+
+    /// Skip whitespace tokens (newlines, comments)
+    fn skip_whitespace(&mut self) {
+        let start_token = self.current_kind().clone();
+        let mut consumed = vec![];
+        while matches!(
+            self.current_kind(),
+            TokenKind::Newline | TokenKind::Comment(_) | TokenKind::BlockComment(_)
+        ) {
+            consumed.push(format!("{:?}", self.current_kind()));
+            self.bump();
+        }
+        if !consumed.is_empty() {
+            tracing::trace!(
+                start = ?start_token,
+                consumed = ?consumed,
+                after = ?self.current_kind(),
+                "skip_whitespace consumed tokens"
+            );
+        }
+    }
+
+    /// Skip indentation tokens
+    fn skip_indentation(&mut self) {
+        // Only skip Indent tokens, not Dedent
+        // Dedent tokens signal the end of blocks and should be checked explicitly
+        while matches!(self.current_kind(), TokenKind::Indent(_)) {
+            self.bump();
+        }
+    }
+
+    // ============================================================================
+    // Parsing methods
+    // ============================================================================
+
+    fn parse_function(&mut self) -> Result<Function, CompilerError> {
+        self.expect(&TokenKind::Function)?;
+        self.skip_whitespace();
+
+        let name_token = self.expect_identifier()?;
+        let name = name_token.text.clone();
+        let location = name_token.location.clone();
+
+        self.skip_whitespace();
+
+        // Parameters
+        let parameters = if self.eat(&TokenKind::LeftParen) {
+            self.parse_parameter_list()?
+        } else {
+            Vec::new()
+        };
+
+        self.skip_whitespace();
+
+        // Return type (optional, defaults to Void)
+        let return_type = if self.eat(&TokenKind::Returns) {
+            self.skip_whitespace();
+            self.parse_type()?
+        } else {
+            Type::Void
+        };
+
+        self.skip_whitespace();
+        // DON'T skip indentation - let parse_block() handle it
+
+        // Body
+        let body = self.parse_block()?;
+
+        Ok(Function {
+            name,
+            type_parameters: Vec::new(),
+            type_constraints: Vec::new(),
+            parameters,
+            return_type,
+            body,
+            description: None,
+            syntax: FunctionSyntax::Simple,
+            visibility: Visibility::Public,
+            modifier: FunctionModifier::None,
+            location: Some(location),
+        })
+    }
+
+    /// Parse start() function (special case - no 'function' keyword)
+    /// Example: start()
+    ///             print("Hello")
+    fn parse_start_function(&mut self) -> Result<Function, CompilerError> {
+        let start_token = self.expect(&TokenKind::Start)?;
+        let location = start_token.location.clone();
+
+        self.skip_whitespace();
+
+        // Expect ()
+        self.expect(&TokenKind::LeftParen)?;
+        self.skip_whitespace();
+        self.expect(&TokenKind::RightParen)?;
+
+        self.skip_whitespace();
+        // DON'T skip indentation - let parse_block() handle it
+
+        // Body
+        let body = self.parse_block()?;
+
+        Ok(Function {
+            name: "start".to_string(),
+            type_parameters: Vec::new(),
+            type_constraints: Vec::new(),
+            parameters: Vec::new(), // start() has no parameters
+            return_type: Type::Void,
+            body,
+            description: None,
+            syntax: FunctionSyntax::Simple,
+            visibility: Visibility::Public,
+            modifier: FunctionModifier::None,
+            location: Some(location),
+        })
+    }
+
+    /// Parse a functions: block containing multiple function definitions
+    fn parse_functions_block(&mut self) -> Result<Vec<Function>, CompilerError> {
+        // Consume "functions" keyword
+        self.expect(&TokenKind::Functions)?;
+        self.skip_whitespace();
+
+        // Consume ":"
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Skip newline after colon
+        self.eat(&TokenKind::Newline);
+        self.skip_whitespace();
+
+        let mut functions = Vec::new();
+
+        // Determine the functions block's indentation level
+        // Functions should be indented one level from the "functions:" line (which is at level 0)
+        let functions_block_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            if let TokenKind::Indent(level) = self.current_kind() {
+                *level
+            } else {
+                1 // Default to level 1
+            }
+        } else {
+            1 // Default to level 1
+        };
+
+        // Parse functions until we hit a dedent or EOF
+        // Functions in a functions: block are indented relative to the "functions:" line
+        let mut break_outer = false;
+        while !self.is_at_end() {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Consume Dedent tokens within the functions block
+            // When we see a Dedent that exits the functions block (goes below our level),
+            // DO NOT consume it - let the parent handle it
+            while let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                let level = *dedent_level;
+                if level < functions_block_level {
+                    // This Dedent exits the functions block - DON'T consume it
+                    // Set flag to break from outer loop
+                    break_outer = true;
+                    break;
+                }
+                self.bump(); // Only consume dedents at or above our level
+                self.skip_whitespace();
+            }
+
+            if break_outer || self.is_at_end() {
+                break;
+            }
+
+            // CRITICAL: Check if we're at a top-level construct (end of functions block)
+            // This must happen BEFORE trying to parse as a function
+            if matches!(
+                self.current_kind(),
+                TokenKind::Start
+                    | TokenKind::Class
+                    | TokenKind::Functions
+                    | TokenKind::Tests
+                    | TokenKind::Import
+            ) {
+                break;
+            }
+
+            // Also check if we see a Dedent that would exit the block
+            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                if *dedent_level < functions_block_level {
+                    // We're at a Dedent that exits the functions block
+                    break;
+                }
+            }
+
+            // Check if we're still in the functions block (indented content)
+            // If we hit a non-indented line or EOF, we're done
+            match self.current_kind() {
+                TokenKind::Indent(_) => {
+                    // Still in the block, parse the next function
+                    self.skip_indentation();
+
+                    // Check if this line starts a function signature
+                    // Functions can optionally start with a return type or keyword that can be used as a name
+                    match self.current_kind() {
+                        TokenKind::Identifier(_)
+                        | TokenKind::Test
+                        | TokenKind::Unit
+                        | TokenKind::Error
+                        | TokenKind::Input
+                        | TokenKind::Step
+                        | TokenKind::Description => match self.parse_function_in_block() {
+                            Ok(func) => functions.push(func),
+                            Err(e) => return Err(e),
+                        },
+                        _ => {
+                            // Not a function, might be end of block
+                            break;
+                        }
+                    }
+                }
+                TokenKind::Identifier(_)
+                | TokenKind::Test
+                | TokenKind::Unit
+                | TokenKind::Error
+                | TokenKind::Input
+                | TokenKind::Step
+                | TokenKind::Description => {
+                    // Direct identifier or keyword without Indent token - still in functions block
+                    // This happens when functions are at the same indentation level
+                    match self.parse_function_in_block() {
+                        Ok(func) => functions.push(func),
+                        Err(e) => return Err(e),
+                    }
+                }
+                _ => {
+                    // No indentation = end of functions block
+                    break;
+                }
+            }
+        }
+
+        // DON'T consume trailing Dedents - let parse_program handle them
+        Ok(functions)
+    }
+
+    /// Parse a type apply block: TYPE:\n\tvar1 = value1\n\tvar2 = value2
+    /// Example: integer:\n\tcount = 0\n\tmaxSize = 100
+    fn parse_type_apply_block(&mut self) -> Result<Statement, CompilerError> {
+        let location = self.current().location.clone();
+
+        // Parse the type (integer, string, boolean, etc.)
+        let type_identifier = self.expect_identifier()?;
+        let type_ = match type_identifier.text.as_str() {
+            "integer" => Type::Integer,
+            "number" => Type::Number,
+            "string" => Type::String,
+            "boolean" => Type::Boolean,
+            "void" => Type::Void,
+            other => Type::Object(other.to_string()),
+        };
+
+        self.skip_whitespace();
+
+        // Expect ':'
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Skip newline after colon
+        self.eat(&TokenKind::Newline);
+        self.skip_whitespace();
+
+        // Parse indented assignments
+        let mut assignments = Vec::new();
+
+        // Determine the apply block's indentation level
+        let block_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            if let TokenKind::Indent(level) = self.current_kind() {
+                *level
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+
+        while !self.is_at_end() {
+            tracing::debug!(
+                before_skip_ws = ?self.current_kind(),
+                "BEFORE skip_whitespace in TypeApplyBlock loop"
+            );
+
+            self.skip_whitespace();
+
+            tracing::debug!(
+                after_skip_ws = ?self.current_kind(),
+                "AFTER skip_whitespace in TypeApplyBlock loop"
+            );
+
+            if self.is_at_end() {
+                break;
+            }
+
+            tracing::debug!(
+                current_token = ?self.current_kind(),
+                block_level = block_level,
+                "TypeApplyBlock loop iteration"
+            );
+
+            // Consume Dedent tokens - exit when we see one below our level
+            while let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                let level = *dedent_level;
+                self.bump();
+                self.skip_whitespace();
+                tracing::debug!(
+                    dedent_level = level,
+                    block_level = block_level,
+                    "Consumed Dedent token"
+                );
+                if level < block_level {
+                    // Exited the apply block
+                    tracing::debug!("Exiting TypeApplyBlock - dedent below block level");
+                    break;
+                }
+            }
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for Indent at our level
+            if matches!(self.current_kind(), TokenKind::Indent(level) if *level == block_level) {
+                tracing::debug!("Found Indent at block level, parsing assignment");
+                self.bump(); // consume Indent
+                self.skip_whitespace();
+
+                // Parse assignment: name = value
+                if let TokenKind::Identifier(var_name) = self.current_kind() {
+                    let var_name = var_name.clone();
+                    tracing::debug!(var_name = %var_name, "Parsing assignment");
+                    self.bump();
+                    self.skip_whitespace();
+
+                    // Expect '='
+                    self.expect(&TokenKind::Assign)?;
+                    self.skip_whitespace();
+
+                    // Parse the initializer expression
+                    let initializer = self.parse_expression()?;
+
+                    tracing::debug!(
+                        var_name = %var_name,
+                        after_parse_expr = ?self.current_kind(),
+                        "After parsing expression"
+                    );
+
+                    assignments.push(VariableAssignment {
+                        name: var_name.clone(),
+                        initializer: Some(initializer),
+                    });
+                    tracing::debug!(
+                        var_name = %var_name,
+                        current_token_after_push = ?self.current_kind(),
+                        "Successfully parsed assignment"
+                    );
+                } else {
+                    // Not an assignment, exit block
+                    tracing::debug!("Not an identifier, exiting TypeApplyBlock");
+                    break;
+                }
+            } else {
+                // No indentation or wrong level - exit block
+                tracing::debug!(current_token = ?self.current_kind(), "No indent at block level, exiting TypeApplyBlock");
+                break;
+            }
+        }
+
+        tracing::debug!(
+            type_ = ?type_,
+            assignments_count = assignments.len(),
+            "Parser created TypeApplyBlock statement"
+        );
+
+        Ok(Statement::TypeApplyBlock {
+            type_,
+            assignments,
+            location: Some(location),
+        })
+    }
+
+    /// Parse a constant apply block: constant:\n\tTYPE NAME = value\n\tTYPE NAME2 = value2
+    /// Example: constant:\n\tinteger MAX_USERS = 1000\n\tstring API_VERSION = "v2.1"
+    fn parse_constant_apply_block(&mut self) -> Result<Statement, CompilerError> {
+        let location = self.current().location.clone();
+
+        // Consume "constant" keyword
+        self.expect(&TokenKind::Constant)?;
+        self.skip_whitespace();
+
+        // Expect ':'
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Skip newline after colon
+        self.eat(&TokenKind::Newline);
+        self.skip_whitespace();
+
+        // Parse indented constant declarations
+        let mut constants = Vec::new();
+
+        // Determine the apply block's indentation level
+        let block_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            if let TokenKind::Indent(level) = self.current_kind() {
+                *level
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+
+        while !self.is_at_end() {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Consume Dedent tokens - exit when we see one below our level
+            while let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                let level = *dedent_level;
+                self.bump();
+                self.skip_whitespace();
+                if level < block_level {
+                    // Exited the apply block
+                    break;
+                }
+            }
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for Indent at our level
+            if matches!(self.current_kind(), TokenKind::Indent(level) if *level == block_level) {
+                self.bump(); // consume Indent
+                self.skip_whitespace();
+
+                // Parse constant declaration: TYPE NAME = value
+                // First token is the type
+                let type_identifier = self.expect_identifier()?;
+                let const_type = match type_identifier.text.as_str() {
+                    "integer" => Type::Integer,
+                    "number" => Type::Number,
+                    "string" => Type::String,
+                    "boolean" => Type::Boolean,
+                    other => Type::Object(other.to_string()),
+                };
+
+                self.skip_whitespace();
+
+                // Second token is the constant name
+                let name_token = self.expect_identifier()?;
+                let const_name = name_token.text.clone();
+
+                self.skip_whitespace();
+
+                // Expect '='
+                self.expect(&TokenKind::Assign)?;
+                self.skip_whitespace();
+
+                // Parse the value expression
+                let value = self.parse_expression()?;
+
+                constants.push(ConstantAssignment {
+                    type_: const_type,
+                    name: const_name,
+                    value,
+                });
+            } else {
+                // No indentation or wrong level - exit block
+                break;
+            }
+        }
+
+        Ok(Statement::ConstantApplyBlock {
+            constants,
+            location: Some(location),
+        })
+    }
+
+    /// Parse a function apply block: FUNCTION:\n\targ1\n\targ2
+    /// Example: print:\n\t"Hello"\n\t"World"
+    /// Equivalent to: print("Hello"), print("World")
+    fn parse_function_apply_block(&mut self) -> Result<Statement, CompilerError> {
+        let location = self.current().location.clone();
+
+        // Parse the function name (could be identifier or keyword like print/println)
+        let function_name = match self.current_kind() {
+            TokenKind::Identifier(_) => {
+                let token = self.bump();
+                token.text.clone()
+            }
+            TokenKind::Print => {
+                self.bump();
+                "print".to_string()
+            }
+            TokenKind::Println => {
+                self.bump();
+                "println".to_string()
+            }
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!(
+                        "Expected function name for apply block, found {:?}",
+                        self.current_kind()
+                    ),
+                    Some(self.current().location.clone()),
+                    None,
+                ));
+            }
+        };
+        self.skip_whitespace();
+
+        // Expect ':'
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Skip newline after colon
+        self.eat(&TokenKind::Newline);
+        self.skip_whitespace();
+
+        // Parse indented expressions
+        let mut expressions = Vec::new();
+
+        // Determine the apply block's indentation level
+        let block_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            if let TokenKind::Indent(level) = self.current_kind() {
+                *level
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+
+        while !self.is_at_end() {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Consume Dedent tokens - exit when we see one below our level
+            while let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                let level = *dedent_level;
+                self.bump();
+                self.skip_whitespace();
+                if level < block_level {
+                    // Exited the apply block
+                    break;
+                }
+            }
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for Indent at our level
+            if matches!(self.current_kind(), TokenKind::Indent(level) if *level == block_level) {
+                self.bump(); // consume Indent
+                self.skip_whitespace();
+
+                // Parse expression
+                let expr = self.parse_expression()?;
+                expressions.push(expr);
+            } else {
+                // No indentation or wrong level - exit block
+                break;
+            }
+        }
+
+        Ok(Statement::FunctionApplyBlock {
+            function_name,
+            expressions,
+            location: Some(location),
+        })
+    }
+
+    /// Parse a method apply block: OBJECT.METHOD:\n\targ1\n\targ2
+    /// Example: list.push:\n\titem1\n\titem2
+    /// Equivalent to: list.push(item1), list.push(item2)
+    fn parse_method_apply_block(&mut self) -> Result<Statement, CompilerError> {
+        let location = self.current().location.clone();
+
+        // Parse the object name
+        let object_name = self.expect_identifier()?.text.clone();
+        self.skip_whitespace();
+
+        // Parse method chain (object.method1.method2...)
+        let mut method_chain = Vec::new();
+        while self.eat(&TokenKind::Dot) {
+            self.skip_whitespace();
+            method_chain.push(self.expect_identifier()?.text.clone());
+            self.skip_whitespace();
+        }
+
+        // Expect ':'
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Skip newline after colon
+        self.eat(&TokenKind::Newline);
+        self.skip_whitespace();
+
+        // Parse indented expressions
+        let mut expressions = Vec::new();
+
+        // Determine the apply block's indentation level
+        let block_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            if let TokenKind::Indent(level) = self.current_kind() {
+                *level
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+
+        while !self.is_at_end() {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Consume Dedent tokens - exit when we see one below our level
+            while let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                let level = *dedent_level;
+                self.bump();
+                self.skip_whitespace();
+                if level < block_level {
+                    // Exited the apply block
+                    break;
+                }
+            }
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for Indent at our level
+            if matches!(self.current_kind(), TokenKind::Indent(level) if *level == block_level) {
+                self.bump(); // consume Indent
+                self.skip_whitespace();
+
+                // Parse expression
+                let expr = self.parse_expression()?;
+                expressions.push(expr);
+            } else {
+                // No indentation or wrong level - exit block
+                break;
+            }
+        }
+
+        Ok(Statement::MethodApplyBlock {
+            object_name,
+            method_chain,
+            expressions,
+            location: Some(location),
+        })
+    }
+
+    /// Parse a single function within a functions: block
+    /// Functions in a block have the format: [return_type] name(params)
+    fn parse_function_in_block(&mut self) -> Result<Function, CompilerError> {
+        let start_location = self.current().location.clone();
+
+        // Parse optional return type (could be void, integer, string, etc.)
+        let first_token = self.expect_name()?;
+        let first_name = first_token.text.clone();
+
+        self.skip_whitespace();
+
+        // Check if next token is a name/identifier (function name) or left paren (no return type)
+        let (return_type, func_name) = if !self.check(&TokenKind::LeftParen) {
+            // First token was return type, next is function name
+            let return_type = match first_name.as_str() {
+                "void" => Type::Void,
+                "integer" => Type::Integer,
+                "number" => Type::Number,
+                "string" => Type::String,
+                "boolean" => Type::Boolean,
+                _ => Type::Object(first_name.clone()),
+            };
+
+            let name_token = self.expect_name()?;
+            (return_type, name_token.text.clone())
+        } else {
+            // No return type specified, defaults to void
+            // First token is the function name
+            (Type::Void, first_name)
+        };
+
+        self.skip_whitespace();
+
+        // Parse parameters: (param1, param2, ...)
+        self.expect(&TokenKind::LeftParen)?;
+        self.skip_whitespace();
+
+        let mut parameters = Vec::new();
+        if !self.check(&TokenKind::RightParen) {
+            loop {
+                // Parse parameter: type name [= defaultValue]
+                let type_token = self.expect_identifier()?;
+                let param_type = match type_token.text.as_str() {
+                    "integer" => Type::Integer,
+                    "number" => Type::Number,
+                    "string" => Type::String,
+                    "boolean" => Type::Boolean,
+                    other => Type::Object(other.to_string()),
+                };
+
+                self.skip_whitespace();
+                let name_token = self.expect_name()?;
+                let param_name = name_token.text.clone();
+
+                self.skip_whitespace();
+
+                // Check for default value (e.g., name = defaultValue)
+                let default_value = if self.eat(&TokenKind::Assign) {
+                    self.skip_whitespace();
+                    Some(self.parse_expression()?)
+                } else {
+                    None
+                };
+
+                parameters.push(Parameter {
+                    name: param_name,
+                    type_: param_type,
+                    default_value,
+                });
+
+                self.skip_whitespace();
+
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+                self.skip_whitespace();
+            }
+        }
+
+        self.expect(&TokenKind::RightParen)?;
+        self.skip_whitespace();
+        // DON'T skip indentation - let parse_block() handle it
+
+        // Parse function body
+        let body = self.parse_block()?;
+
+        Ok(Function {
+            name: func_name,
+            type_parameters: Vec::new(),
+            type_constraints: Vec::new(),
+            parameters,
+            return_type,
+            body,
+            description: None,
+            syntax: FunctionSyntax::Simple,
+            visibility: Visibility::Public,
+            modifier: FunctionModifier::None,
+            location: Some(start_location),
+        })
+    }
+
+    fn parse_class(&mut self) -> Result<Class, CompilerError> {
+        self.expect(&TokenKind::Class)?;
+        self.skip_whitespace();
+
+        let name_token = self.expect_name()?;
+        let name = name_token.text.clone();
+        let location = name_token.location.clone();
+
+        self.skip_whitespace();
+
+        // Base class (optional, using "is" keyword)
+        let base_class = if self.eat(&TokenKind::Is) {
+            self.skip_whitespace();
+            let parent_token = self.expect_identifier()?;
+            Some(parent_token.text.clone())
+        } else {
+            None
+        };
+
+        self.skip_whitespace();
+        // DON'T skip indentation here - let parse_class_body handle it
+
+        // Class body
+        let (fields, methods, constructor) = self.parse_class_body()?;
+
+        Ok(Class {
+            name,
+            type_parameters: Vec::new(),
+            description: None,
+            base_class,
+            base_class_type_args: Vec::new(),
+            fields,
+            methods,
+            constructor,
+            location: Some(location),
+        })
+    }
+
+    fn parse_class_body(
+        &mut self,
+    ) -> Result<(Vec<Field>, Vec<Function>, Option<Constructor>), CompilerError> {
+        let mut fields = Vec::new();
+        let mut methods = Vec::new();
+        let mut constructor = None;
+
+        while !self.is_at_end()
+            && !matches!(
+                self.current_kind(),
+                TokenKind::Class | TokenKind::Function | TokenKind::Start
+            )
+        {
+            self.skip_whitespace();
+            self.skip_indentation();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check what comes next in the class body
+            match self.current_kind() {
+                TokenKind::Constructor => {
+                    // Parse constructor
+                    constructor = Some(self.parse_constructor()?);
+                }
+                TokenKind::Functions => {
+                    // Parse functions: block
+                    self.bump(); // consume 'functions'
+                    self.skip_whitespace();
+                    self.expect(&TokenKind::Colon)?;
+                    self.skip_whitespace();
+
+                    // Determine the functions block indentation level
+                    let functions_indent_level =
+                        if matches!(self.current_kind(), TokenKind::Indent(_)) {
+                            if let TokenKind::Indent(level) = self.current_kind() {
+                                *level
+                            } else {
+                                1
+                            }
+                        } else {
+                            1
+                        };
+
+                    // Parse methods in the functions block
+                    while !self.is_at_end() {
+                        self.skip_whitespace();
+
+                        if self.is_at_end() {
+                            break;
+                        }
+
+                        // Check for Dedent that exits the functions block
+                        if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                            if *dedent_level < functions_indent_level {
+                                // This Dedent exits the functions block - DON'T consume it
+                                break;
+                            }
+                            // Dedent at our level or higher - consume it and continue
+                            self.bump();
+                            self.skip_whitespace();
+                        }
+
+                        // Skip Indent tokens at our level
+                        self.skip_indentation();
+
+                        if self.is_at_end() {
+                            break;
+                        }
+
+                        // Check for end of functions block (top-level declarations)
+                        if matches!(
+                            self.current_kind(),
+                            TokenKind::Class
+                                | TokenKind::Start
+                                | TokenKind::Function
+                                | TokenKind::Tests
+                        ) {
+                            break;
+                        }
+
+                        // Parse method (return_type name(params))
+                        if matches!(self.current_kind(), TokenKind::Identifier(_)) {
+                            match self.parse_function_in_block() {
+                                Ok(func) => methods.push(func),
+                                Err(e) => {
+                                    // Log the error but don't break - try to continue
+                                    // This allows recovery from individual method parse errors
+                                    eprintln!("Warning: Failed to parse method: {}", e);
+                                    break;
+                                }
+                            }
+                        } else {
+                            // No more methods to parse
+                            break;
+                        }
+                    }
+                }
+                TokenKind::Identifier(_) => {
+                    // Could be a field (type name) - parse it
+                    fields.push(self.parse_field()?);
+                }
+                TokenKind::Dedent(level) => {
+                    // Dedent within the class body - consume it and continue
+                    // Only exit if we dedent to level 0 or below (exiting the class)
+                    if *level == 0 {
+                        break; // Exit class body
+                    }
+                    // Otherwise, consume the Dedent and continue parsing the class body
+                    self.bump();
+                }
+                _ => {
+                    // Unknown token, exit class body
+                    break;
+                }
+            }
+        }
+
+        Ok((fields, methods, constructor))
+    }
+
+    fn parse_field(&mut self) -> Result<Field, CompilerError> {
+        // Parse type first (e.g., "string", "integer", "list<integer>")
+        let type_ = self.parse_type()?;
+
+        self.skip_whitespace();
+
+        // Parse field name
+        let name_token = self.expect_identifier()?;
+        let name = name_token.text.clone();
+
+        self.skip_whitespace();
+
+        // Optional default value
+        let default_value = if self.eat(&TokenKind::Assign) {
+            self.skip_whitespace();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
+        Ok(Field {
+            name,
+            type_,
+            visibility: Visibility::Public,
+            is_static: false,
+            default_value,
+        })
+    }
+
+    fn parse_constructor(&mut self) -> Result<Constructor, CompilerError> {
+        let constructor_token = self.expect(&TokenKind::Constructor)?;
+        let location = constructor_token.location.clone();
+
+        self.skip_whitespace();
+
+        // Parse parameter list (type name syntax, like functions: block)
+        self.expect(&TokenKind::LeftParen)?;
+        self.skip_whitespace();
+
+        let mut parameters = Vec::new();
+        if !self.check(&TokenKind::RightParen) {
+            loop {
+                // Parse parameter: type name [= defaultValue]
+                let type_token = self.expect_identifier()?;
+                let param_type = match type_token.text.as_str() {
+                    "integer" => Type::Integer,
+                    "number" => Type::Number,
+                    "string" => Type::String,
+                    "boolean" => Type::Boolean,
+                    other => Type::Object(other.to_string()),
+                };
+
+                self.skip_whitespace();
+                let name_token = self.expect_name()?;
+                let param_name = name_token.text.clone();
+
+                self.skip_whitespace();
+
+                // Check for default value (e.g., name = defaultValue)
+                let default_value = if self.eat(&TokenKind::Assign) {
+                    self.skip_whitespace();
+                    Some(self.parse_expression()?)
+                } else {
+                    None
+                };
+
+                parameters.push(Parameter {
+                    name: param_name,
+                    type_: param_type,
+                    default_value,
+                });
+
+                self.skip_whitespace();
+
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+                self.skip_whitespace();
+            }
+        }
+
+        self.expect(&TokenKind::RightParen)?;
+        self.skip_whitespace();
+        // DON'T skip indentation - let parse_block() handle it
+
+        // Parse constructor body
+        let body = self.parse_block()?;
+
+        Ok(Constructor {
+            parameters,
+            body,
+            location: Some(location),
+        })
+    }
+
+    fn parse_method(&mut self) -> Result<Function, CompilerError> {
+        // Methods are just functions within a class
+        self.parse_function()
+    }
+
+    fn parse_tests_block(&mut self) -> Result<Vec<TestCase>, CompilerError> {
+        self.expect(&TokenKind::Tests)?;
+        self.skip_whitespace();
+
+        // Expect colon after tests keyword
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        let mut tests = Vec::new();
+
+        // Determine the tests block's indentation level
+        let tests_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            if let TokenKind::Indent(level) = self.current_kind() {
+                *level
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+
+        // Parse test cases until we hit a dedent or EOF
+        while !self.is_at_end() {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for Dedent that exits the tests block
+            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                if *dedent_level < tests_indent_level {
+                    // This Dedent exits the tests block - DON'T consume it
+                    break;
+                }
+                // Dedent at our level or higher - consume it and continue
+                self.bump();
+                self.skip_whitespace();
+            }
+
+            // Skip Indent tokens at our level
+            if matches!(self.current_kind(), TokenKind::Indent(level) if *level == tests_indent_level)
+            {
+                self.bump();
+                self.skip_whitespace();
+            }
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for end of tests block (top-level declarations)
+            if matches!(
+                self.current_kind(),
+                TokenKind::Start | TokenKind::Functions | TokenKind::Class | TokenKind::Import
+            ) {
+                break;
+            }
+
+            // Parse test case
+            if let Ok(test) = self.parse_test() {
+                tests.push(test);
+            } else {
+                // Skip line on error
+                while !matches!(self.current_kind(), TokenKind::Newline | TokenKind::Eof) {
+                    self.bump();
+                }
+            }
+        }
+
+        Ok(tests)
+    }
+
+    fn parse_test(&mut self) -> Result<TestCase, CompilerError> {
+        let start_location = self.current().location.clone();
+
+        // Check for string literal description (named test)
+        let description = if matches!(self.current_kind(), TokenKind::StringLiteral(_)) {
+            if let TokenKind::StringLiteral(desc) = self.current_kind() {
+                let desc_text = desc.clone();
+                self.bump(); // consume string
+                self.skip_whitespace();
+
+                // Expect colon after description
+                self.expect(&TokenKind::Colon)?;
+                self.skip_whitespace();
+
+                Some(desc_text)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Parse test expression
+        let test_expression = self.parse_expression()?;
+        self.skip_whitespace();
+
+        // Expect '=' for expected value
+        self.expect(&TokenKind::Assign)?;
+        self.skip_whitespace();
+
+        // Parse expected value
+        let expected_value = self.parse_expression()?;
+
+        Ok(TestCase {
+            description,
+            test_expression,
+            expected_value,
+            location: Some(start_location),
+        })
+    }
+
+    fn parse_import(&mut self) -> Result<Vec<ImportItem>, CompilerError> {
+        self.expect(&TokenKind::Import)?;
+        self.skip_whitespace();
+
+        let mut import_items = Vec::new();
+
+        // Check for import: block syntax vs. single import
+        if self.eat(&TokenKind::Colon) {
+            // Block syntax: import:\n\tmath\n\tstring.concat\n\t...
+            self.skip_whitespace();
+
+            // Parse indented import items
+            while !self.is_at_end() {
+                self.skip_whitespace();
+
+                // Check for indentation or end of block
+                if matches!(self.current_kind(), TokenKind::Indent(_)) {
+                    self.skip_indentation();
+
+                    // Parse import item
+                    import_items.push(self.parse_import_item()?);
+                    self.skip_whitespace();
+                } else if matches!(self.current_kind(), TokenKind::Dedent(_)) {
+                    // End of import block
+                    break;
+                } else if matches!(
+                    self.current_kind(),
+                    TokenKind::Functions
+                        | TokenKind::Class
+                        | TokenKind::Start
+                        | TokenKind::Tests
+                        | TokenKind::Private
+                ) {
+                    // Hit next top-level block
+                    break;
+                } else {
+                    // Not indented and not a dedent = end of block
+                    break;
+                }
+            }
+        } else {
+            // Old syntax: import math (single line, comma-separated)
+            import_items.push(self.parse_import_item()?);
+            self.skip_whitespace();
+
+            // Parse additional import items if present
+            while self.eat(&TokenKind::Comma) {
+                self.skip_whitespace();
+                import_items.push(self.parse_import_item()?);
+                self.skip_whitespace();
+            }
+        }
+
+        Ok(import_items)
+    }
+
+    /// Parse a single import item with support for "Module.symbol" syntax
+    /// Examples:
+    ///   Math → whole module
+    ///   math.sqrt → specific symbol
+    ///   Utils as U → module alias
+    ///   Json.decode as jd → symbol alias
+    fn parse_import_item(&mut self) -> Result<ImportItem, CompilerError> {
+        let mut name = String::new();
+
+        // Parse first identifier
+        let first_token = self.expect_identifier()?;
+        name.push_str(&first_token.text);
+
+        self.skip_whitespace();
+
+        // Check for dot notation (Module.symbol)
+        if self.eat(&TokenKind::Dot) {
+            name.push('.');
+            self.skip_whitespace();
+
+            let symbol_token = self.expect_identifier()?;
+            name.push_str(&symbol_token.text);
+
+            self.skip_whitespace();
+        }
+
+        // Check for alias (as ...)
+        let alias = if let TokenKind::Identifier(id) = self.current_kind() {
+            if id == "as" {
+                self.bump(); // consume 'as'
+                self.skip_whitespace();
+                let alias_token = self.expect_identifier()?;
+                Some(alias_token.text.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(ImportItem { name, alias })
+    }
+
+    /// Parse a private: block listing function names to mark as private
+    /// Example: private:\n\thelperFunction\n\tinternalProcessor
+    fn parse_private(&mut self) -> Result<Statement, CompilerError> {
+        let private_token = self.expect(&TokenKind::Private)?;
+        let location = private_token.location.clone();
+
+        self.skip_whitespace();
+
+        // Expect colon after private keyword
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Skip newline after colon
+        self.eat(&TokenKind::Newline);
+        self.skip_whitespace();
+
+        let mut items = Vec::new();
+
+        // Determine the private block's indentation level
+        let block_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            if let TokenKind::Indent(level) = self.current_kind() {
+                *level
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+
+        // Parse indented function names
+        while !self.is_at_end() {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for Dedent that exits the private block
+            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                if *dedent_level < block_indent_level {
+                    // This Dedent exits the private block - DON'T consume it
+                    break;
+                }
+                // Dedent at our level or higher - consume it and continue
+                self.bump();
+                self.skip_whitespace();
+            }
+
+            // Check for indentation or end of block
+            if matches!(self.current_kind(), TokenKind::Indent(_)) {
+                self.skip_indentation();
+
+                // Parse function name (identifier)
+                if let TokenKind::Identifier(name) = self.current_kind() {
+                    let name = name.clone();
+                    self.bump();
+
+                    // Create an Expression statement with the function name as a Variable
+                    items.push(Statement::Expression {
+                        expr: Expression::Variable(name),
+                        location: Some(self.current().location.clone()),
+                    });
+                }
+                self.skip_whitespace();
+            } else if matches!(
+                self.current_kind(),
+                TokenKind::Functions
+                    | TokenKind::Class
+                    | TokenKind::Start
+                    | TokenKind::Tests
+                    | TokenKind::Import
+            ) {
+                // Hit next top-level block
+                break;
+            } else {
+                // Not indented and not a dedent = end of block
+                break;
+            }
+        }
+
+        Ok(Statement::PrivateBlock {
+            items,
+            location: Some(location),
+        })
+    }
+
+    fn parse_parameter_list(&mut self) -> Result<Vec<Parameter>, CompilerError> {
+        let mut parameters = Vec::new();
+
+        self.skip_whitespace();
+
+        while !self.check(&TokenKind::RightParen) && !self.is_at_end() {
+            parameters.push(self.parse_parameter()?);
+            self.skip_whitespace();
+
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+            self.skip_whitespace();
+        }
+
+        self.expect(&TokenKind::RightParen)?;
+
+        Ok(parameters)
+    }
+
+    fn parse_parameter(&mut self) -> Result<Parameter, CompilerError> {
+        let name_token = self.expect_identifier()?;
+        let name = name_token.text.clone();
+
+        self.skip_whitespace();
+
+        // Type annotation (required for parameters)
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+        let type_ = self.parse_type()?;
+
+        self.skip_whitespace();
+
+        // Optional default value (e.g., name: type = defaultValue)
+        let default_value = if self.eat(&TokenKind::Assign) {
+            self.skip_whitespace();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
+        Ok(Parameter {
+            name,
+            type_,
+            default_value,
+        })
+    }
+
+    fn parse_type(&mut self) -> Result<Type, CompilerError> {
+        let type_token = self.expect_identifier()?;
+
+        // Check for generic type parameters (e.g., list<integer>, matrix<number>)
+        // and precision modifiers (e.g., integer:8, number:32)
+        let base_type = match type_token.text.as_str() {
+            "integer" => Type::Integer,
+            "number" => Type::Number,
+            "string" => Type::String,
+            "boolean" => Type::Boolean,
+            "void" => Type::Void,
+            "any" => Type::Any,
+            "list" => {
+                // Expect list<Type>
+                self.skip_whitespace();
+                if matches!(self.current_kind(), TokenKind::Less) {
+                    self.bump(); // consume '<'
+                    self.skip_whitespace();
+                    let inner_type = self.parse_type()?;
+                    self.skip_whitespace();
+                    self.expect(&TokenKind::Greater)?; // expect '>'
+                    Type::List(Box::new(inner_type))
+                } else {
+                    // list without generic parameter - treat as Object
+                    Type::Object("list".to_string())
+                }
+            }
+            "matrix" => {
+                // Expect matrix<Type>
+                self.skip_whitespace();
+                if matches!(self.current_kind(), TokenKind::Less) {
+                    self.bump(); // consume '<'
+                    self.skip_whitespace();
+                    let inner_type = self.parse_type()?;
+                    self.skip_whitespace();
+                    self.expect(&TokenKind::Greater)?; // expect '>'
+                    Type::Matrix(Box::new(inner_type))
+                } else {
+                    // matrix without generic parameter - treat as Object
+                    Type::Object("matrix".to_string())
+                }
+            }
+            "pairs" => {
+                // Expect pairs<Type, Type>
+                self.skip_whitespace();
+                if matches!(self.current_kind(), TokenKind::Less) {
+                    self.bump(); // consume '<'
+                    self.skip_whitespace();
+                    let first_type = self.parse_type()?;
+                    self.skip_whitespace();
+                    self.expect(&TokenKind::Comma)?; // expect ','
+                    self.skip_whitespace();
+                    let second_type = self.parse_type()?;
+                    self.skip_whitespace();
+                    self.expect(&TokenKind::Greater)?; // expect '>'
+                    Type::Pairs(Box::new(first_type), Box::new(second_type))
+                } else {
+                    // pairs without generic parameters - treat as Object
+                    Type::Object("pairs".to_string())
+                }
+            }
+            other => Type::Object(other.to_string()),
+        };
+
+        // Check for precision modifiers (e.g., integer:8, number:32u)
+        if self.check(&TokenKind::Colon) {
+            self.bump(); // consume ':'
+
+            // Expect an integer literal for the bit size
+            if let TokenKind::IntegerLiteral(size) = self.current_kind() {
+                let bits = *size as u8;
+                self.bump(); // consume the size
+
+                // Check for 'u' suffix for unsigned
+                let unsigned = if let TokenKind::Identifier(suffix) = self.current_kind() {
+                    if suffix == "u" {
+                        self.bump(); // consume 'u'
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                // Apply precision modifier based on base type
+                match base_type {
+                    Type::Integer => Ok(Type::IntegerSized { bits, unsigned }),
+                    Type::Number => Ok(Type::NumberSized { bits }),
+                    _ => Err(CompilerError::parse_error(
+                        format!("Precision modifiers are only supported for integer and number types, not {:?}", base_type),
+                        Some(self.current().location.clone()),
+                        Some("Use :bits syntax only with integer or number types".to_string()),
+                    ))
+                }
+            } else {
+                Err(CompilerError::parse_error(
+                    "Expected integer literal for precision modifier".to_string(),
+                    Some(self.current().location.clone()),
+                    Some("Precision modifiers should be in format 'type:bits' (e.g., 'integer:8', 'number:32')".to_string()),
+                ))
+            }
+        } else {
+            Ok(base_type)
+        }
+    }
+
+    /// Parse a block of statements at the current indentation level
+    /// Returns when it encounters a Dedent that exits this block level
+    fn parse_block(&mut self) -> Result<Vec<Statement>, CompilerError> {
+        let mut statements = Vec::new();
+
+        // Consume the leading Indent token to determine our indentation level
+        // If there's no Indent, we're at level 0 (top level of a function)
+        let block_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            if let TokenKind::Indent(level) = self.current_kind() {
+                let level_value = *level;
+                self.bump(); // Consume the Indent token
+                level_value
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        while !self.is_at_end() {
+            self.skip_whitespace();
+
+            // Skip any Indent tokens at our level (from line beginnings)
+            // These indicate continued statements at the same indentation level
+            while matches!(self.current_kind(), TokenKind::Indent(level) if *level == block_indent_level)
+            {
+                self.bump();
+                self.skip_whitespace();
+            }
+
+            // Check for block terminators
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check if we've encountered a Dedent token
+            // A Dedent(N) token means "we're now at indentation level N"
+            // We should exit this block if the dedent takes us BELOW our level
+            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                if *dedent_level < block_indent_level {
+                    // We've exited this block's scope - DON'T consume the Dedent
+                    // Let the parent handle it
+                    break;
+                }
+                // Dedent at our level or higher - consume it and continue
+                // (This shouldn't happen in practice, but handle it gracefully)
+                self.bump();
+                continue;
+            }
+
+            // Top-level declarations end the current block
+            // Note: TokenKind::Test is NOT included here because "test" can be used as a
+            // function name inside blocks (e.g., calling a function named "test()")
+            if matches!(
+                self.current_kind(),
+                TokenKind::Function | TokenKind::Class | TokenKind::Functions
+            ) {
+                break;
+            }
+
+            match self.parse_statement() {
+                Ok(stmt) => statements.push(stmt),
+                Err(e) => {
+                    self.errors.push(e);
+                    self.bump(); // Skip error token
+                }
+            }
+        }
+
+        Ok(statements)
+    }
+
+    fn parse_statement(&mut self) -> Result<Statement, CompilerError> {
+        self.skip_whitespace();
+
+        match self.current_kind() {
+            TokenKind::Return => self.parse_return(),
+            TokenKind::If => self.parse_if(),
+            TokenKind::While => self.parse_while(),
+            TokenKind::For => self.parse_for(),
+            TokenKind::Iterate => self.parse_iterate(),
+            TokenKind::Print => {
+                // Check if this is a print apply block: print:
+                let saved_cursor = self.cursor;
+                self.bump(); // consume print
+                self.skip_whitespace();
+                if self.check(&TokenKind::Colon) {
+                    // This is a print apply block
+                    self.cursor = saved_cursor; // restore to print token
+                    return self.parse_function_apply_block();
+                }
+                // Not an apply block, restore and parse as regular print
+                self.cursor = saved_cursor;
+                self.parse_print()
+            }
+            TokenKind::Println => {
+                // Check if this is a println apply block: println:
+                let saved_cursor = self.cursor;
+                self.bump(); // consume println
+                self.skip_whitespace();
+                if self.check(&TokenKind::Colon) {
+                    // This is a println apply block
+                    self.cursor = saved_cursor; // restore to println token
+                    return self.parse_function_apply_block();
+                }
+                // Not an apply block, restore and parse as regular println
+                self.cursor = saved_cursor;
+                self.parse_println()
+            }
+            TokenKind::Error => self.parse_error_statement(),
+            TokenKind::Constant => self.parse_constant_apply_block(),
+            // Allow Test keyword to be used as a class/type name
+            TokenKind::Test => {
+                let first_name = "Test".to_string();
+                let first_location = self.current().location.clone();
+                self.bump(); // consume Test token
+                self.skip_whitespace();
+
+                // Check if this is a variable declaration (Test varName = ...)
+                if let TokenKind::Identifier(var_name) = self.current_kind() {
+                    let var_name = var_name.clone();
+                    let var_location = self.current().location.clone();
+                    self.bump(); // consume variable name
+                    self.skip_whitespace();
+
+                    // Check for initializer
+                    let initializer = if self.eat(&TokenKind::Assign) {
+                        self.skip_whitespace();
+                        Some(self.parse_expression()?)
+                    } else {
+                        None
+                    };
+
+                    return Ok(Statement::VariableDecl {
+                        name: var_name,
+                        type_: Type::Object(first_name), // Test is a class type
+                        initializer,
+                        location: Some(var_location),
+                    });
+                } else {
+                    // Not a variable declaration, might be a function call like Test()
+                    // Move cursor back to reparse as expression
+                    self.cursor -= 1;
+                    let expr = self.parse_expression()?;
+                    return Ok(Statement::Expression {
+                        expr,
+                        location: Some(first_location),
+                    });
+                }
+            }
+            TokenKind::Identifier(name) => {
+                // Could be:
+                // 1. Type name for variable declaration (e.g., "integer x = 42" or "list<integer> nums = [1,2,3]")
+                // 2. Variable assignment (e.g., "x = 42")
+                // 3. Expression statement (e.g., "someFunction()" or "x.toString()")
+
+                let first_name = name.clone();
+                let first_location = self.current().location.clone();
+
+                // Check if this is a type name (for variable declaration)
+                let is_type_keyword = matches!(
+                    first_name.as_str(),
+                    "integer"
+                        | "number"
+                        | "string"
+                        | "boolean"
+                        | "void"
+                        | "list"
+                        | "matrix"
+                        | "pairs"
+                        | "any"
+                );
+
+                if is_type_keyword {
+                    // Check if this is an apply block (TYPE:) or a variable declaration (TYPE var or TYPE:precision var)
+                    // Save current position (we're AT the type identifier)
+                    let saved_cursor = self.cursor;
+
+                    self.bump(); // consume type identifier
+                    self.skip_whitespace();
+
+                    if self.check(&TokenKind::Colon) {
+                        // Could be either:
+                        // 1. TYPE: apply block (followed by newline/indent)
+                        // 2. TYPE:precision variable declaration (followed by integer literal)
+
+                        // Look ahead to distinguish
+                        self.bump(); // consume colon
+                        self.skip_whitespace();
+
+                        // Check what follows the colon
+                        let is_precision_modifier =
+                            matches!(self.current_kind(), TokenKind::IntegerLiteral(_));
+
+                        // Restore cursor to the original position (at type identifier)
+                        self.cursor = saved_cursor;
+
+                        if is_precision_modifier {
+                            // This is a variable declaration with precision modifier: TYPE:bits var = val
+                            // Fall through to parse as variable declaration
+                        } else {
+                            // This is a TYPE: apply block
+                            return self.parse_type_apply_block();
+                        }
+                    } else {
+                        // Not a colon - this is a regular variable declaration
+                        // Restore cursor to the original position
+                        self.cursor = saved_cursor;
+                    }
+
+                    // At this point, cursor is positioned AT the type identifier
+                    // Parse the type (which will handle precision modifiers)
+                    let type_ = self.parse_type()?;
+                    self.skip_whitespace();
+
+                    // Next token should be the variable name
+                    if let TokenKind::Identifier(var_name) = self.current_kind() {
+                        let var_name = var_name.clone();
+                        let var_location = self.current().location.clone();
+                        self.bump(); // consume variable name
+                        self.skip_whitespace();
+
+                        // Check for initializer
+                        let initializer = if self.eat(&TokenKind::Assign) {
+                            self.skip_whitespace();
+                            Some(self.parse_expression()?)
+                        } else {
+                            None
+                        };
+
+                        return Ok(Statement::VariableDecl {
+                            name: var_name,
+                            type_,
+                            initializer,
+                            location: Some(var_location),
+                        });
+                    } else {
+                        return Err(CompilerError::parse_error(
+                            "Expected variable name after type".to_string(),
+                            Some(self.current().location.clone()),
+                            None,
+                        ));
+                    }
+                }
+
+                // Not a type keyword - could be:
+                // 1. Function/method apply block (e.g., "print:" or "obj.method:")
+                // 2. Custom class name for variable declaration (e.g., "Test varName = ...")
+                // 3. Variable assignment (e.g., "x = 42")
+                // 4. Expression statement (e.g., "someFunction()" or "x.toString()")
+
+                // Peek ahead to see if this is an apply block
+                self.bump(); // consume identifier
+                self.skip_whitespace();
+
+                // Check for apply block: identifier: or identifier.method:
+                if self.check(&TokenKind::Colon) {
+                    // This is a function apply block: FUNCTION:
+                    // Move cursor back to re-parse the identifier
+                    self.cursor -= 1;
+                    return self.parse_function_apply_block();
+                } else if self.check(&TokenKind::Dot) {
+                    // Could be:
+                    // 1. Method apply block: OBJECT.METHOD:
+                    // 2. Property assignment: OBJECT.PROPERTY = VALUE
+                    // 3. Expression statement: OBJECT.METHOD()
+                    // Need to look ahead to see which one
+                    // Save current position (after the object name)
+                    let saved_cursor = self.cursor;
+
+                    // Try to parse property chain to see if it ends with ':' or '='
+                    let mut has_colon = false;
+                    let mut has_assign = false;
+                    while self.eat(&TokenKind::Dot) {
+                        self.skip_whitespace();
+                        if matches!(self.current_kind(), TokenKind::Identifier(_)) {
+                            self.bump(); // consume property name
+                            self.skip_whitespace();
+                            if self.check(&TokenKind::Colon) {
+                                has_colon = true;
+                                break;
+                            } else if self.check(&TokenKind::Assign) {
+                                has_assign = true;
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Restore cursor
+                    self.cursor = saved_cursor;
+
+                    if has_colon {
+                        // This is a method apply block: OBJECT.METHOD:
+                        // Move cursor back to re-parse from the object name
+                        self.cursor -= 1;
+                        return self.parse_method_apply_block();
+                    } else if has_assign {
+                        // This is a property assignment: OBJECT.PROPERTY = VALUE
+                        // Move cursor back to the identifier
+                        self.cursor -= 1;
+
+                        // Parse the object part
+                        let object = self.parse_expression()?;
+                        self.skip_whitespace();
+
+                        // Extract property name from the parsed expression
+                        // We need to check if it's a PropertyAccess
+                        if let Expression::PropertyAccess { property, .. } = &object {
+                            let property_name = property.clone();
+
+                            // Consume the = token
+                            if self.eat(&TokenKind::Assign) {
+                                self.skip_whitespace();
+                                let value = self.parse_expression()?;
+
+                                // Create PropertyAssignment expression wrapped in Statement::Expression
+                                return Ok(Statement::Expression {
+                                    expr: Expression::PropertyAssignment {
+                                        object: if let Expression::PropertyAccess {
+                                            object, ..
+                                        } = object
+                                        {
+                                            object
+                                        } else {
+                                            Box::new(Expression::Variable(first_name.clone()))
+                                        },
+                                        property: property_name,
+                                        value: Box::new(value),
+                                        location: first_location.clone(),
+                                    },
+                                    location: Some(first_location),
+                                });
+                            }
+                        }
+
+                        return Err(CompilerError::parse_error(
+                            "Expected '=' after property access".to_string(),
+                            Some(self.current().location.clone()),
+                            None,
+                        ));
+                    }
+                    // Not an apply block or property assignment, continue with regular parsing
+                }
+
+                // Check if next token is an Identifier or keyword that can be used as a variable name
+                // (e.g., "Test test" where "test" is a keyword but can be used as a variable name)
+                let next_could_be_var_name = matches!(
+                    self.current_kind(),
+                    TokenKind::Identifier(_) | TokenKind::Test | TokenKind::Error | TokenKind::Unit
+                );
+
+                if next_could_be_var_name {
+                    // Next token is an Identifier - this could be a variable declaration
+                    // with a custom class type: ClassName varName = ...
+                    // Move cursor back to re-parse as type
+                    self.cursor -= 1;
+
+                    // Parse the type
+                    let type_ = self.parse_type()?;
+                    self.skip_whitespace();
+
+                    // Next token should be the variable name (could be identifier or keyword)
+                    let var_name = match self.current_kind() {
+                        TokenKind::Identifier(name) => name.clone(),
+                        TokenKind::Test => "test".to_string(),
+                        TokenKind::Error => "error".to_string(),
+                        TokenKind::Unit => "unit".to_string(),
+                        _ => {
+                            return Err(CompilerError::parse_error(
+                                "Expected variable name after custom type".to_string(),
+                                Some(self.current().location.clone()),
+                                None,
+                            ));
+                        }
+                    };
+                    let var_location = self.current().location.clone();
+                    self.bump(); // consume variable name
+                    self.skip_whitespace();
+
+                    // Check for initializer
+                    let initializer = if self.eat(&TokenKind::Assign) {
+                        self.skip_whitespace();
+                        Some(self.parse_expression()?)
+                    } else {
+                        None
+                    };
+
+                    return Ok(Statement::VariableDecl {
+                        name: var_name,
+                        type_,
+                        initializer,
+                        location: Some(var_location),
+                    });
+                } else if self.check(&TokenKind::Assign) {
+                    // This is a simple assignment: VAR = EXPR
+                    self.bump(); // consume =
+                    self.skip_whitespace();
+                    let value = self.parse_expression()?;
+
+                    return Ok(Statement::Assignment {
+                        target: first_name,
+                        value,
+                        location: Some(first_location),
+                    });
+                } else if self.check(&TokenKind::LeftBracket) {
+                    // This could be an indexed assignment: VAR[index] = value
+                    // or an expression statement: VAR[index]
+                    // Parse the full LHS expression first
+                    self.cursor -= 1; // Go back to the identifier
+
+                    let lhs_expr = self.parse_expression()?;
+                    self.skip_whitespace();
+
+                    // Check if this is an assignment
+                    if self.check(&TokenKind::Assign) {
+                        self.bump(); // consume =
+                        self.skip_whitespace();
+                        let _value = self.parse_expression()?;
+
+                        // TODO: Indexed assignments (array[index] = value) are not yet supported in the AST
+                        // Need to add Statement::IndexedAssignment or extend Statement::Assignment
+                        return Err(CompilerError::parse_error(
+                            "Indexed assignments (e.g., array[index] = value) are not yet supported".to_string(),
+                            Some(first_location),
+                            Some("This feature requires AST extensions to support complex assignment targets".to_string()),
+                        ));
+                    } else {
+                        // Not an assignment, just an expression statement
+                        return Ok(Statement::Expression {
+                            expr: lhs_expr,
+                            location: Some(first_location),
+                        });
+                    }
+                } else {
+                    // This could be an expression statement with operators: x + 1, x * y, etc.
+                    // Or just a bare identifier
+                    // Parse as full expression to handle all cases
+                    self.cursor -= 1; // Go back to the identifier
+
+                    let expr = self.parse_expression()?;
+
+                    return Ok(Statement::Expression {
+                        expr,
+                        location: Some(first_location),
+                    });
+                }
+            }
+            TokenKind::StringLiteral(_)
+            | TokenKind::IntegerLiteral(_)
+            | TokenKind::NumberLiteral(_)
+            | TokenKind::True
+            | TokenKind::False => {
+                // Literal expression statements (e.g., for automatic return)
+                // Parse as full expression to handle operators: "hello" + name, 3.14 * x, etc.
+                let location = self.current().location.clone();
+                let expr = self.parse_expression()?;
+                return Ok(Statement::Expression {
+                    expr,
+                    location: Some(location),
+                });
+            }
+            TokenKind::Description => {
+                // Parse description statement: description "text"
+                let location = self.current().location.clone();
+                self.bump(); // consume 'description'
+                self.skip_whitespace();
+
+                // Expect a string literal
+                if let TokenKind::StringLiteral(text) = self.current_kind() {
+                    let description_text = text.clone();
+                    self.bump(); // consume string
+                    return Ok(Statement::Description {
+                        text: description_text,
+                        location: Some(location),
+                    });
+                } else {
+                    return Err(CompilerError::parse_error(
+                        "Expected string literal after 'description'".to_string(),
+                        Some(self.current().location.clone()),
+                        None,
+                    ));
+                }
+            }
+            _ => {
+                let token = self.current();
+                Err(CompilerError::parse_error(
+                    format!("Unsupported statement type: {:?}", token.kind),
+                    Some(token.location.clone()),
+                    None,
+                ))
+            }
+        }
+    }
+
+    fn parse_return(&mut self) -> Result<Statement, CompilerError> {
+        let return_token = self.expect(&TokenKind::Return)?;
+        self.skip_whitespace();
+
+        // Check if there's a return value expression
+        // If we see Newline, Eof, or Dedent, there's no return value
+        let value = if !matches!(
+            self.current_kind(),
+            TokenKind::Newline | TokenKind::Eof | TokenKind::Dedent(_)
+        ) {
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
+        Ok(Statement::Return {
+            value,
+            location: Some(return_token.location),
+        })
+    }
+
+    fn parse_if(&mut self) -> Result<Statement, CompilerError> {
+        // Capture the if statement's indentation level BEFORE consuming the if token
+        let if_indent_level = self.get_current_indent_level();
+
+        let if_token = self.expect(&TokenKind::If)?;
+        self.skip_whitespace();
+
+        let condition = self.parse_expression()?;
+        self.skip_whitespace();
+
+        let then_branch = self.parse_block()?;
+
+        self.skip_whitespace();
+
+        // Consume Dedent tokens until we return to the if statement's own level
+        // This allows us to see if there's an else clause at the same level as the if
+        loop {
+            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                let level = *dedent_level; // Copy the value to avoid borrow issues
+                if level < if_indent_level {
+                    // This Dedent would take us below the if statement's level
+                    // Don't consume it - it belongs to a parent block
+                    break;
+                }
+                self.bump();
+                self.skip_whitespace();
+
+                // After consuming a dedent, if we've reached the if statement's level, stop
+                if level == if_indent_level {
+                    break;
+                }
+            } else {
+                // Not a Dedent token - stop
+                break;
+            }
+        }
+
+        // Check for else or else if at the same level as the if statement
+        let else_branch = if self.eat(&TokenKind::Else) {
+            self.skip_whitespace();
+            // DON'T skip indentation - let parse_block() handle it
+
+            // Check for "else if" pattern - recursively parse as nested if
+            if self.check(&TokenKind::If) {
+                // Parse the nested if as a single-statement block
+                let nested_if = self.parse_if()?;
+                Some(vec![nested_if])
+            } else {
+                // Regular else block
+                Some(self.parse_block()?)
+            }
+        } else {
+            None
+        };
+
+        Ok(Statement::If {
+            condition,
+            then_branch,
+            else_branch,
+            location: Some(if_token.location),
+        })
+    }
+
+    fn parse_while(&mut self) -> Result<Statement, CompilerError> {
+        let while_token = self.expect(&TokenKind::While)?;
+        self.skip_whitespace();
+
+        let condition = self.parse_expression()?;
+        self.skip_whitespace();
+        // DON'T skip indentation - let parse_block() handle it
+
+        let body = self.parse_block()?;
+
+        Ok(Statement::While {
+            condition,
+            body,
+            location: Some(while_token.location),
+        })
+    }
+
+    fn parse_for(&mut self) -> Result<Statement, CompilerError> {
+        // For is represented as Iterate in Clean Language
+        let for_token = self.expect(&TokenKind::For)?;
+        self.skip_whitespace();
+
+        let variable_token = self.expect_identifier()?;
+        let iterator = variable_token.text.clone();
+
+        self.skip_whitespace();
+        self.expect(&TokenKind::In)?;
+        self.skip_whitespace();
+
+        let collection = self.parse_expression()?;
+        self.skip_whitespace();
+        // DON'T skip indentation - let parse_block() handle it
+
+        let body = self.parse_block()?;
+
+        Ok(Statement::Iterate {
+            iterator,
+            collection,
+            body,
+            location: Some(for_token.location),
+        })
+    }
+
+    /// Parse iterate statement: iterate item in collection or iterate i in start..end
+    fn parse_iterate(&mut self) -> Result<Statement, CompilerError> {
+        let iterate_token = self.expect(&TokenKind::Iterate)?;
+        self.skip_whitespace();
+
+        let variable_token = self.expect_identifier()?;
+        let iterator = variable_token.text.clone();
+
+        self.skip_whitespace();
+        self.expect(&TokenKind::In)?;
+        self.skip_whitespace();
+
+        // Parse the start expression
+        // This could be a range start (for "iterate i in 0 to 10")
+        // or a collection (for "iterate item in myList")
+        let start_or_collection = self.parse_expression()?;
+
+        // Check if this is a range iteration (has "to" keyword)
+        self.skip_whitespace();
+        let is_range = self.check(&TokenKind::To);
+
+        if is_range {
+            // Range iteration: iterate i in start to end [step stepValue]
+            self.bump(); // consume "to"
+            self.skip_whitespace();
+
+            let end = self.parse_expression()?;
+            self.skip_whitespace();
+
+            // Check for optional "step" clause
+            let step = if let TokenKind::Identifier(id) = self.current_kind() {
+                if id == "step" {
+                    self.bump(); // consume "step"
+                    self.skip_whitespace();
+                    Some(self.parse_expression()?)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            self.skip_whitespace();
+            let body = self.parse_block()?;
+
+            Ok(Statement::RangeIterate {
+                iterator,
+                start: start_or_collection,
+                end,
+                step,
+                body,
+                location: Some(iterate_token.location),
+            })
+        } else {
+            // Regular collection iteration: iterate item in collection
+            // Check if there's an optional "step" clause (shouldn't be used with collections, but handle it)
+            let _step = if let TokenKind::Identifier(id) = self.current_kind() {
+                if id == "step" {
+                    self.bump(); // consume "step"
+                    self.skip_whitespace();
+                    Some(Box::new(self.parse_expression()?))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            self.skip_whitespace();
+            let body = self.parse_block()?;
+
+            Ok(Statement::Iterate {
+                iterator,
+                collection: start_or_collection,
+                body,
+                location: Some(iterate_token.location),
+            })
+        }
+    }
+
+    fn parse_print(&mut self) -> Result<Statement, CompilerError> {
+        let print_token = self.expect(&TokenKind::Print)?;
+        self.skip_whitespace();
+
+        // Check if we have parentheses (function call style) with multiple arguments
+        let expression = if self.check(&TokenKind::LeftParen) {
+            self.bump(); // consume (
+            self.skip_whitespace();
+
+            // Parse comma-separated arguments
+            let mut arguments = Vec::new();
+            if !self.check(&TokenKind::RightParen) {
+                loop {
+                    arguments.push(self.parse_expression()?);
+                    self.skip_whitespace();
+
+                    if !self.eat(&TokenKind::Comma) {
+                        break;
+                    }
+                    self.skip_whitespace();
+                }
+            }
+
+            self.expect(&TokenKind::RightParen)?;
+
+            // If multiple arguments, create a function call expression
+            // If single argument, use it directly
+            if arguments.len() == 1 {
+                arguments.into_iter().next().unwrap()
+            } else {
+                // Create a function call to represent multi-arg print
+                Expression::Call("print".to_string(), arguments)
+            }
+        } else {
+            // No parentheses - parse single expression
+            self.parse_expression()?
+        };
+
+        Ok(Statement::Print {
+            expression,
+            newline: false,
+            location: Some(print_token.location),
+        })
+    }
+
+    fn parse_println(&mut self) -> Result<Statement, CompilerError> {
+        let print_token = self.expect(&TokenKind::Println)?;
+        self.skip_whitespace();
+
+        // Check if we have parentheses (function call style) with multiple arguments
+        let expression = if self.check(&TokenKind::LeftParen) {
+            self.bump(); // consume (
+            self.skip_whitespace();
+
+            // Parse comma-separated arguments
+            let mut arguments = Vec::new();
+            if !self.check(&TokenKind::RightParen) {
+                loop {
+                    arguments.push(self.parse_expression()?);
+                    self.skip_whitespace();
+
+                    if !self.eat(&TokenKind::Comma) {
+                        break;
+                    }
+                    self.skip_whitespace();
+                }
+            }
+
+            self.expect(&TokenKind::RightParen)?;
+
+            // If multiple arguments, create a function call expression
+            // If single argument, use it directly
+            if arguments.len() == 1 {
+                arguments.into_iter().next().unwrap()
+            } else {
+                // Create a function call to represent multi-arg println
+                Expression::Call("println".to_string(), arguments)
+            }
+        } else {
+            // No parentheses - parse single expression
+            self.parse_expression()?
+        };
+
+        Ok(Statement::Print {
+            expression,
+            newline: true,
+            location: Some(print_token.location),
+        })
+    }
+
+    fn parse_error_statement(&mut self) -> Result<Statement, CompilerError> {
+        let error_token = self.expect(&TokenKind::Error)?;
+        self.skip_whitespace();
+
+        // Expect parentheses with message expression
+        self.expect(&TokenKind::LeftParen)?;
+        self.skip_whitespace();
+
+        // Parse message expression (typically a string literal)
+        let message = self.parse_expression()?;
+        self.skip_whitespace();
+
+        self.expect(&TokenKind::RightParen)?;
+
+        Ok(Statement::Error {
+            message,
+            location: Some(error_token.location),
+        })
+    }
+
+    fn parse_expression(&mut self) -> Result<Expression, CompilerError> {
+        self.parse_on_error()
+    }
+
+    // Parse onError expressions: expr onError fallback
+    // OnError has lowest precedence (below logical OR)
+    // Supports chaining: a onError b onError c = (a onError b) onError c (left-associative)
+    fn parse_on_error(&mut self) -> Result<Expression, CompilerError> {
+        let mut expr = self.parse_logical_or()?;
+
+        // Support chained onError expressions with a while loop
+        while self.check(&TokenKind::OnError) {
+            self.bump(); // consume onError
+            self.skip_whitespace();
+
+            // Parse fallback expression
+            let fallback = self.parse_logical_or()?;
+            let location = self.current().location.clone();
+
+            expr = Expression::OnError {
+                expression: Box::new(expr),
+                fallback: Box::new(fallback),
+                location,
+            };
+        }
+
+        Ok(expr)
+    }
+
+    // CRITICAL FIX: Add logical OR operator support (lowest precedence)
+    fn parse_logical_or(&mut self) -> Result<Expression, CompilerError> {
+        let mut expr = self.parse_logical_and()?;
+
+        while self.check(&TokenKind::Or) {
+            let _op_token = self.bump();
+            self.skip_whitespace();
+            let right = self.parse_logical_and()?;
+            expr = Expression::Binary(Box::new(expr), BinaryOperator::Or, Box::new(right));
+        }
+
+        Ok(expr)
+    }
+
+    // CRITICAL FIX: Add logical AND operator support
+    fn parse_logical_and(&mut self) -> Result<Expression, CompilerError> {
+        let mut expr = self.parse_comparison()?;
+
+        while self.check(&TokenKind::And) {
+            let _op_token = self.bump();
+            self.skip_whitespace();
+            let right = self.parse_comparison()?;
+            expr = Expression::Binary(Box::new(expr), BinaryOperator::And, Box::new(right));
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_comparison(&mut self) -> Result<Expression, CompilerError> {
+        let mut expr = self.parse_term()?;
+
+        while matches!(
+            self.current_kind(),
+            TokenKind::Equal
+                | TokenKind::NotEqual
+                | TokenKind::Less
+                | TokenKind::Greater
+                | TokenKind::LessEqual
+                | TokenKind::GreaterEqual
+        ) {
+            let op_token = self.bump();
+            self.skip_whitespace();
+            let right = self.parse_term()?;
+
+            let op = match &op_token.kind {
+                TokenKind::Equal => BinaryOperator::Equal,
+                TokenKind::NotEqual => BinaryOperator::NotEqual,
+                TokenKind::Less => BinaryOperator::Less,
+                TokenKind::Greater => BinaryOperator::Greater,
+                TokenKind::LessEqual => BinaryOperator::LessEqual,
+                TokenKind::GreaterEqual => BinaryOperator::GreaterEqual,
+                _ => unreachable!(),
+            };
+
+            expr = Expression::Binary(Box::new(expr), op, Box::new(right));
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_term(&mut self) -> Result<Expression, CompilerError> {
+        let mut expr = self.parse_factor()?;
+
+        while matches!(self.current_kind(), TokenKind::Plus | TokenKind::Minus) {
+            let op_token = self.bump();
+            self.skip_whitespace();
+            let right = self.parse_factor()?;
+
+            let op = match &op_token.kind {
+                TokenKind::Plus => BinaryOperator::Add,
+                TokenKind::Minus => BinaryOperator::Subtract,
+                _ => unreachable!(),
+            };
+
+            expr = Expression::Binary(Box::new(expr), op, Box::new(right));
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_factor(&mut self) -> Result<Expression, CompilerError> {
+        let mut expr = self.parse_power()?;
+
+        while matches!(
+            self.current_kind(),
+            TokenKind::Multiply | TokenKind::Divide | TokenKind::Modulo
+        ) {
+            let op_token = self.bump();
+            self.skip_whitespace();
+            let right = self.parse_power()?;
+
+            let op = match &op_token.kind {
+                TokenKind::Multiply => BinaryOperator::Multiply,
+                TokenKind::Divide => BinaryOperator::Divide,
+                TokenKind::Modulo => BinaryOperator::Modulo,
+                _ => unreachable!(),
+            };
+
+            expr = Expression::Binary(Box::new(expr), op, Box::new(right));
+        }
+
+        Ok(expr)
+    }
+
+    // CRITICAL FIX: Add exponentiation operator support (higher precedence than multiplication)
+    // Right-associative: 2^3^2 = 2^(3^2) = 2^9 = 512
+    fn parse_power(&mut self) -> Result<Expression, CompilerError> {
+        let mut expr = self.parse_unary()?;
+
+        if self.check(&TokenKind::Power) {
+            let _op_token = self.bump();
+            self.skip_whitespace();
+            // Right associative - recursively parse the right side
+            let right = self.parse_power()?;
+            expr = Expression::Binary(Box::new(expr), BinaryOperator::Power, Box::new(right));
+        }
+
+        Ok(expr)
+    }
+
+    // CRITICAL FIX: Add unary operator support (not, unary -)
+    fn parse_unary(&mut self) -> Result<Expression, CompilerError> {
+        match self.current_kind() {
+            TokenKind::Not => {
+                let _op_token = self.bump();
+                self.skip_whitespace();
+                let operand = self.parse_unary()?; // Right-recursive for multiple unary ops
+                Ok(Expression::Unary(
+                    crate::ast::UnaryOperator::Not,
+                    Box::new(operand),
+                ))
+            }
+            TokenKind::Minus => {
+                let _op_token = self.bump();
+                self.skip_whitespace();
+                let operand = self.parse_unary()?;
+                Ok(Expression::Unary(
+                    crate::ast::UnaryOperator::Negate,
+                    Box::new(operand),
+                ))
+            }
+            TokenKind::Plus => {
+                // Unary plus is a no-op, just skip it and parse the operand
+                let _op_token = self.bump();
+                self.skip_whitespace();
+                self.parse_unary()
+            }
+            _ => self.parse_postfix(),
+        }
+    }
+
+    fn parse_postfix(&mut self) -> Result<Expression, CompilerError> {
+        let mut expr = self.parse_primary()?;
+
+        // Handle postfix operations: function calls and member access
+        loop {
+            self.skip_whitespace();
+
+            match self.current_kind() {
+                TokenKind::LeftParen => {
+                    // Function call: identifier(args) or method call: expr.method(args)
+                    let call_location = self.current().location.clone();
+                    self.bump(); // consume (
+                    self.skip_whitespace();
+
+                    let mut arguments = Vec::new();
+                    if !self.check(&TokenKind::RightParen) {
+                        loop {
+                            arguments.push(self.parse_expression()?);
+                            self.skip_whitespace();
+
+                            if !self.eat(&TokenKind::Comma) {
+                                break;
+                            }
+                            self.skip_whitespace();
+                        }
+                    }
+
+                    self.expect(&TokenKind::RightParen)?;
+
+                    // Convert expression to function call or method call
+                    expr = match expr {
+                        Expression::Variable(name) => Expression::Call(name, arguments),
+                        Expression::PropertyAccess {
+                            object,
+                            property,
+                            location,
+                        } => {
+                            // Method call: object.method(args)
+                            Expression::MethodCall {
+                                object,
+                                method: property,
+                                arguments,
+                                location,
+                            }
+                        }
+                        _ => {
+                            return Err(CompilerError::parse_error(
+                                "Function calls must be on identifiers or property access"
+                                    .to_string(),
+                                Some(call_location),
+                                None,
+                            ))
+                        }
+                    };
+                }
+                TokenKind::Dot => {
+                    // Member access: expr.property (might be followed by () for method call)
+                    // Allow keywords as property/method names (e.g., logical.and, logical.or)
+                    let dot_location = self.current().location.clone();
+                    self.bump(); // consume .
+                    self.skip_whitespace();
+
+                    let property_token = self.expect_name()?;
+                    let property = property_token.text.clone();
+
+                    // Create PropertyAccess for now
+                    // If next token is (, it will be converted to MethodCall in next iteration
+                    expr = Expression::PropertyAccess {
+                        object: Box::new(expr),
+                        property,
+                        location: dot_location,
+                    };
+                }
+                TokenKind::LeftBracket => {
+                    // Array/List indexing: expr[index]
+                    self.bump(); // consume [
+                    self.skip_whitespace();
+
+                    let index = self.parse_expression()?;
+                    self.skip_whitespace();
+
+                    self.expect(&TokenKind::RightBracket)?;
+
+                    expr = Expression::ListAccess(Box::new(expr), Box::new(index));
+                }
+                _ => break,
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_primary(&mut self) -> Result<Expression, CompilerError> {
+        match self.current_kind() {
+            TokenKind::IntegerLiteral(n) => {
+                let value = *n;
+                self.bump();
+                Ok(Expression::Literal(Value::Integer(value)))
+            }
+            TokenKind::NumberLiteral(n) => {
+                let value = *n;
+                self.bump();
+                Ok(Expression::Literal(Value::Number(value)))
+            }
+            TokenKind::StringLiteral(s) => {
+                let value = s.clone();
+                self.bump();
+                Ok(Expression::Literal(Value::String(value)))
+            }
+            TokenKind::BooleanLiteral(b) => {
+                let value = *b;
+                self.bump();
+                Ok(Expression::Literal(Value::Boolean(value)))
+            }
+            TokenKind::True => {
+                self.bump();
+                Ok(Expression::Literal(Value::Boolean(true)))
+            }
+            TokenKind::False => {
+                self.bump();
+                Ok(Expression::Literal(Value::Boolean(false)))
+            }
+            TokenKind::Identifier(_) => {
+                let name_token = self.expect_identifier()?;
+                let name = name_token.text.clone();
+                Ok(Expression::Variable(name))
+            }
+            // Allow keywords to be used as identifiers in expressions (for class/type names and variable names)
+            TokenKind::Test
+            | TokenKind::Error
+            | TokenKind::Unit
+            | TokenKind::Input
+            | TokenKind::Step
+            | TokenKind::Description => {
+                let token = self.bump();
+                // Use the actual token text to preserve the exact identifier (e.g., "Test", not "test")
+                let name = token.text.clone();
+                Ok(Expression::Variable(name))
+            }
+            TokenKind::LeftParen => {
+                self.bump();
+                self.skip_whitespace();
+                let expr = self.parse_expression()?;
+                self.skip_whitespace();
+                self.expect(&TokenKind::RightParen)?;
+                Ok(expr)
+            }
+            TokenKind::LeftBracket => {
+                // Parse array/list literal: [elem1, elem2, ...]
+                self.bump(); // consume '['
+                self.skip_whitespace();
+
+                let mut elements = Vec::new();
+
+                // Check for empty array
+                if matches!(self.current_kind(), TokenKind::RightBracket) {
+                    self.bump(); // consume ']'
+                    return Ok(Expression::Literal(Value::List(elements)));
+                }
+
+                // Parse array elements (as expressions, will be converted to values)
+                loop {
+                    let elem_expr = self.parse_expression()?;
+
+                    // Convert expression to Value if it's a literal
+                    // For now, we support literal values and will handle variables/expressions later in MIR
+                    let value = match elem_expr {
+                        Expression::Literal(val) => val,
+                        _ => {
+                            // For now, allow non-literal expressions by wrapping them
+                            // This will be handled properly during lowering to MIR
+                            // Temporarily store as a placeholder - this needs proper handling in semantic analysis
+                            return Err(CompilerError::parse_error(
+                                "Array literals currently only support constant literal values".to_string(),
+                                Some(self.current().location.clone()),
+                                Some("Variables and expressions in arrays will be supported in MIR lowering".to_string()),
+                            ));
+                        }
+                    };
+
+                    elements.push(value);
+                    self.skip_whitespace();
+
+                    if matches!(self.current_kind(), TokenKind::Comma) {
+                        self.bump(); // consume ','
+                        self.skip_whitespace();
+                    } else {
+                        break;
+                    }
+                }
+
+                self.expect(&TokenKind::RightBracket)?;
+                Ok(Expression::Literal(Value::List(elements)))
+            }
+            TokenKind::If => {
+                // Parse conditional expression: if condition then value else value
+                let if_token = self.bump(); // consume 'if'
+                let location = if_token.location.clone();
+                self.skip_whitespace();
+
+                // Parse condition - use comparison level to avoid parsing "then" as part of condition
+                let condition = Box::new(self.parse_comparison()?);
+                self.skip_whitespace();
+
+                // Expect 'then' keyword (identifier)
+                if let TokenKind::Identifier(id) = self.current_kind() {
+                    if id != "then" {
+                        return Err(CompilerError::parse_error(
+                            format!("Expected 'then' after if condition, found '{}'", id),
+                            Some(self.current().location.clone()),
+                            None,
+                        ));
+                    }
+                    self.bump(); // consume 'then'
+                } else {
+                    return Err(CompilerError::parse_error(
+                        format!(
+                            "Expected 'then' after if condition, found {:?}",
+                            self.current_kind()
+                        ),
+                        Some(self.current().location.clone()),
+                        None,
+                    ));
+                }
+                self.skip_whitespace();
+
+                // Parse then expression - use comparison level to avoid parsing "else" as part of then expression
+                let then_expr = Box::new(self.parse_comparison()?);
+                self.skip_whitespace();
+
+                // Expect 'else' keyword (TokenKind::Else)
+                if !self.check(&TokenKind::Else) {
+                    return Err(CompilerError::parse_error(
+                        format!(
+                            "Expected 'else' after then expression, found {:?}",
+                            self.current_kind()
+                        ),
+                        Some(self.current().location.clone()),
+                        None,
+                    ));
+                }
+                self.bump(); // consume 'else'
+                self.skip_whitespace();
+
+                // Parse else expression - can be full expression since this is the last part
+                let else_expr = Box::new(self.parse_comparison()?);
+
+                Ok(Expression::Conditional {
+                    condition,
+                    then_expr,
+                    else_expr,
+                    location,
+                })
+            }
+            _ => {
+                let token = self.current();
+                Err(CompilerError::parse_error(
+                    format!("Unexpected token in expression: {:?}", token.kind),
+                    Some(token.location.clone()),
+                    None,
+                ))
+            }
+        }
+    }
+
+    fn expect_identifier(&mut self) -> Result<Token, CompilerError> {
+        match self.current_kind() {
+            TokenKind::Identifier(_) => Ok(self.bump()),
+            _ => {
+                let token = self.current();
+                Err(CompilerError::parse_error(
+                    format!("Expected identifier, found {:?}", token.kind),
+                    Some(token.location.clone()),
+                    None,
+                ))
+            }
+        }
+    }
+
+    /// Get identifier or keyword text (for cases where keywords can be used as names)
+    fn expect_name(&mut self) -> Result<Token, CompilerError> {
+        match self.current_kind() {
+            TokenKind::Identifier(_) => Ok(self.bump()),
+            // Allow keywords to be used as names in certain contexts (for property/method names and variable names)
+            TokenKind::Test
+            | TokenKind::Unit
+            | TokenKind::Error
+            | TokenKind::Input
+            | TokenKind::Step
+            | TokenKind::Description
+            | TokenKind::And
+            | TokenKind::Or
+            | TokenKind::Not => Ok(self.bump()),
+            _ => {
+                let token = self.current();
+                Err(CompilerError::parse_error(
+                    format!(
+                        "Expected name (identifier or keyword), found {:?}",
+                        token.kind
+                    ),
+                    Some(token.location.clone()),
+                    None,
+                ))
+            }
+        }
+    }
+}

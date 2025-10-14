@@ -15,6 +15,7 @@ pub mod program_parser;
 pub mod property_tests;
 pub mod specification_parser;
 pub mod statement_parser;
+pub mod token_parser; // Token-driven parser (rustc-style)
 pub mod type_parser;
 
 // Re-export main components

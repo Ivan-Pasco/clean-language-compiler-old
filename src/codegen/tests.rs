@@ -14,6 +14,7 @@ use crate::ast::{
 // use wasm_encoder::{Instruction, ConstExpr, GlobalType, ValType};
 
 #[test]
+#[allow(deprecated)] // Tests the deprecated AST-based CodeGenerator
 fn test_code_generation() {
     let mut codegen = CodeGenerator::new();
     // Example Program structure

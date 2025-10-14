@@ -651,6 +651,17 @@ pub fn parse(source: &str) -> Result<Program, CompilerError> {
     parse_program_ast(pairs)
 }
 
+/// # DEPRECATED
+/// This function is deprecated and will be removed in v0.11.0.
+/// Use SpecificationParser from the token-driven parser pipeline instead.
+///
+/// Old approach: source → pest parser (with special-case for functions:)
+/// New approach: source → SpecificationLexer → TokenStream → SpecificationParser → AST
+#[deprecated(
+    since = "0.10.3",
+    note = "Use SpecificationParser with token-driven parsing instead"
+)]
+#[allow(deprecated)] // This deprecated function calls other deprecated functions
 pub fn parse_with_file(source: &str, file_path: &str) -> Result<Program, CompilerError> {
     let trimmed_source = source.trim();
 
@@ -680,7 +691,14 @@ pub fn parse_with_file(source: &str, file_path: &str) -> Result<Program, Compile
     }
 }
 
+/// # DEPRECATED
 /// Parse using preprocessing approach for complex multi-function programs
+/// This function uses ad-hoc string scanning for functions: blocks, which is error-prone.
+/// Use the token-driven parser (SpecificationParser) instead.
+#[deprecated(
+    since = "0.10.3",
+    note = "Use SpecificationParser with token-driven parsing instead"
+)]
 fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, CompilerError> {
     // Check if this is a functions block and use preprocessing for consistency
     // Look for functions: anywhere in the source, potentially after comments

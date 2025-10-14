@@ -8,21 +8,17 @@
  * A modern, type-safe programming language that compiles to WebAssembly
  */
 
-// Comprehensive clippy allow list to suppress all warnings for CI compatibility
-#![allow(clippy::all)]
-#![allow(clippy::pedantic)]
-#![allow(clippy::nursery)]
-#![allow(clippy::cargo)]
-// Rustc lint suppressions for CI compatibility
+// Targeted lint suppressions
+// Allow some unknown lints for cross-compiler compatibility
 #![allow(unknown_lints)]
-#![allow(mismatched_lifetime_syntaxes)]
+#![allow(deprecated)]
 
 pub mod ast;
 pub mod codegen;
 pub mod debug;
 pub mod error;
 pub mod hir;
-pub mod ir;
+
 pub mod lexer;
 pub mod memory;
 pub mod mir;
@@ -41,6 +37,32 @@ pub mod types;
 
 use crate::error::CompilerError;
 
+/// Initialize structured logging with the specified level
+///
+/// This should be called once at application startup. Valid levels are:
+/// - "error" - Only errors
+/// - "warn"  - Warnings and errors
+/// - "info"  - Info, warnings, and errors (default)
+/// - "debug" - Debug and above (shows compilation stages)
+/// - "trace" - All messages (very verbose)
+///
+/// # Example
+/// ```no_run
+/// use clean_language_compiler::init_logging;
+/// init_logging("debug");
+/// ```
+pub fn init_logging(level: &str) {
+    use tracing_subscriber::{fmt, EnvFilter};
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+
+    fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .compact()
+        .init();
+}
+
 /// Compiles Clean Language source code to WebAssembly using the specification-compliant 7-stage pipeline
 pub fn compile(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
     compile_with_file(source, "<unknown>")
@@ -49,14 +71,12 @@ pub fn compile(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
 /// Compiles Clean Language source code to WebAssembly with file path for better error reporting
 pub fn compile_with_file(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
     use crate::lexer::specification_lexer::SpecificationLexer;
-
-    // use crate::hir::hir_builder::HirBuilder; // Temporarily disabled
     use crate::mir::lower_tast_to_mir_with_opt_level;
     use crate::resolver::Resolver;
     use crate::typechecker::TypeChecker;
 
     // Stage 1: Lexical Analysis - specification-compliant tokenization
-    eprintln!("DEBUG: Starting Stage 1 - Lexical Analysis");
+    tracing::debug!("Starting Stage 1: Lexical Analysis");
     let source_code = crate::lexer::specification_lexer::SourceCode::new(
         source.to_string(),
         file_path.to_string(),
@@ -65,83 +85,93 @@ pub fn compile_with_file(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<C
     let tokens = lexer
         .tokenize()
         .map_err(|e| vec![CompilerError::LexError(e)])?;
-    eprintln!(
-        "DEBUG: Stage 1 Complete - Generated {} tokens",
-        tokens.tokens.len()
+    tracing::debug!(
+        token_count = tokens.tokens.len(),
+        "Stage 1 complete: Lexical Analysis"
     );
 
-    // Stage 2: Parsing to AST - use direct pest parsing to avoid token reconstruction issues
-    eprintln!("DEBUG: Starting Stage 2 - Parsing to AST");
-    use crate::parser::parser_impl::parse_with_file;
-    let ast = parse_with_file(source, file_path).map_err(|e| vec![e])?;
-    eprintln!("DEBUG: Stage 2 Complete - AST created");
+    // Stage 2: Parsing to AST - use token-driven parser (rustc-style)
+    tracing::debug!("Starting Stage 2: Parsing to AST");
+    use crate::parser::SpecificationParser;
+    let mut parser = SpecificationParser::new(tokens, file_path.to_string());
+    let ast = parser.parse_program().map_err(|e| vec![e])?;
+    tracing::debug!(
+        functions = ast.functions.len(),
+        statements = ast.statements.len(),
+        classes = ast.classes.len(),
+        "Stage 2 complete: AST created"
+    );
 
     // Stage 3: AST to HIR - validation and desugaring per specification
-    eprintln!("DEBUG: Starting Stage 3 - AST to HIR");
-    eprintln!(
-        "DEBUG: AST has {} functions, {} statements, {} classes",
-        ast.functions.len(),
-        ast.statements.len(),
-        ast.classes.len()
-    );
-    // Note: AST start function parsing is working correctly
+    tracing::debug!("Starting Stage 3: AST to HIR");
     for (i, func) in ast.functions.iter().enumerate() {
-        eprintln!(
-            "DEBUG: AST Function {}: {} with {} statements",
-            i,
-            func.name,
-            func.body.len()
-        );
+        tracing::trace!(index = i, name = %func.name, statements = func.body.len(), "AST function");
+        // Log detailed statement info for start function
+        if func.name == "start" {
+            for (stmt_idx, stmt) in func.body.iter().enumerate() {
+                tracing::debug!(
+                    stmt_index = stmt_idx,
+                    stmt_type = ?std::mem::discriminant(stmt),
+                    "AST statement in start()"
+                );
+                // Check if it's a TypeApplyBlock
+                if let crate::ast::Statement::TypeApplyBlock {
+                    type_, assignments, ..
+                } = stmt
+                {
+                    tracing::debug!(
+                        type_ = ?type_,
+                        assignments_count = assignments.len(),
+                        "Found TypeApplyBlock in AST start() function"
+                    );
+                }
+            }
+        }
     }
     use crate::hir::hir_builder::HirBuilder;
     let mut hir_builder = HirBuilder::new();
     let hir_result = hir_builder.build_hir(ast.clone()).map_err(|e| vec![e])?;
-    eprintln!(
-        "DEBUG: Stage 3 Complete - HIR created with {} functions",
-        hir_result.hir.functions.len()
+    tracing::debug!(
+        functions = hir_result.hir.functions.len(),
+        "Stage 3 complete: HIR created"
     );
-    // Note: HIR start function conversion is working correctly
 
     // Stage 4: Name and Module Resolution - symbol resolution per specification
-    eprintln!("DEBUG: Starting Stage 4 - Resolver");
-    eprintln!(
-        "DEBUG: HIR before resolution has {} functions",
-        hir_result.hir.functions.len()
+    tracing::debug!(
+        functions = hir_result.hir.functions.len(),
+        "Starting Stage 4: Resolver"
     );
     let resolution_result = Resolver::resolve(hir_result.hir)?;
     let resolved_hir = resolution_result.resolved_hir;
-    eprintln!(
-        "DEBUG: Stage 4 Complete - Resolution finished with {} functions",
-        resolved_hir.functions.len()
+    tracing::debug!(
+        functions = resolved_hir.functions.len(),
+        "Stage 4 complete: Resolution finished"
     );
-    // Note: Resolver start function processing is working correctly
 
     // Stage 5: Type Inference and Checking to TAST - constraint-based type inference
-    eprintln!("DEBUG: Starting Stage 5 - TypeChecker");
+    tracing::debug!("Starting Stage 5: Type Checker");
     let type_result = TypeChecker::check(resolved_hir)?;
-    eprintln!(
-        "DEBUG: Stage 5 Complete - Type checking finished with {} functions",
-        type_result.tast.functions.len()
+    tracing::debug!(
+        functions = type_result.tast.functions.len(),
+        "Stage 5 complete: Type checking finished"
     );
 
     // Stage 6: TAST to MIR Lowering and Optimization - SSA form with optimizations
-    eprintln!("DEBUG: Starting Stage 6 - TAST to MIR");
+    tracing::debug!("Starting Stage 6: TAST to MIR");
     let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, 2)?;
-    eprintln!("DEBUG: Stage 6 Complete - MIR created");
+    tracing::debug!("Stage 6 complete: MIR created");
 
     // Stage 7: WASM Code Generation - use MIR-based generator with fixes
-    eprintln!("DEBUG: Starting Stage 7 - WASM generation using MIR approach");
-
-    // Use the MIR codegen pipeline which now has proper entry point handling
+    tracing::debug!("Starting Stage 7: WASM generation");
     use crate::codegen::mir_codegen::MirCodeGenerator;
     let mut mir_codegen = MirCodeGenerator::default();
     let codegen_result = mir_codegen
         .generate(mir_result.program)
         .map_err(|errors| errors)?;
     let wasm_bytes = codegen_result.wasm_bytes;
-    eprintln!(
-        "DEBUG: Stage 7 Complete - WASM generated ({} bytes)",
-        wasm_bytes.len()
+    tracing::info!(
+        bytes = wasm_bytes.len(),
+        "Compilation complete: WASM generated"
     );
 
     Ok(wasm_bytes)
@@ -321,7 +351,7 @@ start()
             (
                 "List Functions",
                 r#"start()
-	List<integer> lst = [1, 2, 3, 4, 5]
+	list<integer> lst = [1, 2, 3, 4, 5]
 	integer length = lst.length()
 	print(length)
 "#,

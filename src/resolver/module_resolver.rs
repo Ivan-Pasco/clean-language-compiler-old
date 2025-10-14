@@ -276,21 +276,70 @@ impl ModuleResolver {
     pub fn load_module_hir(&mut self, module_name: &str) -> Result<&HirProgram, CompilerError> {
         if let Some(module) = self.modules.get_mut(module_name) {
             if module.hir.is_none() {
-                // In a real implementation, this would:
-                // 1. Read the file from module.file_path
-                // 2. Parse it using the specification parser
-                // 3. Build HIR using the HIR builder
-                // 4. Store the result in module.hir
+                // Load the module using the 7-stage pipeline (Stages 1-3)
+                use crate::hir::hir_builder::HirBuilder;
+                use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
+                use crate::parser::SpecificationParser;
+                use std::fs;
 
-                // For now, return an error indicating this is not implemented
-                return Err(CompilerError::validation_error(
-                    &format!("Module loading not yet implemented for '{}'", module_name),
-                    crate::ast::SourceLocation {
-                        file: module.file_path.to_string_lossy().to_string(),
-                        line: 0,
-                        column: 0,
-                    },
-                ));
+                // 1. Read the file
+                let source = fs::read_to_string(&module.file_path).map_err(|e| {
+                    CompilerError::validation_error(
+                        &format!("Failed to read module '{}': {}", module_name, e),
+                        crate::ast::SourceLocation {
+                            file: module.file_path.to_string_lossy().to_string(),
+                            line: 0,
+                            column: 0,
+                        },
+                    )
+                })?;
+
+                // 2. Tokenize (Stage 1)
+                let source_code = SourceCode::new(
+                    source.clone(),
+                    module.file_path.to_string_lossy().to_string(),
+                );
+                let mut lexer = SpecificationLexer::new(&source_code);
+                let tokens = lexer.tokenize().map_err(|e| {
+                    CompilerError::validation_error(
+                        &format!("Lexer error in module '{}': {}", module_name, e),
+                        crate::ast::SourceLocation {
+                            file: module.file_path.to_string_lossy().to_string(),
+                            line: 0,
+                            column: 0,
+                        },
+                    )
+                })?;
+
+                // 3. Parse (Stage 2)
+                let mut parser = SpecificationParser::new(
+                    tokens,
+                    module.file_path.to_string_lossy().to_string(),
+                );
+                let ast = parser.parse_program()?;
+
+                // 4. Build HIR (Stage 3)
+                let mut hir_builder = HirBuilder::new();
+                let hir_result = hir_builder.build_hir(ast)?;
+
+                // 5. Extract exports from HIR
+                let mut exports = HashMap::new();
+                for (idx, func) in hir_result.hir.functions.iter().enumerate() {
+                    // For now, use function index as SymbolId
+                    // In a full implementation, this would use a proper symbol table
+                    exports.insert(func.name.clone(), SymbolId(idx));
+                }
+
+                // 6. Extract dependencies from HIR imports
+                let mut deps = Vec::new();
+                for import in &hir_result.hir.imports {
+                    deps.push(import.module_name.clone());
+                }
+
+                // 7. Store the HIR and metadata
+                module.hir = Some(hir_result.hir);
+                module.exports = exports;
+                module.dependencies = deps;
             }
 
             Ok(module.hir.as_ref().unwrap())

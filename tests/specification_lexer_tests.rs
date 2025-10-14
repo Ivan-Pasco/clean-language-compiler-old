@@ -3,30 +3,24 @@
 //! These tests ensure 100% compliance with the Clean Language Specification
 //! by testing all language constructs defined in the specification.
 
-// Tests temporarily disabled due to lexer API changes
-// Module will never be included until API is updated
 #![cfg(test)]
-#![cfg(not(test))] // Never include this module
 
-use clean_language_compiler::lexer::specification_lexer::*;
-use clean_language_compiler::lexer::specification_token::*;
+use clean_language_compiler::lexer::specification_lexer::{SourceCode, SpecificationLexer};
+use clean_language_compiler::lexer::specification_token::TokenKind;
 
 /// Helper function to tokenize and extract token kinds
 fn tokenize(input: &str) -> Result<Vec<TokenKind>, String> {
-    let mut lexer = SpecificationLexer::new(input, "test.cln");
-    let mut tokens = Vec::new();
+    let source_code = SourceCode::new(input.to_string(), "test.cln".to_string());
+    let mut lexer = SpecificationLexer::new(&source_code);
 
-    loop {
-        match lexer.next_token() {
-            Ok(token) => {
-                if matches!(token.kind, TokenKind::Eof) {
-                    break;
-                }
-                tokens.push(token.kind);
-            }
-            Err(e) => return Err(format!("{}", e)),
-        }
-    }
+    let token_stream = lexer.tokenize().map_err(|e| format!("{}", e))?;
+
+    let tokens = token_stream
+        .tokens
+        .into_iter()
+        .filter(|t| !matches!(t.kind, TokenKind::Eof))
+        .map(|t| t.kind)
+        .collect();
 
     Ok(tokens)
 }

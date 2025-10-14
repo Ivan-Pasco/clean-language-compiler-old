@@ -1,0 +1,19 @@
+// Test string interpolation
+functions:
+	void main()
+		// Simple interpolation
+		name = "World"
+		greeting = "Hello, {name}!"
+		printl(greeting)
+
+		// Property access interpolation
+		user.name = "Alice"
+		user.age = 25
+		message = "User {user.name} is {user.age} years old"
+		printl(message)
+
+		// Multiple expressions
+		x = 10
+		y = 20
+		result = "The sum of {x} and {y} is {x + y}"
+		printl(result)

@@ -451,6 +451,7 @@ impl HirValidator {
                 name,
                 var_type,
                 initializer,
+                is_mutable: _,
                 location,
             } => {
                 Self::validate_type(context, var_type, location);

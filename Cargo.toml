@@ -68,7 +68,7 @@ num_cpus = "1.16"
 tempfile = "3.8"
 
 # HTTP client for real network requests (using native-tls for better macOS compatibility)
-reqwest = { version = "0.11", features = ["json", "native-tls"], default-features = false }
+reqwest = { version = "0.11", features = ["blocking", "json", "native-tls"], default-features = false }
 
 # System utilities
 libc = "0.2"
@@ -100,11 +100,18 @@ lto = false
 codegen-units = 1
 
 # Clippy configuration
+# Basic checks enabled to catch common issues and code smells
+# Pedantic/nursery remain disabled until warning backlog is cleared
 [lints.clippy]
-all = "allow"
-pedantic = "allow"
-nursery = "allow"
-cargo = "allow"
+all = "warn"  # Enable basic clippy checks
+pedantic = "allow"  # Keep pedantic disabled (too strict for current codebase)
+nursery = "allow"  # Keep nursery disabled (experimental lints)
+cargo = "warn"  # Enable cargo manifest checks
+
+# Allow specific patterns that are intentional in our codebase
+too_many_arguments = "allow"  # Compiler functions often need many arguments
+large_enum_variant = "allow"  # AST/HIR enums have naturally large variants
+module_inception = "allow"  # mod.rs pattern is standard in Rust
 
 [dev-dependencies]
 # Testing

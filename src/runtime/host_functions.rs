@@ -25,63 +25,111 @@ pub fn register_all_host_functions(linker: &mut Linker<()>) -> Result<(), Compil
 /// Console I/O Functions
 fn register_console_functions(linker: &mut Linker<()>) -> Result<(), CompilerError> {
     // print(ptr: i32, len: i32) - Output text without newline
-    linker.func_wrap("env", "print", |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-        if let Some(memory) = caller.get_export("memory") {
-            if let Some(memory) = memory.into_memory() {
-                let data = memory.data(&caller);
-                if ptr >= 0 && len >= 0 {
-                    let start = ptr as usize;
-                    let len = len as usize;
-                    if start + len <= data.len() {
-                        if let Ok(s) = std::str::from_utf8(&data[start..start + len]) {
-                            print!("{s}");
-                            io::stdout().flush().unwrap();
+    linker
+        .func_wrap(
+            "env",
+            "print",
+            |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+                if let Some(memory) = caller.get_export("memory") {
+                    if let Some(memory) = memory.into_memory() {
+                        let data = memory.data(&caller);
+                        if ptr >= 0 && len >= 0 {
+                            let start = ptr as usize;
+                            let len = len as usize;
+                            if start + len <= data.len() {
+                                if let Ok(s) = std::str::from_utf8(&data[start..start + len]) {
+                                    print!("{s}");
+                                    io::stdout().flush().unwrap();
+                                } else {
+                                    tracing::error!(
+                                        ptr = ptr,
+                                        len = len,
+                                        "Invalid UTF-8 data in print function"
+                                    );
+                                }
+                            } else {
+                                tracing::error!(
+                                    ptr = ptr,
+                                    len = len,
+                                    memory_size = data.len(),
+                                    "Memory access out of bounds in print function"
+                                );
+                            }
                         } else {
-                            eprintln!("ERROR: Invalid UTF-8 data in print function at ptr={ptr}, len={len}");
+                            tracing::error!(
+                                ptr = ptr,
+                                len = len,
+                                "Invalid parameters in print function"
+                            );
                         }
                     } else {
-                        eprintln!("ERROR: Memory access out of bounds in print function: ptr={ptr}, len={len}, memory_size={}", data.len());
+                        tracing::error!("Could not access memory in print function");
                     }
                 } else {
-                    eprintln!("ERROR: Invalid parameters in print function: ptr={ptr}, len={len}");
+                    tracing::error!("Memory export not found in print function");
                 }
-            } else {
-                eprintln!("ERROR: Could not access memory in print function");
-            }
-        } else {
-            eprintln!("ERROR: Memory export not found in print function");
-        }
-    })
-    .map_err(|e| CompilerError::runtime_error(format!("Failed to create print function: {e}"), None, None))?;
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create print function: {e}"),
+                None,
+                None,
+            )
+        })?;
 
     // printl(ptr: i32, len: i32) - Output text with newline
-    linker.func_wrap("env", "printl", |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-        if let Some(memory) = caller.get_export("memory") {
-            if let Some(memory) = memory.into_memory() {
-                let data = memory.data(&caller);
-                if ptr >= 0 && len >= 0 {
-                    let start = ptr as usize;
-                    let len = len as usize;
-                    if start + len <= data.len() {
-                        if let Ok(s) = std::str::from_utf8(&data[start..start + len]) {
-                            println!("{s}");
+    linker
+        .func_wrap(
+            "env",
+            "printl",
+            |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+                if let Some(memory) = caller.get_export("memory") {
+                    if let Some(memory) = memory.into_memory() {
+                        let data = memory.data(&caller);
+                        if ptr >= 0 && len >= 0 {
+                            let start = ptr as usize;
+                            let len = len as usize;
+                            if start + len <= data.len() {
+                                if let Ok(s) = std::str::from_utf8(&data[start..start + len]) {
+                                    println!("{s}");
+                                } else {
+                                    tracing::error!(
+                                        ptr = ptr,
+                                        len = len,
+                                        "Invalid UTF-8 data in printl function"
+                                    );
+                                }
+                            } else {
+                                tracing::error!(
+                                    ptr = ptr,
+                                    len = len,
+                                    memory_size = data.len(),
+                                    "Memory access out of bounds in printl function"
+                                );
+                            }
                         } else {
-                            eprintln!("ERROR: Invalid UTF-8 data in printl function at ptr={ptr}, len={len}");
+                            tracing::error!(
+                                ptr = ptr,
+                                len = len,
+                                "Invalid parameters in printl function"
+                            );
                         }
                     } else {
-                        eprintln!("ERROR: Memory access out of bounds in printl function: ptr={ptr}, len={len}, memory_size={}", data.len());
+                        tracing::error!("Could not access memory in printl function");
                     }
                 } else {
-                    eprintln!("ERROR: Invalid parameters in printl function: ptr={ptr}, len={len}");
+                    tracing::error!("Memory export not found in printl function");
                 }
-            } else {
-                eprintln!("ERROR: Could not access memory in printl function");
-            }
-        } else {
-            eprintln!("ERROR: Memory export not found in printl function");
-        }
-    })
-    .map_err(|e| CompilerError::runtime_error(format!("Failed to create printl function: {e}"), None, None))?;
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create printl function: {e}"),
+                None,
+                None,
+            )
+        })?;
 
     // input(prompt_ptr: i32, prompt_len: i32) -> string_ptr: i32
     linker
@@ -1875,7 +1923,12 @@ fn allocate_string_in_memory(caller: &mut Caller<'_, ()>, string_value: &str) ->
                     let pages_needed = ((needed_size - current_size) + 65535) / 65536;
                     // eprintln!("DEBUG: Growing memory by {} pages", pages_needed);
                     if memory.grow(&mut *caller, pages_needed as u64).is_err() {
-                        eprintln!("ERROR: Memory growth failed");
+                        tracing::error!(
+                            pages_needed = pages_needed,
+                            current_size = current_size,
+                            needed_size = needed_size,
+                            "Memory growth failed"
+                        );
                         return 0; // Growth failed
                     }
                 }
@@ -1897,6 +1950,6 @@ fn allocate_string_in_memory(caller: &mut Caller<'_, ()>, string_value: &str) ->
         }
     }
 
-    eprintln!("ERROR: String allocation failed");
+    tracing::error!(string_len = string_value.len(), "String allocation failed");
     0 // Allocation failed
 }

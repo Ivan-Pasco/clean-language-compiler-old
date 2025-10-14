@@ -295,9 +295,22 @@ impl IterativeNameResolver {
                         })
                         .collect();
 
+                    // CRITICAL FIX: Look up function symbol instead of using placeholder SymbolId(0)
+                    let function_symbol_id = match self.symbol_table.lookup_symbol(&function) {
+                        Some(symbol_id) => symbol_id,
+                        None => {
+                            // Function not found - emit error and fail
+                            self.error(
+                                &format!("Function '{}' not found", function),
+                                location.clone(),
+                            );
+                            return Err(());
+                        }
+                    };
+
                     let resolved_expression = ResolvedHirExpression::Call {
                         function,
-                        function_symbol_id: SymbolId(0), // TODO: Resolve function symbol
+                        function_symbol_id,
                         arguments,
                         location,
                     };
@@ -531,8 +544,18 @@ impl IterativeNameResolver {
             }
 
             HirExpression::Variable { name, location } => {
-                // Look up variable symbol
-                let symbol_id = self.symbol_table.lookup_symbol(&name).unwrap_or(SymbolId(0));
+                // CRITICAL FIX: Look up variable symbol and fail if not found
+                let symbol_id = match self.symbol_table.lookup_symbol(&name) {
+                    Some(symbol_id) => symbol_id,
+                    None => {
+                        // Variable not found - emit error and fail
+                        self.error(
+                            &format!("Variable '{}' not found", name),
+                            location.clone(),
+                        );
+                        return Err(());
+                    }
+                };
 
                 let resolved_expression = ResolvedHirExpression::Variable {
                     name,

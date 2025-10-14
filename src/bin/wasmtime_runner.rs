@@ -1,4 +1,5 @@
 #![allow(clippy::uninlined_format_args)]
+#![allow(deprecated)]
 
 use std::env;
 use std::fs;
@@ -331,10 +332,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "env",
         "string_concat",
         |mut caller: Caller<'_, ()>, ptr1: i32, len1: i32, ptr2: i32, len2: i32| -> i32 {
+            eprintln!(
+                "🔥 string_concat called: ptr1={}, len1={}, ptr2={}, len2={}",
+                ptr1, len1, ptr2, len2
+            );
+
             // Get memory
             let memory = match caller.get_export("memory") {
                 Some(Extern::Memory(mem)) => mem,
-                _ => return 0, // Return null on failure
+                _ => {
+                    eprintln!("❌ string_concat: Failed to get memory");
+                    return 0; // Return null on failure
+                }
             };
 
             // Read first string
@@ -343,10 +352,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .get(ptr1 as usize..(ptr1 + len1) as usize)
             {
                 Some(data) => match std::str::from_utf8(data) {
-                    Ok(s) => s.to_string(),
-                    Err(_) => return 0,
+                    Ok(s) => {
+                        eprintln!("✅ string_concat: str1 = '{}'", s);
+                        s.to_string()
+                    }
+                    Err(e) => {
+                        eprintln!("❌ string_concat: str1 UTF-8 error: {}", e);
+                        return 0;
+                    }
                 },
-                None => return 0,
+                None => {
+                    eprintln!("❌ string_concat: str1 out of bounds");
+                    return 0;
+                }
             };
 
             // Read second string
@@ -355,17 +373,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .get(ptr2 as usize..(ptr2 + len2) as usize)
             {
                 Some(data) => match std::str::from_utf8(data) {
-                    Ok(s) => s.to_string(),
-                    Err(_) => return 0,
+                    Ok(s) => {
+                        eprintln!("✅ string_concat: str2 = '{}'", s);
+                        s.to_string()
+                    }
+                    Err(e) => {
+                        eprintln!("❌ string_concat: str2 UTF-8 error: {}", e);
+                        return 0;
+                    }
                 },
-                None => return 0,
+                None => {
+                    eprintln!("❌ string_concat: str2 out of bounds");
+                    return 0;
+                }
             };
 
             // Concatenate strings
             let result = str1 + &str2;
+            eprintln!("✅ string_concat: result = '{}'", result);
 
             // Allocate and return result
-            allocate_string_in_memory(&memory, &mut caller, &result)
+            let result_ptr = allocate_string_in_memory(&memory, &mut caller, &result);
+            eprintln!("✅ string_concat: returning ptr = {}", result_ptr);
+            result_ptr
         },
     )?;
 

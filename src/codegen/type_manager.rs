@@ -33,6 +33,12 @@ impl TypeManager {
         self.type_section.clone()
     }
 
+    /// Take ownership of the type section (for final module assembly)
+    #[allow(dead_code)] // Reserved for future module composition
+    pub(crate) fn take_type_section(&mut self) -> TypeSection {
+        std::mem::take(&mut self.type_section)
+    }
+
     /// Add a function type to the type section (supports multi-value returns)
     pub(crate) fn add_function_type(
         &mut self,

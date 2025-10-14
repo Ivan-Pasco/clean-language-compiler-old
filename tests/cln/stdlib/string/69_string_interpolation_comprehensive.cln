@@ -115,7 +115,7 @@ functions:
 	integer multiply(integer x, integer y)
 		return x * y
 
-void start()
+start()
 	print("String Interpolation Comprehensive Test")
 	print("=======================================")
 	testBasicInterpolation()

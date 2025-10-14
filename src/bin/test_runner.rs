@@ -1,3 +1,10 @@
+//! Comprehensive test runner for Clean Language compiler
+//!
+//! NOTE: Uses deprecated SemanticAnalyzer.
+//! Will be migrated to use modern pipeline before v0.11.0.
+
+#![allow(deprecated)]
+
 use clean_language_compiler::parser::CleanParser;
 use clean_language_compiler::semantic::SemanticAnalyzer;
 use std::path::Path;

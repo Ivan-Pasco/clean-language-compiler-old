@@ -1,7 +1,9 @@
 //! Modular compilation pipeline for Clean Language to WebAssembly
-//! 
-//! This module provides a simplified working pipeline that compiles basic Clean Language
-//! programs to WebAssembly. This is a temporary implementation that will be expanded.
+//!
+//! # DEPRECATED
+//! This module is deprecated and will be removed in v0.11.0.
+//! The stub pipeline only generates hello-world WASM modules and is not used in production.
+//! Use the MIR-based code generator (mir_codegen.rs) for actual WASM compilation.
 
 use crate::ast::Program;
 use crate::error::CompilerError;
@@ -23,6 +25,11 @@ pub enum CompilationPhase {
 }
 
 /// Main compilation pipeline - simplified working version
+///
+/// # DEPRECATED
+/// This is a stub implementation that only generates hello-world modules.
+/// Use MirCodeGenerator from mir_codegen.rs for actual compilation.
+#[deprecated(since = "0.10.2", note = "Use MirCodeGenerator from mir_codegen.rs instead")]
 pub struct CompilationPipeline {
     /// Current phase of compilation
     #[allow(dead_code)]
