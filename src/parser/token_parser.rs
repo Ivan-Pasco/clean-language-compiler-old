@@ -1272,6 +1272,7 @@ impl TokenParser {
         })
     }
 
+    #[allow(dead_code)]
     fn parse_method(&mut self) -> Result<Function, CompilerError> {
         // Methods are just functions within a class
         self.parse_function()

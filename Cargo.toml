@@ -7,6 +7,9 @@ homepage = "https://www.cleanlanguage.dev"
 repository = "https://github.com/cleanlang/clean-language-compiler"
 description = "A modern, type-safe programming language that compiles to WebAssembly"
 license = "MIT"
+readme = "README.md"
+keywords = ["compiler", "webassembly", "wasm", "programming-language", "type-safe"]
+categories = ["compilers", "wasm", "development-tools"]
 
 
 [dependencies]
@@ -103,15 +106,16 @@ codegen-units = 1
 # Basic checks enabled to catch common issues and code smells
 # Pedantic/nursery remain disabled until warning backlog is cleared
 [lints.clippy]
-all = "warn"  # Enable basic clippy checks
+all = { level = "warn", priority = -1 }  # Enable basic clippy checks
 pedantic = "allow"  # Keep pedantic disabled (too strict for current codebase)
 nursery = "allow"  # Keep nursery disabled (experimental lints)
-cargo = "warn"  # Enable cargo manifest checks
+cargo = { level = "warn", priority = -1 }  # Enable cargo manifest checks
 
 # Allow specific patterns that are intentional in our codebase
 too_many_arguments = "allow"  # Compiler functions often need many arguments
 large_enum_variant = "allow"  # AST/HIR enums have naturally large variants
 module_inception = "allow"  # mod.rs pattern is standard in Rust
+multiple_crate_versions = "allow"  # Transitive dependencies can have version conflicts
 
 [dev-dependencies]
 # Testing

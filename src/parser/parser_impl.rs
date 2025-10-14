@@ -624,7 +624,6 @@ impl ErrorRecoveringParser {
     }
 
     /// Extract function name from malformed function declaration
-
     fn parse_internal(&mut self, source: &str) -> Result<Program, CompilerError> {
         let trimmed_source = source.trim();
         let pairs = <CleanParser as Parser<Rule>>::parse(Rule::program, trimmed_source)

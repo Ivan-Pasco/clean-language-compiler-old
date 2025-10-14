@@ -1694,9 +1694,7 @@ impl SemanticAnalyzer {
             if let Some(class_name) = self.extract_class_context_from_description(description) {
                 self.inject_class_fields_into_scope(&class_name)?;
                 class_context_found = true;
-            } else {
             }
-        } else {
         }
 
         // WORKAROUND: If no class context from preprocessor, try to infer it
@@ -1704,7 +1702,6 @@ impl SemanticAnalyzer {
         if !class_context_found {
             if let Some(inferred_class) = self.infer_class_context_for_function(&function.name) {
                 self.inject_class_fields_into_scope(&inferred_class)?;
-            } else {
             }
         }
 
@@ -2036,12 +2033,9 @@ impl SemanticAnalyzer {
                         if self.current_scope.lookup_variable(&field.name).is_none() {
                             self.current_scope
                                 .define_variable(field.name.clone(), field.type_.clone());
-                        } else {
                         }
-                    } else {
                     }
                 }
-            } else {
             }
         }
 

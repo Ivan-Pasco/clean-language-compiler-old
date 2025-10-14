@@ -1122,7 +1122,7 @@ impl<'a> TypeInference<'a> {
             tast_parameters.push(TastParameter {
                 symbol_id: param.symbol_id,
                 name: param.name.clone(),
-                param_type: param_type,
+                param_type,
                 default_value: None, // Would convert from HIR
                 is_variadic: param.is_variadic,
                 location: param.location.clone(),

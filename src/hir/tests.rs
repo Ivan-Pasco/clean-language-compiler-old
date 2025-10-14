@@ -3,8 +3,6 @@
 //! These tests verify that AST to HIR transformation works correctly,
 //! including validation, desugaring, and error handling.
 
-#![cfg(test)]
-
 use super::*;
 use crate::ast::{BinaryOperator as AstBinaryOperator, *};
 use crate::hir::hir_builder::HirBuilder;
