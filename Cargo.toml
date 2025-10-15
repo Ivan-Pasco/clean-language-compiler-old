@@ -182,6 +182,7 @@ unnecessary_get_then_check = "allow"  # Separate get and check can be clearer
 expect_fun_call = "allow"  # expect with format! is acceptable in tests
 assertions_on_constants = "allow"  # Constant assertions document invariants in tests
 double_ended_iterator_last = "allow"  # .last() on slice is clear
+manual_div_ceil = "allow"  # Manual ceiling division is clear and explicit
 
 [lints.rust]
 # Allow deprecated warnings - we're in active migration
