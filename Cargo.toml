@@ -110,6 +110,7 @@ cargo = "allow"
 
 [lints.rust]
 deprecated = "allow"
+mismatched_lifetime_syntaxes = "allow"
 
 [dev-dependencies]
 # Testing
