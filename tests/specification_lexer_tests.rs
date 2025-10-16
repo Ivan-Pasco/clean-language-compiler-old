@@ -47,7 +47,6 @@ fn test_integer_literals() {
 
 /// Test precision integer literals (§3.2 - Type Precision)
 #[test]
-#[ignore = "Temporarily disabled - lexer hangs on precision literals"]
 fn test_precision_integer_literals() {
     let test_cases = vec![
         ("42:8", vec![TokenKind::Integer8Literal(42)]),
@@ -92,7 +91,6 @@ fn test_number_literals() {
 
 /// Test precision number literals
 #[test]
-#[ignore = "Temporarily disabled - lexer hangs on precision literals"]
 fn test_precision_number_literals() {
     let test_cases = vec![
         ("3.14:32", vec![TokenKind::Number32Literal(3.14)]),
@@ -347,7 +345,6 @@ start()
 
 /// Test precision modifier parsing edge cases
 #[test]
-#[ignore = "Temporarily disabled - lexer hangs on precision literals"]
 fn test_precision_edge_cases() {
     let test_cases = vec![
         ("0:8", vec![TokenKind::Integer8Literal(0)]),

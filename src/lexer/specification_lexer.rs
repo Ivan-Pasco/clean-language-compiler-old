@@ -972,7 +972,7 @@ impl<'a> SpecificationLexer<'a> {
             // Look ahead to see if this is actually a precision modifier
             if self.is_valid_precision_modifier_ahead() {
                 self.advance(); // Skip ':'
-                let precision = self.read_precision_modifier()?;
+                let precision = self.read_precision_modifier(is_float)?;
 
                 let text = self.source_text_range(start_pos, self.current_pos);
 
@@ -1165,33 +1165,21 @@ impl<'a> SpecificationLexer<'a> {
     /// Read precision modifier (8, 8u, 16, 16u, 32, 64)
     /// Check if what follows the current ':' looks like a valid precision modifier
     fn is_valid_precision_modifier_ahead(&self) -> bool {
-        let pos = 1; // Start after the ':'
-        let mut has_digits = false;
-
-        // Look ahead to see if we have a valid precision modifier pattern
-        while let Some(ch) = self.peek_at_offset(pos) {
-            if ch.is_ascii_digit() {
-                has_digits = true;
-                let _ = pos + 1; // Validation only, don't advance
-            } else if ch == 'u' && has_digits {
-                break; // 'u' can only be at the end
-            } else {
-                break;
-            }
-        }
-
-        if !has_digits {
-            return false;
-        }
-
         // Collect the potential modifier string and check if it's valid
         let mut modifier = String::new();
-        let mut check_pos = 1;
-        while let Some(ch) = self.peek_at_offset(check_pos) {
-            if ch.is_ascii_digit() || ch == 'u' {
-                modifier.push(ch);
-                check_pos += 1;
+        let mut check_pos = 1; // Start after the ':'
+        let max_lookahead = 4; // Prevent infinite loops
+
+        while check_pos <= max_lookahead {
+            if let Some(ch) = self.peek_at_offset(check_pos) {
+                if ch.is_ascii_digit() || ch == 'u' {
+                    modifier.push(ch);
+                    check_pos += 1;
+                } else {
+                    break;
+                }
             } else {
+                // End of input
                 break;
             }
         }
@@ -1201,14 +1189,14 @@ impl<'a> SpecificationLexer<'a> {
     }
 
     fn peek_at_offset(&self, offset: usize) -> Option<char> {
-        if self.current_pos + offset < self.source_content.len() {
-            self.source_content.chars().nth(self.current_pos + offset)
-        } else {
-            None
-        }
+        // Get a slice starting from current position, then get the nth character
+        self.source_content
+            .get(self.current_pos..)?
+            .chars()
+            .nth(offset)
     }
 
-    fn read_precision_modifier(&mut self) -> Result<PrecisionModifier, LexError> {
+    fn read_precision_modifier(&mut self, is_float: bool) -> Result<PrecisionModifier, LexError> {
         let mut modifier = String::new();
 
         while let Some(&ch) = self.peek() {
@@ -1225,8 +1213,20 @@ impl<'a> SpecificationLexer<'a> {
             "8u" => Ok(PrecisionModifier::Integer8u),
             "16" => Ok(PrecisionModifier::Integer16),
             "16u" => Ok(PrecisionModifier::Integer16u),
-            "32" => Ok(PrecisionModifier::Integer32),
-            "64" => Ok(PrecisionModifier::Integer64),
+            "32" => {
+                if is_float {
+                    Ok(PrecisionModifier::Number32)
+                } else {
+                    Ok(PrecisionModifier::Integer32)
+                }
+            }
+            "64" => {
+                if is_float {
+                    Ok(PrecisionModifier::Number64)
+                } else {
+                    Ok(PrecisionModifier::Integer64)
+                }
+            }
             _ => Err(LexError::InvalidPrecisionModifier {
                 modifier,
                 location: self.current_location(),
