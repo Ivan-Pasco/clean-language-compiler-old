@@ -300,14 +300,10 @@ pub fn parse_indented_block_statements(
     for stmt_pair in block.into_inner() {
         match stmt_pair.as_rule() {
             Rule::simple_indented_block => {
-                // Handle simple_indented_block -> indented_statement -> statement
-                for indented in stmt_pair.into_inner() {
-                    if indented.as_rule() == Rule::indented_statement {
-                        for stmt in indented.into_inner() {
-                            if stmt.as_rule() == Rule::statement {
-                                statements.push(parse_statement(stmt)?);
-                            }
-                        }
+                // Handle simple_indented_block -> statement (direct parsing)
+                for stmt in stmt_pair.into_inner() {
+                    if stmt.as_rule() == Rule::statement {
+                        statements.push(parse_statement(stmt)?);
                     }
                 }
             }

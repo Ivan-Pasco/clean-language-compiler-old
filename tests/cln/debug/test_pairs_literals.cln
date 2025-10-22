@@ -1,0 +1,14 @@
+// Test pairs literal syntax implementation
+
+start()
+	// Simple pairs literals
+	pairs<string, integer> str_int = {"key1": 1, "key2": 2}
+	pairs<integer, boolean> int_bool = {1: true, 2: false}
+
+	// Empty pairs
+	pairs<string, string> empty_pairs = {}
+
+	// Nested pairs with list
+	pairs<string, list<integer>> pairs_with_list = {"nums": [1, 2, 3]}
+
+	print("Pairs literals test completed")

@@ -103,14 +103,16 @@ context_indented_block = {
 // Smart indented block - uses different strategies based on context
 indented_block = { simple_indented_block | function_nested_block }
 
-// Simple indented block for top-level contexts (start function, etc.)  
-// Fixed to handle tab-indented empty lines properly in function contexts
+// Simple indented block for top-level contexts (start function, etc.)
+// Fixed to enforce consistent single-tab indentation per Clean Language Specification
+// Each indentation level must use exactly ONE tab character
 simple_indented_block = {
     NEWLINE ~ (empty_line)* ~
-    indented_statement ~ (NEWLINE ~ (empty_line)* ~ indented_statement)*
+    INDENT ~ statement ~
+    (NEWLINE ~ (empty_line)* ~ INDENT ~ statement)*
 }
 
-indented_statement = { INDENT+ ~ statement }
+// Removed indented_statement rule - was allowing INDENT+ which mixed indentation levels
 
 // Nested block within function bodies - flexible indentation pattern for nested contexts
 function_nested_block = { 

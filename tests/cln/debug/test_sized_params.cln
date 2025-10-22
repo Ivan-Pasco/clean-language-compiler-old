@@ -1,0 +1,10 @@
+// Test sized types in function parameters
+
+functions:
+	// Simple function with sized parameter
+	integer add(integer:8 small)
+		return small
+
+start()
+	integer result = add(10)
+	print("Sized parameter test")

@@ -1,0 +1,10 @@
+// Test simple pairs type as return type
+
+functions:
+	// Simple pairs return in function
+	pairs<string, integer> getSimplePairs()
+		return {"key": 42}
+
+start()
+	pairs<string, integer> result = getSimplePairs()
+	print("Simple pairs return works")

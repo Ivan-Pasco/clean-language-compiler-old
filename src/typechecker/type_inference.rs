@@ -1203,12 +1203,14 @@ impl<'a> TypeInference<'a> {
     /// Infer types for a block
     fn infer_block(&mut self, block: &ResolvedHirBlock) -> Result<TastBlock, CompilerError> {
         let mut tast_statements = Vec::new();
-        // Start with a fresh type variable for the block's return type
-        // This prevents different blocks from conflicting during constraint solving
-        let mut block_return_type = self.create_type_variable();
+        // Start with Undefined return type (void blocks)
+        // Only the last expression statement will update this
+        let mut block_return_type = ConcreteType::Undefined;
 
-        for statement in &block.statements {
+        let statement_count = block.statements.len();
+        for (i, statement) in block.statements.iter().enumerate() {
             let tast_statement = self.infer_statement(statement)?;
+            let is_last_statement = i == statement_count - 1;
 
             // Update block return type based on statement
             match &tast_statement {
@@ -1216,8 +1218,11 @@ impl<'a> TypeInference<'a> {
                     block_return_type = return_type.clone();
                 }
                 TastStatement::Expression { expression, .. } => {
-                    // Last expression in block becomes return type
-                    block_return_type = expression.expr_type.clone();
+                    // Only the LAST expression statement becomes the block's return type
+                    // Other expression statements are discarded (will need DROP in codegen)
+                    if is_last_statement {
+                        block_return_type = expression.expr_type.clone();
+                    }
                 }
                 _ => {}
             }

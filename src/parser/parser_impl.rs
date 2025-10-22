@@ -924,15 +924,10 @@ pub fn parse_start_function(pair: Pair<Rule>) -> Result<Function, CompilerError>
             for block_pair in inner.into_inner() {
                 match block_pair.as_rule() {
                     Rule::simple_indented_block => {
-                        // simple_indented_block contains indented_statement rules
+                        // simple_indented_block contains statement rules directly
                         for stmt_pair in block_pair.into_inner() {
-                            if stmt_pair.as_rule() == Rule::indented_statement {
-                                // indented_statement contains the actual statement
-                                for inner_stmt in stmt_pair.into_inner() {
-                                    if inner_stmt.as_rule() == Rule::statement {
-                                        body.push(parse_statement(inner_stmt)?);
-                                    }
-                                }
+                            if stmt_pair.as_rule() == Rule::statement {
+                                body.push(parse_statement(stmt_pair)?);
                             }
                         }
                     }
