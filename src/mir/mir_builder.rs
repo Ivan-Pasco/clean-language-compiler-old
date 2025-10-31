@@ -1699,30 +1699,34 @@ impl MirBuilder {
                 }
 
                 // Fill in default parameters for missing arguments
-                // Look up the function definition and clone the default values to avoid borrow conflicts
-                let default_params: Vec<(String, Option<TastExpression>)> = {
-                    let function_def = context
-                        .all_functions
-                        .iter()
-                        .find(|f| f.symbol_id == function_symbol_id)
-                        .ok_or_else(|| {
-                            vec![CompilerError::validation_error(
-                                &format!(
-                                    "Function definition not found for symbol {:?}",
-                                    function_symbol_id
-                                ),
-                                expression.location.clone(),
-                            )]
-                        })?;
+                // CRITICAL FIX: Skip default parameter handling for builtin/stdlib functions
+                // Stdlib functions don't have default parameters and aren't in the all_functions list
+                // Check if this function is actually in all_functions before trying to look it up
+                let function_in_all_functions = context
+                    .all_functions
+                    .iter()
+                    .any(|f| f.symbol_id == function_symbol_id);
 
-                    // Clone the default values for parameters beyond what was provided
-                    function_def
-                        .parameters
-                        .iter()
-                        .skip(arguments.len())
-                        .map(|p| (p.name.clone(), p.default_value.clone()))
-                        .collect()
-                };
+                // Look up the function definition and clone the default values to avoid borrow conflicts
+                let default_params: Vec<(String, Option<TastExpression>)> =
+                    if !function_in_all_functions {
+                        // Stdlib/builtin functions don't have default parameters, skip lookup
+                        Vec::new()
+                    } else {
+                        let function_def = context
+                            .all_functions
+                            .iter()
+                            .find(|f| f.symbol_id == function_symbol_id)
+                            .expect("Function must exist - we just checked with any()");
+
+                        // Clone the default values for parameters beyond what was provided
+                        function_def
+                            .parameters
+                            .iter()
+                            .skip(arguments.len())
+                            .map(|p| (p.name.clone(), p.default_value.clone()))
+                            .collect()
+                    };
 
                 // For each missing parameter, check if it has a default value
                 for (param_name, default_value_opt) in default_params {
