@@ -94,8 +94,10 @@ pub struct CodeGenerator {
     // Add missing fields
     label_counter: u32,
 
-    // Result tracking for get_result function generation
+    // Result tracking for get_result function generation (legacy)
+    #[allow(dead_code)]
     last_result_value: Option<i32>, // Store the final result value
+    #[allow(dead_code)]
     last_result_type: Option<Type>, // Store the type of the final result
 
     // Variable tracking for automatic getter generation
@@ -7687,7 +7689,8 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Register file system import functions
+    /// Register file system import functions (legacy - not used by MirCodeGenerator)
+    #[allow(dead_code)]
     fn register_file_imports(&mut self) -> Result<(), CompilerError> {
         // file_write(pathPtr: i32, pathLen: i32, contentPtr: i32, contentLen: i32) -> i32
         let write_type = self.add_function_type(
@@ -7758,7 +7761,8 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Register HTTP client import functions
+    /// Register HTTP client import functions (legacy - not used by MirCodeGenerator)
+    #[allow(dead_code)]
     fn register_http_imports(&mut self) -> Result<(), CompilerError> {
         // Basic HTTP methods
 
@@ -8100,7 +8104,8 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Register console input function imports
+    /// Register console input function imports (legacy - not used by MirCodeGenerator)
+    #[allow(dead_code)]
     fn register_console_imports(&mut self) -> Result<(), CompilerError> {
         // input(prompt_ptr: i32, prompt_len: i32) -> string_ptr: i32
         let input_type =
@@ -8735,7 +8740,8 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Generate a dedicated test runner function
+    /// Generate a dedicated test runner function (legacy - not used by MirCodeGenerator)
+    #[allow(dead_code)]
     fn generate_test_runner_function(
         &mut self,
         tests: &[crate::ast::TestCase],
@@ -9164,8 +9170,9 @@ impl CodeGenerator {
         self.assemble_module()
     }
 
-    /// Track all variables in the start function for automatic getter generation
+    /// Track all variables in the start function for automatic getter generation (legacy)
     /// DISABLED: Let runtime code generation handle all expressions properly
+    #[allow(dead_code)]
     fn track_start_function_result(
         &mut self,
         _start_function: &AstFunction,
@@ -9236,7 +9243,8 @@ impl CodeGenerator {
         }
     }
 
-    /// Generate getter functions for all variables in start function + get_result for backward compatibility
+    /// Generate getter functions for all variables in start function + get_result for backward compatibility (legacy)
+    #[allow(dead_code)]
     fn generate_getter_functions(&mut self) -> Result<(), CompilerError> {
         // Generate individual getter functions for each variable
         for (var_name, (var_type, var_value)) in &self.start_function_variables.clone() {
@@ -9249,7 +9257,8 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Generate a single getter function for a variable
+    /// Generate a single getter function for a variable (legacy)
+    #[allow(dead_code)]
     fn generate_single_getter_function(
         &mut self,
         func_name: &str,
@@ -9311,7 +9320,8 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Generate the get_result function for integration testing
+    /// Generate the get_result function for integration testing (legacy)
+    #[allow(dead_code)]
     fn generate_get_result_function(&mut self) -> Result<(), CompilerError> {
         // Check if there's a variable named "result" first, otherwise use the last result
         let (result_value, result_type) =
@@ -9372,7 +9382,8 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Generate constructor body with field initialization
+    /// Generate constructor body with field initialization (legacy)
+    #[allow(dead_code)]
     fn generate_constructor_body(&self, class: &Class) -> Result<Vec<Statement>, CompilerError> {
         let mut body = Vec::new();
 

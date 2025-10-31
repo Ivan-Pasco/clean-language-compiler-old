@@ -323,7 +323,7 @@ impl MirBuilder {
         };
 
         // For class methods and constructors, add implicit 'this' parameter as the first parameter
-        if let Some(class_ctx) = class_context {
+        if let Some(_class_ctx) = class_context {
             let this_value_id = ValueId(context.function.next_value_id);
             context.function.next_value_id += 1;
 
@@ -964,7 +964,7 @@ impl MirBuilder {
             }
 
             TastStatement::For {
-                iterator,
+                iterator: _,
                 iterator_name,
                 iterable,
                 body,
