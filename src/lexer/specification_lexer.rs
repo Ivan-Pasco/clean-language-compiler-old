@@ -776,6 +776,7 @@ impl<'a> SpecificationLexer<'a> {
                         last_was_expr = false;
                         TokenKind::InterpolationStart
                     } else if i == parts.len() - 1 {
+                        last_was_expr = false;
                         TokenKind::InterpolationEnd
                     } else {
                         last_was_expr = false;

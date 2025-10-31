@@ -297,6 +297,14 @@ impl HirBuilder {
                 let inner_type = self.build_type(inner)?;
                 Ok(HirType::Matrix(Box::new(inner_type)))
             }
+            Type::Pairs(key_type, value_type) => {
+                let key_hir_type = self.build_type(key_type)?;
+                let value_hir_type = self.build_type(value_type)?;
+                Ok(HirType::Pairs(
+                    Box::new(key_hir_type),
+                    Box::new(value_hir_type),
+                ))
+            }
             Type::Object(name) | Type::Class { name, .. } => Ok(HirType::Named {
                 name: name.clone(),
                 location: SourceLocation::default(),

@@ -13,62 +13,6 @@ use crate::ast::{
 // use wasmtime::{Engine, Module, Store, Instance, Val};
 // use wasm_encoder::{Instruction, ConstExpr, GlobalType, ValType};
 
-#[test]
-#[allow(deprecated)] // Tests the deprecated AST-based CodeGenerator
-fn test_code_generation() {
-    let mut codegen = CodeGenerator::new();
-    // Example Program structure
-    let program = Program {
-        imports: vec![],
-        statements: vec![],
-        location: None,
-        functions: vec![AstFunction {
-            name: "add".to_string(),
-            description: None,
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![
-                Parameter {
-                    name: "a".to_string(),
-                    type_: Type::Integer,
-                    default_value: None,
-                },
-                Parameter {
-                    name: "b".to_string(),
-                    type_: Type::Integer,
-                    default_value: None,
-                },
-            ],
-            return_type: Type::Integer,
-            body: vec![Statement::Return {
-                value: Some(Expression::Binary(
-                    Box::new(Expression::Variable("a".to_string())),
-                    BinaryOperator::Add,
-                    Box::new(Expression::Variable("b".to_string())),
-                )),
-                location: None,
-            }],
-            location: None,
-            syntax: FunctionSyntax::Simple,
-            visibility: Visibility::Public,
-            modifier: FunctionModifier::None,
-        }],
-        classes: vec![],
-        start_function: None,
-        tests: vec![],
-    };
-
-    let result = codegen.generate(&program);
-    assert!(result.is_ok(), "Code generation failed: {:?}", result.err());
-    let wasm_bytes = result.unwrap();
-    assert!(!wasm_bytes.is_empty(), "Generated WASM bytes are empty");
-
-    // TODO: Add more detailed validation of generated WASM
-    // (e.g., using wasmparser or wasmtime to validate/run the module)
-    // let validation_result = wasmparser::validate(&wasm_bytes);
-    // assert!(validation_result.is_ok(), "WASM validation failed: {:?}", validation_result.err());
-}
-
 // Commented out tests for methods that don't exist in current CodeGenerator
 /*
 #[test]

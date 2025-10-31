@@ -815,6 +815,18 @@ impl ConstraintGenerator {
                     params: vec![ConstraintType::Variable(element_var)],
                 }
             }
+            Value::Pairs(_) => {
+                // Pairs literals
+                let key_var = self.type_vars.fresh_var("pairs_key".to_string(), None);
+                let value_var = self.type_vars.fresh_var("pairs_value".to_string(), None);
+                ConstraintType::Generic {
+                    name: "Pairs".to_string(),
+                    params: vec![
+                        ConstraintType::Variable(key_var),
+                        ConstraintType::Variable(value_var),
+                    ],
+                }
+            }
             // Handle sized integer types
             Value::Integer8(_)
             | Value::Integer8u(_)

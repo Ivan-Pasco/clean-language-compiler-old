@@ -44,6 +44,9 @@ pub enum Value {
 
     // List (replaces Array)
     List(Vec<Value>),
+
+    // Pairs (key-value associative container)
+    Pairs(Vec<(Value, Value)>),
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -488,6 +491,13 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
+    // Error handling with block
+    OnErrorBlock {
+        expression: Expression,
+        error_block: Vec<Statement>,
+        location: Option<SourceLocation>,
+    },
+
     // While loops
     While {
         condition: Expression,
@@ -781,6 +791,16 @@ impl fmt::Display for Value {
             Value::Integer64(i) => write!(f, "{i}:64"),
             Value::Number32(f_val) => write!(f, "{f_val}:32"),
             Value::Number64(f_val) => write!(f, "{f_val}:64"),
+            Value::Pairs(pairs) => {
+                write!(f, "{{")?;
+                for (i, (key, value)) in pairs.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{key}: {value}")?;
+                }
+                write!(f, "}}")
+            }
         }
     }
 }

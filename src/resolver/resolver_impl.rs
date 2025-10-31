@@ -140,12 +140,34 @@ impl NameResolver {
                     class.location.clone(),
                 );
             } else {
-                let _symbol_id = self.symbol_table.create_symbol(
+                let class_symbol_id = self.symbol_table.create_symbol(
                     class.name.clone(),
                     SymbolKind::Class {
                         fields: Vec::new(),  // Will be filled in second pass
                         methods: Vec::new(), // Will be filled in second pass
                         parent: None,        // Will be resolved in second pass
+                    },
+                    self.symbol_table.current_scope_id(),
+                    class.location.clone(),
+                );
+
+                // CRITICAL FIX: Register constructor symbol in first pass
+                // This allows global functions to reference constructors before classes are fully resolved
+                let constructor_params = if let Some(constructor) = &class.constructor {
+                    constructor
+                        .parameters
+                        .iter()
+                        .map(|p| p.param_type.clone())
+                        .collect()
+                } else {
+                    vec![] // Default constructor has no parameters
+                };
+
+                let _constructor_symbol_id = self.symbol_table.create_symbol(
+                    format!("{}.constructor", class.name),
+                    SymbolKind::Constructor {
+                        class_id: class_symbol_id,
+                        parameters: constructor_params,
                     },
                     self.symbol_table.current_scope_id(),
                     class.location.clone(),
@@ -285,6 +307,19 @@ impl NameResolver {
             None
         };
 
+        // Lookup constructor symbol - it was already created in the first pass (register_top_level_symbols)
+        // This ensures constructors are available before global functions are resolved
+        let constructor_name = format!("{}.constructor", class.name);
+        let constructor_symbol_id = self
+            .symbol_table
+            .lookup_symbol(&constructor_name)
+            .ok_or_else(|| {
+                self.error(
+                    &format!("Constructor symbol for class '{}' not found - this is an internal compiler error", class.name),
+                    class.location.clone(),
+                );
+            })?;
+
         // Create class scope
         let class_scope = self.symbol_table.create_scope(
             None,
@@ -335,11 +370,21 @@ impl NameResolver {
             }
         }
 
-        // Resolve constructor
+        // Resolve constructor (symbol was already created in global scope)
         let resolved_constructor = if let Some(constructor) = &class.constructor {
-            Some(self.resolve_constructor(constructor, class_symbol_id)?)
+            // Use explicit constructor
+            Some(self.resolve_constructor(constructor, class_symbol_id, constructor_symbol_id)?)
         } else {
-            None
+            // CRITICAL FIX: Generate default constructor with empty body
+            Some(ResolvedHirConstructor {
+                symbol_id: constructor_symbol_id,
+                parameters: vec![],
+                body: ResolvedHirBlock {
+                    statements: vec![], // Empty body for default constructor
+                    location: class.location.clone(),
+                },
+                location: class.location.clone(),
+            })
         };
 
         // Resolve methods
@@ -403,6 +448,7 @@ impl NameResolver {
         &mut self,
         constructor: &HirConstructor,
         class_id: SymbolId,
+        constructor_symbol_id: SymbolId,
     ) -> Result<ResolvedHirConstructor, ()> {
         // Create constructor scope
         let constructor_scope = self
@@ -451,6 +497,7 @@ impl NameResolver {
         self.current_class = previous_class;
 
         Ok(ResolvedHirConstructor {
+            symbol_id: constructor_symbol_id,
             parameters: resolved_parameters,
             body: resolved_body,
             location: constructor.location.clone(),
@@ -961,17 +1008,74 @@ impl NameResolver {
                 location,
             } => {
                 // Lookup function in symbol table (includes builtin functions)
-                let function_symbol_id =
-                    self.symbol_table.lookup_symbol(function).ok_or_else(|| {
-                        self.error(
-                            &format!("Function '{}' not found", function),
-                            location.clone(),
-                        );
-                    })?;
+                let function_symbol_opt = self.symbol_table.lookup_symbol(function);
+
+                // If not found as a global function and we're inside a class,
+                // check if it's a method in the current class or parent class
+                if function_symbol_opt.is_none() {
+                    if let Some(current_class_id) = self.current_class {
+                        // Try to find it as a method in the current class or parent
+                        if let Some(method_symbol_id) = self
+                            .symbol_table
+                            .lookup_class_member(current_class_id, function)
+                        {
+                            // Found as a method! Convert to implicit this.method() call
+                            let mut resolved_arguments = Vec::new();
+                            for arg in arguments {
+                                resolved_arguments.push(self.resolve_expression(arg)?);
+                            }
+
+                            return Ok(ResolvedHirExpression::MethodCall {
+                                receiver: Box::new(ResolvedHirExpression::This {
+                                    class_symbol_id: current_class_id,
+                                    location: location.clone(),
+                                }),
+                                method: function.clone(),
+                                method_symbol_id: Some(method_symbol_id),
+                                arguments: resolved_arguments,
+                                location: location.clone(),
+                            });
+                        }
+                    }
+                }
+
+                // If still not found, emit error
+                let function_symbol_id = function_symbol_opt.ok_or_else(|| {
+                    self.error(
+                        &format!("Function '{}' not found", function),
+                        location.clone(),
+                    );
+                })?;
 
                 let mut resolved_arguments = Vec::new();
                 for arg in arguments {
                     resolved_arguments.push(self.resolve_expression(arg)?);
+                }
+
+                // Check if this is actually a constructor call (call to a class)
+                if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
+                    if matches!(symbol.kind, SymbolKind::Class { .. }) {
+                        // This is a constructor call, not a function call
+                        // Look up the constructor's SymbolId by name
+                        let constructor_name = format!("{}.constructor", function);
+                        let constructor_symbol_id = self
+                            .symbol_table
+                            .lookup_symbol(&constructor_name)
+                            .ok_or_else(|| {
+                                self.error(
+                                    &format!("Constructor for class '{}' not found", function),
+                                    location.clone(),
+                                );
+                            })?;
+
+                        return Ok(ResolvedHirExpression::Constructor {
+                            class_name: function.clone(),
+                            class_symbol_id: function_symbol_id,
+                            constructor_symbol_id,
+                            arguments: resolved_arguments,
+                            location: location.clone(),
+                        });
+                    }
                 }
 
                 Ok(ResolvedHirExpression::Call {
@@ -1058,6 +1162,56 @@ impl NameResolver {
                     }
                 }
 
+                // CRITICAL FIX: Check if receiver is a FieldAccess that represents a namespace path
+                // This handles three-level calls like compare.integer.greaterThan()
+                if let HirExpression::FieldAccess {
+                    object,
+                    field: class_part,
+                    ..
+                } = receiver.as_ref()
+                {
+                    if let HirExpression::Variable {
+                        name: namespace_part,
+                        ..
+                    } = object.as_ref()
+                    {
+                        // Check if namespace_part is a namespace
+                        if let Some(ns_symbol_id) = self.symbol_table.lookup_symbol(namespace_part)
+                        {
+                            if let Some(ns_symbol) = self.symbol_table.get_symbol(ns_symbol_id) {
+                                if matches!(ns_symbol.kind, SymbolKind::Namespace { .. }) {
+                                    // This is a three-level call: namespace.class.method()
+                                    // Resolve arguments
+                                    let mut resolved_arguments = Vec::new();
+                                    for arg in arguments {
+                                        resolved_arguments.push(self.resolve_expression(arg)?);
+                                    }
+
+                                    // Look up the full class name
+                                    let full_class_name =
+                                        format!("{}.{}", namespace_part, class_part);
+                                    let class_symbol_id = self
+                                        .symbol_table
+                                        .lookup_symbol(&full_class_name)
+                                        .unwrap_or(SymbolId(0)); // Placeholder for built-in classes
+
+                                    let method_symbol_id = SymbolId(0); // Placeholder for built-in methods
+
+                                    return Ok(ResolvedHirExpression::StaticMethodCall {
+                                        namespace: vec![namespace_part.clone()],
+                                        class_name: class_part.clone(),
+                                        class_symbol_id,
+                                        method: method.clone(),
+                                        method_symbol_id,
+                                        arguments: resolved_arguments,
+                                        location: location.clone(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Regular instance method call
                 let resolved_receiver = self.resolve_expression(receiver)?;
 
@@ -1084,6 +1238,45 @@ impl NameResolver {
                 field,
                 location,
             } => {
+                // CRITICAL FIX: Check if object is a Variable that refers to a namespace
+                // This handles cases like compare.integer where "compare" is a namespace, not a variable
+                if let HirExpression::Variable { name: obj_name, .. } = object.as_ref() {
+                    if let Some(obj_symbol_id) = self.symbol_table.lookup_symbol(obj_name) {
+                        if let Some(obj_symbol) = self.symbol_table.get_symbol(obj_symbol_id) {
+                            if matches!(obj_symbol.kind, SymbolKind::Namespace { .. }) {
+                                // This is a namespace access (e.g., compare.integer)
+                                // The field is either another namespace or a class within the namespace
+                                // Don't resolve as a regular field access - return as a variable with dotted name
+                                // This will be handled later when we encounter the method call
+
+                                // For now, create a placeholder Variable with the full dotted path
+                                // This is not ideal but allows the rest of the pipeline to work
+                                let full_name = format!("{}.{}", obj_name, field);
+
+                                // Check if this full name is a known symbol (namespace or class)
+                                if let Some(full_symbol_id) =
+                                    self.symbol_table.lookup_symbol(&full_name)
+                                {
+                                    return Ok(ResolvedHirExpression::Variable {
+                                        name: full_name,
+                                        symbol_id: full_symbol_id,
+                                        location: location.clone(),
+                                    });
+                                }
+
+                                // If not found as a single symbol, this might be part of a three-level call
+                                // Create a placeholder symbol for namespace path
+                                return Ok(ResolvedHirExpression::Variable {
+                                    name: full_name,
+                                    symbol_id: SymbolId(0), // Placeholder
+                                    location: location.clone(),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Normal field access - resolve object first
                 let resolved_object = self.resolve_expression(object)?;
 
                 // Field resolution depends on object type - for now use placeholder
@@ -1142,6 +1335,18 @@ impl NameResolver {
                         );
                     })?;
 
+                // Look up the constructor's SymbolId by name
+                let constructor_name = format!("{}.constructor", class_name);
+                let constructor_symbol_id = self
+                    .symbol_table
+                    .lookup_symbol(&constructor_name)
+                    .ok_or_else(|| {
+                        self.error(
+                            &format!("Constructor for class '{}' not found", class_name),
+                            location.clone(),
+                        );
+                    })?;
+
                 let mut resolved_arguments = Vec::new();
                 for arg in arguments {
                     resolved_arguments.push(self.resolve_expression(arg)?);
@@ -1150,18 +1355,8 @@ impl NameResolver {
                 Ok(ResolvedHirExpression::Constructor {
                     class_name: class_name.clone(),
                     class_symbol_id,
+                    constructor_symbol_id,
                     arguments: resolved_arguments,
-                    location: location.clone(),
-                })
-            }
-
-            HirExpression::This { location } => {
-                let class_symbol_id = self.current_class.ok_or_else(|| {
-                    self.error("'this' can only be used inside a class", location.clone());
-                })?;
-
-                Ok(ResolvedHirExpression::This {
-                    class_symbol_id,
                     location: location.clone(),
                 })
             }
@@ -1530,6 +1725,52 @@ impl NameResolver {
                     condition: Box::new(resolved_condition),
                     then_expr: Box::new(resolved_then),
                     else_expr: Box::new(resolved_else),
+                    location: location.clone(),
+                })
+            }
+
+            HirExpression::BaseCall {
+                arguments,
+                location,
+            } => {
+                // Resolve the parent class symbol from the current class
+                let parent_class_symbol_id = if let Some(current_class_id) = self.current_class {
+                    if let Some(class_symbol) = self.symbol_table.get_symbol(current_class_id) {
+                        if let SymbolKind::Class { parent, .. } = &class_symbol.kind {
+                            parent.ok_or_else(|| {
+                                self.error(
+                                    "base() can only be called in a derived class constructor",
+                                    location.clone(),
+                                );
+                            })?
+                        } else {
+                            self.error(
+                                "base() can only be called inside a class",
+                                location.clone(),
+                            );
+                            return Err(());
+                        }
+                    } else {
+                        self.error("Current class symbol not found", location.clone());
+                        return Err(());
+                    }
+                } else {
+                    self.error(
+                        "base() can only be called inside a class constructor",
+                        location.clone(),
+                    );
+                    return Err(());
+                };
+
+                // Resolve arguments
+                let mut resolved_arguments = Vec::new();
+                for arg in arguments {
+                    resolved_arguments.push(self.resolve_expression(arg)?);
+                }
+
+                Ok(ResolvedHirExpression::BaseCall {
+                    parent_class_symbol_id,
+                    arguments: resolved_arguments,
                     location: location.clone(),
                 })
             }

@@ -2368,6 +2368,8 @@ impl SemanticAnalyzer {
                 location,
             } => {
                 let value_type = self.check_expression(value)?;
+
+                // Try to find variable in local scope first
                 if let Some(var_type) = self.current_scope.lookup_variable(target) {
                     if !self.types_compatible(&var_type, &value_type) {
                         return Err(CompilerError::type_error(
@@ -2380,6 +2382,20 @@ impl SemanticAnalyzer {
                             location.clone(),
                         ));
                     }
+                    self.used_variables.insert(target.clone());
+                    Ok(())
+                } else if let Some(field_type) = self.resolve_class_field_access(target) {
+                    // Variable not found locally, but it's a class field - allow implicit field access
+                    if !self.types_compatible(&field_type, &value_type) {
+                        return Err(CompilerError::type_error(
+                            &format!(
+                                "Cannot assign {value_type:?} to field of type {field_type:?}"
+                            ),
+                            Some("Ensure the assignment value matches the field type".to_string()),
+                            location.clone(),
+                        ));
+                    }
+                    // Mark the field as used
                     self.used_variables.insert(target.clone());
                     Ok(())
                 } else {
@@ -2645,6 +2661,22 @@ impl SemanticAnalyzer {
             } => {
                 // background expression - fire and forget
                 let _expr_type = self.check_expression(expression)?;
+                Ok(())
+            }
+
+            Statement::OnErrorBlock {
+                expression,
+                error_block,
+                location: _,
+            } => {
+                // Check the main expression
+                let _expr_type = self.check_expression(expression)?;
+
+                // Check all statements in the error block
+                for stmt in error_block {
+                    self.check_statement(stmt)?;
+                }
+
                 Ok(())
             }
 
@@ -3096,7 +3128,7 @@ impl SemanticAnalyzer {
                     Type::Object(class_name) => {
                         // Handle field assignment on user-defined classes
                         if let Some(class) = self.class_table.get(&class_name).cloned() {
-                            // Find the field in the class
+                            // Find the field in the class (check direct fields first)
                             for field in &class.fields {
                                 if field.name == *property {
                                     // Check if the assignment value type is compatible with the field type
@@ -3111,13 +3143,30 @@ impl SemanticAnalyzer {
                                     return Ok(Type::Void); // Assignment returns void
                                 }
                             }
-                            // Field not found
+
+                            // Field not found in direct fields - check inherited fields
+                            if let Some(inherited_type) =
+                                self.lookup_inherited_field(&class_name, property)
+                            {
+                                // Check if the assignment value type is compatible with the inherited field type
+                                if !self.types_compatible(&inherited_type, &value_type) {
+                                    return Err(CompilerError::type_error(
+                                        &format!("Cannot assign {:?} to inherited field '{}' of type {:?}",
+                                            value_type, property, inherited_type),
+                                        Some("Ensure the assignment value matches the field type".to_string()),
+                                        None
+                                    ));
+                                }
+                                return Ok(Type::Void); // Assignment returns void
+                            }
+
+                            // Field not found in class or parent classes
                             Err(CompilerError::type_error(
                                 &format!(
-                                    "Field '{}' not found in class '{}'",
+                                    "Field '{}' not found in class '{}' or its parent classes",
                                     property, class_name
                                 ),
-                                Some("Check the class definition for available fields".to_string()),
+                                Some("Check the class definition and parent classes for available fields".to_string()),
                                 None,
                             ))
                         } else {
@@ -3269,6 +3318,39 @@ impl SemanticAnalyzer {
                                 Some(location.clone()),
                             )),
                         };
+                    }
+                }
+
+                // Check for nested namespace method calls (e.g., compare.integer.greaterThan())
+                if let Expression::PropertyAccess {
+                    object: namespace_obj,
+                    property: namespace_prop,
+                    ..
+                } = &**object
+                {
+                    if let Expression::Variable(namespace_name) = &**namespace_obj {
+                        // Build the full qualified name: namespace.property.method
+                        let qualified_name =
+                            format!("{}.{}.{}", namespace_name, namespace_prop, method);
+                        eprintln!(
+                            "DEBUG: Nested namespace method call detected: {}",
+                            qualified_name
+                        );
+                        eprintln!("DEBUG: Arguments provided: {}", arguments.len());
+
+                        // Check if this is a known builtin function
+                        if self.function_table.contains_key(&qualified_name) {
+                            eprintln!(
+                                "DEBUG: Found in function table, calling check_function_call"
+                            );
+                            return self.check_function_call(
+                                &qualified_name,
+                                arguments,
+                                Some(location.clone()),
+                            );
+                        } else {
+                            eprintln!("DEBUG: NOT found in function table");
+                        }
                     }
                 }
 
@@ -5296,6 +5378,7 @@ impl SemanticAnalyzer {
             Value::Integer64(_) => Type::Integer,
             Value::Number32(_) => Type::Number,
             Value::Number64(_) => Type::Number,
+            Value::Pairs(_) => Type::Pairs(Box::new(Type::Any), Box::new(Type::Any)),
         }
     }
 

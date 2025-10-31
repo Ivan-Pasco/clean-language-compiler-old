@@ -184,20 +184,37 @@ impl CodeGenerator {
         // Handle default parameters
         self.generate_default_parameter_logic(function, instructions)?;
 
-        // Generate function body statements
-        for statement in &function.body {
-            self.generate_statement(statement, instructions)?;
-        }
+        // Check if the last statement is an expression that should be implicitly returned
+        let has_implicit_return = self.has_implicit_return_expression(&function.body, &function.return_type);
 
-        // Add implicit return if function has no explicit return
-        if !self.has_explicit_return(&function.body) {
-            match &function.return_type {
-                Type::Void => {
-                    // No return value needed
-                },
-                return_type => {
-                    // Generate default return value based on type
-                    self.generate_default_return_value(return_type, instructions)?;
+        // Generate function body statements
+        if has_implicit_return && !function.body.is_empty() {
+            // Generate all statements except the last one normally
+            for statement in &function.body[..function.body.len() - 1] {
+                self.generate_statement(statement, instructions)?;
+            }
+
+            // Generate the last statement as an implicit return
+            if let Some(Statement::Expression { expr, .. }) = function.body.last() {
+                // Generate the expression without dropping its result
+                self.generate_expression(expr, instructions)?;
+            }
+        } else {
+            // Generate all statements normally
+            for statement in &function.body {
+                self.generate_statement(statement, instructions)?;
+            }
+
+            // Add implicit return if function has no explicit return
+            if !self.has_explicit_return(&function.body) {
+                match &function.return_type {
+                    Type::Void => {
+                        // No return value needed
+                    },
+                    return_type => {
+                        // Generate default return value based on type
+                        self.generate_default_return_value(return_type, instructions)?;
+                    }
                 }
             }
         }
@@ -332,6 +349,26 @@ impl CodeGenerator {
             }
         }
         false
+    }
+
+    fn has_implicit_return_expression(&self, statements: &[Statement], return_type: &Type) -> bool {
+        // Only consider implicit returns if the function has a non-void return type
+        if matches!(return_type, Type::Void) {
+            return false;
+        }
+
+        // Check if the last statement is an expression statement
+        if let Some(last_stmt) = statements.last() {
+            match last_stmt {
+                Statement::Expression { .. } => {
+                    // Only treat as implicit return if there's no explicit return anywhere
+                    !self.has_explicit_return(statements)
+                },
+                _ => false
+            }
+        } else {
+            false
+        }
     }
 
     /// Prepare function type signature and return type index for WASM function declaration
@@ -561,6 +598,9 @@ impl CodeGenerator {
     pub fn generate_start_function(&mut self) -> Result<(), CompilerError> {
         // Look for Clean Language entry point "start" function
         if let Some(&start_index) = self.function_map.get("start") {
+            eprintln!("DEBUG _start: Will call start() function at index {}", start_index);
+            eprintln!("DEBUG _start: Total imports = {}, Total functions = {}",
+                self.imported_functions.len(), self.function_names.len());
             // CRITICAL FIX: Declare the _start function in the function section FIRST
             // The _start function has no parameters and no return value
             let type_index = self.type_manager.add_function_type(&[], None)?;

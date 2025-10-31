@@ -122,6 +122,7 @@ pub enum TastStatement {
     },
     For {
         iterator: SymbolId,
+        iterator_name: String, // Variable name for the iterator
         iterable: TastExpression,
         body: TastBlock,
         location: SourceLocation,
@@ -240,6 +241,10 @@ pub enum TastExpressionKind {
         then_expr: Box<TastExpression>,
         else_expr: Box<TastExpression>,
     },
+    BaseCall {
+        parent_class_symbol_id: SymbolId,
+        arguments: Vec<TastExpression>,
+    },
 }
 
 /// Type-checked literal values
@@ -313,6 +318,9 @@ pub enum ConcreteType {
 
     /// Matrix type with element type (2D array)
     Matrix(Box<ConcreteType>),
+
+    /// Pairs type with key and value types
+    Pairs(Box<ConcreteType>, Box<ConcreteType>),
 
     /// Function type
     Function {
@@ -573,6 +581,9 @@ impl std::fmt::Display for ConcreteType {
             ConcreteType::Undefined => write!(f, "undefined"),
             ConcreteType::Array(element_type) => write!(f, "Array<{}>", element_type),
             ConcreteType::Matrix(element_type) => write!(f, "Matrix<{}>", element_type),
+            ConcreteType::Pairs(key_type, value_type) => {
+                write!(f, "Pairs<{}, {}>", key_type, value_type)
+            }
             ConcreteType::Function {
                 parameters,
                 return_type,

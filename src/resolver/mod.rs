@@ -90,6 +90,7 @@ pub struct ResolvedHirField {
 /// Resolved HIR Constructor with resolved parameter references
 #[derive(Debug, Clone)]
 pub struct ResolvedHirConstructor {
+    pub symbol_id: SymbolId,
     pub parameters: Vec<ResolvedHirParameter>,
     pub body: ResolvedHirBlock,
     pub location: SourceLocation,
@@ -287,11 +288,12 @@ pub enum ResolvedHirExpression {
     Constructor {
         class_name: String,
         class_symbol_id: SymbolId,
+        constructor_symbol_id: SymbolId,
         arguments: Vec<ResolvedHirExpression>,
         location: SourceLocation,
     },
 
-    /// This reference (resolved to current class)
+    /// This reference (resolved to current class - created internally for implicit field access)
     This {
         class_symbol_id: SymbolId,
         location: SourceLocation,
@@ -323,6 +325,13 @@ pub enum ResolvedHirExpression {
         condition: Box<ResolvedHirExpression>,
         then_expr: Box<ResolvedHirExpression>,
         else_expr: Box<ResolvedHirExpression>,
+        location: SourceLocation,
+    },
+
+    /// Base constructor call (in derived class constructors)
+    BaseCall {
+        parent_class_symbol_id: SymbolId,
+        arguments: Vec<ResolvedHirExpression>,
         location: SourceLocation,
     },
 }

@@ -45,13 +45,15 @@ impl MathClass {
     fn register_core_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // Math.sqrt(number x) -> number
         let sqrt_impl = vec![Instruction::LocalGet(0), Instruction::F64Sqrt];
-        register_stdlib_function(
+        let sqrt_index = register_stdlib_function(
             codegen,
             "math.sqrt",
             &[WasmType::F64],
             Some(WasmType::F64),
             sqrt_impl.clone(),
         )?;
+        // Add underscore alias for backwards compatibility
+        codegen.add_function_alias("math_sqrt", sqrt_index);
 
         // Math.abs(number x) -> number
         let abs_impl = vec![Instruction::LocalGet(0), Instruction::F64Abs];
@@ -141,13 +143,15 @@ impl MathClass {
         )?;
 
         // Math.trunc(number x) -> number
-        register_stdlib_function(
+        let trunc_index = register_stdlib_function(
             codegen,
             "math.trunc",
             &[WasmType::F64],
             Some(WasmType::F64),
             vec![Instruction::LocalGet(0), Instruction::F64Trunc],
         )?;
+        // Add underscore alias for backwards compatibility
+        codegen.add_function_alias("math_trunc", trunc_index);
 
         // Math.sign(number x) -> number
         register_stdlib_function(
@@ -275,13 +279,15 @@ impl MathClass {
         )?;
 
         // Math.pow(number base, number exponent) -> number
-        register_stdlib_function(
+        let pow_index = register_stdlib_function(
             codegen,
             "math.pow",
             &[WasmType::F64, WasmType::F64],
             Some(WasmType::F64),
             self.generate_pow(),
         )?;
+        // Add underscore alias for backwards compatibility
+        codegen.add_function_alias("math_pow", pow_index);
 
         Ok(())
     }
@@ -323,13 +329,15 @@ impl MathClass {
     fn register_constants(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // Math.pi() -> number - register both lowercase and uppercase variants
         let pi_impl = vec![Instruction::F64Const(std::f64::consts::PI)];
-        register_stdlib_function(
+        let pi_index = register_stdlib_function(
             codegen,
             "math.pi",
             &[],
             Some(WasmType::F64),
             pi_impl.clone(),
         )?;
+        // Add underscore alias for backwards compatibility
+        codegen.add_function_alias("math_pi", pi_index);
 
         // Math.e() -> number - register both lowercase and uppercase variants
         let e_impl = vec![Instruction::F64Const(std::f64::consts::E)];

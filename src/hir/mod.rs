@@ -73,6 +73,7 @@ pub enum HirType {
     /// Generic types
     List(Box<HirType>),
     Matrix(Box<HirType>),
+    Pairs(Box<HirType>, Box<HirType>),
 
     /// User-defined types (resolved in Stage 4)
     Named {
@@ -291,9 +292,6 @@ pub enum HirExpression {
         location: SourceLocation,
     },
 
-    /// This reference (in methods)
-    This { location: SourceLocation },
-
     /// Type cast (explicit type conversion)
     Cast {
         expression: Box<HirExpression>,
@@ -337,6 +335,12 @@ pub enum HirExpression {
         condition: Box<HirExpression>,
         then_expr: Box<HirExpression>,
         else_expr: Box<HirExpression>,
+        location: SourceLocation,
+    },
+
+    /// Base constructor call (in derived class constructors)
+    BaseCall {
+        arguments: Vec<HirExpression>,
         location: SourceLocation,
     },
 }
@@ -408,13 +412,13 @@ impl HirExpression {
             HirExpression::Index { location, .. } => location,
             HirExpression::Array { location, .. } => location,
             HirExpression::Constructor { location, .. } => location,
-            HirExpression::This { location, .. } => location,
             HirExpression::Cast { location, .. } => location,
             HirExpression::Assignment { location, .. } => location,
             HirExpression::NamespaceCall { location, .. } => location,
             HirExpression::StaticMethodCall { location, .. } => location,
             HirExpression::OnError { location, .. } => location,
             HirExpression::Conditional { location, .. } => location,
+            HirExpression::BaseCall { location, .. } => location,
         }
     }
 }
@@ -479,6 +483,16 @@ impl HirType {
                 location: SourceLocation::default(),
             })),
             Value::Matrix(_) => HirType::Matrix(Box::new(HirType::Number)),
+            Value::Pairs(_) => HirType::Pairs(
+                Box::new(HirType::Inferred {
+                    id: 0,
+                    location: SourceLocation::default(),
+                }),
+                Box::new(HirType::Inferred {
+                    id: 0,
+                    location: SourceLocation::default(),
+                }),
+            ),
         }
     }
 }

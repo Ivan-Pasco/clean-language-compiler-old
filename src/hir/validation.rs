@@ -669,15 +669,6 @@ impl HirValidator {
                 }
             }
 
-            HirExpression::This { location } => {
-                if context.current_class.is_none() {
-                    context.error(
-                        "'this' can only be used inside a class method or constructor",
-                        location.clone(),
-                    );
-                }
-            }
-
             HirExpression::Cast {
                 expression,
                 target_type,
@@ -722,6 +713,15 @@ impl HirValidator {
                 Self::validate_expression(context, condition);
                 Self::validate_expression(context, then_expr);
                 Self::validate_expression(context, else_expr);
+            }
+
+            HirExpression::BaseCall { arguments, .. } => {
+                // Validate arguments
+                for arg in arguments {
+                    Self::validate_expression(context, arg);
+                }
+                // Note: Validation of whether base() is used in proper context (constructor of derived class)
+                // is done during resolution phase, not here
             }
         }
     }

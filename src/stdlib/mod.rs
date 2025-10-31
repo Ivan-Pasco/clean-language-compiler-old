@@ -325,8 +325,6 @@ pub(crate) fn register_stdlib_function(
     // Function registration completed successfully
     let function_index = codegen.register_function(name, params, return_type, &instructions)?;
 
-    // Function registration completed successfully
-
     Ok(function_index)
 }
 

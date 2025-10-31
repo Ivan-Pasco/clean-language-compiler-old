@@ -371,6 +371,30 @@ impl<'a> TypeInference<'a> {
             self.type_env.insert(symbol_id, ConcreteType::Namespace);
         }
 
+        // Add compare namespace to type environment
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("compare", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(symbol_id, ConcreteType::Namespace);
+        }
+
+        // Add conditional namespace to type environment
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("conditional", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(symbol_id, ConcreteType::Namespace);
+        }
+
+        // Add logical namespace to type environment
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("logical", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(symbol_id, ConcreteType::Namespace);
+        }
+
         // Add math namespace functions to type environment
         // These correspond to the namespace functions registered in symbol_table.rs
 
@@ -1094,6 +1118,16 @@ impl<'a> TypeInference<'a> {
         self.current_function = None;
         self.current_return_type = None;
 
+        // DEBUG: Log final return type stored in TAST for Pairs/Matrix functions
+        let return_debug = format!("{:?}", declared_return_type);
+        if return_debug.contains("Pairs") || return_debug.contains("Matrix") {
+            eprintln!(
+                "[DEBUG infer_function END] Function '{}' final TastFunction.return_type:",
+                function.name
+            );
+            eprintln!("  {:?}", declared_return_type);
+        }
+
         Ok(TastFunction {
             symbol_id: function.symbol_id,
             name: function.name.clone(),
@@ -1109,6 +1143,53 @@ impl<'a> TypeInference<'a> {
     }
 
     /// Infer types for a method (similar to function but handles methods)
+    fn infer_constructor(
+        &mut self,
+        constructor: &crate::resolver::ResolvedHirConstructor,
+        class_symbol_id: SymbolId,
+    ) -> Result<TastFunction, CompilerError> {
+        self.current_function = Some(constructor.symbol_id);
+
+        // Constructor returns an instance of the class
+        let return_type = ConcreteType::Class {
+            symbol_id: class_symbol_id,
+            type_args: Vec::new(),
+        };
+        self.current_return_type = Some(return_type.clone());
+
+        // Add parameters to type environment
+        let mut tast_parameters = Vec::new();
+        for param in &constructor.parameters {
+            let param_type = self.hir_type_to_concrete(&param.param_type);
+            self.type_env.insert(param.symbol_id, param_type.clone());
+
+            tast_parameters.push(TastParameter {
+                symbol_id: param.symbol_id,
+                name: param.name.clone(),
+                param_type,
+                default_value: None,
+                is_variadic: param.is_variadic,
+                location: param.location.clone(),
+            });
+        }
+
+        // Infer body
+        let tast_body = self.infer_block(&constructor.body)?;
+
+        Ok(TastFunction {
+            symbol_id: constructor.symbol_id,
+            name: "constructor".to_string(), // Constructors are named "constructor"
+            parameters: tast_parameters,
+            return_type,
+            body: tast_body,
+            generic_params: Vec::new(),
+            constraints: Vec::new(),
+            is_async: false,
+            visibility: Visibility::Public,
+            location: constructor.location.clone(),
+        })
+    }
+
     fn infer_method(&mut self, method: &ResolvedHirMethod) -> Result<TastFunction, CompilerError> {
         self.current_function = Some(method.symbol_id);
         self.current_return_type = Some(self.hir_type_to_concrete(&method.return_type));
@@ -1175,6 +1256,14 @@ impl<'a> TypeInference<'a> {
             });
         }
 
+        // Convert constructors
+        let mut tast_constructors = Vec::new();
+        if let Some(constructor) = &class.constructor {
+            if let Ok(tast_constructor) = self.infer_constructor(constructor, class.symbol_id) {
+                tast_constructors.push(tast_constructor);
+            }
+        }
+
         // Convert methods
         let mut tast_methods = Vec::new();
         for method in &class.methods {
@@ -1190,7 +1279,7 @@ impl<'a> TypeInference<'a> {
             name: class.name.clone(),
             fields: tast_fields,
             methods: tast_methods,
-            constructors: Vec::new(), // Would handle constructors
+            constructors: tast_constructors, // Now properly populated
             parent_class: class.parent,
             interfaces: Vec::new(),         // Would handle interfaces
             generic_params: Vec::new(),     // Would handle generics
@@ -1222,6 +1311,32 @@ impl<'a> TypeInference<'a> {
                     // Other expression statements are discarded (will need DROP in codegen)
                     if is_last_statement {
                         block_return_type = expression.expr_type.clone();
+                    }
+                }
+                TastStatement::If {
+                    result_type,
+                    then_block,
+                    else_block,
+                    ..
+                } => {
+                    // If statement can produce a value when both branches return
+                    // Check if the branches contain return statements
+                    let then_returns = !matches!(then_block.return_type, ConcreteType::Undefined);
+                    let else_returns = else_block
+                        .as_ref()
+                        .map(|b| !matches!(b.return_type, ConcreteType::Undefined))
+                        .unwrap_or(false);
+
+                    // If both branches return, use the result_type
+                    // If only one branch returns, use that branch's return type
+                    if then_returns || else_returns {
+                        if !matches!(result_type, ConcreteType::Null | ConcreteType::Undefined) {
+                            block_return_type = result_type.clone();
+                        } else if then_returns {
+                            block_return_type = then_block.return_type.clone();
+                        } else if else_returns {
+                            block_return_type = else_block.as_ref().unwrap().return_type.clone();
+                        }
                     }
                 }
                 _ => {}
@@ -1422,7 +1537,7 @@ impl<'a> TypeInference<'a> {
             }
 
             ResolvedHirStatement::For {
-                variable: _,
+                variable,
                 variable_symbol_id,
                 iterable,
                 body,
@@ -1454,6 +1569,7 @@ impl<'a> TypeInference<'a> {
 
                 Ok(TastStatement::For {
                     iterator: *variable_symbol_id,
+                    iterator_name: variable.clone(),
                     iterable: tast_iterable,
                     body: tast_body,
                     location: location.clone(),
@@ -1798,12 +1914,75 @@ impl<'a> TypeInference<'a> {
                     &tast_arguments,
                 )?;
 
+                // CRITICAL FIX: Resolve method symbol from receiver's class type or primitive type
+                // The resolver sets method_symbol_id = None because it doesn't have type info
+                // Now we have the receiver's type, so we can look up the method
+                let resolved_method_symbol = method_symbol_id
+                    .or_else(|| {
+                        // Extract class symbol ID from receiver type
+                        match &resolved_receiver_type {
+                            ConcreteType::Class { symbol_id, .. } => {
+                                // Look up the method in the class's symbol table
+                                if let Some(method_sym) =
+                                    self.symbol_table.lookup_class_member(*symbol_id, method)
+                                {
+                                    tracing::debug!(
+                                        class_symbol = symbol_id.0,
+                                        method = %method,
+                                        method_symbol = method_sym.0,
+                                        "Resolved instance method symbol from class type"
+                                    );
+                                    Some(method_sym)
+                                } else {
+                                    tracing::warn!(
+                                        class_symbol = symbol_id.0,
+                                        method = %method,
+                                        "Method not found in class - using SymbolId(0) fallback"
+                                    );
+                                    None
+                                }
+                            }
+                            _ => {
+                                // Not a class type - might be built-in method on primitive type
+                                // Try to resolve as built-in method (e.g., "string.toString")
+                                let type_name =
+                                    Self::get_builtin_type_name(&resolved_receiver_type);
+                                if let Some(type_name) = type_name {
+                                    let builtin_method_name = format!("{}.{}", type_name, method);
+                                    if let Some(method_sym) =
+                                        self.symbol_table.lookup_symbol(&builtin_method_name)
+                                    {
+                                        tracing::debug!(
+                                            type_name = %type_name,
+                                            method = %method,
+                                            builtin_name = %builtin_method_name,
+                                            method_symbol = method_sym.0,
+                                            "Resolved built-in method symbol from primitive type"
+                                        );
+                                        Some(method_sym)
+                                    } else {
+                                        tracing::warn!(
+                                            type_name = %type_name,
+                                            method = %method,
+                                            builtin_name = %builtin_method_name,
+                                            "Built-in method not found - using SymbolId(0) fallback"
+                                        );
+                                        None
+                                    }
+                                } else {
+                                    // Complex type without built-in methods
+                                    None
+                                }
+                            }
+                        }
+                    })
+                    .unwrap_or(crate::resolver::symbol_table::SymbolId(0)); // SymbolId(0) for built-in methods
+
                 (
                     TastExpressionKind::MethodCall {
                         receiver: Box::new(tast_receiver),
                         method_name: method.clone(),
-                        method_symbol: method_symbol_id
-                            .unwrap_or(crate::resolver::symbol_table::SymbolId(0)), // Use dummy SymbolId for built-in methods
+                        method_symbol: resolved_method_symbol,
                         arguments: tast_arguments,
                         type_args: Vec::new(),
                     },
@@ -1834,6 +2013,8 @@ impl<'a> TypeInference<'a> {
                 };
 
                 // For now, use simple static method resolution based on class and method name
+                eprintln!("DEBUG TypeChecker: Calling infer_static_method_return_type for {}.{} with {} args",
+                          full_class_name, method, tast_arguments.len());
                 let return_type = self.infer_static_method_return_type(
                     &full_class_name,
                     method,
@@ -1968,6 +2149,7 @@ impl<'a> TypeInference<'a> {
             ResolvedHirExpression::Constructor {
                 class_name,
                 class_symbol_id,
+                constructor_symbol_id,
                 arguments,
                 location,
             } => {
@@ -1987,7 +2169,7 @@ impl<'a> TypeInference<'a> {
                     TastExpressionKind::FunctionCall {
                         function: Box::new(TastExpression {
                             kind: TastExpressionKind::Variable {
-                                symbol_id: *class_symbol_id,
+                                symbol_id: *constructor_symbol_id, // Use constructor's SymbolId, not class's
                                 name: format!("{}.constructor", class_name),
                             },
                             expr_type: ConcreteType::Function {
@@ -2124,6 +2306,29 @@ impl<'a> TypeInference<'a> {
                 };
 
                 (kind, result_type, location.clone())
+            }
+
+            ResolvedHirExpression::BaseCall {
+                parent_class_symbol_id,
+                arguments,
+                location,
+            } => {
+                // Infer types for all arguments
+                let mut tast_arguments = Vec::new();
+                for arg in arguments {
+                    let tast_arg = self.infer_expression(arg)?;
+                    tast_arguments.push(tast_arg);
+                }
+
+                // BaseCall returns null/void (it's a statement-like expression)
+                (
+                    TastExpressionKind::BaseCall {
+                        parent_class_symbol_id: *parent_class_symbol_id,
+                        arguments: tast_arguments,
+                    },
+                    ConcreteType::Null,
+                    location.clone(),
+                )
             }
         };
 
@@ -2540,6 +2745,22 @@ impl<'a> TypeInference<'a> {
         }
     }
 
+    /// Get the builtin type name for method lookups (e.g., "string", "integer", "array")
+    /// Returns None for complex types that don't have built-in methods
+    fn get_builtin_type_name(concrete_type: &ConcreteType) -> Option<String> {
+        match concrete_type {
+            ConcreteType::Integer => Some("integer".to_string()),
+            ConcreteType::Number => Some("number".to_string()),
+            ConcreteType::String => Some("string".to_string()),
+            ConcreteType::Boolean => Some("boolean".to_string()),
+            ConcreteType::Array(_) => Some("array".to_string()),
+            ConcreteType::Matrix(_) => Some("matrix".to_string()),
+            ConcreteType::Pairs(_, _) => Some("pairs".to_string()),
+            // Class, Interface, Function, Tuple, Union, etc. are not primitive types
+            _ => None,
+        }
+    }
+
     /// Infer return type of method call
     fn infer_method_return_type(
         &self,
@@ -2572,10 +2793,50 @@ impl<'a> TypeInference<'a> {
             (ConcreteType::Array(_), "size") => Ok(ConcreteType::Integer), // Alias for length
             (ConcreteType::Array(_), "push") => Ok(ConcreteType::Undefined), // void return
             (ConcreteType::Array(element_type), "pop") => Ok((**element_type).clone()),
+            (ConcreteType::Array(element_type), "remove") => Ok((**element_type).clone()), // remove() behaves like pop()
+            (ConcreteType::Array(_), "contains") => Ok(ConcreteType::Boolean), // contains() returns boolean
+            (ConcreteType::Array(_), "isEmpty") => Ok(ConcreteType::Boolean), // isEmpty() returns boolean
             (ConcreteType::Array(_), "toString") => Ok(ConcreteType::String),
 
             // Boolean methods
             (ConcreteType::Boolean, "toString") => Ok(ConcreteType::String),
+
+            // Class instance methods - look up in symbol table
+            (ConcreteType::Class { symbol_id, .. }, _) => {
+                // Look up the method in the class's symbol table
+                if let Some(method_symbol) = self
+                    .symbol_table
+                    .lookup_class_member(*symbol_id, method_name)
+                {
+                    // Get the method info from the symbol table
+                    if let Some(symbol) = self.symbol_table.get_symbol(method_symbol) {
+                        if let crate::resolver::symbol_table::SymbolKind::Method {
+                            return_type,
+                            ..
+                        } = &symbol.kind
+                        {
+                            // Convert HirType to ConcreteType
+                            let concrete_type = Self::hir_type_to_concrete_type(return_type);
+                            tracing::debug!(
+                                class_symbol = symbol_id.0,
+                                method_name = %method_name,
+                                method_symbol = method_symbol.0,
+                                return_type = ?concrete_type,
+                                "Resolved class method return type from symbol table"
+                            );
+                            return Ok(concrete_type);
+                        }
+                    }
+                }
+
+                // Method not found or not a method - log warning and return Unknown
+                tracing::warn!(
+                    class_symbol = symbol_id.0,
+                    method_name = %method_name,
+                    "Method not found in class or invalid method info - returning Unknown"
+                );
+                Ok(ConcreteType::Unknown)
+            }
 
             // For unknown method/type combinations, return Unknown
             _ => Ok(ConcreteType::Unknown),
@@ -2587,59 +2848,204 @@ impl<'a> TypeInference<'a> {
         &self,
         class_name: &str,
         method_name: &str,
-        _arguments: &[TastExpression],
+        arguments: &[TastExpression],
     ) -> Result<ConcreteType, CompilerError> {
-        // For now, implement basic built-in static method type inference
+        // Helper to validate argument count
+        let validate_arg_count =
+            |expected: usize, actual: usize, method_full_name: &str| -> Result<(), CompilerError> {
+                eprintln!(
+                    "DEBUG validate_arg_count: {} expects {}, got {}",
+                    method_full_name, expected, actual
+                );
+                if actual != expected {
+                    eprintln!("DEBUG: ARGUMENT COUNT MISMATCH - RETURNING ERROR!");
+                    let error = CompilerError::type_error(
+                        format!(
+                            "{}() expects {} argument(s), but {} were provided",
+                            method_full_name, expected, actual
+                        ),
+                        Some(format!("Provide exactly {} argument(s)", expected)),
+                        None,
+                    );
+                    eprintln!("DEBUG: Created error: {:?}", error);
+                    return Err(error);
+                }
+                Ok(())
+            };
+
+        // Implement basic built-in static method type inference with argument validation
+        let arg_count = arguments.len();
+        let full_method_name = format!("{}.{}", class_name, method_name);
+        eprintln!(
+            "DEBUG infer_static_method_return_type: class_name={}, method_name={}, arg_count={}",
+            class_name, method_name, arg_count
+        );
+
         match (class_name, method_name) {
             // Math static methods
-            ("Math", "abs") => Ok(ConcreteType::Number),
-            ("Math", "floor") => Ok(ConcreteType::Integer),
-            ("Math", "ceil") => Ok(ConcreteType::Integer),
-            ("Math", "round") => Ok(ConcreteType::Integer),
-            ("Math", "sqrt") => Ok(ConcreteType::Number),
-            ("Math", "pow") => Ok(ConcreteType::Number),
-            ("Math", "sin") => Ok(ConcreteType::Number),
-            ("Math", "cos") => Ok(ConcreteType::Number),
-            ("Math", "tan") => Ok(ConcreteType::Number),
-            ("Math", "max") => Ok(ConcreteType::Number),
-            ("Math", "min") => Ok(ConcreteType::Number),
+            ("Math", "abs") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Number)
+            }
+            ("Math", "floor") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Integer)
+            }
+            ("Math", "ceil") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Integer)
+            }
+            ("Math", "round") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Integer)
+            }
+            ("Math", "sqrt") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Number)
+            }
+            ("Math", "pow") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Number)
+            }
+            ("Math", "sin") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Number)
+            }
+            ("Math", "cos") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Number)
+            }
+            ("Math", "tan") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Number)
+            }
+            ("Math", "max") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Number)
+            }
+            ("Math", "min") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Number)
+            }
 
             // String static methods
-            ("String", "fromCharCode") => Ok(ConcreteType::String),
-            ("String", "isEmpty") => Ok(ConcreteType::Boolean),
+            ("String", "fromCharCode") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::String)
+            }
+            ("String", "isEmpty") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Boolean)
+            }
 
             // StringUtils static methods
-            ("StringUtils", "length") => Ok(ConcreteType::Integer),
-            ("StringUtils", "concat") => Ok(ConcreteType::String),
-            ("StringUtils", "substring") => Ok(ConcreteType::String),
-            ("StringUtils", "indexOf") => Ok(ConcreteType::Integer),
-            ("StringUtils", "replace") => Ok(ConcreteType::String),
-            ("StringUtils", "toUpperCase") => Ok(ConcreteType::String),
-            ("StringUtils", "toLowerCase") => Ok(ConcreteType::String),
+            ("StringUtils", "length") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Integer)
+            }
+            ("StringUtils", "concat") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::String)
+            }
+            ("StringUtils", "substring") => {
+                validate_arg_count(3, arg_count, &full_method_name)?;
+                Ok(ConcreteType::String)
+            }
+            ("StringUtils", "indexOf") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Integer)
+            }
+            ("StringUtils", "replace") => {
+                validate_arg_count(3, arg_count, &full_method_name)?;
+                Ok(ConcreteType::String)
+            }
+            ("StringUtils", "toUpperCase") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::String)
+            }
+            ("StringUtils", "toLowerCase") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::String)
+            }
 
             // Integer static methods
-            ("Integer", "parse") => Ok(ConcreteType::Integer),
-            ("Integer", "toString") => Ok(ConcreteType::String),
+            ("Integer", "parse") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Integer)
+            }
+            ("Integer", "toString") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::String)
+            }
 
             // Number static methods
-            ("Number", "parse") => Ok(ConcreteType::Number),
-            ("Number", "toString") => Ok(ConcreteType::String),
+            ("Number", "parse") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Number)
+            }
+            ("Number", "toString") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::String)
+            }
 
-            // compare.integer static methods
-            ("compare.integer", "equal") => Ok(ConcreteType::Boolean),
-            ("compare.integer", "notEqual") => Ok(ConcreteType::Boolean),
-            ("compare.integer", "lessThan") => Ok(ConcreteType::Boolean),
-            ("compare.integer", "greaterThan") => Ok(ConcreteType::Boolean),
-            ("compare.integer", "lessEqual") => Ok(ConcreteType::Boolean),
-            ("compare.integer", "greaterEqual") => Ok(ConcreteType::Boolean),
+            // compare.integer static methods (all require 2 arguments)
+            ("compare.integer", "equal") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                eprintln!("DEBUG: Validation passed for equal");
+                Ok(ConcreteType::Boolean)
+            }
+            ("compare.integer", "notEqual") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                eprintln!("DEBUG: Validation passed for notEqual");
+                Ok(ConcreteType::Boolean)
+            }
+            ("compare.integer", "lessThan") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                eprintln!("DEBUG: Validation passed for lessThan");
+                Ok(ConcreteType::Boolean)
+            }
+            ("compare.integer", "greaterThan") => {
+                eprintln!("DEBUG: About to validate greaterThan");
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                eprintln!(
+                    "DEBUG: Validation passed for greaterThan - THIS SHOULD NOT PRINT IF ERROR"
+                );
+                Ok(ConcreteType::Boolean)
+            }
+            ("compare.integer", "lessEqual") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Boolean)
+            }
+            ("compare.integer", "greaterEqual") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Boolean)
+            }
 
-            // compare.number static methods
-            ("compare.number", "equal") => Ok(ConcreteType::Boolean),
-            ("compare.number", "notEqual") => Ok(ConcreteType::Boolean),
-            ("compare.number", "lessThan") => Ok(ConcreteType::Boolean),
-            ("compare.number", "greaterThan") => Ok(ConcreteType::Boolean),
-            ("compare.number", "lessEqual") => Ok(ConcreteType::Boolean),
-            ("compare.number", "greaterEqual") => Ok(ConcreteType::Boolean),
+            // compare.number static methods (all require 2 arguments)
+            ("compare.number", "equal") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Boolean)
+            }
+            ("compare.number", "notEqual") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Boolean)
+            }
+            ("compare.number", "lessThan") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Boolean)
+            }
+            ("compare.number", "greaterThan") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Boolean)
+            }
+            ("compare.number", "lessEqual") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Boolean)
+            }
+            ("compare.number", "greaterEqual") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Boolean)
+            }
 
             // For unknown static method/class combinations, return Unknown
             _ => Ok(ConcreteType::Unknown),
@@ -2699,10 +3105,10 @@ impl<'a> TypeInference<'a> {
                     if let SymbolKind::Class {
                         fields,
                         methods: _,
-                        parent: _,
+                        parent,
                     } = &class_symbol.kind
                     {
-                        // Search for the field with the matching name
+                        // Search for the field with the matching name in this class
                         for field_symbol_id in fields {
                             if let Some(field_symbol) =
                                 self.symbol_table.get_symbol(*field_symbol_id)
@@ -2719,7 +3125,41 @@ impl<'a> TypeInference<'a> {
                                 }
                             }
                         }
-                        // Field not found in class
+
+                        // Field not found in this class - check parent class if exists
+                        if let Some(parent_symbol_id) = parent {
+                            if let Some(parent_symbol) =
+                                self.symbol_table.get_symbol(*parent_symbol_id)
+                            {
+                                if let SymbolKind::Class {
+                                    fields: parent_fields,
+                                    ..
+                                } = &parent_symbol.kind
+                                {
+                                    // Search for the field in parent class
+                                    for field_symbol_id in parent_fields {
+                                        if let Some(field_symbol) =
+                                            self.symbol_table.get_symbol(*field_symbol_id)
+                                        {
+                                            if field_symbol.name == field_name {
+                                                // Found the field in parent class!
+                                                if let SymbolKind::Field {
+                                                    class_id: _,
+                                                    field_type,
+                                                } = &field_symbol.kind
+                                                {
+                                                    return Ok(
+                                                        self.hir_type_to_concrete(field_type)
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Field not found in class or parent class
                         return Err(CompilerError::type_error(
                             &format!(
                                 "Field '{}' not found in class '{}'",
@@ -2823,6 +3263,13 @@ impl<'a> TypeInference<'a> {
                         }
                     }
                 }
+            }
+            HirType::Pairs(key_type, value_type) => {
+                // Pairs are represented as a container with key and value types
+                ConcreteType::Pairs(
+                    Box::new(self.hir_type_to_concrete(key_type)),
+                    Box::new(self.hir_type_to_concrete(value_type)),
+                )
             }
             HirType::Inferred { .. } => {
                 // Type inference placeholders are handled by the constraint solver

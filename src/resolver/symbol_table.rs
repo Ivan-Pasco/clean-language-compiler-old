@@ -1183,9 +1183,15 @@ impl GlobalSymbolTable {
             ("logical_not", vec![HirType::Boolean], HirType::Boolean),
             // Input namespace functions (input(), input.integer(), input.yesNo(), etc.)
             ("input", vec![HirType::String], HirType::String),
+            ("input_string", vec![HirType::String], HirType::String),
             ("input_integer", vec![HirType::String], HirType::Integer),
             ("input_number", vec![HirType::String], HirType::Number),
             ("input_yesNo", vec![HirType::String], HirType::Boolean),
+            (
+                "input_integerWithDefault",
+                vec![HirType::String, HirType::Integer],
+                HirType::Integer,
+            ),
         ];
 
         for (name, params, return_type) in namespace_functions {
@@ -1514,9 +1520,12 @@ impl GlobalSymbolTable {
         // Create input namespace
         let input_functions = vec![
             self.lookup_symbol("input").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("input_string").unwrap_or(SymbolId(0)),
             self.lookup_symbol("input_integer").unwrap_or(SymbolId(0)),
             self.lookup_symbol("input_number").unwrap_or(SymbolId(0)),
             self.lookup_symbol("input_yesNo").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("input_integerWithDefault")
+                .unwrap_or(SymbolId(0)),
         ];
 
         let input_namespace_id = self.create_symbol(

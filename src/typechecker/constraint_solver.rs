@@ -200,6 +200,28 @@ impl<'a> ConstraintSolver<'a> {
             // Array unification
             (ConcreteType::Array(a), ConcreteType::Array(b)) => self.unify(a, b, location),
 
+            // Matrix unification
+            (ConcreteType::Matrix(a), ConcreteType::Matrix(b)) => self.unify(a, b, location),
+
+            // Array<Array<T>> can unify with Matrix<T> (2D array literal assignment to matrix)
+            (ConcreteType::Array(inner), ConcreteType::Matrix(element_type))
+            | (ConcreteType::Matrix(element_type), ConcreteType::Array(inner)) => {
+                // Check if inner is Array<T> where T unifies with element_type
+                if let ConcreteType::Array(inner_element_type) = &**inner {
+                    self.unify(inner_element_type, element_type, location)
+                } else {
+                    Err(CompilerError::type_error(
+                        &format!(
+                            "Cannot unify types: {} and Matrix<{}>",
+                            ConcreteType::Array(inner.clone()),
+                            element_type
+                        ),
+                        None,
+                        Some(location.clone()),
+                    ))
+                }
+            }
+
             // Function unification
             (
                 ConcreteType::Function {
@@ -492,6 +514,10 @@ impl<'a> ConstraintSolver<'a> {
                 ConcreteType::Array(Box::new(self.apply_substitution(element_type)))
             }
 
+            ConcreteType::Matrix(element_type) => {
+                ConcreteType::Matrix(Box::new(self.apply_substitution(element_type)))
+            }
+
             ConcreteType::Function {
                 parameters,
                 return_type,
@@ -556,6 +582,8 @@ impl<'a> ConstraintSolver<'a> {
             }
 
             ConcreteType::Array(element_type) => self.occurs_check(var, element_type),
+
+            ConcreteType::Matrix(element_type) => self.occurs_check(var, element_type),
 
             ConcreteType::Function {
                 parameters,
@@ -676,6 +704,9 @@ impl<'a> ConstraintSolver<'a> {
                 }
             }
             ConcreteType::Array(element_type) => {
+                self.collect_type_vars(element_type, vars);
+            }
+            ConcreteType::Matrix(element_type) => {
                 self.collect_type_vars(element_type, vars);
             }
             ConcreteType::Function {

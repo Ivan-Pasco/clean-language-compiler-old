@@ -120,7 +120,8 @@ impl CodeGenerator {
                         Ok(WasmType::I32)
                     }
                     BinaryOperator::Power => {
-                        // For I32 ^ I32, we need to convert both operands to F64
+                        // For I32 ^ I32, we need to convert both operands to F64,
+                        // call pow, then convert the result back to I32
                         // Stack currently has: [left_i32, right_i32]
 
                         // Store right operand temporarily
@@ -137,7 +138,9 @@ impl CodeGenerator {
                         // Call power function
                         if let Some(pow_index) = self.get_function_index("pow") {
                             instructions.push(Instruction::Call(pow_index));
-                            Ok(WasmType::F64)
+                            // Convert result back to I32 for integer operands
+                            instructions.push(Instruction::I32TruncF64S);
+                            Ok(WasmType::I32)
                         } else {
                             Err(CompilerError::type_error(
                                 "Power function not found".to_string(),

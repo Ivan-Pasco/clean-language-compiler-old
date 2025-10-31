@@ -54,6 +54,12 @@ enum ResolverWorkItem {
         arg_slots: Vec<usize>,
         result_slot: usize,
     },
+    /// Complete resolution of base constructor call
+    CompleteBaseCall {
+        location: SourceLocation,
+        arg_slots: Vec<usize>,
+        result_slot: usize,
+    },
 }
 
 /// Iterative name resolver that prevents stack overflow
@@ -323,6 +329,63 @@ impl IterativeNameResolver {
                     });
                 }
             }
+            ResolverWorkItem::CompleteBaseCall { location, arg_slots, result_slot } => {
+                // Check if all arguments are resolved
+                let all_ready = arg_slots.iter().all(|&slot| self.is_ready(slot));
+                if all_ready {
+                    let arguments = arg_slots.into_iter()
+                        .map(|slot| {
+                            if let ResolverResult::Expression(expr) = self.get_result(slot) {
+                                Rc::new(expr.clone())
+                            } else {
+                                panic!("Expected expression result in slot {}", slot);
+                            }
+                        })
+                        .collect();
+
+                    // Get parent class symbol from current class
+                    let parent_class_symbol_id = if let Some(current_class_id) = self.current_class {
+                        if let Some(class_symbol) = self.symbol_table.get_symbol(current_class_id) {
+                            if let SymbolKind::Class { parent, .. } = &class_symbol.kind {
+                                parent.ok_or_else(|| {
+                                    self.error(
+                                        "base() can only be called in a derived class constructor",
+                                        location.clone(),
+                                    );
+                                })?
+                            } else {
+                                self.error(
+                                    "base() can only be called inside a class",
+                                    location.clone(),
+                                );
+                                return Err(());
+                            }
+                        } else {
+                            self.error("Current class symbol not found", location.clone());
+                            return Err(());
+                        }
+                    } else {
+                        self.error(
+                            "base() can only be called inside a class constructor",
+                            location.clone(),
+                        );
+                        return Err(());
+                    };
+
+                    let resolved_expression = ResolvedHirExpression::BaseCall {
+                        parent_class_symbol_id,
+                        arguments,
+                        location,
+                    };
+
+                    self.set_result(result_slot, ResolverResult::Expression(resolved_expression));
+                } else {
+                    // Dependencies not ready, push back to queue
+                    self.work_queue.push_back(ResolverWorkItem::CompleteBaseCall {
+                        location, arg_slots, result_slot
+                    });
+                }
+            }
         }
         Ok(())
     }
@@ -564,6 +627,26 @@ impl IterativeNameResolver {
                 };
 
                 self.set_result(result_slot, ResolverResult::Expression(resolved_expression));
+            }
+
+            HirExpression::BaseCall { arguments, location } => {
+                // Queue arguments for resolution
+                let mut arg_slots = Vec::new();
+                for argument in arguments {
+                    let slot = self.allocate_slot();
+                    arg_slots.push(slot);
+                    self.work_queue.push_back(ResolverWorkItem::ResolveExpression {
+                        expression: argument.as_ref().clone(),
+                        result_slot: slot,
+                    });
+                }
+
+                // Queue completion of base call
+                self.work_queue.push_back(ResolverWorkItem::CompleteBaseCall {
+                    location,
+                    arg_slots,
+                    result_slot,
+                });
             }
 
             _ => {

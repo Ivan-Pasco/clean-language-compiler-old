@@ -11,8 +11,8 @@
 
 use crate::ast::{
     BinaryOperator, Class, ConstantAssignment, Constructor, Expression, Field, Function,
-    FunctionModifier, FunctionSyntax, ImportItem, Parameter, Program, Statement, TestCase, Type,
-    Value, VariableAssignment, Visibility,
+    FunctionModifier, FunctionSyntax, ImportItem, Parameter, Program, SourceLocation, Statement,
+    TestCase, Type, Value, VariableAssignment, Visibility,
 };
 use crate::error::CompilerError;
 use crate::lexer::specification_token::{Token, TokenKind, TokenStream};
@@ -24,6 +24,7 @@ pub struct TokenParser {
     #[allow(dead_code)] // Used for future error reporting enhancements
     file_path: String,
     errors: Vec<CompilerError>,
+    paren_depth: usize, // Track parenthesis depth for multiline expression support
 }
 
 impl TokenParser {
@@ -33,6 +34,7 @@ impl TokenParser {
             cursor: 0,
             file_path,
             errors: Vec::new(),
+            paren_depth: 0,
         }
     }
 
@@ -244,21 +246,40 @@ impl TokenParser {
     }
 
     /// Skip whitespace tokens (newlines, comments)
+    /// When inside parentheses (paren_depth > 0), also skip Indent/Dedent for multiline expressions
     fn skip_whitespace(&mut self) {
         let start_token = self.current_kind().clone();
         let mut consumed = vec![];
-        while matches!(
-            self.current_kind(),
-            TokenKind::Newline | TokenKind::Comment(_) | TokenKind::BlockComment(_)
-        ) {
-            consumed.push(format!("{:?}", self.current_kind()));
-            self.bump();
+
+        // When inside parentheses, skip indent/dedent tokens too (for multiline expressions)
+        if self.paren_depth > 0 {
+            while matches!(
+                self.current_kind(),
+                TokenKind::Newline
+                    | TokenKind::Comment(_)
+                    | TokenKind::BlockComment(_)
+                    | TokenKind::Indent(_)
+                    | TokenKind::Dedent(_)
+            ) {
+                consumed.push(format!("{:?}", self.current_kind()));
+                self.bump();
+            }
+        } else {
+            while matches!(
+                self.current_kind(),
+                TokenKind::Newline | TokenKind::Comment(_) | TokenKind::BlockComment(_)
+            ) {
+                consumed.push(format!("{:?}", self.current_kind()));
+                self.bump();
+            }
         }
+
         if !consumed.is_empty() {
             tracing::trace!(
                 start = ?start_token,
                 consumed = ?consumed,
                 after = ?self.current_kind(),
+                paren_depth = self.paren_depth,
                 "skip_whitespace consumed tokens"
             );
         }
@@ -273,6 +294,8 @@ impl TokenParser {
         }
     }
 
+    /// Skip whitespace AND indentation tokens (for use inside parentheses/brackets)
+    /// This allows expressions to span multiple lines when wrapped in parentheses
     // ============================================================================
     // Parsing methods
     // ============================================================================
@@ -419,13 +442,10 @@ impl TokenParser {
 
             // CRITICAL: Check if we're at a top-level construct (end of functions block)
             // This must happen BEFORE trying to parse as a function
+            // Note: Start is not included here because it can be used as a method name
             if matches!(
                 self.current_kind(),
-                TokenKind::Start
-                    | TokenKind::Class
-                    | TokenKind::Functions
-                    | TokenKind::Tests
-                    | TokenKind::Import
+                TokenKind::Class | TokenKind::Functions | TokenKind::Tests | TokenKind::Import
             ) {
                 break;
             }
@@ -454,7 +474,8 @@ impl TokenParser {
                         | TokenKind::Error
                         | TokenKind::Input
                         | TokenKind::Step
-                        | TokenKind::Description => match self.parse_function_in_block() {
+                        | TokenKind::Description
+                        | TokenKind::Start => match self.parse_function_in_block() {
                             Ok(func) => functions.push(func),
                             Err(e) => return Err(e),
                         },
@@ -470,7 +491,8 @@ impl TokenParser {
                 | TokenKind::Error
                 | TokenKind::Input
                 | TokenKind::Step
-                | TokenKind::Description => {
+                | TokenKind::Description
+                | TokenKind::Start => {
                     // Direct identifier or keyword without Indent token - still in functions block
                     // This happens when functions are at the same indentation level
                     match self.parse_function_in_block() {
@@ -921,30 +943,56 @@ impl TokenParser {
     fn parse_function_in_block(&mut self) -> Result<Function, CompilerError> {
         let start_location = self.current().location.clone();
 
-        // Parse optional return type (could be void, integer, string, etc.)
-        let first_token = self.expect_name()?;
-        let first_name = first_token.text.clone();
+        // Save position in case we need to backtrack
+        let saved_cursor = self.cursor;
 
-        self.skip_whitespace();
+        // Try to parse as type (which handles precision modifiers like number:64)
+        let (return_type, func_name) = match self.parse_type() {
+            Ok(typ) => {
+                self.skip_whitespace();
+                // Check if this is actually a parameterless void function
+                // (e.g., "first()" where "first" was parsed as Type::Object)
+                if matches!(typ, Type::Object(_)) && self.check(&TokenKind::LeftParen) {
+                    // This is a function name, not a type
+                    // Extract the name from Type::Object
+                    let name = if let Type::Object(n) = typ {
+                        n
+                    } else {
+                        unreachable!()
+                    };
+                    (Type::Void, name)
+                } else {
+                    // Successfully parsed a type, expect function name next
+                    let name_token = self.expect_name()?;
+                    (typ, name_token.text.clone())
+                }
+            }
+            Err(_) => {
+                // Failed to parse as type, backtrack and try as function name
+                self.cursor = saved_cursor;
+                let first_token = self.expect_name()?;
+                let first_name = first_token.text.clone();
+                self.skip_whitespace();
 
-        // Check if next token is a name/identifier (function name) or left paren (no return type)
-        let (return_type, func_name) = if !self.check(&TokenKind::LeftParen) {
-            // First token was return type, next is function name
-            let return_type = match first_name.as_str() {
-                "void" => Type::Void,
-                "integer" => Type::Integer,
-                "number" => Type::Number,
-                "string" => Type::String,
-                "boolean" => Type::Boolean,
-                _ => Type::Object(first_name.clone()),
-            };
-
-            let name_token = self.expect_name()?;
-            (return_type, name_token.text.clone())
-        } else {
-            // No return type specified, defaults to void
-            // First token is the function name
-            (Type::Void, first_name)
+                // Check if this is a parameterless function (name followed by '(')
+                if self.check(&TokenKind::LeftParen) {
+                    // No return type, first token is function name
+                    (Type::Void, first_name)
+                } else {
+                    // This shouldn't happen since parse_type should have worked
+                    // but handle it anyway - treat first token as return type
+                    let return_type = match first_name.as_str() {
+                        "void" => Type::Void,
+                        "integer" => Type::Integer,
+                        "number" => Type::Number,
+                        "string" => Type::String,
+                        "boolean" => Type::Boolean,
+                        _ => Type::Object(first_name.clone()),
+                    };
+                    let name_token = self.expect_name()?;
+                    (return_type, name_token.text.clone())
+                }
+            }
         };
 
         self.skip_whitespace();
@@ -957,14 +1005,8 @@ impl TokenParser {
         if !self.check(&TokenKind::RightParen) {
             loop {
                 // Parse parameter: type name [= defaultValue]
-                let type_token = self.expect_identifier()?;
-                let param_type = match type_token.text.as_str() {
-                    "integer" => Type::Integer,
-                    "number" => Type::Number,
-                    "string" => Type::String,
-                    "boolean" => Type::Boolean,
-                    other => Type::Object(other.to_string()),
-                };
+                // Use parse_type() to handle precision modifiers like integer:8, number:32
+                let param_type = self.parse_type()?;
 
                 self.skip_whitespace();
                 let name_token = self.expect_name()?;
@@ -1220,14 +1262,8 @@ impl TokenParser {
         if !self.check(&TokenKind::RightParen) {
             loop {
                 // Parse parameter: type name [= defaultValue]
-                let type_token = self.expect_identifier()?;
-                let param_type = match type_token.text.as_str() {
-                    "integer" => Type::Integer,
-                    "number" => Type::Number,
-                    "string" => Type::String,
-                    "boolean" => Type::Boolean,
-                    other => Type::Object(other.to_string()),
-                };
+                // Use parse_type() to handle precision modifiers like integer:8, number:32
+                let param_type = self.parse_type()?;
 
                 self.skip_whitespace();
                 let name_token = self.expect_name()?;
@@ -1813,6 +1849,8 @@ impl TokenParser {
             TokenKind::While => self.parse_while(),
             TokenKind::For => self.parse_for(),
             TokenKind::Iterate => self.parse_iterate(),
+            TokenKind::Later => self.parse_later_assignment(),
+            TokenKind::Background => self.parse_background(),
             TokenKind::Print => {
                 // Check if this is a print apply block: print:
                 let saved_cursor = self.cursor;
@@ -1906,14 +1944,21 @@ impl TokenParser {
                 );
 
                 if is_type_keyword {
-                    // Check if this is an apply block (TYPE:) or a variable declaration (TYPE var or TYPE:precision var)
+                    // IMPORTANT: Check if this is actually a namespace/method call (e.g., list.add())
+                    // If followed by a dot, it's NOT a type declaration
                     // Save current position (we're AT the type identifier)
                     let saved_cursor = self.cursor;
 
                     self.bump(); // consume type identifier
                     self.skip_whitespace();
 
-                    if self.check(&TokenKind::Colon) {
+                    // If followed by a dot, this is a namespace/method call, not a type declaration
+                    if self.check(&TokenKind::Dot) {
+                        // Restore cursor and treat as a regular identifier (not a type keyword)
+                        // This will allow it to be parsed as a method/namespace call below
+                        self.cursor = saved_cursor;
+                        // Fall through to the non-type-keyword handling code
+                    } else if self.check(&TokenKind::Colon) {
                         // Could be either:
                         // 1. TYPE: apply block (followed by newline/indent)
                         // 2. TYPE:precision variable declaration (followed by integer literal)
@@ -1936,44 +1981,78 @@ impl TokenParser {
                             // This is a TYPE: apply block
                             return self.parse_type_apply_block();
                         }
+
+                        // At this point, cursor is positioned AT the type identifier
+                        // Parse the type (which will handle precision modifiers)
+                        let type_ = self.parse_type()?;
+                        self.skip_whitespace();
+
+                        // Next token should be the variable name
+                        if let TokenKind::Identifier(var_name) = self.current_kind() {
+                            let var_name = var_name.clone();
+                            let var_location = self.current().location.clone();
+                            self.bump(); // consume variable name
+                            self.skip_whitespace();
+
+                            // Check for initializer
+                            let initializer = if self.eat(&TokenKind::Assign) {
+                                self.skip_whitespace();
+                                Some(self.parse_expression()?)
+                            } else {
+                                None
+                            };
+
+                            return Ok(Statement::VariableDecl {
+                                name: var_name,
+                                type_,
+                                initializer,
+                                location: Some(var_location),
+                            });
+                        } else {
+                            return Err(CompilerError::parse_error(
+                                "Expected variable name after type".to_string(),
+                                Some(self.current().location.clone()),
+                                None,
+                            ));
+                        }
                     } else {
                         // Not a colon - this is a regular variable declaration
                         // Restore cursor to the original position
                         self.cursor = saved_cursor;
-                    }
 
-                    // At this point, cursor is positioned AT the type identifier
-                    // Parse the type (which will handle precision modifiers)
-                    let type_ = self.parse_type()?;
-                    self.skip_whitespace();
-
-                    // Next token should be the variable name
-                    if let TokenKind::Identifier(var_name) = self.current_kind() {
-                        let var_name = var_name.clone();
-                        let var_location = self.current().location.clone();
-                        self.bump(); // consume variable name
+                        // At this point, cursor is positioned AT the type identifier
+                        // Parse the type (which will handle precision modifiers)
+                        let type_ = self.parse_type()?;
                         self.skip_whitespace();
 
-                        // Check for initializer
-                        let initializer = if self.eat(&TokenKind::Assign) {
+                        // Next token should be the variable name
+                        if let TokenKind::Identifier(var_name) = self.current_kind() {
+                            let var_name = var_name.clone();
+                            let var_location = self.current().location.clone();
+                            self.bump(); // consume variable name
                             self.skip_whitespace();
-                            Some(self.parse_expression()?)
-                        } else {
-                            None
-                        };
 
-                        return Ok(Statement::VariableDecl {
-                            name: var_name,
-                            type_,
-                            initializer,
-                            location: Some(var_location),
-                        });
-                    } else {
-                        return Err(CompilerError::parse_error(
-                            "Expected variable name after type".to_string(),
-                            Some(self.current().location.clone()),
-                            None,
-                        ));
+                            // Check for initializer
+                            let initializer = if self.eat(&TokenKind::Assign) {
+                                self.skip_whitespace();
+                                Some(self.parse_expression()?)
+                            } else {
+                                None
+                            };
+
+                            return Ok(Statement::VariableDecl {
+                                name: var_name,
+                                type_,
+                                initializer,
+                                location: Some(var_location),
+                            });
+                        } else {
+                            return Err(CompilerError::parse_error(
+                                "Expected variable name after type".to_string(),
+                                Some(self.current().location.clone()),
+                                None,
+                            ));
+                        }
                     }
                 }
 
@@ -2151,15 +2230,31 @@ impl TokenParser {
                     if self.check(&TokenKind::Assign) {
                         self.bump(); // consume =
                         self.skip_whitespace();
-                        let _value = self.parse_expression()?;
+                        let value = self.parse_expression()?;
 
-                        // TODO: Indexed assignments (array[index] = value) are not yet supported in the AST
-                        // Need to add Statement::IndexedAssignment or extend Statement::Assignment
-                        return Err(CompilerError::parse_error(
-                            "Indexed assignments (e.g., array[index] = value) are not yet supported".to_string(),
-                            Some(first_location),
-                            Some("This feature requires AST extensions to support complex assignment targets".to_string()),
-                        ));
+                        // Check if lhs_expr is a list access (e.g., numbers[0])
+                        if let Expression::ListAccess(list, index) = lhs_expr {
+                            // Create indexed assignment (numbers[0] = 99)
+                            return Ok(Statement::Expression {
+                                expr: Expression::ListAssignment {
+                                    list,
+                                    index,
+                                    value: Box::new(value),
+                                    location: first_location.clone(),
+                                },
+                                location: Some(first_location),
+                            });
+                        } else {
+                            // Not a list access - unsupported assignment target
+                            return Err(CompilerError::parse_error(
+                                "Unsupported assignment target".to_string(),
+                                Some(first_location),
+                                Some(
+                                    "Only simple variables and list indices can be assigned to"
+                                        .to_string(),
+                                ),
+                            ));
+                        }
                     } else {
                         // Not an assignment, just an expression statement
                         return Ok(Statement::Expression {
@@ -2174,6 +2269,15 @@ impl TokenParser {
                     self.cursor -= 1; // Go back to the identifier
 
                     let expr = self.parse_expression()?;
+
+                    // Check for onError: block
+                    if let Some((error_block, _error_loc)) = self.try_parse_on_error_block()? {
+                        return Ok(Statement::OnErrorBlock {
+                            expression: expr,
+                            error_block,
+                            location: Some(first_location),
+                        });
+                    }
 
                     return Ok(Statement::Expression {
                         expr,
@@ -2190,6 +2294,16 @@ impl TokenParser {
                 // Parse as full expression to handle operators: "hello" + name, 3.14 * x, etc.
                 let location = self.current().location.clone();
                 let expr = self.parse_expression()?;
+
+                // Check for onError: block
+                if let Some((error_block, _error_loc)) = self.try_parse_on_error_block()? {
+                    return Ok(Statement::OnErrorBlock {
+                        expression: expr,
+                        error_block,
+                        location: Some(location),
+                    });
+                }
+
                 return Ok(Statement::Expression {
                     expr,
                     location: Some(location),
@@ -2557,10 +2671,19 @@ impl TokenParser {
 
         // Support chained onError expressions with a while loop
         while self.check(&TokenKind::OnError) {
+            // Peek ahead to see if this is onError: (block) or onError expr
+            let saved_cursor = self.cursor;
             self.bump(); // consume onError
             self.skip_whitespace();
 
-            // Parse fallback expression
+            // If we see a colon, this is onError: block syntax (handled at statement level)
+            // Back up and stop parsing onError at expression level
+            if self.check(&TokenKind::Colon) {
+                self.cursor = saved_cursor; // restore cursor to before onError
+                break;
+            }
+
+            // Otherwise, parse fallback expression
             let fallback = self.parse_logical_or()?;
             let location = self.current().location.clone();
 
@@ -2737,6 +2860,7 @@ impl TokenParser {
                     // Function call: identifier(args) or method call: expr.method(args)
                     let call_location = self.current().location.clone();
                     self.bump(); // consume (
+                    self.paren_depth += 1; // Track that we're inside call parentheses
                     self.skip_whitespace();
 
                     let mut arguments = Vec::new();
@@ -2753,10 +2877,21 @@ impl TokenParser {
                     }
 
                     self.expect(&TokenKind::RightParen)?;
+                    self.paren_depth -= 1; // Exit call parentheses
 
                     // Convert expression to function call or method call
                     expr = match expr {
-                        Expression::Variable(name) => Expression::Call(name, arguments),
+                        Expression::Variable(name) => {
+                            // Special case: base() calls in constructors
+                            if name == "base" {
+                                Expression::BaseCall {
+                                    arguments,
+                                    location: call_location.clone(),
+                                }
+                            } else {
+                                Expression::Call(name, arguments)
+                            }
+                        }
                         Expression::PropertyAccess {
                             object,
                             property,
@@ -2834,6 +2969,10 @@ impl TokenParser {
                 self.bump();
                 Ok(Expression::Literal(Value::String(value)))
             }
+            TokenKind::InterpolationStart => {
+                // Parse string interpolation: "Hello {name}!"
+                self.parse_string_interpolation()
+            }
             TokenKind::BooleanLiteral(b) => {
                 let value = *b;
                 self.bump();
@@ -2852,6 +2991,17 @@ impl TokenParser {
                 let name = name_token.text.clone();
                 Ok(Expression::Variable(name))
             }
+            TokenKind::Start => {
+                // start keyword for async execution: start fetchData()
+                let location = self.current().location.clone();
+                self.bump(); // consume 'start'
+                self.skip_whitespace();
+                let expression = Box::new(self.parse_expression()?);
+                Ok(Expression::StartExpression {
+                    expression,
+                    location,
+                })
+            }
             // Allow keywords to be used as identifiers in expressions (for class/type names and variable names)
             TokenKind::Test
             | TokenKind::Error
@@ -2866,10 +3016,12 @@ impl TokenParser {
             }
             TokenKind::LeftParen => {
                 self.bump();
+                self.paren_depth += 1; // Track that we're inside parentheses
                 self.skip_whitespace();
                 let expr = self.parse_expression()?;
                 self.skip_whitespace();
                 self.expect(&TokenKind::RightParen)?;
+                self.paren_depth -= 1; // Exit parentheses
                 Ok(expr)
             }
             TokenKind::LeftBracket => {
@@ -2979,6 +3131,67 @@ impl TokenParser {
                     location,
                 })
             }
+            TokenKind::LeftBrace => {
+                // Parse pairs literal: {"key": value, "key2": value2}
+                self.bump(); // consume '{'
+                self.skip_whitespace();
+
+                let mut pairs = Vec::new();
+
+                // Check for empty pairs
+                if matches!(self.current_kind(), TokenKind::RightBrace) {
+                    self.bump(); // consume '}'
+                    return Ok(Expression::Literal(Value::Pairs(pairs)));
+                }
+
+                // Parse key-value pairs
+                loop {
+                    // Parse key (must be an expression, typically a literal)
+                    let key_expr = self.parse_expression()?;
+                    let key = match key_expr {
+                        Expression::Literal(val) => val,
+                        _ => {
+                            return Err(CompilerError::parse_error(
+                                "Pairs literal keys must be constant literals".to_string(),
+                                Some(self.current().location.clone()),
+                                None,
+                            ));
+                        }
+                    };
+
+                    self.skip_whitespace();
+
+                    // Expect colon
+                    self.expect(&TokenKind::Colon)?;
+                    self.skip_whitespace();
+
+                    // Parse value
+                    let value_expr = self.parse_expression()?;
+                    let value = match value_expr {
+                        Expression::Literal(val) => val,
+                        _ => {
+                            return Err(CompilerError::parse_error(
+                                "Pairs literal values currently only support constant literals".to_string(),
+                                Some(self.current().location.clone()),
+                                Some("Variables and expressions in pairs will be supported in MIR lowering".to_string()),
+                            ));
+                        }
+                    };
+
+                    pairs.push((key, value));
+                    self.skip_whitespace();
+
+                    if matches!(self.current_kind(), TokenKind::Comma) {
+                        self.bump(); // consume ','
+                        self.skip_whitespace();
+                    } else {
+                        break;
+                    }
+                }
+
+                self.expect(&TokenKind::RightBrace)?;
+                Ok(Expression::Literal(Value::Pairs(pairs)))
+            }
             _ => {
                 let token = self.current();
                 Err(CompilerError::parse_error(
@@ -3017,7 +3230,8 @@ impl TokenParser {
             | TokenKind::Description
             | TokenKind::And
             | TokenKind::Or
-            | TokenKind::Not => Ok(self.bump()),
+            | TokenKind::Not
+            | TokenKind::Start => Ok(self.bump()),
             _ => {
                 let token = self.current();
                 Err(CompilerError::parse_error(
@@ -3030,5 +3244,133 @@ impl TokenParser {
                 ))
             }
         }
+    }
+
+    fn parse_string_interpolation(&mut self) -> Result<Expression, CompilerError> {
+        use crate::ast::StringPart;
+        let mut parts = Vec::new();
+
+        // Handle InterpolationStart - token text contains the literal string part before first {
+        if let TokenKind::InterpolationStart = self.current_kind() {
+            let token = self.bump();
+            // Add text part if present
+            if !token.text.is_empty() {
+                parts.push(StringPart::Text(token.text.clone()));
+            }
+
+            // Parse the expression inside {}
+            let expr = self.parse_expression()?;
+            parts.push(StringPart::Interpolation(expr));
+
+            // Handle InterpolationMid tokens - text between } and next {
+            while matches!(self.current_kind(), TokenKind::InterpolationMid) {
+                let token = self.bump();
+                // Add text part if present
+                if !token.text.is_empty() {
+                    parts.push(StringPart::Text(token.text.clone()));
+                }
+
+                // Parse next expression
+                let expr = self.parse_expression()?;
+                parts.push(StringPart::Interpolation(expr));
+            }
+
+            // Handle InterpolationEnd - token text contains the literal string part after last }
+            if let TokenKind::InterpolationEnd = self.current_kind() {
+                let token = self.bump();
+                // Add final text part if present
+                if !token.text.is_empty() {
+                    parts.push(StringPart::Text(token.text.clone()));
+                }
+            } else {
+                return Err(CompilerError::parse_error(
+                    "Expected end of string interpolation".to_string(),
+                    Some(self.current().location.clone()),
+                    None,
+                ));
+            }
+        }
+
+        Ok(Expression::StringInterpolation(parts))
+    }
+
+    /// Parse later assignment: later var = start expr
+    fn parse_later_assignment(&mut self) -> Result<Statement, CompilerError> {
+        let location = self.current().location.clone();
+        self.expect(&TokenKind::Later)?;
+        self.skip_whitespace();
+
+        // Get variable name
+        let var_name = self.expect_identifier()?.text.clone();
+        self.skip_whitespace();
+
+        // Expect =
+        self.expect(&TokenKind::Assign)?;
+        self.skip_whitespace();
+
+        // Parse the expression (usually 'start someFunc()')
+        let expression = self.parse_expression()?;
+
+        // Create a variable declaration with the later expression as initializer
+        // The type will be inferred from the expression
+        Ok(Statement::VariableDecl {
+            name: var_name,
+            type_: Type::Any, // Type will be inferred from the expression
+            initializer: Some(expression),
+            location: Some(location),
+        })
+    }
+
+    /// Parse background statement: background expr
+    fn parse_background(&mut self) -> Result<Statement, CompilerError> {
+        let location = self.current().location.clone();
+        self.expect(&TokenKind::Background)?;
+        self.skip_whitespace();
+
+        // Parse the expression
+        let expression = self.parse_expression()?;
+
+        Ok(Statement::Background {
+            expression,
+            location: Some(location),
+        })
+    }
+
+    /// Check if the current position has `onError:` and parse the error handling block
+    /// Returns Some((error_block, location)) if onError block is present, None otherwise
+    fn try_parse_on_error_block(
+        &mut self,
+    ) -> Result<Option<(Vec<Statement>, SourceLocation)>, CompilerError> {
+        self.skip_whitespace();
+
+        // Check for onError keyword
+        if !self.check(&TokenKind::OnError) {
+            return Ok(None);
+        }
+
+        let error_location = self.current().location.clone();
+        self.bump(); // consume onError
+        self.skip_whitespace();
+
+        // Expect colon for block syntax
+        if !self.check(&TokenKind::Colon) {
+            return Err(CompilerError::parse_error(
+                "Expected ':' after 'onError' for error handling block".to_string(),
+                Some(self.current().location.clone()),
+                Some(
+                    "Use 'onError:' for blocks or 'onError <fallback>' for expressions".to_string(),
+                ),
+            ));
+        }
+
+        self.bump(); // consume :
+        self.skip_whitespace();
+
+        // Use parse_block() to handle all the indentation logic properly
+        // parse_block() will consume the Indent token, parse all statements,
+        // and handle Dedent tokens correctly
+        let error_block = self.parse_block()?;
+
+        Ok(Some((error_block, error_location)))
     }
 }

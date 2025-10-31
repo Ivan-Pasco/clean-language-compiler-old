@@ -458,7 +458,7 @@ impl MirType {
         match concrete_type {
             ConcreteType::Integer => MirType::I32, // CRITICAL FIX: Integers are i32 in WASM, not i64
             ConcreteType::Number => MirType::F64,
-            ConcreteType::String => MirType::StringTuple, // String as (ptr, len) tuple for WASM
+            ConcreteType::String => MirType::I32, // CRITICAL FIX: Strings are i32 pointer to [len|content] structure in memory
             ConcreteType::Boolean => MirType::Bool,
             ConcreteType::Null => MirType::Ptr(Box::new(MirType::Void)),
             ConcreteType::Undefined => MirType::Void,
@@ -475,8 +475,19 @@ impl MirType {
                 return_type: Box::new(Self::from_concrete_type(return_type)),
             },
             ConcreteType::Class { .. } => {
-                // Classes as opaque pointers for now
-                MirType::Ptr(Box::new(MirType::Void))
+                // CRITICAL FIX: Classes as i32 pointer in WASM (heap-allocated objects)
+                // Cannot use Ptr(Void) because codegen treats that as void return type
+                MirType::I32
+            }
+            ConcreteType::Pairs(_, _) => {
+                // CRITICAL FIX: Pairs as i32 pointer in WASM (heap-allocated map structure)
+                // Similar to Class - cannot use Ptr(Void) as it becomes void return type
+                MirType::I32
+            }
+            ConcreteType::Matrix(_) => {
+                // CRITICAL FIX: Matrix as i32 pointer in WASM (heap-allocated 2D array)
+                // Similar to Class and Pairs - i32 pointer representation
+                MirType::I32
             }
             ConcreteType::Generic { name, .. } => {
                 // Generic types that haven't been resolved should be void for function returns

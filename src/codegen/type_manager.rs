@@ -160,6 +160,7 @@ impl TypeManager {
             Value::Integer64(_) => WasmType::I64,
             Value::Number32(_) => WasmType::F32,
             Value::Number64(_) => WasmType::F64,
+            Value::Pairs(_) => WasmType::I32, // Pairs are pointers in WASM
         })
     }
 
@@ -183,6 +184,7 @@ impl TypeManager {
             Value::Integer64(_) => WasmType::I64,
             Value::Number32(_) => WasmType::F32,
             Value::Number64(_) => WasmType::F64,
+            Value::Pairs(_) => WasmType::I32, // Pairs are pointers in WASM
         })
     }
 

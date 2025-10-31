@@ -37,6 +37,7 @@ function.wasm
 
 # Backup and disabled files
 *.bak
+*.backup
 *.corrupt
 *.disabled
 

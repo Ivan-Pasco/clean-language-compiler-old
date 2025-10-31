@@ -34,6 +34,9 @@ impl CodeGenerator {
             Expression::ListAccess(array, index) => {
                 self.generate_array_access_expression(array, index, instructions)
             },
+            Expression::ListAssignment { list, index, value, .. } => {
+                self.generate_list_assignment_expression(list, index, value, instructions)
+            },
             Expression::OnError { expression, fallback, .. } => {
                 self.generate_onerror_expression(expression, fallback, instructions)
             },
@@ -124,7 +127,13 @@ impl CodeGenerator {
                 wasm_encoder::ValType::F32 => WasmType::F32,
                 wasm_encoder::ValType::F64 => WasmType::F64,
                 wasm_encoder::ValType::V128 => WasmType::V128,
-                _ => WasmType::I32,
+                other => {
+                    return Err(CompilerError::codegen_error(
+                        format!("Unsupported local variable type for '{}': {:?}", name, other),
+                        Some("This variable has an unsupported WASM type".to_string()),
+                        None
+                    ));
+                }
             })
         } else if self.is_namespace_variable(name) {
             // Handle namespace variables like compare, conditional, logical
@@ -1110,7 +1119,7 @@ impl CodeGenerator {
     ) -> Result<WasmType, CompilerError> {
         // Generate the array expression (should yield array pointer)
         let array_type = self.generate_expression(array, instructions)?;
-        
+
         // Ensure we have an array pointer (I32 in WebAssembly)
         if array_type != WasmType::I32 {
             return Err(CompilerError::codegen_error(
@@ -1119,10 +1128,10 @@ impl CodeGenerator {
                 None
             ));
         }
-        
+
         // Generate the index expression (should yield integer)
         let index_type = self.generate_expression(index, instructions)?;
-        
+
         // Ensure index is integer
         if index_type != WasmType::I32 {
             return Err(CompilerError::codegen_error(
@@ -1131,15 +1140,58 @@ impl CodeGenerator {
                 None
             ));
         }
-        
+
         // Call runtime function for safe array access with bounds checking
         // Stack: [array_ptr, index] -> [element_value]
         let func_index = self.get_function_index_or_error("array_get")?;
         instructions.push(Instruction::Call(func_index));
-        
+
         // Determine return type based on the array's element type
         let element_type = self.get_array_element_type(array)?;
         Ok(element_type)
+    }
+
+    fn generate_list_assignment_expression(
+        &mut self,
+        list: &Expression,
+        index: &Expression,
+        value: &Expression,
+        instructions: &mut Vec<Instruction>
+    ) -> Result<WasmType, CompilerError> {
+        // Generate the list expression (should yield list pointer)
+        let list_type = self.generate_expression(list, instructions)?;
+
+        // Ensure we have a list pointer (I32 in WebAssembly)
+        if list_type != WasmType::I32 {
+            return Err(CompilerError::codegen_error(
+                format!("List expression must evaluate to pointer (I32), got: {:?}", list_type),
+                None,
+                None
+            ));
+        }
+
+        // Generate the index expression (should yield integer)
+        let index_type = self.generate_expression(index, instructions)?;
+
+        // Ensure index is integer
+        if index_type != WasmType::I32 {
+            return Err(CompilerError::codegen_error(
+                format!("List index must be integer (I32), got: {:?}", index_type),
+                None,
+                None
+            ));
+        }
+
+        // Generate the value expression
+        let value_type = self.generate_expression(value, instructions)?;
+
+        // Call runtime function for safe list assignment with bounds checking
+        // Stack: [list_ptr, index, value] -> []
+        let func_index = self.get_function_index_or_error("list_set")?;
+        instructions.push(Instruction::Call(func_index));
+
+        // List assignment returns void
+        Ok(WasmType::Void)
     }
 
     fn generate_list_literal_expression(

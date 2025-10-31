@@ -169,7 +169,13 @@ impl CodeGenerator {
         self.register_import_function("env", "string.trimEnd", vec![ValType::I32], vec![ValType::I32]);
         self.register_import_function("env", "string.replace", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
         self.register_import_function("env", "string.substring", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
-        
+        self.register_import_function("env", "string.toUpperCase", vec![ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "string.toLowerCase", vec![ValType::I32], vec![ValType::I32]);
+
+        // Also register the underscore versions for method calls
+        self.register_import_function("env", "string_toUpperCase", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_toLowerCase", vec![ValType::I32], vec![ValType::I32])?;
+
         Ok(())
     }
 
@@ -350,16 +356,25 @@ impl CodeGenerator {
         ];
 
         for (name, params, returns) in &file_functions {
-            let index = self.register_import_function("env", name, params.clone(), returns.clone());
+            let index = self.register_import_function("env", name, params.clone(), returns.clone())?;
             self.file_import_indices.insert(name.to_string(), index);
         }
         
         // File namespace operations (static method style)
-        self.register_import_function("env", "file.read", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "file.write", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "file.append", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "file.exists", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "file.delete", vec![ValType::I32], vec![ValType::I32]);
+        let file_read_index = self.register_import_function("env", "file.read", vec![ValType::I32], vec![ValType::I32])?;
+        self.file_import_indices.insert("file.read".to_string(), file_read_index);
+
+        let file_write_index = self.register_import_function("env", "file.write", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.file_import_indices.insert("file.write".to_string(), file_write_index);
+
+        let file_append_index = self.register_import_function("env", "file.append", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.file_import_indices.insert("file.append".to_string(), file_append_index);
+
+        let file_exists_index = self.register_import_function("env", "file.exists", vec![ValType::I32], vec![ValType::I32])?;
+        self.file_import_indices.insert("file.exists".to_string(), file_exists_index);
+
+        let file_delete_index = self.register_import_function("env", "file.delete", vec![ValType::I32], vec![ValType::I32])?;
+        self.file_import_indices.insert("file.delete".to_string(), file_delete_index);
         
         Ok(())
     }

@@ -40,16 +40,17 @@ impl ListClass {
     }
 
     fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // List.length(list lst) -> integer
+        // List.size(list lst) -> integer
+        // Returns the number of elements in the list
         register_stdlib_function(
             codegen,
-            "list.length",
+            "list.size",
             &[WasmType::I32],
             Some(WasmType::I32),
             vec![
                 // Get list pointer
                 Instruction::LocalGet(0),
-                // Load list length (first 4 bytes)
+                // Load list size (first 4 bytes)
                 Instruction::I32Load(MemArg {
                     offset: 0,
                     align: 2,
@@ -571,8 +572,10 @@ impl ListClass {
             Instruction::LocalGet(2), // end_index
             Instruction::Drop,        // drop it
             // Allocate new list for slice result
+            // mem_alloc signature: (type_id: i32, size: i32) -> i32
+            Instruction::I32Const(0),  // type_id = 0 for generic allocation
             Instruction::I32Const(12), // Basic list header size
-            Instruction::Call(1),      // mem_alloc to create new list
+            Instruction::Call(2),      // memory_runtime.mem_alloc to create new list
         ]
     }
 
@@ -587,8 +590,10 @@ impl ListClass {
             Instruction::LocalGet(1), // list2_ptr
             Instruction::Drop,        // drop it
             // Allocate new list for concatenated result
+            // mem_alloc signature: (type_id: i32, size: i32) -> i32
+            Instruction::I32Const(0),  // type_id = 0 for generic allocation
             Instruction::I32Const(24), // Estimated size for concatenated list
-            Instruction::Call(1),      // mem_alloc to create new list
+            Instruction::Call(2),      // memory_runtime.mem_alloc to create new list
         ]
     }
 

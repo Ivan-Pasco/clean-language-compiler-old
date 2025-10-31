@@ -1,13 +1,13 @@
 //! Module for WebAssembly code generation.
 
 use wasm_encoder::{
-    BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
-    ImportSection, Instruction, MemArg, MemorySection, ValType,
+    BlockType, CodeSection, EntityType, ExportSection, Function, FunctionSection, ImportSection,
+    Instruction, MemArg, MemorySection, ValType,
 };
 
 use crate::ast::{
-    self, BinaryOperator, Class, Expression, Function as AstFunction, Pattern, Program,
-    SourceLocation, Statement, Type, UnaryOperator, Value,
+    self, BinaryOperator, Class, Expression, Function as AstFunction, Pattern, SourceLocation,
+    Statement, Type, UnaryOperator, Value,
 };
 use crate::error::{CompilationErrorKind, CompilerError, EnhancedErrorCollector};
 
@@ -294,294 +294,6 @@ impl CodeGenerator {
         self.assemble_module()
     }
 
-    /// Generate the complete program
-    ///
-    /// # DEPRECATED
-    /// This method uses the old AST-based code generation path which has known issues.
-    /// **DO NOT USE** - Use `compile_with_file()` from the library root instead,
-    /// which uses the MIR pipeline with all optimizations and fixes.
-    ///
-    /// This method will be removed in v0.11.0.
-    #[deprecated(
-        since = "0.10.2",
-        note = "Use compile_with_file() instead. This old AST-based path generates invalid WASM."
-    )]
-    pub fn generate(&mut self, program: &Program) -> Result<Vec<u8>, CompilerError> {
-        // Clear previous state
-        self.function_count = 0;
-        self.function_map.clear();
-        self.function_names.clear();
-
-        // ------------------------------------------------------------------
-        // 1. Register imports FIRST (they get indices 0-13)
-        // ------------------------------------------------------------------
-
-        // 1.1. Register print function imports (only if runtime imports are enabled)
-        if self.include_runtime_imports {
-            self.register_print_imports()?;
-            self.register_console_imports()?;
-        }
-
-        // TEMPORARILY DISABLED for WASM validation debugging
-        // 1.2. Register file system imports
-        self.register_file_imports()?;
-
-        // 1.3. Register HTTP client imports
-        self.register_http_imports()?;
-
-        // 1.4. Register type conversion imports - CRITICAL for runtime functionality
-        // DEBUG: About to register type conversion imports
-        self.register_type_conversion_imports()?;
-        // DEBUG: Type conversion imports registered
-
-        // ------------------------------------------------------------------
-        // 2. Register method-style functions as imports AFTER type conversion imports
-        // ------------------------------------------------------------------
-        self.register_method_style_imports()?;
-
-        // ------------------------------------------------------------------
-        // 3. Register standard library functions AFTER imports (they get indices 14+)
-        // ------------------------------------------------------------------
-        // TEMPORARILY DISABLED ALL STDLIB FUNCTIONS FOR DEBUGGING
-        self.register_stdlib_functions()?;
-        // DUPLICATE REGISTRATIONS DISABLED - these are already called inside register_stdlib_functions()
-        // self.register_numeric_operations()?;
-        // self.register_list_operations()?;
-        // self.register_math_operations()?;
-        // self.register_conditional_operations()?;
-
-        // ------------------------------------------------------------------
-        // 3. Store class information and setup field maps
-        // ------------------------------------------------------------------
-        for class in &program.classes {
-            if let Some(_constructor) = &class.constructor {
-                // Constructor processing logic continues below
-            }
-            self.class_table.insert(class.name.clone(), class.clone());
-
-            // Build field map with offsets - for simple inheritance, inherit parent fields first
-            let mut field_map = HashMap::new();
-            let mut field_offset = 0u32;
-
-            // Add parent class fields first (if any)
-            if let Some(base_class_name) = &class.base_class {
-                if let Some(base_class) =
-                    program.classes.iter().find(|c| c.name == *base_class_name)
-                {
-                    for field in &base_class.fields {
-                        field_map.insert(field.name.clone(), (field.type_.clone(), field_offset));
-                        field_offset += 4; // Simple 4-byte offset for all fields (treating everything as i32 for now)
-                    }
-                }
-            }
-
-            // Add this class's fields
-            for field in &class.fields {
-                field_map.insert(field.name.clone(), (field.type_.clone(), field_offset));
-                field_offset += 4; // Simple 4-byte offset for all fields
-            }
-
-            self.class_field_map.insert(class.name.clone(), field_map);
-        }
-
-        // ------------------------------------------------------------------
-        // 4. Analyze and prepare all functions (including start function and class methods)
-        // ------------------------------------------------------------------
-        for function in &program.functions {
-            self.prepare_function_type(function)?;
-            // Store function definition for default parameter handling
-            self.function_definitions
-                .insert(function.name.clone(), function.clone());
-        }
-
-        // Prepare class methods as static functions and constructors
-        for class in &program.classes {
-            // Prepare constructor if it exists, or prepare default constructor if not
-            if let Some(constructor) = &class.constructor {
-                let constructor_function_name =
-                    format!("{class_name}_constructor", class_name = class.name);
-                let constructor_function = ast::Function::new(
-                    constructor_function_name,
-                    constructor.parameters.clone(),
-                    Type::Object(class.name.clone()), // Constructor returns an object of this class
-                    constructor.body.clone(),
-                    constructor.location.clone(),
-                );
-                self.prepare_function_type(&constructor_function)?;
-            } else {
-                // Prepare default constructor
-                let constructor_function_name =
-                    format!("{class_name}_constructor", class_name = class.name);
-                let constructor_function = ast::Function::new(
-                    constructor_function_name,
-                    vec![], // No parameters for default constructor
-                    Type::Object(class.name.clone()),
-                    self.generate_constructor_body(class)?, // Generate proper constructor body
-                    None,
-                );
-                self.prepare_function_type(&constructor_function)?;
-            }
-
-            // Prepare class methods as static functions
-            for method in &class.methods {
-                let static_function_name = format!(
-                    "{class_name}_{method_name}",
-                    class_name = class.name,
-                    method_name = method.name
-                );
-                let mut static_function = method.clone();
-                static_function.name = static_function_name;
-                self.prepare_function_type(&static_function)?;
-            }
-        }
-
-        // Also process the start function if it exists
-        // DEBUG: Checking if program has start_function
-        if let Some(start_function) = &program.start_function {
-            // println!(
-            //     "DEBUG: Found start function '{}', preparing its type",
-            //     start_function.name
-            // );
-            self.prepare_function_type(start_function)?;
-            // Store start function definition for default parameter handling
-            self.function_definitions
-                .insert(start_function.name.clone(), start_function.clone());
-        } else {
-            // println!("DEBUG: No start function in program");
-        }
-
-        // ------------------------------------------------------------------
-        // 4. Generate function code (including start function and class methods)
-        // ------------------------------------------------------------------
-        for function in &program.functions {
-            self.generate_function(function)?;
-        }
-
-        // Generate class methods as static functions and constructors
-        for class in &program.classes {
-            // Generate constructor if it exists, or default constructor if not
-            if let Some(constructor) = &class.constructor {
-                // Set class context for constructor generation
-                self.current_class_context = Some(class.name.clone());
-
-                let constructor_function_name =
-                    format!("{class_name}_constructor", class_name = class.name);
-                let constructor_function = ast::Function::new(
-                    constructor_function_name,
-                    constructor.parameters.clone(),
-                    Type::Object(class.name.clone()), // Constructor returns an object of this class
-                    constructor.body.clone(),
-                    constructor.location.clone(),
-                );
-                self.generate_function(&constructor_function)?;
-
-                // Clear class context
-                self.current_class_context = None;
-            } else {
-                // Generate a default constructor (no parameters, initializes fields to default values)
-                self.current_class_context = Some(class.name.clone());
-
-                let constructor_function_name =
-                    format!("{class_name}_constructor", class_name = class.name);
-                let constructor_function = ast::Function::new(
-                    constructor_function_name,
-                    vec![], // No parameters for default constructor
-                    Type::Object(class.name.clone()),
-                    self.generate_constructor_body(class)?, // Generate proper constructor body
-                    None,
-                );
-                self.generate_function(&constructor_function)?;
-
-                // Clear class context
-                self.current_class_context = None;
-            }
-
-            // Generate class methods as static functions
-            for method in &class.methods {
-                // Set class context for method generation
-                self.current_class_context = Some(class.name.clone());
-
-                let static_function_name = format!(
-                    "{class_name}_{method_name}",
-                    class_name = class.name,
-                    method_name = method.name
-                );
-                let mut static_function = method.clone();
-                static_function.name = static_function_name;
-                self.generate_function(&static_function)?;
-
-                // Clear class context
-                self.current_class_context = None;
-            }
-        }
-
-        // Also generate the start function if it exists
-        if let Some(start_function) = &program.start_function {
-            self.generate_function(start_function)?;
-
-            // After generating start function, track its final result for get_result function
-            self.track_start_function_result(start_function)?;
-        }
-
-        // ------------------------------------------------------------------
-        // Generate test runner function if tests exist
-        // ------------------------------------------------------------------
-        if !program.tests.is_empty() {
-            self.generate_test_runner_function(&program.tests)?;
-        }
-
-        // ------------------------------------------------------------------
-        // 5. Setup memory (1 page minimum for basic operations)
-        // ------------------------------------------------------------------
-        println!("DEBUG: Setting up memory section with 1 page minimum");
-        self.setup_memory_section();
-        println!("DEBUG: Memory section configured");
-
-        // ------------------------------------------------------------------
-        // 6. Generate getter functions for integration testing
-        // ------------------------------------------------------------------
-        if program.start_function.is_some() {
-            self.generate_getter_functions()?;
-        }
-
-        // ------------------------------------------------------------------
-        // 7. Export the start function (if it exists)
-        // ------------------------------------------------------------------
-        // println!("DEBUG: Looking for start function in function_map...");
-        // DEBUG: function_map keys
-        if let Some(&start_index) = self.function_map.get("start") {
-            // println!(
-            //     "DEBUG: Found start function at index {}, exporting it",
-            //     start_index
-            // );
-            self.export_section
-                .export("start", ExportKind::Func, start_index);
-        } else {
-            // println!("DEBUG: No start function found in function_map");
-        }
-
-        // Always export memory for debugging/inspection
-        self.export_section.export("memory", ExportKind::Memory, 0);
-
-        // Export all functions for testing/library usage (except start and imported functions)
-        for (func_name, &func_index) in &self.function_map {
-            if func_name != "start" && !self.imported_functions.contains(func_name) {
-                self.export_section
-                    .export(func_name, ExportKind::Func, func_index);
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // 7. Generate start function if "start" function exists
-        // ------------------------------------------------------------------
-        self.generate_start_function()?;
-
-        // ------------------------------------------------------------------
-        // 8. Assemble the final module
-        // ------------------------------------------------------------------
-        self.assemble_module()
-    }
-
     /// Prepare function type information without generating code
     fn prepare_function_type(&mut self, function: &AstFunction) -> Result<(), CompilerError> {
         // Convert parameter types to WebAssembly types
@@ -699,6 +411,17 @@ impl CodeGenerator {
         params: &[WasmType],
         return_type: Option<WasmType>,
     ) -> Result<u32, CompilerError> {
+        // CRITICAL FIX: Check if function is already registered to prevent duplicates
+        // This allows multiple registration calls to be idempotent
+        if let Some(&existing_index) = self.function_map.get(field) {
+            tracing::debug!(
+                function = field,
+                existing_index = existing_index,
+                "Function already registered, returning existing index"
+            );
+            return Ok(existing_index);
+        }
+
         let type_index = self.add_function_type(params, return_type)?;
         self.import_section
             .import(module, field, EntityType::Function(type_index));
@@ -714,6 +437,13 @@ impl CodeGenerator {
             .add_function_type(func_index, wasm_params, wasm_results);
 
         self.function_count += 1;
+
+        tracing::debug!(
+            function = field,
+            index = func_index,
+            "Registered new import function"
+        );
+
         Ok(func_index)
     }
 
@@ -1133,6 +863,9 @@ impl CodeGenerator {
                 expressions,
                 ..
             } => {
+                eprintln!("DEBUG: Statement::FunctionApplyBlock matched");
+                eprintln!("  function_name: {}", function_name);
+                eprintln!("  expressions: {:?}", expressions);
                 self.generate_function_apply_block_statement(
                     function_name,
                     expressions,
@@ -1187,6 +920,23 @@ impl CodeGenerator {
             }
             Statement::Background { expression, .. } => {
                 self.generate_background_statement(expression, instructions)?;
+            }
+
+            Statement::OnErrorBlock {
+                expression,
+                error_block,
+                ..
+            } => {
+                // For now, generate the expression normally and ignore the error block
+                // Full error handling would require try-catch WASM instructions or custom runtime
+                self.generate_expression_statement(expression, instructions)?;
+
+                // TODO: Implement proper error handling with:
+                // 1. Try block around expression
+                // 2. Error capture and handling
+                // 3. Execute error_block statements on error
+                // For now, error_block is ignored (expression executes normally)
+                let _ = error_block; // Suppress unused warning
             }
 
             Statement::FunctionsBlock { functions, .. } => {
@@ -3780,6 +3530,14 @@ impl CodeGenerator {
         let left_type = self.generate_expression(left, instructions)?;
         let right_type = self.generate_expression(right, instructions)?;
 
+        // DEBUG: Log types for comparison operations
+        if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual) {
+            eprintln!(
+                "DEBUG: Binary operation {:?} with types: left={:?}, right={:?}",
+                op, left_type, right_type
+            );
+        }
+
         // Special handling for division by zero
         if let BinaryOperator::Divide = op {
             match right {
@@ -4535,9 +4293,54 @@ impl CodeGenerator {
         result
     }
 
+    /// Register ONLY the import functions (file, HTTP, etc.) that must come first in WASM
+    /// CRITICAL: This must be called BEFORE any stdlib functions are registered
+    /// because imports MUST have indices 0, 1, 2... in WASM files
+    fn register_import_functions_only(&mut self) -> Result<(), CompilerError> {
+        // CRITICAL: Register file imports FIRST (they get indices 0-4)
+        let file_functions: Vec<(&str, &[WasmType], Option<WasmType>)> = vec![
+            (
+                "file_read",
+                &[WasmType::I32, WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+            ),
+            (
+                "file_write",
+                &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+            ),
+            (
+                "file_append",
+                &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+            ),
+            (
+                "file_exists",
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+            ),
+            (
+                "file_delete",
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+            ),
+        ];
+
+        for (name, params, return_type) in &file_functions {
+            let index = self.register_import_function("env", name, params, *return_type)?;
+            self.file_import_indices.insert(name.to_string(), index);
+        }
+
+        Ok(())
+    }
+
     // Helper to register stdlib functions
     #[allow(dead_code)]
     fn register_stdlib_functions(&mut self) -> Result<(), CompilerError> {
+        // CRITICAL: Register imports FIRST (they must have indices 0, 1, 2...)
+        self.register_import_functions_only()?;
+
+        // NOW register stdlib functions (they get indices starting after imports)
         // Delegate to the extracted stdlib generator
         self.stdlib_generator.register_stdlib_functions()?;
 
@@ -4559,9 +4362,15 @@ impl CodeGenerator {
         // self.register_math_operations()?;
 
         // 12. Register string class operations
-        // eprintln!("DEBUG: About to register string class operations");
+        eprintln!(
+            "DEBUG: About to register string class operations (function_count={})",
+            self.function_count
+        );
         self.register_string_class_operations()?;
-        // eprintln!("DEBUG: String class operations registered successfully");
+        eprintln!(
+            "DEBUG: String class operations registered successfully (function_count={})",
+            self.function_count
+        );
 
         // 13. Register method-style and list behavior operations
         // eprintln!("DEBUG: About to register method-style operations");
@@ -4628,11 +4437,13 @@ impl CodeGenerator {
 
     /// Register file operation functions using WASM instructions from FileClass
     /// Only registers specification-compliant functions: file.read, file.write, file.append, file.exists, file.delete
+    /// NOTE: File imports are now registered in register_import_functions_only() which is called first
     #[allow(dead_code)]
     fn register_file_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::file_class::FileClass;
 
-        // Create a FileClass instance and register its functions
+        // File imports are already registered by register_import_functions_only()
+        // Just register the wrapper functions (file.read, file.write, etc.)
         let file_class = FileClass::new();
         file_class.register_functions(self)?;
 
@@ -5062,12 +4873,9 @@ impl CodeGenerator {
     fn register_math_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::math_class::MathClass;
 
-        // println!("DEBUG: Creating MathClass instance");
         // Create a MathClass instance and register its functions
         let math_class = MathClass::new();
-        // println!("DEBUG: Calling math_class.register_functions()");
         math_class.register_functions(self)?;
-        // println!("DEBUG: MathClass registration completed");
 
         Ok(())
     }
@@ -5078,11 +4886,17 @@ impl CodeGenerator {
         use crate::stdlib::string_class::StringClass;
 
         // Create a StringClass instance and register its functions
-        // eprintln!("DEBUG: Creating StringClass instance");
+        eprintln!("DEBUG: Creating StringClass instance");
         let string_class = StringClass::new();
-        // eprintln!("DEBUG: Calling string_class.register_functions()");
+        eprintln!(
+            "DEBUG: Calling string_class.register_functions() - before: function_count={}",
+            self.function_count
+        );
         string_class.register_functions(self)?;
-        // eprintln!("DEBUG: StringClass registration completed");
+        eprintln!(
+            "DEBUG: StringClass registration completed - after: function_count={}",
+            self.function_count
+        );
 
         Ok(())
     }
@@ -5142,26 +4956,17 @@ impl CodeGenerator {
             Instruction::I32Add, // Calculate element pointer
         ];
 
-        let function_index = self.instruction_generator.register_function(
+        // Use CodeGenerator::register_function to ensure proper index tracking
+        let function_index = self.register_function(
             "array_get",
             &[WasmType::I32, WasmType::I32], // List pointer and index
             Some(WasmType::I32),             // Return element pointer
             &instructions,
         )?;
 
-        self.function_map
-            .insert("array_get".to_string(), function_index);
-
         // Also register as list.get for the new naming scheme
-        let function_index2 = self.instruction_generator.register_function(
-            "list.get",
-            &[WasmType::I32, WasmType::I32], // List pointer and index
-            Some(WasmType::I32),             // Return element pointer
-            &instructions,
-        )?;
-
-        self.function_map
-            .insert("list.get".to_string(), function_index2);
+        // Note: This creates an alias to the same function
+        self.add_function_alias("list.get", function_index);
 
         Ok(())
     }
@@ -5498,6 +5303,10 @@ impl CodeGenerator {
         } else {
             // Create a placeholder function index for async runtime functions
             let index = self.function_count;
+            eprintln!(
+                "DEBUG get_or_create_function_index: Creating placeholder for '{}' at index {}",
+                name, index
+            );
             self.function_count += 1;
             self.function_map.insert(name.to_string(), index);
             self.function_names.push(name.to_string());
@@ -5736,8 +5545,14 @@ impl CodeGenerator {
         }
 
         // Register with instruction_generator for internal tracking
-        self.instruction_generator
-            .register_function(name, params, return_type, instructions)?;
+        // Pass the function_index so InstructionGenerator uses the same index
+        self.instruction_generator.register_function(
+            name,
+            params,
+            return_type,
+            instructions,
+            function_index,
+        )?;
 
         // Add the function type to the type section
         let type_index = self.add_function_type(params, return_type)?;
@@ -5860,8 +5675,14 @@ impl CodeGenerator {
         }
 
         // Register with instruction_generator for internal tracking
-        self.instruction_generator
-            .register_function(name, params, return_type, instructions)?;
+        // Pass the function_index so InstructionGenerator uses the same index
+        self.instruction_generator.register_function(
+            name,
+            params,
+            return_type,
+            instructions,
+            function_index,
+        )?;
 
         // Add the function type to the type section
         let type_index = self.add_function_type(params, return_type)?;
@@ -5923,6 +5744,12 @@ impl CodeGenerator {
 
         // Return the function index
         Ok(function_index)
+    }
+
+    /// Add an alias name for an existing function
+    /// This allows a function to be referenced by multiple names
+    pub fn add_function_alias(&mut self, alias: &str, function_index: u32) {
+        self.function_map.insert(alias.to_string(), function_index);
     }
 
     /// Register a function with multiple return values (for WebAssembly multi-value returns)
@@ -5989,9 +5816,15 @@ impl CodeGenerator {
 
         // Also register with instruction_generator for internal tracking
         // For now, use first return type for compatibility
+        // Pass the function_index so InstructionGenerator uses the same index
         let single_return = return_types.first().copied();
-        self.instruction_generator
-            .register_function(name, params, single_return, instructions)?;
+        self.instruction_generator.register_function(
+            name,
+            params,
+            single_return,
+            instructions,
+            function_index,
+        )?;
 
         // Return the function index
         Ok(function_index)
@@ -8998,11 +8831,20 @@ impl CodeGenerator {
         expressions: &[Expression],
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
-        for expression in expressions {
+        eprintln!("DEBUG: generate_function_apply_block_statement called");
+        eprintln!("  function_name: {}", function_name);
+        eprintln!("  expressions count: {}", expressions.len());
+        eprintln!("  instructions before: {}", instructions.len());
+
+        for (i, expression) in expressions.iter().enumerate() {
+            eprintln!("  Processing expression {}: {:?}", i, expression);
+
             // Special case for print functions - treat them as print statements
             if function_name == "print" || function_name == "println" || function_name == "printl" {
+                eprintln!("    -> Calling generate_print_statement");
                 self.generate_print_statement(expression, false, instructions)?;
             } else {
+                eprintln!("    -> Generating function call");
                 // Generate a function call for each expression
                 let call_expr =
                     Expression::Call(function_name.to_string(), vec![expression.clone()]);
@@ -9015,6 +8857,8 @@ impl CodeGenerator {
                 }
             }
         }
+
+        eprintln!("  instructions after: {}", instructions.len());
         Ok(())
     }
 

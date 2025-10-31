@@ -41,6 +41,7 @@ pub enum TokenKind {
     Import,      // import
     In,          // in
     Iterate,     // iterate
+    Later,       // later
     Not,         // not
     OnError,     // onError
     Or,          // or
@@ -153,6 +154,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Import => write!(f, "import"),
             TokenKind::In => write!(f, "in"),
             TokenKind::Iterate => write!(f, "iterate"),
+            TokenKind::Later => write!(f, "later"),
             TokenKind::Not => write!(f, "not"),
             TokenKind::OnError => write!(f, "onError"),
             TokenKind::Or => write!(f, "or"),
@@ -352,6 +354,7 @@ impl Keywords {
             "import" => Some(TokenKind::Import),
             "in" => Some(TokenKind::In),
             "iterate" => Some(TokenKind::Iterate),
+            "later" => Some(TokenKind::Later),
             "not" => Some(TokenKind::Not),
             "onError" => Some(TokenKind::OnError),
             "or" => Some(TokenKind::Or),

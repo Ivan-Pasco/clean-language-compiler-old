@@ -90,7 +90,17 @@ impl InstructionGenerator {
         param_types: &[WasmType],
     ) -> Option<u32> {
         let signature = self.create_function_signature(name, param_types);
-        self.function_signatures.get(&signature).copied()
+        let result = self.function_signatures.get(&signature).copied();
+        // DEBUG: Track function lookups that return high indices
+        if let Some(idx) = result {
+            if idx >= 42 {
+                eprintln!(
+                    "DEBUG: Looking up function '{}' returned index {} (signature: {})",
+                    name, idx, signature
+                );
+            }
+        }
+        result
     }
 
     /// Create a function signature string for overload resolution
@@ -1285,6 +1295,12 @@ impl InstructionGenerator {
                     Ok(WasmType::I32)
                 }
             }
+            Value::Pairs(_pairs) => {
+                // Pairs literals - for now, return a placeholder
+                // Full implementation would allocate memory and store key-value pairs
+                instructions.push(Instruction::I32Const(0));
+                Ok(WasmType::I32)
+            }
         }
     }
 
@@ -1452,23 +1468,41 @@ impl InstructionGenerator {
     }
 
     /// Register a function with the instruction generator
+    /// The function index is provided by the CodeGenerator to ensure consistency
     pub(crate) fn register_function(
         &mut self,
         name: &str,
         params: &[WasmType],
         return_type: Option<WasmType>,
         _instructions: &[Instruction],
+        function_index: u32,
     ) -> Result<u32, CompilerError> {
         // Create signature for this specific overload
         let signature = self.create_function_signature(name, params);
 
-        // Check if this exact signature already exists
-        if let Some(index) = self.function_signatures.get(&signature) {
-            return Ok(*index);
+        // DEBUG: Track function registrations above index 41
+        if function_index >= 42 {
+            eprintln!(
+                "DEBUG: Registering function '{}' at index {} (signature: {})",
+                name, function_index, signature
+            );
         }
 
-        // Get the next function index based on total registered functions
-        let index = self.function_signatures.len() as u32;
+        // Check if this exact signature already exists
+        if let Some(existing_index) = self.function_signatures.get(&signature) {
+            // If the signature exists, return the existing index
+            // This allows idempotent registration (multiple calls for same function are OK)
+            tracing::debug!(
+                signature = %signature,
+                existing_index = *existing_index,
+                new_index = function_index,
+                "Function signature already registered, using existing index"
+            );
+            return Ok(*existing_index);
+        }
+
+        // Use the provided function index from CodeGenerator
+        let index = function_index;
 
         // Add to signature map (for exact overload lookup)
         self.function_signatures.insert(signature, index);
