@@ -22,9 +22,14 @@ use std::path::{Path, PathBuf};
 mod cli;
 use cli::options_export;
 
-/// Clean Language Compiler and Test Runner
+/// 🧹 Clean Language Compiler - Modern, type-safe language that compiles to WebAssembly
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    author = "Ivan Pasco Lizarraga",
+    version,
+    about = "Clean Language Compiler - A modern, type-safe programming language",
+    long_about = "Clean Language Compiler (cln)\n\nA modern, type-safe programming language that compiles to WebAssembly.\nWebsite: https://www.cleanlanguage.dev"
+)]
 struct Args {
     #[command(subcommand)]
     command: Commands,

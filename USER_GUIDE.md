@@ -66,6 +66,44 @@ cln check hello.cln
 
 ### Advanced Features
 
+#### Package Management
+
+```bash
+# Initialize a new Clean Language project
+cln package init
+
+# Add a dependency
+cln package add package-name
+
+# Install dependencies
+cln package install
+
+# List dependencies
+cln package list
+
+# Remove a dependency
+cln package remove package-name
+
+# Publish package
+cln package publish
+```
+
+#### Testing & Quality Assurance
+
+```bash
+# Run the full test suite
+cln test
+
+# Lint a file for code quality
+cln lint -i app.cln
+
+# Debug with enhanced error reporting
+cln debug -i app.cln --show-ast
+
+# Parse with error recovery
+cln parse -i app.cln --recover-errors
+```
+
 #### Compilation Targets
 
 ```bash
@@ -160,16 +198,25 @@ cln compile webapp.cln --target web --optimization production
 #### Full Development Workflow
 
 ```bash
-# 1. Check syntax
+# 1. Initialize project
+cln package init
+
+# 2. Check syntax
 cln parse myapp.cln
 
-# 2. Type check
+# 3. Type check
 cln check myapp.cln
 
-# 3. Compile with debugging
+# 4. Lint code
+cln lint -i myapp.cln
+
+# 5. Run tests
+cln test
+
+# 6. Compile with debugging
 cln compile myapp.cln --debug --verbose
 
-# 4. Run the program
+# 7. Run the program
 cln run myapp.cln
 ```
 
@@ -181,8 +228,30 @@ COMMANDS:
     run <input>                 Compile and run a Clean program
     parse <input>               Parse and validate syntax only
     check <input>               Type check without compilation
+
+    package <subcommand>        Manage packages and dependencies
+      init                      Initialize a new Clean Language project
+      add <name>                Add a dependency
+      remove <name>             Remove a dependency
+      install                   Install dependencies
+      list                      List dependencies
+      publish                   Publish package
+
+    test                        Run the test suite
+    lint -i <input>             Lint code for quality issues
+    debug -i <input>            Debug with enhanced error reporting
+
     targets <subcommand>        Manage compilation targets
+      list                      List available targets
+      info <target>             Get target information
+
     runtime <subcommand>        Manage WebAssembly runtimes
+      list                      List available runtimes
+      detect                    Auto-detect best runtime
+
+    options                     Export compile options (IDE integration)
+      --export-json             Export as JSON format
+
     version                     Show version information
     help                        Show this help message
 
@@ -192,6 +261,8 @@ OPTIONS:
     --optimization, -O <level>  Optimization level
     --debug, -d                 Include debug information
     --verbose, -v               Verbose output
+    --show-ast                  Show AST structure (debug mode)
+    --recover-errors            Enable error recovery (parse mode)
 ```
 
 ### Getting Help
@@ -203,11 +274,16 @@ cln help
 # Show version
 cln version
 
-# List targets
+# List all targets
 cln targets list
 
-# List runtimes
+# List all runtimes
 cln runtime list
+
+# Get help for specific command
+cln compile --help
+cln package --help
+cln test --help
 ```
 
 ### Success Indicators

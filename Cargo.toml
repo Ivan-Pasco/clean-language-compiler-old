@@ -133,16 +133,10 @@ grcov = "0.8"
 # File system utilities
 walkdir = "2.4"
 
-# Main compiler binary - User-friendly interface
-# This is the primary command users should use
+# Main compiler binary - Complete feature set
+# This is the ONE command for everything: compile, run, test, package, lint, debug
 [[bin]]
 name = "cln"
-path = "src/bin/cln.rs"
-
-# Advanced compiler binary - For development and advanced features
-# Includes package management, testing, linting, and debugging tools
-[[bin]]
-name = "clean-language-compiler"
 path = "src/main.rs"
 
 # Essential debugging tools

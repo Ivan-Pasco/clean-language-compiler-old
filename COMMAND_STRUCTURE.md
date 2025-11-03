@@ -1,22 +1,53 @@
 # Clean Language - Command Structure
 
-## ✅ Simplified Command System (v0.11.0+)
+## ✅ Unified Command System (v0.11.0+)
 
-We've consolidated from **3 redundant commands** down to **2 focused commands**:
+We've consolidated from **3 redundant commands** down to **ONE unified command**: `cln`
+
+Following the pattern of modern tools like `cargo`, `go`, and `npm`, Clean Language now has a single, unified command-line interface for all tasks.
 
 ---
 
-## For Users: `cln` ⭐ PRIMARY COMMAND
+## The `cln` Command ⭐ ALL-IN-ONE
 
-**Use `cln` for all everyday development tasks.**
+**Use `cln` for everything - from compilation to package management.**
 
+### Basic Operations
 ```bash
 cln compile hello.cln          # Compile to WASM
 cln run app.cln                # Compile and run
 cln parse file.cln             # Check syntax
 cln check file.cln             # Type checking
+```
+
+### Package Management
+```bash
+cln package init               # Initialize project
+cln package add <name>         # Add dependency
+cln package install            # Install dependencies
+cln package list               # List dependencies
+```
+
+### Testing & Quality
+```bash
+cln test                       # Run test suite
+cln lint -i file.cln           # Lint code
+cln debug -i file.cln          # Enhanced debugging
+```
+
+### Platform & Runtime
+```bash
 cln targets list               # List platforms
 cln runtime detect             # Auto-detect runtime
+```
+
+### IDE Integration
+```bash
+cln options --export-json      # Export compile options
+```
+
+### Help & Version
+```bash
 cln version                    # Show version
 cln help                       # Show help
 ```
@@ -30,49 +61,26 @@ Download: https://github.com/Ivan-Pasco/clean-language-compiler/releases/tag/v0.
 
 ---
 
-## For Developers: `clean-language-compiler` 🔧 ADVANCED TOOLS
-
-**Use `clean-language-compiler` for advanced development features.**
-
-### Package Management
-```bash
-clean-language-compiler package init              # Initialize project
-clean-language-compiler package add <name>        # Add dependency
-clean-language-compiler package install           # Install dependencies
-clean-language-compiler package list              # List dependencies
-```
-
-### Testing & Quality
-```bash
-clean-language-compiler test                      # Run test suite
-clean-language-compiler lint -i <file>            # Lint code
-clean-language-compiler debug -i <file>           # Enhanced debugging
-```
-
-### IDE Integration
-```bash
-clean-language-compiler options --export-json     # Export compile options
-```
-
----
-
 ## What Changed?
 
-### ❌ Removed: `cleanc` (Redundant)
+### ❌ Removed: `cleanc` and `clean-language-compiler` (Redundant)
 
-The `cleanc` command was removed because it only had `compile` and `run`, which are already in `cln`.
+All functionality has been consolidated into the single `cln` command for better user experience.
 
 **Before (v0.10.x):**
 ```bash
-cln compile hello.cln                  # User-friendly
-cleanc compile hello.cln hello.wasm    # Same thing (redundant!)
-clean-language-compiler compile ...    # Advanced features
+cln compile hello.cln                     # User-friendly command
+cleanc compile hello.cln hello.wasm       # Same thing (redundant!)
+clean-language-compiler package init      # Advanced features
+clean-language-compiler test              # Testing
 ```
 
 **After (v0.11.0):**
 ```bash
-cln compile hello.cln                  # For users ✅
-clean-language-compiler compile ...    # For developers ✅
+cln compile hello.cln                     # Compilation ✅
+cln package init                          # Package management ✅
+cln test                                  # Testing ✅
+cln lint -i file.cln                      # Linting ✅
 ```
 
 ---
@@ -85,23 +93,15 @@ clean-language-compiler compile ...    # For developers ✅
 | **Run program** | `cln run app.cln` |
 | **Check syntax** | `cln parse app.cln` |
 | **Type check** | `cln check app.cln` |
+| **Init package** | `cln package init` |
+| **Add dependency** | `cln package add <name>` |
+| **Install deps** | `cln package install` |
+| **Run tests** | `cln test` |
+| **Lint code** | `cln lint -i app.cln` |
+| **Debug code** | `cln debug -i app.cln` |
 | **List targets** | `cln targets list` |
-| **Init package** | `clean-language-compiler package init` |
-| **Run tests** | `clean-language-compiler test` |
-| **Lint code** | `clean-language-compiler lint -i app.cln` |
-
----
-
-## Recommendation
-
-**For 95% of use cases, just use `cln`.**
-
-Only use `clean-language-compiler` if you need:
-- Package management
-- Running the test suite
-- Code linting
-- Enhanced debugging
-- IDE integration tools
+| **Detect runtime** | `cln runtime detect` |
+| **IDE integration** | `cln options --export-json` |
 
 ---
 
@@ -123,14 +123,16 @@ sudo mv cln-macos-aarch64 /usr/local/bin/cln
 cln version
 ```
 
-### Verify Only `cln` is Needed
+### All You Need
 
 ```bash
-# This is all you need for development!
+# One command for everything!
 cln compile hello.cln
 cln run hello.cln
+cln test
+cln package init
 ```
 
 ---
 
-**Summary:** ONE primary command (`cln`) for users, ONE advanced command for developers. No more confusion! 🎉
+**Summary:** ONE command (`cln`) for everything. Simple, unified, powerful! 🎉
