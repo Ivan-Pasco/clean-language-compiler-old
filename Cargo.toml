@@ -133,20 +133,17 @@ grcov = "0.8"
 # File system utilities
 walkdir = "2.4"
 
-# Main compiler binary
-[[bin]]
-name = "clean-language-compiler"
-path = "src/main.rs"
-
-# Core compiler binary (alternative interface)
-[[bin]]
-name = "cleanc"
-path = "src/bin/cleanc.rs"
-
-# Short command line interface
+# Main compiler binary - User-friendly interface
+# This is the primary command users should use
 [[bin]]
 name = "cln"
 path = "src/bin/cln.rs"
+
+# Advanced compiler binary - For development and advanced features
+# Includes package management, testing, linting, and debugging tools
+[[bin]]
+name = "clean-language-compiler"
+path = "src/main.rs"
 
 # Essential debugging tools
 [[bin]]
