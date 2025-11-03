@@ -246,6 +246,17 @@ impl<'a> MirCodeGenerator<'a> {
         for (symbol_id, name) in &mir_program.symbol_name_map {
             self.function_symbol_map.insert(*symbol_id, name.clone());
             eprintln!("DEBUG SYMBOL INIT: SymbolId({}) -> '{}'", symbol_id.0, name);
+
+            // CRITICAL FIX: Also populate symbol_to_function_index for builtin functions
+            // Builtin functions are already registered in wasm_generator.function_map (name -> index)
+            // but their SymbolIds were never mapped to their WASM indices
+            if let Some(&wasm_index) = self.wasm_generator.function_map.get(name) {
+                self.symbol_to_function_index.insert(*symbol_id, wasm_index);
+                eprintln!(
+                    "DEBUG BUILTIN MAP: SymbolId({}) -> '{}' at WASM index {}",
+                    symbol_id.0, name, wasm_index
+                );
+            }
         }
 
         // Collect and sort functions by SymbolId for deterministic ordering

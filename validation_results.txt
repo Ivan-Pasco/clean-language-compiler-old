@@ -1,5 +1,5 @@
 === WASM Validation Analysis ===
-Date: Mon Nov  3 00:30:25 -05 2025
+Date: Mon Nov  3 07:50:36 -05 2025
 
 FAIL: tests/cln/advanced/memory/24_memory_management.cln
   Error: tests/output/advanced/memory/24_memory_management.wasm:00007d0: error: type mismatch in call, expected [f64, f64] but got [i32]
@@ -11,7 +11,7 @@ FAIL: tests/cln/advanced/modules/67_import_export_comprehensive.cln
   Error: tests/output/advanced/modules/67_import_export_comprehensive.wasm:0000884: error: type mismatch in local.set, expected [i32] but got [f64]
 
 FAIL: tests/cln/control/loops/05_loop_constructs.cln
-  Error: tests/output/control/loops/05_loop_constructs.wasm:00007d8: error: type mismatch in call, expected [f64, f64] but got [i32]
+  Error: tests/output/control/loops/05_loop_constructs.wasm:00007d1: error: type mismatch in call, expected [f64, f64] but got [i32]
 
 FAIL: tests/cln/core/basics/29_apply_blocks_fixed.cln
   Error: tests/output/core/basics/29_apply_blocks_fixed.wasm:00007f9: error: type mismatch in call, expected [f64, f64] but got [i32]
