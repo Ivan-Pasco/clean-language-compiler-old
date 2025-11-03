@@ -1,5 +1,0 @@
-start()
-	// Test the simplest possible namespace call
-	print("Testing namespace access")
-	number result = math.pi()
-	print("Math.pi result obtained")

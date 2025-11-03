@@ -101,9 +101,13 @@ pub struct OptimizationStats {
 
 impl MirPipeline {
     /// Create a new MIR pipeline with default configuration
+    /// Note: This creates an empty symbol table which will be replaced when lower() is called
     pub fn new() -> Self {
+        // Create a temporary empty symbol table for initialization
+        // The actual symbol table will be set when lower() is called with a TAST
+        let empty_symbol_table = std::sync::Arc::new(crate::resolver::GlobalSymbolTable::new());
         Self {
-            builder: MirBuilder::new(),
+            builder: MirBuilder::new(empty_symbol_table),
             optimizer: MirOptimizer::new(),
             config: MirConfig::default(),
         }
@@ -111,8 +115,9 @@ impl MirPipeline {
 
     /// Create a new MIR pipeline with custom configuration
     pub fn with_config(config: MirConfig) -> Self {
+        let empty_symbol_table = std::sync::Arc::new(crate::resolver::GlobalSymbolTable::new());
         Self {
-            builder: MirBuilder::new(),
+            builder: MirBuilder::new(empty_symbol_table),
             optimizer: MirOptimizer::with_config(&config),
             config,
         }
@@ -131,6 +136,9 @@ impl MirPipeline {
                 "Processing TAST function"
             );
         }
+
+        // Update builder with the actual symbol table from TAST
+        self.builder = MirBuilder::new(tast.symbol_table.clone());
 
         // Phase 1: Lower TAST to unoptimized MIR
         let build_result = self.builder.build(tast)?;

@@ -32,5 +32,5 @@ start()
 	matrix<number> precisionMatrix = [[3.14159, 2.71828], [1.41421, 1.73205]]
 	print("Precision matrix created")
 	// Empty matrix handling
-	matrix<integer> emptyMatrix = [[]]
+	matrix<integer> emptyMatrix = []
 	print("Empty matrix created")

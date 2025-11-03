@@ -6,7 +6,7 @@
 functions:
 	list<integer> processNumbers(list<integer> input)
 		list<integer> result = [0]  // Initialize with dummy value
-		iterate i in 0 to input.length - 1
+		iterate i in 0 to input.length() - 1
 			integer value = input[i]
 			if value > 0
 				result.push(value * 2)
@@ -51,7 +51,7 @@ start()
 		print("Comprehensive test successful!")
 		print("Chain result: " + chain_result.toString())
 		print("Calculation: " + calc_result.toString())
-		print("Processed count: " + processed.length.toString())
+		print("Processed count: " + processed.length().toString())
 	else
 		print("Test failed!")
 

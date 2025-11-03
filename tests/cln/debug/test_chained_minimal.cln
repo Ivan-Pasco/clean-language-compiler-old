@@ -1,3 +1,8 @@
+class TestObject
+	integer prop
+
 functions:
 	void main()
+		TestObject obj
+		obj.prop = 10
 		obj.prop.greaterThan(5)

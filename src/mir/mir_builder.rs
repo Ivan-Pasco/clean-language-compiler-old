@@ -79,6 +79,9 @@ pub struct MirBuilder {
     /// String literal to pool index mapping
     string_indices: HashMap<String, usize>,
 
+    /// Symbol table for looking up constructors, methods, etc.
+    symbol_table: std::sync::Arc<crate::resolver::GlobalSymbolTable>,
+
     /// Collected warnings
     warnings: Vec<CompilerError>,
 
@@ -145,7 +148,7 @@ struct LoopContext {
 
 impl MirBuilder {
     /// Create a new MIR builder
-    pub fn new() -> Self {
+    pub fn new(symbol_table: std::sync::Arc<crate::resolver::GlobalSymbolTable>) -> Self {
         Self {
             current_function: None,
             current_block: None,
@@ -155,6 +158,7 @@ impl MirBuilder {
             variable_values: HashMap::new(),
             string_pool: Vec::new(),
             string_indices: HashMap::new(),
+            symbol_table,
             warnings: Vec::new(),
             stats: MirBuildStats::default(),
             all_classes: Vec::new(),
@@ -179,15 +183,97 @@ impl MirBuilder {
             string_pool: Vec::new(),
             entry_point: None,
             debug_info: None,
+            symbol_name_map: HashMap::new(),
         };
+
+        // CRITICAL FIX: Populate symbol_name_map from SymbolTable for dynamic resolution
+        // This captures ALL symbols: builtins (print, math.*, string.*, etc.) AND user-defined
+        eprintln!(
+            "DEBUG MIR SYMBOLS: Populating symbol_name_map from SymbolTable with {} symbols",
+            tast.symbol_table.all_symbols().len()
+        );
+        for (symbol_id, symbol) in tast.symbol_table.all_symbols() {
+            // CRITICAL FIX: For Method symbols, construct fully qualified name (e.g., "math.min")
+            let full_name =
+                if let crate::resolver::SymbolKind::Method { class_id, .. } = &symbol.kind {
+                    // Get the class name for this method
+                    if let Some(class_symbol) = tast.symbol_table.all_symbols().get(class_id) {
+                        format!("{}.{}", class_symbol.name.to_lowercase(), symbol.name)
+                    } else {
+                        symbol.name.clone()
+                    }
+                } else {
+                    symbol.name.clone()
+                };
+
+            mir_program
+                .symbol_name_map
+                .insert(*symbol_id, full_name.clone());
+            eprintln!(
+                "DEBUG MIR SYMBOLS: SymbolId({}) -> '{}'",
+                symbol_id.0, full_name
+            );
+        }
+        eprintln!(
+            "DEBUG MIR SYMBOLS: symbol_name_map populated with {} entries",
+            mir_program.symbol_name_map.len()
+        );
+
+        // CRITICAL FIX: Add synthetic SymbolIds for MIR-generated built-in functions
+        // These are created during MIR building for string concatenation and power operations
+        // Map them to existing WASM builtin functions
+        mir_program
+            .symbol_name_map
+            .insert(SymbolId(1000), "string_concat".to_string());
+        // pow_f64 and pow_i32 should map to the existing math.pow function
+        mir_program
+            .symbol_name_map
+            .insert(SymbolId(1001), "math.pow".to_string());
+        mir_program
+            .symbol_name_map
+            .insert(SymbolId(1002), "math.pow".to_string());
+
+        // CRITICAL FIX: Add common name variations for builtin functions
+        // Check symbol_name_map for variations and add correct WASM names
+        let mut fixes_needed = Vec::new();
+        for (symbol_id, name) in mir_program.symbol_name_map.iter() {
+            match name.as_str() {
+                "println" => fixes_needed.push((*symbol_id, "printl".to_string())),
+                _ => {}
+            }
+        }
+        for (symbol_id, corrected_name) in fixes_needed {
+            eprintln!(
+                "DEBUG MIR SYMBOLS: Correcting SymbolId({}) from '{}' to '{}'",
+                symbol_id.0,
+                mir_program.symbol_name_map.get(&symbol_id).unwrap(),
+                corrected_name
+            );
+            mir_program
+                .symbol_name_map
+                .insert(symbol_id, corrected_name);
+        }
+
+        eprintln!(
+            "DEBUG MIR SYMBOLS: Added 3 synthetic SymbolIds (1000-1002) for MIR-generated builtins"
+        );
+        eprintln!(
+            "DEBUG MIR SYMBOLS: Final symbol_name_map has {} entries",
+            mir_program.symbol_name_map.len()
+        );
 
         // Lower all functions
         for function in tast.functions {
+            let symbol_id = function.symbol_id;
+            let name = function.name.clone();
+
             match self.build_function(function) {
                 Ok(mir_function) => {
                     if mir_function.attributes.entry_point {
                         mir_program.entry_point = Some(mir_function.symbol_id);
                     }
+                    // CRITICAL FIX: Add function name to symbol map for dynamic resolution
+                    mir_program.symbol_name_map.insert(symbol_id, name);
                     mir_program
                         .functions
                         .insert(mir_function.symbol_id, mir_function);
@@ -201,10 +287,15 @@ impl MirBuilder {
 
         // CRITICAL FIX: Lower the start function if it exists
         if let Some(start_function) = tast.start_function {
+            let symbol_id = start_function.symbol_id;
+            let name = start_function.name.clone();
+
             match self.build_function(start_function) {
                 Ok(mir_function) => {
                     // Mark the start function as the entry point
                     mir_program.entry_point = Some(mir_function.symbol_id);
+                    // CRITICAL FIX: Add start function name to symbol map
+                    mir_program.symbol_name_map.insert(symbol_id, name);
                     mir_program
                         .functions
                         .insert(mir_function.symbol_id, mir_function);
@@ -221,6 +312,10 @@ impl MirBuilder {
             match self.build_class(class) {
                 Ok(class_functions) => {
                     for function in class_functions {
+                        // CRITICAL FIX: Add class method/constructor names to symbol map
+                        mir_program
+                            .symbol_name_map
+                            .insert(function.symbol_id, function.name.clone());
                         mir_program.functions.insert(function.symbol_id, function);
                         self.stats.functions_lowered += 1;
                     }
@@ -982,6 +1077,9 @@ impl MirBuilder {
                 let index_value_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
+                // CRITICAL FIX: Register index ValueId as a local
+                self.register_temp_local(context, index_value_id, MirType::I32, location.clone());
+
                 // Initialize index to 0
                 let init_instruction = MirInstruction {
                     dest: Some(index_value_id),
@@ -1041,12 +1139,14 @@ impl MirBuilder {
                 let length_value_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
-                // Array length instruction (simplified - assume array has length property)
+                // CRITICAL FIX: Register length ValueId as a local
+                self.register_temp_local(context, length_value_id, MirType::I32, location.clone());
+
+                // Load array length directly from memory (length is at offset 0)
                 let length_instruction = MirInstruction {
                     dest: Some(length_value_id),
-                    operation: MirOperation::Call {
-                        function: MirOperand::Function(SymbolId(999)), // Built-in array length
-                        arguments: vec![MirOperand::Value(iterable_value)],
+                    operation: MirOperation::Load {
+                        source: MirOperand::Value(iterable_value),
                     },
                     location: location.clone(),
                 };
@@ -1055,6 +1155,14 @@ impl MirBuilder {
                 // Compare index < length
                 let condition_value_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
+
+                // CRITICAL FIX: Register condition ValueId as a local
+                self.register_temp_local(
+                    context,
+                    condition_value_id,
+                    MirType::I32, // Boolean represented as I32
+                    location.clone(),
+                );
 
                 let compare_instruction = MirInstruction {
                     dest: Some(condition_value_id),
@@ -1111,6 +1219,14 @@ impl MirBuilder {
                 // Increment index: index = index + 1
                 let incremented_value_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
+
+                // CRITICAL FIX: Register incremented ValueId as a local
+                self.register_temp_local(
+                    context,
+                    incremented_value_id,
+                    MirType::I32,
+                    location.clone(),
+                );
 
                 let increment_instruction = MirInstruction {
                     dest: Some(incremented_value_id),
@@ -2050,10 +2166,6 @@ impl MirBuilder {
                 property_name,
                 property_symbol,
             } => {
-                eprintln!(
-                    "DEBUG MIR PROPACCESS: Property '{}' with symbol {:?}",
-                    property_name, property_symbol
-                );
                 // Build the object expression first
                 let object_id = self.build_expression(context, object)?;
 
@@ -2070,10 +2182,17 @@ impl MirBuilder {
                 };
                 context.function.locals.insert(result_id, gep_local);
 
+                // CRITICAL FIX: Get the class from the object's type, not from class_context
+                // This allows field access from any context (e.g., start() function)
+                let object_class_symbol = match &object.expr_type {
+                    ConcreteType::Class { symbol_id, .. } => Some(*symbol_id),
+                    _ => None,
+                };
+
                 // Find the actual field index in the class hierarchy (including inherited fields)
-                let field_index_value = if context.class_context.is_some() {
-                    // Search for the field in current class and all parent classes
-                    self.find_field_index_in_hierarchy(context, property_symbol)
+                let field_index_value = if let Some(class_symbol) = object_class_symbol {
+                    // Search for the field in the object's class and all parent classes
+                    self.find_field_index_for_class(context, class_symbol, property_symbol)
                         .ok_or_else(|| {
                             vec![CompilerError::validation_error(
                                 &format!(
@@ -2084,18 +2203,17 @@ impl MirBuilder {
                             )]
                         })? as i64
                 } else {
-                    // Not in a class context - this shouldn't happen for field access
+                    // Object doesn't have a class type - this shouldn't happen for field access
                     return Err(vec![CompilerError::validation_error(
-                        "Field access outside of class context",
+                        &format!(
+                            "Cannot access field '{}' on non-class type: {:?}",
+                            property_name, object.expr_type
+                        ),
                         expression.location.clone(),
                     )]);
                 };
 
                 let field_index = MirOperand::Constant(MirConstant::Integer(field_index_value));
-                eprintln!(
-                    "DEBUG MIR PROPACCESS: Resolved field index: {}",
-                    field_index_value
-                );
                 let instruction = MirInstruction {
                     dest: Some(result_id),
                     operation: MirOperation::GetElementPtr {
@@ -2141,6 +2259,15 @@ impl MirBuilder {
                 let result_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
+                // CRITICAL FIX: Register the pointer result as a local
+                // GetElementPtr returns a pointer to the array element
+                self.register_temp_local(
+                    context,
+                    result_id,
+                    MirType::Ptr(Box::new(MirType::I32)), // Pointer to element
+                    expression.location.clone(),
+                );
+
                 let instruction = MirInstruction {
                     dest: Some(result_id),
                     operation: MirOperation::GetElementPtr {
@@ -2155,6 +2282,24 @@ impl MirBuilder {
                 // Load the value from the array element pointer
                 let load_result_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
+
+                // CRITICAL FIX: Register the loaded value as a local
+                // Determine the type from the array expression type
+                let element_type = match &array.expr_type {
+                    ConcreteType::Array(elem_type) => self.convert_concrete_type(elem_type),
+                    ConcreteType::Matrix(elem_type) => {
+                        // Matrix is 2D array, so element is 1D array
+                        MirType::Ptr(Box::new(self.convert_concrete_type(elem_type)))
+                    }
+                    _ => MirType::I32, // Default fallback
+                };
+
+                self.register_temp_local(
+                    context,
+                    load_result_id,
+                    element_type,
+                    expression.location.clone(),
+                );
 
                 let load_instruction = MirInstruction {
                     dest: Some(load_result_id),
@@ -2257,12 +2402,45 @@ impl MirBuilder {
                     expression.location.clone(),
                 );
 
+                // CRITICAL FIX: Find the parent class constructor SymbolId
+                // parent_class_symbol_id is the CLASS, we need to find its CONSTRUCTOR
+                let parent_constructor_symbol_id = if let Some(parent_symbol) =
+                    self.symbol_table.all_symbols().get(parent_class_symbol_id)
+                {
+                    // For classes, look for a child symbol that is a Constructor for this class
+                    let constructor_id = self.symbol_table.all_symbols().iter()
+                        .find(|(_, symbol)| {
+                            matches!(symbol.kind, crate::resolver::SymbolKind::Constructor { class_id, .. } if class_id == *parent_class_symbol_id)
+                        })
+                        .map(|(id, _)| *id);
+
+                    if let Some(constructor_id) = constructor_id {
+                        eprintln!(
+                            "DEBUG MIR BASECALL: Found parent constructor SymbolId({}) for class '{}'",
+                            constructor_id.0, parent_symbol.name
+                        );
+                        constructor_id
+                    } else {
+                        eprintln!(
+                            "DEBUG MIR BASECALL: WARNING - No constructor found for parent class '{}' (SymbolId({})), using class SymbolId",
+                            parent_symbol.name, parent_class_symbol_id.0
+                        );
+                        *parent_class_symbol_id
+                    }
+                } else {
+                    eprintln!(
+                        "DEBUG MIR BASECALL: WARNING - Parent class SymbolId({}) not found in symbol table",
+                        parent_class_symbol_id.0
+                    );
+                    *parent_class_symbol_id
+                };
+
                 // Create function call instruction
                 // Base constructors are void, so dest = None
                 let call_instruction = MirInstruction {
                     dest: None, // Void return
                     operation: MirOperation::Call {
-                        function: MirOperand::Function(*parent_class_symbol_id),
+                        function: MirOperand::Function(parent_constructor_symbol_id),
                         arguments: mir_arguments,
                     },
                     location: expression.location.clone(),
@@ -2638,10 +2816,76 @@ impl MirBuilder {
 
         None
     }
+
+    /// Find field index for a specific class in its hierarchy, searching through parent classes if needed
+    ///
+    /// This is similar to find_field_index_in_hierarchy, but takes an explicit class_symbol instead
+    /// of using context.class_context. This allows field access from any context (e.g., start() function).
+    ///
+    /// Fields are laid out in memory starting with the most distant ancestor's fields first.
+    /// For example, if Child extends Base:
+    /// - Base fields: [name]
+    /// - Child fields: [flag]
+    /// - Memory layout: [name(0), flag(1)]
+    fn find_field_index_for_class(
+        &self,
+        context: &FunctionBuildContext,
+        class_symbol: SymbolId,
+        property_symbol: &SymbolId,
+    ) -> Option<usize> {
+        // Find the starting class
+        let mut current_class_opt = context
+            .all_classes
+            .iter()
+            .find(|c| c.symbol_id == class_symbol);
+
+        if current_class_opt.is_none() {
+            return None;
+        }
+
+        // Collect all classes in the hierarchy from current to root
+        let mut hierarchy = Vec::new();
+
+        while let Some(current_class) = current_class_opt {
+            hierarchy.push(current_class.clone());
+
+            // Move to parent
+            if let Some(ref parent_symbol) = current_class.parent_class {
+                current_class_opt = context
+                    .all_classes
+                    .iter()
+                    .find(|c| c.symbol_id == *parent_symbol);
+            } else {
+                break;
+            }
+        }
+
+        // Reverse to get root-to-leaf order
+        hierarchy.reverse();
+
+        // Now search through hierarchy and count field offsets
+        let mut field_offset = 0usize;
+
+        for class in &hierarchy {
+            if let Some(position) = class
+                .fields
+                .iter()
+                .position(|f| f.symbol_id == *property_symbol)
+            {
+                return Some(field_offset + position);
+            }
+            // Move offset past this class's fields
+            field_offset += class.fields.len();
+        }
+
+        None
+    }
 }
 
 impl Default for MirBuilder {
     fn default() -> Self {
-        Self::new()
+        // Create empty symbol table for default initialization
+        let empty_symbol_table = std::sync::Arc::new(crate::resolver::GlobalSymbolTable::new());
+        Self::new(empty_symbol_table)
     }
 }

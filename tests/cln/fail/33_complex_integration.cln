@@ -168,7 +168,8 @@ start()
 
 	// Complex iteration with error handling
 	iterate i in 0 to iterations
-		Rectangle testRect = Rectangle(i.toString().toNumber(), i.toString().toNumber()) onError Rectangle(1.0, 1.0)
+		number:32 dim = i.toNumber()
+		Rectangle testRect = Rectangle(dim, dim)
 		if testRect.getArea() > precision
 			processed = processed + 1
 		count = count + 1
@@ -180,7 +181,7 @@ start()
 	print("  Error rate: " + ((errors * 100) / count).toString() + "%")
 
 	// Mathematical analysis of results
-	number:64 averageArea = totalArea / allShapes.length()
+	number:64 averageArea = totalArea / allShapes.size()
 	number:64 maxArea = math.max(rect1.getArea(), math.max(rect2.getArea(), math.max(circle1.getArea(), circle2.getArea())))
 	number:64 minArea = math.min(rect1.getArea(), math.min(rect2.getArea(), math.min(circle1.getArea(), circle2.getArea())))
 

@@ -4,11 +4,12 @@
 //! All expressions have concrete types and all symbols are fully resolved.
 
 use crate::ast::SourceLocation;
-use crate::resolver::{ScopeId, SymbolId};
+use crate::resolver::{GlobalSymbolTable, ScopeId, SymbolId};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Type-checked program representation
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct TastProgram {
     pub functions: Vec<TastFunction>,
     pub classes: Vec<TastClass>,
@@ -17,6 +18,9 @@ pub struct TastProgram {
     pub tests: Vec<TastTest>,
     pub type_env: HashMap<SymbolId, ConcreteType>,
     pub location: SourceLocation,
+    /// Symbol table with all symbols (builtins + user-defined)
+    /// Used by MIR builder for dynamic SymbolId resolution
+    pub symbol_table: Arc<GlobalSymbolTable>,
 }
 
 /// Type-checked function with full type information

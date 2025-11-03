@@ -3,6 +3,8 @@ functions:
 		if true
 			print("test")
 			return "success"
+		else
+			return "failure"
 
 	string second()
 		return "hello"

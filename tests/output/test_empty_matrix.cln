@@ -1,4 +1,0 @@
-start()
-	// Test empty matrix - this might be the issue
-	matrix<integer> emptyMatrix = []
-	print("Empty matrix test")

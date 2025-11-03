@@ -1,0 +1,24 @@
+=== WASM Validation Analysis ===
+Date: Sat Nov  1 11:43:30 -05 2025
+
+FAIL: tests/cln/integration/real_world/calculator_application.cln
+  Error: tests/output/integration/real_world/calculator_application.wasm:0000d64: error: type mismatch in return, expected [f64] but got [i32]
+
+FAIL: tests/cln/language/classes/16_classes_polymorphism_fixed.cln
+  Error: tests/output/language/classes/16_classes_polymorphism_fixed.wasm:0000da5: error: type mismatch in call, expected [i32] but got []
+
+FAIL: tests/cln/language/classes/16_classes_polymorphism_new.cln
+  Error: tests/output/language/classes/16_classes_polymorphism_new.wasm:0000ddf: error: type mismatch in call, expected [i32] but got []
+
+FAIL: tests/cln/testing/specification_compliance_test.cln
+  Error: tests/output/testing/specification_compliance_test.wasm:00007ea: error: type mismatch in call, expected [i32, i32, i32] but got [i32, i32]
+
+
+=== SUMMARY ===
+Total test files: 297
+Compiled: 233
+Validation passed: 229
+Validation failed: 4
+
+=== ERROR CATEGORIES ===
+0: 4

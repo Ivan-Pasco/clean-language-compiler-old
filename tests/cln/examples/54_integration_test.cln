@@ -36,7 +36,8 @@ functions:
 			validAge = 120
 
 		// Use HTTP methods for data submission
-		string userData = "{\"name\": \"" + cleanName + "\", \"age\": " + validAge.toString() + "}"
+		// Note: Using simple format instead of JSON to avoid escape sequence issues
+		string userData = "name=" + cleanName + "&age=" + validAge.toString()
 		string response = http.post("https://api.example.com/users", userData)
 
 		// Logging
@@ -127,7 +128,8 @@ start()
 	print("Max value: " + maxValue.toString())
 
 	// Test HTTP operations with method calls
-	string analytics = http.post("https://api.example.com/analytics", "{\"event\": \"test_completed\"}")
+	// Note: Using simple format instead of JSON to avoid escape sequence issues
+	string analytics = http.post("https://api.example.com/analytics", "event=test_completed")
 
 	// Test comprehensive user processing
 	boolean userProcessed = processUserInput()

@@ -79,7 +79,7 @@ functions:
 		string rejoined = string.join(fruits, " | ")
 
 		print("CSV data: " + csvData)
-		print("Split result count: " + fruits.length().toString())
+		print("Split result count: " + fruits.size().toString())
 		print("Rejoined with |: " + rejoined)
 	void testCharacterOperations()
 		print("=== Character Operations ===")

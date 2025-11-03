@@ -165,7 +165,7 @@ impl HirBuilder {
             .collect::<Result<Vec<_>, _>>()?;
 
         let constructor = if let Some(ctor) = &class.constructor {
-            Some(self.build_constructor(ctor)?)
+            Some(self.build_constructor(ctor, &class.fields)?)
         } else {
             None
         };
@@ -204,14 +204,46 @@ impl HirBuilder {
     }
 
     /// Convert AST constructor to HIR constructor
-    fn build_constructor(&mut self, ctor: &Constructor) -> Result<HirConstructor, CompilerError> {
+    fn build_constructor(
+        &mut self,
+        ctor: &Constructor,
+        class_fields: &[crate::ast::Field],
+    ) -> Result<HirConstructor, CompilerError> {
         let parameters = ctor
             .parameters
             .iter()
             .map(|param| self.build_parameter(param))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let body = self.build_block(&ctor.body)?;
+        let mut body = self.build_block(&ctor.body)?;
+
+        // CRITICAL FIX: Auto-storing fields feature
+        // When constructor body is empty and parameter names match field names,
+        // automatically generate field assignments: field = parameter
+        if body.statements.is_empty() {
+            let mut auto_assignments = Vec::new();
+
+            for param in &ctor.parameters {
+                // Check if there's a field with matching name
+                if let Some(_field) = class_fields.iter().find(|f| f.name == param.name) {
+                    // Generate: field = parameter
+                    let assignment = HirStatement::Assignment {
+                        target: HirLValue::Variable {
+                            name: param.name.clone(),
+                            location: SourceLocation::default(),
+                        },
+                        value: HirExpression::Variable {
+                            name: param.name.clone(),
+                            location: SourceLocation::default(),
+                        },
+                        location: SourceLocation::default(),
+                    };
+                    auto_assignments.push(assignment);
+                }
+            }
+
+            body.statements = auto_assignments;
+        }
 
         Ok(HirConstructor {
             parameters,
@@ -602,11 +634,24 @@ impl HirBuilder {
                     .map(|arg| self.build_expression(arg))
                     .collect::<Result<Vec<_>, _>>()?;
 
-                Ok(HirExpression::Call {
-                    function: name.clone(),
-                    arguments: hir_args,
-                    location: SourceLocation::default(),
-                })
+                // CRITICAL FIX: Detect base() calls for parent constructor invocation
+                // base() is a special function call that invokes the parent class constructor
+                if name == "base" {
+                    eprintln!(
+                        "DEBUG HIR: Detected base() call with {} arguments",
+                        hir_args.len()
+                    );
+                    Ok(HirExpression::BaseCall {
+                        arguments: hir_args,
+                        location: SourceLocation::default(),
+                    })
+                } else {
+                    Ok(HirExpression::Call {
+                        function: name.clone(),
+                        arguments: hir_args,
+                        location: SourceLocation::default(),
+                    })
+                }
             }
 
             Expression::MethodCall {
@@ -740,6 +785,27 @@ impl HirBuilder {
                     condition: Box::new(hir_condition),
                     then_expr: Box::new(hir_then),
                     else_expr: Box::new(hir_else),
+                    location: location.clone(),
+                })
+            }
+
+            // CRITICAL FIX: Handle base() calls from AST
+            // The parser creates Expression::BaseCall, so we must handle it here
+            Expression::BaseCall {
+                arguments,
+                location,
+            } => {
+                eprintln!(
+                    "DEBUG HIR: Handling Expression::BaseCall with {} arguments",
+                    arguments.len()
+                );
+                let hir_args = arguments
+                    .iter()
+                    .map(|arg| self.build_expression(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                Ok(HirExpression::BaseCall {
+                    arguments: hir_args,
                     location: location.clone(),
                 })
             }

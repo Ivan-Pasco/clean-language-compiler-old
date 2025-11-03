@@ -38,6 +38,11 @@ pub struct MirProgram {
 
     /// Debug information if enabled
     pub debug_info: Option<MirDebugInfo>,
+
+    /// CRITICAL FIX: Mapping from SymbolId to function name for ALL functions
+    /// This includes both builtin functions (print, math.*, etc.) and user-defined functions
+    /// Used by code generator to resolve function calls
+    pub symbol_name_map: HashMap<SymbolId, String>,
 }
 
 /// MIR function representation
@@ -258,6 +263,10 @@ pub enum MirOperand {
 
     /// Function reference
     Function(SymbolId),
+
+    /// Named function (for stdlib namespace functions like math.max, string.length)
+    /// Stores both the name and SymbolId since SymbolId(0) is shared by all namespace functions
+    NamedFunction { name: String, symbol_id: SymbolId },
 
     /// Global variable reference
     Global(SymbolId),

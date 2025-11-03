@@ -916,15 +916,33 @@ impl<'a> TypeInference<'a> {
 
         // Second pass: Infer function bodies
         for function in &program.functions {
-            if let Ok(tast_function) = self.infer_function(function) {
-                tast_functions.push(tast_function);
+            match self.infer_function(function) {
+                Ok(tast_function) => {
+                    tast_functions.push(tast_function);
+                }
+                Err(error) => {
+                    eprintln!(
+                        "ERROR: Failed to infer function '{}' (SymbolId {:?}): {:?}",
+                        function.name, function.symbol_id, error
+                    );
+                    self.errors.push(error);
+                }
             }
         }
 
         // Third pass: Infer class method bodies
         for class in &program.classes {
-            if let Ok(tast_class) = self.infer_class(class) {
-                tast_classes.push(tast_class);
+            match self.infer_class(class) {
+                Ok(tast_class) => {
+                    tast_classes.push(tast_class);
+                }
+                Err(error) => {
+                    eprintln!(
+                        "ERROR: Failed to infer class '{}' (SymbolId {:?}): {:?}",
+                        class.name, class.symbol_id, error
+                    );
+                    self.errors.push(error);
+                }
             }
         }
 
@@ -949,6 +967,8 @@ impl<'a> TypeInference<'a> {
             tests: Vec::new(),   // Would convert tests here
             type_env: self.type_env.clone(),
             location: program.location.clone(),
+            // CRITICAL FIX: Pass symbol table through to MIR for dynamic SymbolId resolution
+            symbol_table: std::sync::Arc::new(program.symbol_table.clone()),
         };
 
         // Type inference completed successfully
@@ -1815,8 +1835,11 @@ impl<'a> TypeInference<'a> {
                 }
 
                 // Look up function type and determine return type
-                let return_type =
-                    self.infer_function_return_type(*function_symbol_id, &tast_arguments)?;
+                let return_type = self.infer_function_return_type(
+                    *function_symbol_id,
+                    function,
+                    &tast_arguments,
+                )?;
 
                 (
                     TastExpressionKind::FunctionCall {
@@ -2051,19 +2074,21 @@ impl<'a> TypeInference<'a> {
             ResolvedHirExpression::FieldAccess {
                 object,
                 field,
-                field_symbol_id,
+                field_symbol_id: _hir_field_symbol_id,
                 location,
             } => {
                 let tast_object = self.infer_expression(object)?;
 
-                // Infer the field type based on the object type
-                let field_type = self.infer_field_type(&tast_object.expr_type, field)?;
+                // CRITICAL FIX: Resolve the field type AND symbol ID based on the object's actual type
+                // This enables inherited field access - we look up the field in the object's class hierarchy
+                let (field_type, resolved_field_symbol_id) =
+                    self.infer_field_type_and_symbol(&tast_object.expr_type, field)?;
 
                 (
                     TastExpressionKind::PropertyAccess {
                         object: Box::new(tast_object),
                         property_name: field.clone(),
-                        property_symbol: *field_symbol_id,
+                        property_symbol: resolved_field_symbol_id, // Use resolved symbol, not HIR placeholder
                     },
                     field_type,
                     location.clone(),
@@ -2656,6 +2681,7 @@ impl<'a> TypeInference<'a> {
     fn infer_function_return_type(
         &self,
         function_symbol_id: SymbolId,
+        function_name: &str,
         arguments: &[TastExpression],
     ) -> Result<ConcreteType, CompilerError> {
         // Special handling for generic list namespace functions FIRST
@@ -2717,6 +2743,23 @@ impl<'a> TypeInference<'a> {
             }
         } else {
             // FALLBACK: Check if this might be a static method call that wasn't resolved properly
+            // CRITICAL FIX: Handle SymbolId(0) for stdlib namespace functions
+            // SymbolId(0) is a placeholder used for stdlib functions like string.length, math.max
+            // These are registered in CodeGenerator, not in the symbol table
+            if function_symbol_id == SymbolId(0) {
+                // Use function_name parameter directly (e.g., "string.length")
+                if let Some(dot_pos) = function_name.find('.') {
+                    let class_name = &function_name[..dot_pos];
+                    let method_name = &function_name[dot_pos + 1..];
+                    // Try to infer as static method/stdlib function
+                    if let Ok(static_return_type) =
+                        self.infer_static_method_return_type(class_name, method_name, arguments)
+                    {
+                        return Ok(static_return_type);
+                    }
+                }
+            }
+
             // Look up the symbol in the symbol table to get its name
             if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
                 let function_name = &symbol.name;
@@ -2882,48 +2925,48 @@ impl<'a> TypeInference<'a> {
         );
 
         match (class_name, method_name) {
-            // Math static methods
-            ("Math", "abs") => {
+            // Math static methods (lowercase to match actual namespace usage)
+            ("math", "abs") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
                 Ok(ConcreteType::Number)
             }
-            ("Math", "floor") => {
+            ("math", "floor") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
                 Ok(ConcreteType::Integer)
             }
-            ("Math", "ceil") => {
+            ("math", "ceil") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
                 Ok(ConcreteType::Integer)
             }
-            ("Math", "round") => {
+            ("math", "round") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
                 Ok(ConcreteType::Integer)
             }
-            ("Math", "sqrt") => {
+            ("math", "sqrt") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
                 Ok(ConcreteType::Number)
             }
-            ("Math", "pow") => {
+            ("math", "pow") => {
                 validate_arg_count(2, arg_count, &full_method_name)?;
                 Ok(ConcreteType::Number)
             }
-            ("Math", "sin") => {
+            ("math", "sin") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
                 Ok(ConcreteType::Number)
             }
-            ("Math", "cos") => {
+            ("math", "cos") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
                 Ok(ConcreteType::Number)
             }
-            ("Math", "tan") => {
+            ("math", "tan") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
                 Ok(ConcreteType::Number)
             }
-            ("Math", "max") => {
+            ("math", "max") => {
                 validate_arg_count(2, arg_count, &full_method_name)?;
                 Ok(ConcreteType::Number)
             }
-            ("Math", "min") => {
+            ("math", "min") => {
                 validate_arg_count(2, arg_count, &full_method_name)?;
                 Ok(ConcreteType::Number)
             }
@@ -3081,7 +3124,135 @@ impl<'a> TypeInference<'a> {
     }
 
     /// Infer the type of a field access based on the object type and field name
+    /// Infer field type and symbol ID from object type
+    /// Returns (field_type, field_symbol_id)
+    fn infer_field_type_and_symbol(
+        &self,
+        object_type: &ConcreteType,
+        field_name: &str,
+    ) -> Result<(ConcreteType, SymbolId), CompilerError> {
+        match object_type {
+            // Array fields - use placeholder symbol for built-in fields
+            ConcreteType::Array(_element_type) if field_name == "length" => {
+                Ok((ConcreteType::Integer, SymbolId(0)))
+            }
+
+            // String fields - use placeholder symbol for built-in fields
+            ConcreteType::String if field_name == "length" => {
+                Ok((ConcreteType::Integer, SymbolId(0)))
+            }
+
+            // CRITICAL FIX: For class types, look up the field in the class definition
+            ConcreteType::Class {
+                symbol_id,
+                type_args: _,
+            } => {
+                // Look up the class symbol to get its fields
+                if let Some(class_symbol) = self.symbol_table.get_symbol(*symbol_id) {
+                    if let SymbolKind::Class {
+                        fields,
+                        methods: _,
+                        parent,
+                    } = &class_symbol.kind
+                    {
+                        // Search for the field with the matching name in this class
+                        for field_symbol_id in fields {
+                            if let Some(field_symbol) =
+                                self.symbol_table.get_symbol(*field_symbol_id)
+                            {
+                                if field_symbol.name == field_name {
+                                    // Found the field! Return its type and symbol ID
+                                    if let SymbolKind::Field {
+                                        class_id: _,
+                                        field_type,
+                                    } = &field_symbol.kind
+                                    {
+                                        return Ok((
+                                            self.hir_type_to_concrete(field_type),
+                                            *field_symbol_id,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+
+                        // Field not found in this class - check parent class if exists
+                        if let Some(parent_symbol_id) = parent {
+                            if let Some(parent_symbol) =
+                                self.symbol_table.get_symbol(*parent_symbol_id)
+                            {
+                                if let SymbolKind::Class {
+                                    fields: parent_fields,
+                                    ..
+                                } = &parent_symbol.kind
+                                {
+                                    // Search for the field in parent class
+                                    for field_symbol_id in parent_fields {
+                                        if let Some(field_symbol) =
+                                            self.symbol_table.get_symbol(*field_symbol_id)
+                                        {
+                                            if field_symbol.name == field_name {
+                                                // Found the field in parent class!
+                                                if let SymbolKind::Field {
+                                                    class_id: _,
+                                                    field_type,
+                                                } = &field_symbol.kind
+                                                {
+                                                    return Ok((
+                                                        self.hir_type_to_concrete(field_type),
+                                                        *field_symbol_id,
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Field not found in class or parent class
+                        return Err(CompilerError::type_error(
+                            &format!(
+                                "Field '{}' not found in class '{}'",
+                                field_name, class_symbol.name
+                            ),
+                            None,
+                            None,
+                        ));
+                    }
+                }
+                // Class symbol not found - return error
+                Err(CompilerError::type_error(
+                    &format!(
+                        "Cannot resolve class type for field access '{}'",
+                        field_name
+                    ),
+                    None,
+                    None,
+                ))
+            }
+
+            _ => Err(CompilerError::type_error(
+                &format!(
+                    "Type {:?} does not have field '{}'",
+                    object_type, field_name
+                ),
+                None,
+                None,
+            )),
+        }
+    }
+
     fn infer_field_type(
+        &self,
+        object_type: &ConcreteType,
+        field_name: &str,
+    ) -> Result<ConcreteType, CompilerError> {
+        self.infer_field_type_and_symbol(object_type, field_name)
+            .map(|(field_type, _symbol_id)| field_type)
+    }
+
+    fn _old_infer_field_type_removed(
         &self,
         object_type: &ConcreteType,
         field_name: &str,

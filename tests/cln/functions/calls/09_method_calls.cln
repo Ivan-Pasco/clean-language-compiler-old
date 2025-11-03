@@ -9,10 +9,10 @@ start()
 	numbers.push(42)
 	numbers.push(99)
 
-	// Property access
+	// Property access (method call)
 	string text = "hello"
-	integer length = text.length
+	integer length = text.length()
 
 	print("Method calls test successful!")
-	print("List length: " + numbers.length.toString())
+	print("List size: " + numbers.size().toString())
 	print("String length: " + length.toString())

@@ -406,33 +406,64 @@ impl CodeGenerator {
     }
 
     fn register_conditional_operations(&mut self) -> Result<(), CompilerError> {
-        // Comparison functions for integers
+        // CRITICAL FIX: Register comparison functions with BOTH naming schemes:
+        // 1. Underscored names for backwards compatibility (compare_integer_equal)
+        // 2. Dotted namespace names for modern calls (compare.integer.equal)
+
+        // Comparison functions for integers - underscored names
         self.register_import_function("env", "compare_integer_equal", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
         self.register_import_function("env", "compare_integer_notEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
         self.register_import_function("env", "compare_integer_lessThan", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
         self.register_import_function("env", "compare_integer_greaterThan", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
         self.register_import_function("env", "compare_integer_lessEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
         self.register_import_function("env", "compare_integer_greaterEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        
-        // Comparison functions for numbers
+
+        // Comparison functions for integers - dotted namespace names
+        self.register_import_function("env", "compare.integer.equal", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "compare.integer.notEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "compare.integer.lessThan", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "compare.integer.greaterThan", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "compare.integer.lessEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "compare.integer.greaterEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+
+        // Comparison functions for numbers - underscored names
         self.register_import_function("env", "compare_number_equal", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
         self.register_import_function("env", "compare_number_notEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
         self.register_import_function("env", "compare_number_lessThan", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
         self.register_import_function("env", "compare_number_greaterThan", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
         self.register_import_function("env", "compare_number_lessEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
         self.register_import_function("env", "compare_number_greaterEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
-        
-        // Conditional functions
+
+        // Comparison functions for numbers - dotted namespace names
+        self.register_import_function("env", "compare.number.equal", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
+        self.register_import_function("env", "compare.number.notEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
+        self.register_import_function("env", "compare.number.lessThan", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
+        self.register_import_function("env", "compare.number.greaterThan", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
+        self.register_import_function("env", "compare.number.lessEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
+        self.register_import_function("env", "compare.number.greaterEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
+
+        // Conditional functions - underscored names
         self.register_import_function("env", "conditional_integer", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
         self.register_import_function("env", "conditional_number", vec![ValType::I32, ValType::F64, ValType::F64], vec![ValType::F64]);
         self.register_import_function("env", "conditional_string", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
         self.register_import_function("env", "conditional_boolean", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
-        
-        // Logical functions
+
+        // Conditional functions - dotted namespace names
+        self.register_import_function("env", "conditional.integer", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "conditional.number", vec![ValType::I32, ValType::F64, ValType::F64], vec![ValType::F64]);
+        self.register_import_function("env", "conditional.string", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "conditional.boolean", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
+
+        // Logical functions - underscored names
         self.register_import_function("env", "logical_and", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
         self.register_import_function("env", "logical_or", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
         self.register_import_function("env", "logical_not", vec![ValType::I32], vec![ValType::I32]);
-        
+
+        // Logical functions - dotted namespace names
+        self.register_import_function("env", "logical.and", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "logical.or", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "logical.not", vec![ValType::I32], vec![ValType::I32]);
+
         Ok(())
     }
 

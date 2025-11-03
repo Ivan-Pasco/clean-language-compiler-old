@@ -4382,12 +4382,11 @@ impl CodeGenerator {
         // 13. Register list class operations
         // self.register_list_class_operations()?;
 
-        // 14. Register conditional operations
-        // println!("DEBUG: About to register conditional operations");
-        match self.register_conditional_operations() {
-            Ok(()) => {}  // println!("DEBUG: Conditional operations registered successfully"),
-            Err(_e) => {} // println!("DEBUG: Conditional operations registration failed: {:?}", e),
-        }
+        // 14. Register conditional operations (compare.*, conditional.*, logical.*)
+        // CRITICAL FIX: Don't silently ignore errors - these functions MUST be registered!
+        eprintln!("DEBUG MOD: About to register conditional operations");
+        self.register_conditional_operations()?;
+        eprintln!("DEBUG MOD: Conditional operations registered successfully");
 
         // 15. Register HTTP operations
         // println!("DEBUG: About to register HTTP operations");
@@ -4923,10 +4922,13 @@ impl CodeGenerator {
         use std::cell::RefCell;
         use std::rc::Rc;
 
+        eprintln!("DEBUG CONDITIONAL OPS: Creating ConditionalManager");
         // Create a MemoryManager and ConditionalManager instance
         let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(16))));
         let conditional_manager = ConditionalManager::new(memory_manager.clone());
+        eprintln!("DEBUG CONDITIONAL OPS: Calling register_functions");
         conditional_manager.register_functions(self)?;
+        eprintln!("DEBUG CONDITIONAL OPS: register_functions completed");
 
         // Register MethodStyleManager for isEmpty, isDefined, etc.
         use crate::stdlib::method_style::MethodStyleManager;

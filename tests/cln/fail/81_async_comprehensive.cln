@@ -18,16 +18,16 @@ functions:
 
 start()
 	// Test basic async with start/later pattern
-	later string data = start fetchData("https://api.example.com/data")
+	later data = start fetchData("https://api.example.com/data")
 	print("Working while data loads...")
-	print "Received: " + data ln  // blocks here only when accessed
+	print("Received: " + data)  // blocks here only when accessed
 
 	// Test background execution without keeping result
 	background logAction("user_login")  // runs and ignores result
 
 	// Test multiple async operations
-	later string user = start fetchData("https://api.example.com/user")
-	later string posts = start fetchData("https://api.example.com/posts")
+	later user = start fetchData("https://api.example.com/user")
+	later posts = start fetchData("https://api.example.com/posts")
 
 	print("Processing other tasks...")
 	// Access async results (blocks if not ready)

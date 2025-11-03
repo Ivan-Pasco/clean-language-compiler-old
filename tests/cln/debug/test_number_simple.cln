@@ -1,0 +1,6 @@
+// Simple number literal test
+functions:
+
+start()
+	number x = 19.99
+	print(x.toString())

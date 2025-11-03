@@ -749,6 +749,12 @@ impl GlobalSymbolTable {
         symbols
     }
 
+    /// Get all symbols in the symbol table (for MIR building)
+    /// Returns a reference to the internal symbols HashMap
+    pub fn all_symbols(&self) -> &HashMap<SymbolId, Symbol> {
+        &self.symbols
+    }
+
     /// Add built-in namespace functions (e.g., math_sin for math.sin calls)
     fn add_builtin_namespace_functions(&mut self, global_scope: ScopeId) {
         let namespace_functions = vec![

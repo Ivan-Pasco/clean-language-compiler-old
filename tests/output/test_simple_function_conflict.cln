@@ -1,8 +1,0 @@
-start()
-	// Test math namespace function
-	number result1 = math.sqrt(16.0)
-	print("Namespace function works")
-
-	// Test potential conflict: call math_sqrt as regular function
-	// (This should work if no conflict resolution issues)
-	print("Basic function test complete")

@@ -1963,15 +1963,15 @@ The list module provides powerful data collection capabilities. Whether you're m
 ```clean
 // Essential operations
 list.add(list, item), list.remove(list, index), list.get(list, index)
-list.length(list), list.contains(list, item)
+list.size(list), list.contains(list, item)
 list.sort(list), list.reverse(list), list.join(list, separator)
 ```
     functions:
         // Basic operations - fundamental list access
-        integer length(list<any> array)
+        integer size(list<any> array)
             // Returns the number of elements in the list
             // Like counting how many items are in a box
-            // Example: length([1, 2, 3]) → 3
+            // Example: size([1, 2, 3]) → 3
         
         any get(list<any> array, integer index)
             // Gets the element at the specified position
@@ -2104,7 +2104,7 @@ functions:
     void start()
         // Basic array operations
         list<integer> numbers = [1, 2, 3]
-        integer size = list.length(numbers)           // 3
+        integer size = list.size(numbers)           // 3
         integer first = list.get(numbers, 0)          // 1
         list.set(numbers, 1, 99)                      // [1, 99, 3]
         

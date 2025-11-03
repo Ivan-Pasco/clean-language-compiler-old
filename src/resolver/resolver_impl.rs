@@ -1127,22 +1127,21 @@ impl NameResolver {
                                     location: location.clone(),
                                 });
                             } else if let SymbolKind::Namespace { .. } = &class_symbol.kind {
-                                // This is a namespace function call (e.g., logical.and, conditional.integer)
-                                let qualified_name = format!("{}_{}", class_name, method);
+                                // This is a namespace function call (e.g., logical.and, conditional.integer, string.length)
+                                // CRITICAL FIX: Use dot notation to match stdlib function registration
+                                let qualified_name = format!("{}.{}", class_name, method);
 
-                                // Look up the qualified function name in the symbol table
+                                // Try to look up the qualified function name in the symbol table
+                                // CRITICAL: Stdlib functions (string.length, math.max, etc.) are NOT in the symbol table
+                                // They're registered directly in CodeGenerator, so we use a placeholder SymbolId
                                 let function_symbol_id = self
                                     .symbol_table
                                     .lookup_symbol(&qualified_name)
-                                    .ok_or_else(|| {
-                                        self.error(
-                                            &format!(
-                                                "Namespace function '{}::{}' not found",
-                                                class_name, method
-                                            ),
-                                            location.clone(),
-                                        );
-                                    })?;
+                                    .unwrap_or_else(|| {
+                                        // Use SymbolId(0) as placeholder for stdlib namespace functions
+                                        // The actual function lookup will happen during code generation
+                                        SymbolId(0)
+                                    });
 
                                 // Resolve all arguments
                                 let mut resolved_arguments = Vec::new();
@@ -1629,18 +1628,21 @@ impl NameResolver {
                 }
 
                 // Original namespace call logic for true namespaces (like math.sin)
-                let qualified_name = format!("{}_{}", namespace, function);
+                // CRITICAL FIX: Use dot notation to match stdlib function registration
+                // stdlib registers as "string.length", not "string_length"
+                let qualified_name = format!("{}.{}", namespace, function);
 
-                // Look up the qualified function name in the symbol table
+                // Try to look up the qualified function name in the symbol table
+                // CRITICAL: Stdlib functions (string.length, math.max, etc.) are NOT in the symbol table
+                // They're registered directly in CodeGenerator, so we use a placeholder SymbolId
                 let function_symbol_id = self
                     .symbol_table
                     .lookup_symbol(&qualified_name)
-                    .ok_or_else(|| {
-                        self.error(
-                            &format!("Namespace function '{}::{}' not found", namespace, function),
-                            location.clone(),
-                        );
-                    })?;
+                    .unwrap_or_else(|| {
+                        // Use SymbolId(0) as placeholder for stdlib namespace functions
+                        // The actual function lookup will happen during code generation
+                        SymbolId(0)
+                    });
 
                 // Resolve all arguments
                 let mut resolved_arguments = Vec::new();

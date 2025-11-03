@@ -53,6 +53,10 @@ pub struct MirCodeGenerator<'a> {
     /// CRITICAL FIX: Mapping from SymbolId to function name for proper function resolution
     function_symbol_map: HashMap<SymbolId, String>,
 
+    /// CRITICAL FIX: Direct mapping from SymbolId to WASM function index
+    /// This avoids name collisions for constructors/methods with same names
+    symbol_to_function_index: HashMap<SymbolId, u32>,
+
     /// Function signature map for proper parameter/return handling
     function_signatures: HashMap<SymbolId, MirFunction>,
 
@@ -103,6 +107,7 @@ impl<'a> MirCodeGenerator<'a> {
             string_pool: None,
             value_to_string_index: HashMap::new(),
             function_symbol_map: HashMap::new(),
+            symbol_to_function_index: HashMap::new(),
             function_signatures: HashMap::new(),
             value_to_type: HashMap::new(),
         }
@@ -121,6 +126,7 @@ impl<'a> MirCodeGenerator<'a> {
             string_pool: None,
             value_to_string_index: HashMap::new(),
             function_symbol_map: HashMap::new(),
+            symbol_to_function_index: HashMap::new(),
             function_signatures: HashMap::new(),
             value_to_type: HashMap::new(),
         }
@@ -153,6 +159,13 @@ impl<'a> MirCodeGenerator<'a> {
             self.wasm_generator
                 .register_print_imports()
                 .map_err(|e| vec![e])?;
+
+            // CRITICAL: Register console input function imports (input, input_integer, input_float, etc.)
+            debug_mir!("DEBUG MIR: Registering console input imports");
+            self.wasm_generator
+                .register_console_imports()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: Console input imports registered");
 
             // CRITICAL: Register type conversion imports for .toString() methods
             debug_mir!("DEBUG MIR: Registering type conversion imports (int_to_string, etc.)");
@@ -224,11 +237,22 @@ impl<'a> MirCodeGenerator<'a> {
             mir_program.functions.len()
         );
 
+        // CRITICAL FIX: Initialize function_symbol_map from MirProgram's symbol_name_map
+        // This includes ALL functions: builtins (print, math.*, etc.) AND user-defined
+        eprintln!(
+            "DEBUG SYMBOL INIT: Initializing function_symbol_map from MirProgram with {} entries",
+            mir_program.symbol_name_map.len()
+        );
+        for (symbol_id, name) in &mir_program.symbol_name_map {
+            self.function_symbol_map.insert(*symbol_id, name.clone());
+            eprintln!("DEBUG SYMBOL INIT: SymbolId({}) -> '{}'", symbol_id.0, name);
+        }
+
         // Collect and sort functions by SymbolId for deterministic ordering
         let mut sorted_functions: Vec<_> = mir_program.functions.into_iter().collect();
         sorted_functions.sort_by_key(|(symbol_id, _)| symbol_id.0);
 
-        for (i, (_symbol_id, function)) in sorted_functions.iter().enumerate() {
+        for (i, (symbol_id, function)) in sorted_functions.iter().enumerate() {
             let function_index = self.wasm_generator.function_count + i as u32;
             eprintln!(
                 "DEBUG: Pre-registering function '{}' at index {} (i={}, function_count={})",
@@ -237,10 +261,29 @@ impl<'a> MirCodeGenerator<'a> {
             self.wasm_generator
                 .function_map
                 .insert(function.name.clone(), function_index);
+
+            // CRITICAL FIX: Populate function_symbol_map for base() call resolution
+            // Map SymbolId -> function name so get_function_name_by_symbol can resolve user-defined functions
+            self.function_symbol_map
+                .insert(*symbol_id, function.name.clone());
+
+            // CRITICAL FIX: Direct SymbolId -> WASM index mapping
+            // Avoids name collisions for constructors/methods with same names
+            self.symbol_to_function_index
+                .insert(*symbol_id, function_index);
+
+            eprintln!(
+                "DEBUG SYMBOL MAP: Inserted SymbolId({}) -> '{}' at WASM index {}",
+                symbol_id.0, function.name, function_index
+            );
         }
         eprintln!(
             "DEBUG: All {} functions pre-registered in function_map",
             sorted_functions.len()
+        );
+        eprintln!(
+            "DEBUG SYMBOL MAP: Total entries in function_symbol_map = {}",
+            self.function_symbol_map.len()
         );
 
         // Generate all functions in the same sorted order
@@ -266,7 +309,10 @@ impl<'a> MirCodeGenerator<'a> {
                         "DEBUG: ERROR generating function '{}': {:?}",
                         func_name, error
                     );
-                    warnings.push(error);
+                    // CRITICAL FIX: Function generation failures must be hard errors
+                    // If we allow them as warnings, we get phantom function indices that don't exist in WASM
+                    // This causes "function variable out of range" errors when calling pre-registered but failed functions
+                    return Err(vec![error]);
                 }
             }
         }
@@ -432,6 +478,11 @@ impl<'a> MirCodeGenerator<'a> {
         );
         let mut generated_blocks = std::collections::HashSet::new();
         self.generate_structured_blocks(&function, entry_block_id, &mut generated_blocks)?;
+        eprintln!(
+            "DEBUG AFTER GENERATE_STRUCTURED_BLOCKS: Function '{}' has {} instructions in current_instructions",
+            function.name,
+            self.current_instructions.len()
+        );
         tracing::debug!(
             name = %function.name,
             "Finished generate_structured_blocks"
@@ -454,10 +505,56 @@ impl<'a> MirCodeGenerator<'a> {
             instructions = self.current_instructions.len(),
             "Creating WASM function"
         );
+        eprintln!(
+            "DEBUG BEFORE COPY TO WASM_FUNCTION: Function '{}' has {} instructions, {} local_types",
+            function.name,
+            self.current_instructions.len(),
+            local_types.len()
+        );
         let mut wasm_function = WasmFunction::new(local_types);
+        let mut instruction_count = 0;
         for instruction in &self.current_instructions {
             wasm_function.instruction(instruction);
+            instruction_count += 1;
         }
+        eprintln!(
+            "DEBUG AFTER COPY: Function '{}' wasm_function created with {} instructions copied",
+            function.name, instruction_count
+        );
+
+        // CRITICAL FIX: For void functions, check if we need to drop a value
+        // This prevents "type mismatch at end of function, expected [] but got [X]" errors
+        let is_void_function = matches!(function.return_type, MirType::Void)
+            || matches!(&function.return_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
+
+        if is_void_function && !self.current_instructions.is_empty() {
+            // Check if the very last instruction is a Return
+            // Void functions that don't end with an explicit return will have their last
+            // expression statement leave a value on the stack that needs to be dropped
+            let last_is_return = self
+                .current_instructions
+                .last()
+                .map(|inst| matches!(inst, Instruction::Return))
+                .unwrap_or(false);
+
+            if !last_is_return {
+                // The function doesn't end with an explicit return, so it falls through
+                // We need to ensure the stack is empty before END
+                // Add DROP to consume any value left by the last expression
+                eprintln!(
+                    "DEBUG VOID DROP: Adding DROP for void function '{}' (last instruction: {:?})",
+                    function.name,
+                    self.current_instructions.last()
+                );
+                wasm_function.instruction(&Instruction::Drop);
+            } else {
+                eprintln!(
+                    "DEBUG VOID DROP: Skipping DROP for '{}' - has explicit return",
+                    function.name
+                );
+            }
+        }
+
         // CRITICAL: Add END instruction to properly close the function
         wasm_function.instruction(&Instruction::End);
 
@@ -742,7 +839,9 @@ impl<'a> MirCodeGenerator<'a> {
                         );
                         self.value_to_string_index.insert(dest, *index);
                     }
-                    self.store_to_local(dest)?;
+                    // CRITICAL FIX: Pass source type for automatic type conversion
+                    let source_type = self.get_operand_mir_type(source);
+                    self.store_to_local_with_conversion(dest, source_type)?;
                 } else {
                     // No destination - drop the value to avoid stack pollution
                     self.current_instructions.push(Instruction::Drop);
@@ -841,6 +940,12 @@ impl<'a> MirCodeGenerator<'a> {
                 function,
                 arguments,
             } => {
+                eprintln!(
+                    "DEBUG CALL START: function={:?}, arguments_len={}",
+                    function,
+                    arguments.len()
+                );
+
                 tracing::trace!(
                     function = ?function,
                     arguments = arguments.len(),
@@ -848,14 +953,52 @@ impl<'a> MirCodeGenerator<'a> {
                 );
 
                 // Get function signature to determine parameter types
-                let (function_name, function_signature) = match function {
+                let (mut function_name, function_signature, symbol_id_opt) = match function {
                     MirOperand::Function(symbol_id) => {
+                        eprintln!("DEBUG CALL SYMBOL: SymbolId({})", symbol_id.0);
                         let name = self.get_function_name_by_symbol(*symbol_id);
+                        eprintln!("DEBUG CALL NAME FROM SYMBOL: {:?}", name);
                         let sig = self.function_signatures.get(symbol_id).cloned();
-                        (name, sig)
+                        (name, sig, Some(*symbol_id))
                     }
-                    _ => (None, None),
+                    MirOperand::NamedFunction { name, symbol_id } => {
+                        eprintln!(
+                            "DEBUG CALL NAMED FUNCTION: name='{}', SymbolId({})",
+                            name, symbol_id.0
+                        );
+                        let sig = self.function_signatures.get(symbol_id).cloned();
+                        (Some(name.clone()), sig, Some(*symbol_id))
+                    }
+                    _ => (None, None, None),
                 };
+
+                // CRITICAL FIX: For stdlib namespace functions (SymbolId(0)), try reverse lookup
+                // NamedFunction operands already have the correct name, so skip reverse lookup for them
+                // Only do reverse lookup for plain Function operands with missing/wrong names
+                let needs_reverse_lookup = matches!(function, MirOperand::Function(_))
+                    && (function_name.is_none()
+                        || (symbol_id_opt.map(|id| id.0 == 0).unwrap_or(false)
+                            && function_name.as_deref() == Some("print")));
+
+                if needs_reverse_lookup {
+                    if let MirOperand::Function(symbol_id) = function {
+                        if let Some(&function_index) = self.symbol_to_function_index.get(symbol_id)
+                        {
+                            // Reverse-lookup: find the function name that maps to this index
+                            for (name, &index) in &self.wasm_generator.function_map {
+                                if index == function_index {
+                                    eprintln!(
+                                        "DEBUG REVERSE LOOKUP: SymbolId({}) -> index {} -> name '{}'",
+                                        symbol_id.0, function_index, name
+                                    );
+                                    function_name = Some(name.clone());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 debug_mir!(function_name = ?function_name, "Function name resolved");
 
                 // CRITICAL FIX: String expansion should only happen for built-in functions
@@ -927,16 +1070,106 @@ impl<'a> MirCodeGenerator<'a> {
                 // Generate function call
                 match function {
                     MirOperand::Function(symbol_id) => {
-                        // CRITICAL FIX: Map symbol_id to actual function index using symbol table
-                        // For built-in functions like print, map directly to function_map
-                        if let Some(function_name) = self.get_function_name_by_symbol(*symbol_id) {
+                        // CRITICAL FIX: Try direct SymbolId -> index lookup first
+                        // This avoids name collisions for constructors/methods with same names
+                        if let Some(&function_index) = self.symbol_to_function_index.get(symbol_id)
+                        {
+                            eprintln!(
+                                "DEBUG DIRECT LOOKUP: SymbolId({}) -> WASM index {} (DIRECT)",
+                                symbol_id.0, function_index
+                            );
+                            tracing::trace!(
+                                symbol_id = symbol_id.0,
+                                index = function_index,
+                                "Calling function at WASM index (direct lookup)"
+                            );
+                            self.current_instructions
+                                .push(Instruction::Call(function_index));
+                        } else if let Some(function_name) =
+                            self.get_function_name_by_symbol(*symbol_id)
+                        {
+                            // Fallback to name-based lookup for built-in functions
                             eprintln!(
                                 "DEBUG LOOKUP: Looking up function '{}' in function_map",
                                 function_name
                             );
-                            if let Some(&function_index) =
+
+                            // Try direct lookup first
+                            let function_index = if let Some(&idx) =
                                 self.wasm_generator.function_map.get(&function_name)
                             {
+                                Some(idx)
+                            } else {
+                                // CRITICAL FIX: Try underscore/dot conversion first
+                                // "math_round" -> "math.round" or vice versa
+                                let alt_name = if function_name.contains('_') {
+                                    function_name.replace('_', ".")
+                                } else if function_name.contains('.') {
+                                    function_name.replace('.', "_")
+                                } else {
+                                    String::new()
+                                };
+
+                                if !alt_name.is_empty() {
+                                    if let Some(&idx) =
+                                        self.wasm_generator.function_map.get(&alt_name)
+                                    {
+                                        eprintln!(
+                                            "DEBUG LOOKUP FALLBACK: Found '{}' as '{}'",
+                                            function_name, alt_name
+                                        );
+                                        Some(idx)
+                                    } else {
+                                        // Try namespace-prefixed variants for builtin functions
+                                        // If "min" is not found, try "math.min", "string.min", etc.
+                                        let namespaces = [
+                                            "math",
+                                            "string",
+                                            "list",
+                                            "file",
+                                            "http",
+                                            "compare",
+                                            "conditional",
+                                        ];
+                                        namespaces.iter().find_map(|ns| {
+                                            let qualified_name =
+                                                format!("{}.{}", ns, function_name);
+                                            eprintln!(
+                                                "DEBUG LOOKUP FALLBACK: Trying '{}'",
+                                                qualified_name
+                                            );
+                                            self.wasm_generator
+                                                .function_map
+                                                .get(&qualified_name)
+                                                .copied()
+                                        })
+                                    }
+                                } else {
+                                    // Try namespace-prefixed variants for builtin functions
+                                    let namespaces = [
+                                        "math",
+                                        "string",
+                                        "list",
+                                        "file",
+                                        "http",
+                                        "compare",
+                                        "conditional",
+                                    ];
+                                    namespaces.iter().find_map(|ns| {
+                                        let qualified_name = format!("{}.{}", ns, function_name);
+                                        eprintln!(
+                                            "DEBUG LOOKUP FALLBACK: Trying '{}'",
+                                            qualified_name
+                                        );
+                                        self.wasm_generator
+                                            .function_map
+                                            .get(&qualified_name)
+                                            .copied()
+                                    })
+                                }
+                            };
+
+                            if let Some(function_index) = function_index {
                                 tracing::trace!(
                                     name = %function_name,
                                     index = function_index,
@@ -983,6 +1216,40 @@ impl<'a> MirCodeGenerator<'a> {
                             });
                         }
                     }
+                    MirOperand::NamedFunction { name, symbol_id: _ } => {
+                        // CRITICAL FIX: Handle namespace functions (math.*, string.*) by looking up by name
+                        eprintln!(
+                            "DEBUG NAMED FUNCTION: Looking up function '{}' in function_map",
+                            name
+                        );
+                        if let Some(&function_index) = self.wasm_generator.function_map.get(name) {
+                            tracing::trace!(
+                                name = %name,
+                                index = function_index,
+                                "Calling named function at WASM index"
+                            );
+                            self.current_instructions
+                                .push(Instruction::Call(function_index));
+                        } else {
+                            // CRITICAL FIX: Return a proper error when named function is not found
+                            eprintln!(
+                                "DEBUG NAMED FUNCTION: Function '{}' not found in function_map!",
+                                name
+                            );
+                            eprintln!(
+                                "DEBUG NAMED FUNCTION: Available functions: {:?}",
+                                self.wasm_generator.function_map.keys().collect::<Vec<_>>()
+                            );
+                            return Err(CompilerError::Codegen {
+                                context: Box::new(crate::error::ErrorContext::new(
+                                    format!("Function '{}' not found in function map", name),
+                                    None,
+                                    crate::error::ErrorType::Codegen,
+                                    Some(instruction.location.clone()),
+                                )),
+                            });
+                        }
+                    }
                     _ => {
                         return Err(CompilerError::Codegen {
                             context: Box::new(crate::error::ErrorContext::new(
@@ -996,19 +1263,79 @@ impl<'a> MirCodeGenerator<'a> {
                 }
 
                 // CRITICAL FIX: Handle return values based on function signature
+                eprintln!("DEBUG CALL: Call operation completed");
+                eprintln!(
+                    "DEBUG CALL: function_name={:?}, has_dest={}",
+                    function_name,
+                    instruction.dest.is_some()
+                );
+
                 if let Some(dest) = instruction.dest {
-                    // CRITICAL FIX: Convert math.pow result from F64 to I32 when destination is I32
-                    // math.pow always returns F64, but for integer operands we need I32 result
+                    eprintln!("DEBUG CALL DEST: Processing call with dest={:?}", dest);
+                    eprintln!("DEBUG CALL DEST: function_name={:?}", function_name);
+
+                    // CRITICAL FIX: Convert function results from F64 to I32 when destination is I32
+                    // Use the function signature's return type to determine if conversion is needed
                     if let Some(dest_type) = self.value_to_type.get(&dest) {
+                        eprintln!("DEBUG CALL DEST: dest_type={:?}", dest_type);
                         if matches!(dest_type, MirType::I32) {
-                            if let Some(fname) = &function_name {
-                                if fname == "math.pow" {
-                                    // Convert F64 result to I32
-                                    self.current_instructions.push(Instruction::I32TruncF64S);
-                                    tracing::trace!("Added F64->I32 conversion for math.pow with I32 destination");
+                            eprintln!("DEBUG CALL DEST: Destination is I32, checking function return type...");
+
+                            // Check if the function returns F64 by checking the signature
+                            // For SymbolId(0) stdlib functions, the MIR signature may be Void (incorrect)
+                            // In that case, fall back to function name checking
+                            let needs_conversion = if let Some(sig) = &function_signature {
+                                eprintln!("DEBUG CALL DEST: Checking signature return_type={:?} for SymbolId={:?}", sig.return_type, symbol_id_opt);
+
+                                // If signature has a proper return type, use it
+                                if matches!(sig.return_type, MirType::F64) {
+                                    true
+                                } else if matches!(sig.return_type, MirType::Void) {
+                                    // Void signature is incorrect for stdlib functions, check function name instead
+                                    if let Some(fname) = &function_name {
+                                        eprintln!("DEBUG CALL DEST: Void signature detected, checking function name={}", fname);
+                                        fname.starts_with("math.")
+                                    } else {
+                                        eprintln!(
+                                            "DEBUG CALL DEST: Void signature but no function name"
+                                        );
+                                        false
+                                    }
+                                } else {
+                                    // I32 or other non-F64 return type
+                                    false
                                 }
+                            } else if let Some(fname) = &function_name {
+                                // Fallback to function name check if no signature
+                                eprintln!(
+                                    "DEBUG CALL DEST: No signature, checking function name={}",
+                                    fname
+                                );
+                                fname.starts_with("math.")
+                            } else {
+                                eprintln!("DEBUG CALL DEST: No signature or function name");
+                                false
+                            };
+
+                            if needs_conversion {
+                                eprintln!(
+                                    "DEBUG TYPE CONVERSION (CALL): Adding f64→i32 conversion for {:?} result",
+                                    function_name
+                                );
+                                self.current_instructions.push(Instruction::I32TruncF64S);
+                                tracing::trace!(
+                                    "Added F64->I32 conversion for {:?} with I32 destination",
+                                    function_name
+                                );
+                            } else {
+                                eprintln!(
+                                    "DEBUG CALL DEST: Function {:?} does not need conversion",
+                                    function_name
+                                );
                             }
                         }
+                    } else {
+                        eprintln!("DEBUG CALL DEST: No dest_type found for {:?}", dest);
                     }
 
                     if let Some(signature) = &function_signature {
@@ -1069,6 +1396,61 @@ impl<'a> MirCodeGenerator<'a> {
                                 self.store_to_local(dest)?;
                             }
                         }
+                    }
+                } else {
+                    // CRITICAL FIX: Handle calls with no destination (expression statements)
+                    // For non-void functions, we need to DROP the return value to clean up the stack
+                    eprintln!("DEBUG CALL NO DEST: Call has no destination, checking if return value needs to be dropped");
+
+                    // Check if this function returns void (no cleanup needed)
+                    let is_void_return = if let Some(signature) = &function_signature {
+                        eprintln!(
+                            "DEBUG CALL NO DEST: Found signature, return_type={:?}",
+                            signature.return_type
+                        );
+                        // CRITICAL FIX: Check for both Void and Ptr(Void)
+                        // Ptr(Void) represents a void function (no return value)
+                        matches!(signature.return_type, MirType::Void)
+                            || matches!(&signature.return_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void))
+                    } else {
+                        eprintln!(
+                            "DEBUG CALL NO DEST: No signature found, checking fallback logic"
+                        );
+                        // Fallback: check known void functions by name
+                        let is_known_void_builtin = function_name.as_deref() == Some("print")
+                            || function_name.as_deref() == Some("printl")
+                            || function_name.as_deref() == Some("println");
+
+                        if is_known_void_builtin {
+                            eprintln!("DEBUG CALL NO DEST: Known void built-in function");
+                            true
+                        } else {
+                            // CRITICAL FIX: For user-defined functions without signatures,
+                            // default to void if being called as expression statement
+                            // This is safe because:
+                            // 1. If function returns a value AND it's being used, it would have a dest
+                            // 2. If function returns a value BUT it's not being used, MIR shouldn't have a dest
+                            // 3. Most expression statements are void function calls
+                            eprintln!("DEBUG CALL NO DEST: Unknown function without signature, defaulting to void (safe for expression statements)");
+                            true
+                        }
+                    };
+
+                    if !is_void_return {
+                        eprintln!("DEBUG CALL NO DEST: Non-void function, adding DROP instruction");
+                        // Function returns a value but we're not using it (expression statement)
+                        // Drop the return value from the stack
+                        self.current_instructions.push(Instruction::Drop);
+                        tracing::trace!(
+                            function_name = ?function_name,
+                            "Dropped unused return value for call with no destination"
+                        );
+                    } else {
+                        eprintln!("DEBUG CALL NO DEST: Void function, no DROP needed");
+                        tracing::trace!(
+                            function_name = ?function_name,
+                            "No DROP needed for void function call"
+                        );
                     }
                 }
 
@@ -1204,6 +1586,64 @@ impl<'a> MirCodeGenerator<'a> {
                 }
             }
 
+            MirOperation::Cast { value, target_type } => {
+                debug_mir!(value = ?value, target_type = ?target_type, "Processing Cast");
+
+                // Get the source type by checking value_to_type or inferring from operand
+                let source_type = if let MirOperand::Value(vid) = value {
+                    self.value_to_type.get(vid).cloned()
+                } else {
+                    None
+                };
+
+                // Load the value onto the stack
+                self.load_operand(value)?;
+
+                // Generate appropriate conversion instruction
+                match (source_type.as_ref(), target_type) {
+                    // Integer to Float conversions
+                    (Some(MirType::I32), MirType::F64) | (None, MirType::F64) => {
+                        // Convert i32 to f64 (signed conversion)
+                        self.current_instructions.push(Instruction::F64ConvertI32S);
+                        debug_mir!("Cast: I32 -> F64 using F64ConvertI32S");
+                    }
+
+                    // Float to Integer conversions
+                    (Some(MirType::F64), MirType::I32) => {
+                        // Convert f64 to i32 (truncate)
+                        self.current_instructions.push(Instruction::I32TruncF64S);
+                        debug_mir!("Cast: F64 -> I32 using I32TruncF64S");
+                    }
+
+                    // Same type - no conversion needed
+                    (Some(MirType::I32), MirType::I32) | (Some(MirType::F64), MirType::F64) => {
+                        debug_mir!("Cast: Same type, no conversion needed");
+                    }
+
+                    // Pointer casts - treat as no-op in WASM (all pointers are i32)
+                    (Some(MirType::Ptr(_)), MirType::Ptr(_)) => {
+                        debug_mir!("Cast: Pointer to pointer, no conversion needed");
+                    }
+
+                    // Default: log warning but don't fail
+                    _ => {
+                        debug_mir!(
+                            source = ?source_type,
+                            target = ?target_type,
+                            "Cast: Unknown type conversion, treating as no-op"
+                        );
+                    }
+                }
+
+                // Store result if there's a destination
+                if let Some(dest) = instruction.dest {
+                    self.store_to_local(dest)?;
+                    debug_mir!("Cast completed successfully, stored to {:?}", dest);
+                } else {
+                    debug_mir!("No destination for Cast result");
+                }
+            }
+
             _ => {
                 // TODO: Implement other operation types
                 return Err(CompilerError::Codegen {
@@ -1307,6 +1747,12 @@ impl<'a> MirCodeGenerator<'a> {
 
             MirOperand::Function(_symbol_id) => {
                 // TODO: Load function reference
+                // For now, just load the function index as a constant
+                self.current_instructions.push(Instruction::I32Const(0));
+            }
+
+            MirOperand::NamedFunction { .. } => {
+                // TODO: Load named function reference
                 // For now, just load the function index as a constant
                 self.current_instructions.push(Instruction::I32Const(0));
             }
@@ -1590,8 +2036,71 @@ impl<'a> MirCodeGenerator<'a> {
     }
 
     /// Store value from WASM stack to local
-    fn store_to_local(&mut self, value_id: ValueId) -> Result<(), CompilerError> {
+    /// Get the type of a ValueId from the current function's locals
+    fn get_value_type(&self, value_id: ValueId) -> Option<MirType> {
+        self.current_function
+            .as_ref()
+            .and_then(|func| func.locals.get(&value_id))
+            .map(|local| local.local_type.clone())
+    }
+
+    /// Get the type of a MirOperand
+    fn get_operand_mir_type(&self, operand: &MirOperand) -> Option<MirType> {
+        match operand {
+            MirOperand::Value(vid) => self.get_value_type(*vid),
+            MirOperand::Constant(constant) => Some(match constant {
+                MirConstant::Integer(_) => MirType::I32,
+                MirConstant::Float(_) => MirType::F64,
+                MirConstant::Boolean(_) => MirType::I32,
+                MirConstant::String(_) => MirType::I32, // String pointers are i32
+                MirConstant::Null => MirType::I32,
+                MirConstant::Undefined => MirType::I32, // Undefined is represented as i32
+                MirConstant::Array(_) => MirType::I32,  // Array pointers are i32
+                MirConstant::Struct(_) => MirType::I32, // Struct pointers are i32
+            }),
+            MirOperand::Function(_) => Some(MirType::I32), // Function pointers are i32
+            MirOperand::NamedFunction { .. } => Some(MirType::I32), // Named function pointers are i32
+            MirOperand::Global(_) => Some(MirType::I32), // Global variable pointers are i32
+        }
+    }
+
+    /// Store value to local with automatic type conversion if needed
+    /// This function checks if the value on the stack needs type conversion before storing
+    fn store_to_local_with_conversion(
+        &mut self,
+        value_id: ValueId,
+        source_type: Option<MirType>,
+    ) -> Result<(), CompilerError> {
         if let Some(&local_index) = self.value_to_local.get(&value_id) {
+            // Get destination type from function.locals
+            if let Some(dest_type) = self.get_value_type(value_id) {
+                // If we know the source type, check if conversion is needed
+                if let Some(src_type) = source_type {
+                    // CRITICAL FIX: Add type conversions when assigning between i32 and f64
+                    match (&src_type, &dest_type) {
+                        // f64 → i32: Truncate float to integer
+                        (MirType::F64, MirType::I32) => {
+                            eprintln!(
+                                "DEBUG TYPE CONVERSION: Adding f64→i32 conversion for ValueId({:?})",
+                                value_id.0
+                            );
+                            self.current_instructions.push(Instruction::I32TruncF64S);
+                        }
+                        // i32 → f64: Convert integer to float
+                        (MirType::I32, MirType::F64) => {
+                            eprintln!(
+                                "DEBUG TYPE CONVERSION: Adding i32→f64 conversion for ValueId({:?})",
+                                value_id.0
+                            );
+                            self.current_instructions.push(Instruction::F64ConvertI32S);
+                        }
+                        // Same types or pointer types - no conversion needed
+                        _ => {}
+                    }
+                }
+            }
+
+            // Store to local
             self.current_instructions
                 .push(Instruction::LocalSet(local_index));
             Ok(())
@@ -1613,6 +2122,11 @@ impl<'a> MirCodeGenerator<'a> {
                 )),
             });
         }
+    }
+
+    /// Store value to local without type conversion (backward compatibility)
+    fn store_to_local(&mut self, value_id: ValueId) -> Result<(), CompilerError> {
+        self.store_to_local_with_conversion(value_id, None)
     }
 
     /// Generate WASM binary operation (type-aware)
@@ -2067,9 +2581,9 @@ impl<'a> MirCodeGenerator<'a> {
             64 => Some("string.length".to_string()),   // string.length (alt mapping)
             65 => Some("string.substring".to_string()), // string.substring (alt mapping)
             66 => Some("string.contains".to_string()), // string.contains (alt mapping)
-            67 => Some("string.contains".to_string()), // string.contains (alt2) or isEmpty
+            67 => Some("string.contains".to_string()), // string.contains (alt2)
             68 => Some("string.length".to_string()),   // string.length (alt2)
-            69 => Some("string.contains".to_string()), // string.isEmpty or similar
+            69 => Some("string.isEmpty".to_string()),  // string.isEmpty - FIXED
             _ => {
                 tracing::debug!(
                     symbol_id = symbol_id.0,
@@ -2080,52 +2594,44 @@ impl<'a> MirCodeGenerator<'a> {
         }
     }
 
-    /// Get function name by symbol ID
+    /// Get function name by symbol ID using pure dynamic resolution
+    /// CRITICAL FIX: Completely eliminated hardcoded SymbolId mappings
+    /// All symbols (builtins + user-defined) are resolved from the symbol table
     fn get_function_name_by_symbol(&self, symbol_id: SymbolId) -> Option<String> {
-        // For built-in functions, map symbol IDs to standard names
-        // These mappings should match the order functions are registered in symbol_table.rs
-        match symbol_id.0 {
-            0 => Some("print".to_string()),
-            1 => Some("printl".to_string()),
-            2 => Some("println".to_string()),
-            // Type conversion functions (registered by register_type_conversion_imports)
-            5 => Some("int_to_string".to_string()),
-            6 => Some("float_to_string".to_string()),
-            7 => Some("bool_to_string".to_string()),
-            8 => Some("string_to_int".to_string()),
-            9 => Some("string_to_float".to_string()),
-            // Built-in math functions (registered by symbol table)
-            11 => Some("math.abs.i32".to_string()), // abs for integers
-            // String concatenation runtime function
-            1000 => Some("string_concat".to_string()),
-            // CRITICAL FIX: Power operation (^) is converted to math.pow call
-            1002 => Some("math.pow".to_string()),
-            // Namespace functions - these should be handled as function calls
-            35..=70 => {
-                // Math namespace functions (SymbolId 35-47)
-                // String namespace functions (SymbolId 48-52)
-                // List namespace functions (SymbolId 53-59)
-                // Type method calls like toString (SymbolId 60-70)
-                // We need to map these to their host function names for WASM calls
-                self.resolve_namespace_function(symbol_id)
-            }
-            _ => {
-                // CRITICAL FIX: Use the dynamic function symbol mapping for user-defined functions
-                if let Some(function_name) = self.function_symbol_map.get(&symbol_id) {
-                    tracing::debug!(
-                        symbol_id = symbol_id.0,
-                        name = %function_name,
-                        "Resolved SymbolId to function name"
-                    );
-                    Some(function_name.clone())
-                } else {
-                    tracing::debug!(
-                        symbol_id = symbol_id.0,
-                        "Unknown function SymbolId - not found in function map"
-                    );
-                    None
-                }
-            }
+        eprintln!(
+            "DEBUG SYMBOL MAP LOOKUP: Looking up SymbolId({}) in function_symbol_map",
+            symbol_id.0
+        );
+        eprintln!(
+            "DEBUG SYMBOL MAP LOOKUP: Map has {} entries",
+            self.function_symbol_map.len()
+        );
+
+        if let Some(function_name) = self.function_symbol_map.get(&symbol_id) {
+            eprintln!(
+                "DEBUG SYMBOL MAP LOOKUP: Found SymbolId({}) -> '{}'",
+                symbol_id.0, function_name
+            );
+            tracing::debug!(
+                symbol_id = symbol_id.0,
+                name = %function_name,
+                "Resolved SymbolId to function name dynamically"
+            );
+            Some(function_name.clone())
+        } else {
+            eprintln!(
+                "DEBUG SYMBOL MAP LOOKUP: SymbolId({}) NOT FOUND in map!",
+                symbol_id.0
+            );
+            eprintln!(
+                "DEBUG SYMBOL MAP LOOKUP: Map contents (first 10): {:?}",
+                self.function_symbol_map.iter().take(10).collect::<Vec<_>>()
+            );
+            tracing::warn!(
+                symbol_id = symbol_id.0,
+                "Unknown function SymbolId - not found in function map"
+            );
+            None
         }
     }
 
@@ -2346,7 +2852,7 @@ impl<'a> MirCodeGenerator<'a> {
     /// Generate start function export for the entry point
     fn generate_start_function_export(
         &mut self,
-        _entry_symbol_id: SymbolId,
+        entry_symbol_id: SymbolId,
     ) -> Result<(), CompilerError> {
         // Log all functions in function map
         tracing::debug!("Function map contents:");
@@ -2355,12 +2861,14 @@ impl<'a> MirCodeGenerator<'a> {
         }
         tracing::debug!(
             entries = self.wasm_generator.function_map.len(),
-            "Looking for function 'start' in function map"
+            symbol_id = entry_symbol_id.0,
+            "Looking for entry function by SymbolId"
         );
 
-        // Look up the function name by symbol ID
-        // Since we already processed all functions, the entry function should be registered in the WASM generator
-        if let Some(entry_function_index) = self.wasm_generator.function_map.get("start") {
+        // CRITICAL FIX: Use SymbolId -> index mapping instead of function name
+        // Function names can collide (e.g., top-level start() and Vehicle.start() method)
+        // but SymbolIds are unique
+        if let Some(entry_function_index) = self.symbol_to_function_index.get(&entry_symbol_id) {
             eprintln!(
                 "DEBUG MIR _start: Will call start() function at index {}",
                 entry_function_index

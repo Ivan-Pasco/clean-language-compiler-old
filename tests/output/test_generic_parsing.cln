@@ -1,9 +1,0 @@
-class Shape
-	string name
-
-functions:
-	any findShapeByName(list<Shape> shapes, string targetName)
-		return ""
-
-start()
-	print("Testing generic parsing")

@@ -5,7 +5,7 @@ functions:
 	integer complexCalculation(integer a, integer b, integer c)
 		// Test multiline arithmetic with required parentheses
 		integer result = (
-			a * b
+			a * b +
 			c / 2 -
 			(a + b) * c
 		)
@@ -23,8 +23,8 @@ functions:
 	string complexStringOp(string a, string b, string c)
 		// Test multiline string concatenation
 		string result = (
-			a + " "
-			b + " "
+			a + " " +
+			b + " " +
 			c
 		)
 		return result
@@ -54,8 +54,8 @@ functions:
 		// Test method chaining across lines
 		string chainResult = (
 			"testing"
-			.toUpperCase()
-			.substring(0, 4)
+				.toUpperCase()
+				.substring(0, 4)
 		)
 		print("Method chain result: " + chainResult)
 

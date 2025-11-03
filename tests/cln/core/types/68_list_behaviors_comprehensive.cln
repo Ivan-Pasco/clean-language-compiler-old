@@ -47,9 +47,16 @@ functions:
 		print("Attempted to add: Alice, Bob, Alice, Charlie, Bob")
 		print("Unique visitors count: " + visitors.size().toString())
 
-		if visitors.contains("Alice")
+		// Check Alice
+		boolean hasAlice = visitors.contains("Alice")
+		if hasAlice
 			print("Alice is in the visitor list")
-		if visitors.contains("David")
+		else
+			print("Alice is NOT in the visitor list")
+
+		// Check David
+		boolean hasDavid = visitors.contains("David")
+		if hasDavid
 			print("David is in the visitor list")
 		else
 			print("David is NOT in the visitor list")

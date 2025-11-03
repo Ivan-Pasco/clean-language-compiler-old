@@ -13,6 +13,6 @@ start()
 	any mixedItem = mixed[1]
 
 	// Test list methods (if implemented)
-	integer count = numbers.length()
+	integer count = numbers.size()
 
 	print("List generics test complete")
