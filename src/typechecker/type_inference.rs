@@ -3243,6 +3243,7 @@ impl<'a> TypeInference<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn infer_field_type(
         &self,
         object_type: &ConcreteType,

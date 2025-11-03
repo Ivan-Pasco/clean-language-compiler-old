@@ -6,7 +6,7 @@ use super::*;
 
 use crate::ast::{
     BinaryOperator, Expression, Function as AstFunction, FunctionModifier, FunctionSyntax,
-    Parameter, Program, SourceLocation, Statement, Type, Value, Visibility,
+    SourceLocation, Statement, Type, Value, Visibility,
 };
 
 // StringPool has been removed as it was unused

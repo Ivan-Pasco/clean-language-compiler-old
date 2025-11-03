@@ -152,7 +152,7 @@ impl<'a> MirCodeGenerator<'a> {
 
         let start_time = std::time::Instant::now();
         let mut stats = MirCodegenStats::default();
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
 
         // CRITICAL FIX: Set up the underlying WASM generator with runtime imports
         if self.wasm_generator.include_runtime_imports {
@@ -2532,6 +2532,7 @@ impl<'a> MirCodeGenerator<'a> {
     }
 
     /// Resolve namespace function SymbolId to WASM function name
+    #[allow(dead_code)]
     fn resolve_namespace_function(&self, symbol_id: SymbolId) -> Option<String> {
         // Based on registration order in symbol_table.rs, map SymbolIds to function names
         // These correspond to the math namespace functions registered at lines 748-772
