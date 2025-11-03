@@ -1,24 +1,471 @@
 === WASM Validation Analysis ===
-Date: Sat Nov  1 11:43:30 -05 2025
+Date: Mon Nov  3 00:30:25 -05 2025
+
+FAIL: tests/cln/advanced/memory/24_memory_management.cln
+  Error: tests/output/advanced/memory/24_memory_management.wasm:00007d0: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/advanced/modules/53_import_export_blocks.cln
+  Error: tests/output/advanced/modules/53_import_export_blocks.wasm:0000840: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/advanced/modules/67_import_export_comprehensive.cln
+  Error: tests/output/advanced/modules/67_import_export_comprehensive.wasm:0000884: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/control/loops/05_loop_constructs.cln
+  Error: tests/output/control/loops/05_loop_constructs.wasm:00007d8: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/basics/29_apply_blocks_fixed.cln
+  Error: tests/output/core/basics/29_apply_blocks_fixed.wasm:00007f9: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/basics/29_apply_blocks.cln
+  Error: tests/output/core/basics/29_apply_blocks.wasm:00007f9: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/basics/56_apply_blocks_comprehensive.cln
+  Error: tests/output/core/basics/56_apply_blocks_comprehensive.wasm:00007cd: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/basics/56_apply_blocks_simple.cln
+  Error: tests/output/core/basics/56_apply_blocks_simple.wasm:000080e: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/basics/61_multiline_expressions_simple.cln
+  Error: tests/output/core/basics/61_multiline_expressions_simple.wasm:000085c: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/basics/61_multiline_expressions.cln
+  Error: tests/output/core/basics/61_multiline_expressions.wasm:000088a: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/basics/63_multiline_expressions_spec.cln
+  Error: tests/output/core/basics/63_multiline_expressions_spec.wasm:0000940: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/basics/90_comments_multiline.cln
+  Error: tests/output/core/basics/90_comments_multiline.wasm:00007e2: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/basics/91_identifiers_validation.cln
+  Error: tests/output/core/basics/91_identifiers_validation.wasm:0000878: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/collections/03_array_operations.cln
+  Error: tests/output/core/collections/03_array_operations.wasm:000083e: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/collections/matrix_operations_comprehensive.cln
+  Error: tests/output/core/collections/matrix_operations_comprehensive.wasm:000083b: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/operators/03_arithmetic_operations.cln
+  Error: tests/output/core/operators/03_arithmetic_operations.wasm:00007f7: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/operators/04_comparison_operations.cln
+  Error: tests/output/core/operators/04_comparison_operations.wasm:00007b6: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/operators/05_logical_operations.cln
+  Error: tests/output/core/operators/05_logical_operations.wasm:00007b6: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/types/02_precision_modifiers.cln
+  Error: tests/output/core/types/02_precision_modifiers.wasm:0000806: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/types/06_type_conversions.cln
+  Error: tests/output/core/types/06_type_conversions.wasm:00007ca: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/types/07_lists_basic.cln
+  Error: tests/output/core/types/07_lists_basic.wasm:00007bb: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/types/08_matrices.cln
+  Error: tests/output/core/types/08_matrices.wasm:00007bc: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/types/09_type_inference.cln
+  Error: tests/output/core/types/09_type_inference.wasm:00007ef: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/types/30_precision_modifiers.cln
+  Error: tests/output/core/types/30_precision_modifiers.wasm:0000873: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/types/34_list_behaviors_simple.cln
+  Error: tests/output/core/types/34_list_behaviors_simple.wasm:0000800: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/types/34_list_behaviors.cln
+  Error: tests/output/core/types/34_list_behaviors.wasm:000082a: error: type mismatch in call, expected [f64] but got [... i32]
+
+FAIL: tests/cln/core/types/66_type_precision_spec.cln
+  Error: tests/output/core/types/66_type_precision_spec.wasm:0000830: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/types/68_list_behaviors_comprehensive.cln
+  Error: tests/output/core/types/68_list_behaviors_comprehensive.wasm:00007eb: error: type mismatch in call, expected [f64] but got [... i32]
+
+FAIL: tests/cln/core/types/70_type_precision_comprehensive.cln
+  Error: tests/output/core/types/70_type_precision_comprehensive.wasm:0000848: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/types/92_numeric_literals_comprehensive.cln
+  Error: tests/output/core/types/92_numeric_literals_comprehensive.wasm:000089e: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/core/variables/02_variables_basic.cln
+  Error: tests/output/core/variables/02_variables_basic.wasm:00007d4: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/static_method_args_test.cln
+  Error: tests/output/debug/static_method_args_test.wasm:00007f3: error: type mismatch in call, expected [f64, f64] but got [... i32, i32]
+
+FAIL: tests/cln/debug/test_apply_block_conflict.cln
+  Error: tests/output/debug/test_apply_block_conflict.wasm:00007ca: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_args_comprehensive.cln
+  Error: tests/output/debug/test_args_comprehensive.wasm:00007c3: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/debug/test_arith_return.cln
+  Error: tests/output/debug/test_arith_return.wasm:00007c7: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_base_param.cln
+  Error: tests/output/debug/test_base_param.wasm:00007c7: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_boolean_assignment.cln
+  Error: tests/output/debug/test_boolean_assignment.wasm:00007e3: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_boolean_return_minimal.cln
+  Error: tests/output/debug/test_boolean_return_minimal.wasm:00007e4: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_chained_index.cln
+  Error: tests/output/debug/test_chained_index.wasm:00007cc: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_chained_onerror.cln
+  Error: tests/output/debug/test_chained_onerror.wasm:00007f8: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_chained_property_method.cln
+  Error: tests/output/debug/test_chained_property_method.wasm:00007c6: error: type mismatch in call, expected [f64, f64] but got [... i32, i32]
+
+FAIL: tests/cln/debug/test_chained_static.cln
+  Error: tests/output/debug/test_chained_static.wasm:00007e0: error: type mismatch in call, expected [f64, f64] but got [... i32, i32]
+
+FAIL: tests/cln/debug/test_comparison_minimal.cln
+  Error: tests/output/debug/test_comparison_minimal.wasm:00007b6: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_complex_onerror.cln
+  Error: tests/output/debug/test_complex_onerror.wasm:0000876: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_conditional_namespace.cln
+  Error: tests/output/debug/test_conditional_namespace.wasm:0000808: error: type mismatch in call, expected [f64, f64] but got [... i32, i32]
+
+FAIL: tests/cln/debug/test_default_params_minimal.cln
+  Error: tests/output/debug/test_default_params_minimal.wasm:00007ba: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/debug/test_different_property_chain.cln
+  Error: tests/output/debug/test_different_property_chain.wasm:00007aa: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_exact_68_structure.cln
+  Error: tests/output/debug/test_exact_68_structure.wasm:00007d0: error: type mismatch in call, expected [f64] but got [... i32]
+
+FAIL: tests/cln/debug/test_explicit_method_chained.cln
+  Error: tests/output/debug/test_explicit_method_chained.wasm:00007c6: error: type mismatch in call, expected [f64, f64] but got [... i32, i32]
+
+FAIL: tests/cln/debug/test_expression_statement_mixed.cln
+  Error: tests/output/debug/test_expression_statement_mixed.wasm:00007d4: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_final_onerror.cln
+  Error: tests/output/debug/test_final_onerror.wasm:00008c9: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_http_basic.cln
+  Error: tests/output/debug/test_http_basic.wasm:00007fe: error: type mismatch in call, expected [f64, f64] but got [... i32, i32]
+
+FAIL: tests/cln/debug/test_inheritance_with_constructor.cln
+  Error: tests/output/debug/test_inheritance_with_constructor.wasm:0000807: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_int_return.cln
+  Error: tests/output/debug/test_int_return.wasm:00007c3: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_list_generics.cln
+  Error: tests/output/debug/test_list_generics.wasm:00007c8: error: type mismatch in call, expected [f64] but got [i32]
+
+FAIL: tests/cln/debug/test_list_type.cln
+  Error: tests/output/debug/test_list_type.wasm:00007b5: error: type mismatch in call, expected [f64] but got [... i32]
+
+FAIL: tests/cln/debug/test_method_call_in_args.cln
+  Error: tests/output/debug/test_method_call_in_args.wasm:000079c: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_method_call_pattern.cln
+  Error: tests/output/debug/test_method_call_pattern.wasm:000079b: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_modulo_comparison.cln
+  Error: tests/output/debug/test_modulo_comparison.wasm:00007ba: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_modulo_minimal.cln
+  Error: tests/output/debug/test_modulo_minimal.wasm:00007b6: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_number_comparison.cln
+  Error: tests/output/debug/test_number_comparison.wasm:0000817: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/debug/test_number_method.cln
+  Error: tests/output/debug/test_number_method.wasm:000079b: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_number_simple.cln
+  Error: tests/output/debug/test_number_simple.wasm:00007bb: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/debug/test_onerror_simple.cln
+  Error: tests/output/debug/test_onerror_simple.wasm:0000810: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_precision_standalone.cln
+  Error: tests/output/debug/test_precision_standalone.wasm:00007db: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/debug/test_priority_2_fixes.cln
+  Error: tests/output/debug/test_priority_2_fixes.wasm:00007a6: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_property_method_no_args.cln
+  Error: tests/output/debug/test_property_method_no_args.wasm:000079c: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_regular_method_multiarg.cln
+  Error: tests/output/debug/test_regular_method_multiarg.wasm:00007ab: error: type mismatch in call, expected [f64] but got [... i32]
+
+FAIL: tests/cln/debug/test_return_issue.cln
+  Error: tests/output/debug/test_return_issue.wasm:00007d8: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_return_syntax.cln
+  Error: tests/output/debug/test_return_syntax.wasm:0000805: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_simple_math.cln
+  Error: tests/output/debug/test_simple_math.wasm:00007ce: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/debug/test_simple_method_multiarg.cln
+  Error: tests/output/debug/test_simple_method_multiarg.wasm:00007ab: error: type mismatch in call, expected [f64] but got [... i32]
+
+FAIL: tests/cln/debug/test_simple_method.cln
+  Error: tests/output/debug/test_simple_method.wasm:00007b6: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_simple_property_method.cln
+  Error: tests/output/debug/test_simple_property_method.wasm:000079d: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_statement_sequencing.cln
+  Error: tests/output/debug/test_statement_sequencing.wasm:00007e3: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_static_method.cln
+  Error: tests/output/debug/test_static_method.wasm:00007c7: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_var_arith_return.cln
+  Error: tests/output/debug/test_var_arith_return.wasm:00007d8: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/debug/test_while_concat.cln
+  Error: tests/output/debug/test_while_concat.wasm:00007a8: error: type mismatch in call, expected [f64] but got [i32]
+
+FAIL: tests/cln/examples/28_complex_example.cln
+  Error: tests/output/examples/28_complex_example.wasm:000083d: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/examples/54_integration_test.cln
+  Error: tests/output/examples/54_integration_test.wasm:0000816: error: type mismatch in call, expected [i32, i32] but got [i32]
+
+FAIL: tests/cln/examples/99_spec_basic_features.cln
+  Error: tests/output/examples/99_spec_basic_features.wasm:000091f: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/examples/final_test.cln
+  Error: tests/output/examples/final_test.wasm:00007ca: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/fail/79_http_module_comprehensive.cln
+  Error: tests/output/fail/79_http_module_comprehensive.wasm:0000917: error: type mismatch in call, expected [f64, f64] but got [... i32, i32]
+
+FAIL: tests/cln/fail/83_memory_management_comprehensive.cln
+  Error: tests/output/fail/83_memory_management_comprehensive.wasm:0000867: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/functions/calls/09_method_calls.cln
+  Error: tests/output/functions/calls/09_method_calls.wasm:00007d9: error: type mismatch in call, expected [f64] but got [... i32]
+
+FAIL: tests/cln/functions/declarations/06_function_definitions.cln
+  Error: tests/output/functions/declarations/06_function_definitions.wasm:0000889: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/integration/comprehensive/10_comprehensive_features.cln
+  Error: tests/output/integration/comprehensive/10_comprehensive_features.wasm:000083f: error: type mismatch in call, expected [f64] but got [... i32]
 
 FAIL: tests/cln/integration/real_world/calculator_application.cln
-  Error: tests/output/integration/real_world/calculator_application.wasm:0000d64: error: type mismatch in return, expected [f64] but got [i32]
+  Error: tests/output/integration/real_world/calculator_application.wasm:000091a: error: type mismatch in call, expected [i32, f64] but got [f64]
+
+FAIL: tests/cln/language/classes/07_class_definitions.cln
+  Error: tests/output/language/classes/07_class_definitions.wasm:000084c: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/classes/08_class_inheritance.cln
+  Error: tests/output/language/classes/08_class_inheritance.wasm:00008af: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/classes/14_classes_basic.cln
+  Error: tests/output/language/classes/14_classes_basic.wasm:0000824: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/classes/15_classes_inheritance.cln
+  Error: tests/output/language/classes/15_classes_inheritance.wasm:00009a5: error: type mismatch in call, expected [f64, f64] but got [i32]
 
 FAIL: tests/cln/language/classes/16_classes_polymorphism_fixed.cln
-  Error: tests/output/language/classes/16_classes_polymorphism_fixed.wasm:0000da5: error: type mismatch in call, expected [i32] but got []
+  Error: tests/output/language/classes/16_classes_polymorphism_fixed.wasm:00008b5: error: type mismatch in call, expected [f64, f64] but got [i32]
 
 FAIL: tests/cln/language/classes/16_classes_polymorphism_new.cln
-  Error: tests/output/language/classes/16_classes_polymorphism_new.wasm:0000ddf: error: type mismatch in call, expected [i32] but got []
+  Error: tests/output/language/classes/16_classes_polymorphism_new.wasm:00009a3: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/classes/16_classes_polymorphism_simple.cln
+  Error: tests/output/language/classes/16_classes_polymorphism_simple.wasm:0000952: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/classes/16_classes_polymorphism.cln
+  Error: tests/output/language/classes/16_classes_polymorphism.wasm:00008c8: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/classes/38_method_calls_test.cln
+  Error: tests/output/language/classes/38_method_calls_test.wasm:00007d6: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/language/classes/41_static_methods_test.cln
+  Error: tests/output/language/classes/41_static_methods_test.wasm:00007d2: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/language/classes/49_static_method_calls_simple.cln
+  Error: tests/output/language/classes/49_static_method_calls_simple.wasm:00007e3: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/language/classes/49_static_method_calls.cln
+  Error: tests/output/language/classes/49_static_method_calls.wasm:0000854: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/language/classes/80_chained_method_calls.cln
+  Error: tests/output/language/classes/80_chained_method_calls.wasm:000080e: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/language/control_flow/18_control_flow_loops.cln
+  Error: tests/output/language/control_flow/18_control_flow_loops.wasm:00007da: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/control_flow/36_conditionals_fixed.cln
+  Error: tests/output/language/control_flow/36_conditionals_fixed.wasm:00007fe: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/control_flow/36_conditionals_simple.cln
+  Error: tests/output/language/control_flow/36_conditionals_simple.wasm:000080c: error: type mismatch in call, expected [f64, f64] but got [... i32, i32]
+
+FAIL: tests/cln/language/control_flow/36_conditionals.cln
+  Error: tests/output/language/control_flow/36_conditionals.wasm:000086e: error: type mismatch in call, expected [f64, f64] but got [... i32, i32]
+
+FAIL: tests/cln/language/error_handling/21_error_handling_try_catch.cln
+  Error: tests/output/language/error_handling/21_error_handling_try_catch.wasm:0000822: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/language/error_handling/55_error_handling_test.cln
+  Error: tests/output/language/error_handling/55_error_handling_test.wasm:00007b9: error: type mismatch in call, expected [f64] but got [i32]
+
+FAIL: tests/cln/language/error_handling/58_error_handling_onerror.cln
+  Error: tests/output/language/error_handling/58_error_handling_onerror.wasm:0000868: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/error_handling/58_error_handling_simple.cln
+  Error: tests/output/language/error_handling/58_error_handling_simple.wasm:0000863: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/error_handling/65_error_handling_onerror_spec.cln
+  Error: tests/output/language/error_handling/65_error_handling_onerror_spec.wasm:00008fa: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/error_handling/71_error_handling_onerror_comprehensive.cln
+  Error: tests/output/language/error_handling/71_error_handling_onerror_comprehensive.wasm:00008c4: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/expressions/multiline_expressions_edge_cases.cln
+  Error: tests/output/language/expressions/multiline_expressions_edge_cases.wasm:0000968: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/functions/10_functions_basic.cln
+  Error: tests/output/language/functions/10_functions_basic.wasm:0000875: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/functions/12_functions_recursion.cln
+  Error: tests/output/language/functions/12_functions_recursion.wasm:0000805: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/functions/13_functions_generics.cln
+  Error: tests/output/language/functions/13_functions_generics.wasm:000089d: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/functions/35_method_style_simple.cln
+  Error: tests/output/language/functions/35_method_style_simple.wasm:00007cd: error: type mismatch in call, expected [f64] but got [i32]
+
+FAIL: tests/cln/language/functions/35_method_style.cln
+  Error: tests/output/language/functions/35_method_style.wasm:00007ea: error: type mismatch in call, expected [f64] but got [i32]
+
+FAIL: tests/cln/language/functions/48_method_style_syntax_fixed.cln
+  Error: tests/output/language/functions/48_method_style_syntax_fixed.wasm:0000812: error: type mismatch in call, expected [f64] but got [i32]
+
+FAIL: tests/cln/language/functions/48_method_style_syntax_simple.cln
+  Error: tests/output/language/functions/48_method_style_syntax_simple.wasm:00007c4: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/functions/48_method_style_syntax.cln
+  Error: tests/output/language/functions/48_method_style_syntax.wasm:000082c: error: type mismatch in call, expected [f64] but got [i32]
+
+FAIL: tests/cln/language/functions/59_default_parameters_simple.cln
+  Error: tests/output/language/functions/59_default_parameters_simple.wasm:000099b: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/functions/59_default_parameters_working.cln
+  Error: tests/output/language/functions/59_default_parameters_working.wasm:0000878: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/functions/59_default_parameters.cln
+  Error: tests/output/language/functions/59_default_parameters.wasm:00009ca: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/functions/60_automatic_return.cln
+  Error: tests/output/language/functions/60_automatic_return.wasm:0000855: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/language/functions/64_default_parameters_spec.cln
+  Error: tests/output/language/functions/64_default_parameters_spec.wasm:0000826: error: type mismatch in call, expected [f64] but got [i32]
+
+FAIL: tests/cln/language/functions/72_default_parameters_comprehensive.cln
+  Error: tests/output/language/functions/72_default_parameters_comprehensive.wasm:00008d8: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/parser_compliance/02_numeric_literals_simple.cln
+  Error: tests/output/parser_compliance/02_numeric_literals_simple.wasm:00007e7: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/parser_compliance/02_numeric_literals.cln
+  Error: tests/output/parser_compliance/02_numeric_literals.wasm:0000a1a: error: type mismatch in local.set, expected [i32] but got [... f64]
+
+FAIL: tests/cln/parser_compliance/05_expressions.cln
+  Error: tests/output/parser_compliance/05_expressions.wasm:00008a3: error: type mismatch in call, expected [f64] but got [i32]
+
+FAIL: tests/cln/parser_compliance/06_statements.cln
+  Error: tests/output/parser_compliance/06_statements.wasm:000083d: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/stdlib/25_stdlib_functions_original_modules.cln
+  Error: tests/output/stdlib/25_stdlib_functions_original_modules.wasm:00007f2: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/stdlib/25_stdlib_functions.cln
+  Error: tests/output/stdlib/25_stdlib_functions.wasm:000080b: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/stdlib/32_comprehensive_stdlib.cln
+  Error: tests/output/stdlib/32_comprehensive_stdlib.wasm:0000a3b: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/stdlib/78_list_module_comprehensive.cln
+  Error: tests/output/stdlib/78_list_module_comprehensive.wasm:000099b: error: type mismatch in call, expected [f64, f64] but got [... i32, i32]
+
+FAIL: tests/cln/stdlib/80_host_functions_test.cln
+  Error: tests/output/stdlib/80_host_functions_test.wasm:000081a: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/stdlib/console/50_input_method_syntax.cln
+  Error: tests/output/stdlib/console/50_input_method_syntax.wasm:00007d0: error: type mismatch in call, expected [i32, i32] but got [i32]
+
+FAIL: tests/cln/stdlib/console/57_console_input_comprehensive.cln
+  Error: tests/output/stdlib/console/57_console_input_comprehensive.wasm:000084b: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/stdlib/console/57_console_input_simple.cln
+  Error: tests/output/stdlib/console/57_console_input_simple.wasm:0000840: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/stdlib/console/73_console_input_comprehensive.cln
+  Error: tests/output/stdlib/console/73_console_input_comprehensive.wasm:00008b0: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/stdlib/console/96_console_input_comprehensive.cln
+  Error: tests/output/stdlib/console/96_console_input_comprehensive.wasm:00008be: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/stdlib/console/console_input_comprehensive.cln
+  Error: tests/output/stdlib/console/console_input_comprehensive.wasm:0000816: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/stdlib/io/26_io_operations.cln
+  Error: tests/output/stdlib/io/26_io_operations.wasm:0000804: error: type mismatch in call, expected [i32, i32] but got [i32]
+
+FAIL: tests/cln/stdlib/io/51_http_method_syntax.cln
+  Error: tests/output/stdlib/io/51_http_method_syntax.wasm:0000871: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/stdlib/io/74_file_module_comprehensive.cln
+  Error: tests/output/stdlib/io/74_file_module_comprehensive.wasm:0000808: error: type mismatch in call, expected [f64, f64] but got [... i32, i32]
+
+FAIL: tests/cln/stdlib/math/76_math_module_comprehensive.cln
+  Error: tests/output/stdlib/math/76_math_module_comprehensive.wasm:000091f: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/stdlib/math/93_stdlib_math_comprehensive.cln
+  Error: tests/output/stdlib/math/93_stdlib_math_comprehensive.wasm:000083a: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/stdlib/math/98_stdlib_math_working.cln
+  Error: tests/output/stdlib/math/98_stdlib_math_working.wasm:0000820: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/stdlib/math/99_math_minimal_working.cln
+  Error: tests/output/stdlib/math/99_math_minimal_working.wasm:000081c: error: type mismatch in local.set, expected [i32] but got [f64]
+
+FAIL: tests/cln/stdlib/string/69_string_interpolation_comprehensive.cln
+  Error: tests/output/stdlib/string/69_string_interpolation_comprehensive.wasm:0000860: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/stdlib/string/77_string_module_comprehensive.cln
+  Error: tests/output/stdlib/string/77_string_module_comprehensive.wasm:000097f: error: type mismatch in call, expected [f64, f64] but got [i32]
+
+FAIL: tests/cln/stdlib/string/94_stdlib_string_comprehensive.cln
+  Error: tests/output/stdlib/string/94_stdlib_string_comprehensive.wasm:000085b: error: type mismatch in call, expected [f64, f64] but got [... i32, i32]
+
+FAIL: tests/cln/testing/31_testing_framework.cln
+  Error: tests/output/testing/31_testing_framework.wasm:000097a: error: type mismatch in call, expected [f64, f64] but got [i32]
 
 FAIL: tests/cln/testing/specification_compliance_test.cln
-  Error: tests/output/testing/specification_compliance_test.wasm:00007ea: error: type mismatch in call, expected [i32, i32, i32] but got [i32, i32]
+  Error: tests/output/testing/specification_compliance_test.wasm:0000860: error: type mismatch in call, expected [i32, i32, i32] but got [i32, i32]
 
 
 === SUMMARY ===
 Total test files: 297
-Compiled: 233
-Validation passed: 229
-Validation failed: 4
+Compiled: 295
+Validation passed: 142
+Validation failed: 153
 
 === ERROR CATEGORIES ===
-0: 4
+0: 153
