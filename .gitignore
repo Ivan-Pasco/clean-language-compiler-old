@@ -50,7 +50,7 @@ tests/output/*.wasm
 *.clean.wasm 
 
 # AI Tools and Development Environments
-# Claude Code (ignore session/temp files but keep config)
+# Claude Code (ignore session/temp files but keep CLAUDE.md config)
 .claude-testing.json
 .claude-session*
 claude-session*
@@ -58,6 +58,7 @@ claude-session*
 .claude/cache/
 .claude/logs/
 *claude-code*
+*Claude-Code*
 
 # OpenAI/ChatGPT
 .openai/
@@ -93,10 +94,34 @@ github-copilot*
 .devcontainer/
 .codespaces/
 
-# AI Generated Content Markers  
+# AI Generated Content Markers
 *_ai_generated*
 *-ai-generated*
 *.ai.md
 *.claude.md
 *.gpt.md
 GEMINI.md
+
+# LLM Development Documentation and Sessions
+system-documents/
+dev_docs/
+Agents/
+.agents/
+*agent*/
+*Agent*/
+
+# Serena and AI Assistant Files
+serena/
+.serena/
+*serena*
+*Serena*
+
+# Codex and other LLM tools
+codex/
+Codex/
+*codex*
+*Codex*
+llm-sessions/
+ai-sessions/
+*-session-*.md
+*_session_*.md
