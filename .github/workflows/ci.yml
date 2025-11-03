@@ -46,7 +46,7 @@ jobs:
     - name: Test cln binary
       run: |
         cargo build --bin cln
-        ./target/debug/cln version
+        ./target/debug/cln --version
 
   build-test:
     name: Build Test ${{ matrix.os }}
@@ -67,11 +67,11 @@ jobs:
     - name: Test cln binary (Unix)
       if: matrix.os != 'windows-latest'
       run: |
-        ./target/release/cln version
+        ./target/release/cln --version
         echo "Testing cln binary works on ${{ matrix.os }}"
 
     - name: Test cln binary (Windows)
       if: matrix.os == 'windows-latest'
       run: |
-        .\target\release\cln.exe version
+        .\target\release\cln.exe --version
         echo "Testing cln binary works on ${{ matrix.os }}" 
