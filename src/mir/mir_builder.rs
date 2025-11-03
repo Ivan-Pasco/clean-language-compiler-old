@@ -1826,10 +1826,30 @@ impl MirBuilder {
                     mir_arguments.push(MirOperand::Value(alloc_result));
                 }
 
+                // CRITICAL FIX: For print/printl function calls, convert all arguments to strings
+                // Check if this is a print/printl call
+                let is_print_call = function_symbol_id == SymbolId(0) // print
+                    || function_symbol_id == SymbolId(1) // printl
+                    || function_symbol_id == SymbolId(162) // print (alternative)
+                    || function_symbol_id == SymbolId(163); // printl (alternative)
+
                 // Add user-provided arguments
                 for arg in arguments {
                     let arg_id = self.build_expression(context, arg)?;
-                    mir_arguments.push(MirOperand::Value(arg_id));
+
+                    // For print calls, convert arguments to strings
+                    let final_arg_id = if is_print_call {
+                        self.convert_value_to_string(
+                            context,
+                            arg_id,
+                            &arg.expr_type,
+                            &arg.location,
+                        )?
+                    } else {
+                        arg_id
+                    };
+
+                    mir_arguments.push(MirOperand::Value(final_arg_id));
                 }
 
                 // Fill in default parameters for missing arguments
@@ -2562,6 +2582,113 @@ impl MirBuilder {
             location,
         };
         context.function.locals.insert(value_id, local);
+    }
+
+    /// Convert a value to string for print() calls
+    /// Returns the ValueId of the string result
+    fn convert_value_to_string(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        value_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> Result<ValueId, Vec<CompilerError>> {
+        use crate::typechecker::tast::ConcreteType;
+
+        match value_type {
+            ConcreteType::String => {
+                // Already a string, use directly
+                Ok(value_id)
+            }
+            ConcreteType::Integer => {
+                // Convert integer to string using int_to_string
+                let converted_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+
+                // Register the converted_id in function.locals
+                self.register_temp_local(context, converted_id, MirType::I32, location.clone());
+
+                let symbol_id = self
+                    .symbol_table
+                    .lookup_symbol("int_to_string")
+                    .unwrap_or_else(|| {
+                        eprintln!(
+                            "WARNING: int_to_string not found in symbol table, using SymbolId(166)"
+                        );
+                        SymbolId(166)
+                    });
+
+                let conversion_instruction = MirInstruction {
+                    dest: Some(converted_id),
+                    operation: MirOperation::Call {
+                        function: MirOperand::Function(symbol_id),
+                        arguments: vec![MirOperand::Value(value_id)],
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, conversion_instruction);
+                Ok(converted_id)
+            }
+            ConcreteType::Number => {
+                // Convert float to string using float_to_string
+                let converted_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+
+                // Register the converted_id in function.locals
+                self.register_temp_local(context, converted_id, MirType::I32, location.clone());
+
+                let symbol_id = self
+                    .symbol_table
+                    .lookup_symbol("float_to_string")
+                    .unwrap_or_else(|| {
+                        eprintln!("WARNING: float_to_string not found in symbol table, using SymbolId(167)");
+                        SymbolId(167)
+                    });
+
+                let conversion_instruction = MirInstruction {
+                    dest: Some(converted_id),
+                    operation: MirOperation::Call {
+                        function: MirOperand::Function(symbol_id),
+                        arguments: vec![MirOperand::Value(value_id)],
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, conversion_instruction);
+                Ok(converted_id)
+            }
+            ConcreteType::Boolean => {
+                // Convert boolean to string using bool_to_string
+                let converted_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+
+                // Register the converted_id in function.locals
+                self.register_temp_local(context, converted_id, MirType::I32, location.clone());
+
+                let symbol_id = self
+                    .symbol_table
+                    .lookup_symbol("bool_to_string")
+                    .unwrap_or_else(|| {
+                        eprintln!("WARNING: bool_to_string not found in symbol table, using SymbolId(165)");
+                        SymbolId(165)
+                    });
+
+                let conversion_instruction = MirInstruction {
+                    dest: Some(converted_id),
+                    operation: MirOperation::Call {
+                        function: MirOperand::Function(symbol_id),
+                        arguments: vec![MirOperand::Value(value_id)],
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, conversion_instruction);
+                Ok(converted_id)
+            }
+            _ => {
+                // For other types (objects, arrays, etc.), use the value as-is for now
+                // In a complete implementation, these would also have toString() methods
+                Ok(value_id)
+            }
+        }
     }
 
     /// Infer the result type of a binary operation

@@ -62,6 +62,10 @@ pub struct MirCodeGenerator<'a> {
 
     /// Type tracking for values (needed to expand string pointers)
     value_to_type: HashMap<ValueId, MirType>,
+
+    /// CRITICAL FIX: Track types of temporary locals created during codegen
+    /// Maps local index -> WASM type for temporaries (e.g., string expansion temps)
+    temp_local_types: HashMap<u32, ValType>,
 }
 
 /// Result of MIR code generation
@@ -110,6 +114,7 @@ impl<'a> MirCodeGenerator<'a> {
             symbol_to_function_index: HashMap::new(),
             function_signatures: HashMap::new(),
             value_to_type: HashMap::new(),
+            temp_local_types: HashMap::new(),
         }
     }
 
@@ -129,6 +134,7 @@ impl<'a> MirCodeGenerator<'a> {
             symbol_to_function_index: HashMap::new(),
             function_signatures: HashMap::new(),
             value_to_type: HashMap::new(),
+            temp_local_types: HashMap::new(),
         }
     }
 
@@ -369,6 +375,7 @@ impl<'a> MirCodeGenerator<'a> {
         self.block_labels.clear();
         self.value_to_string_index.clear();
         self.value_to_type.clear();
+        self.temp_local_types.clear();
         self.next_local_index = 0;
         self.next_block_label = 0;
         self.current_instructions.clear();
@@ -1984,6 +1991,8 @@ impl<'a> MirCodeGenerator<'a> {
                     // Allocate a temporary local to hold the pointer
                     let temp_local = self.next_local_index;
                     self.next_local_index += 1;
+                    // Track type: string pointers are i32
+                    self.temp_local_types.insert(temp_local, ValType::I32);
 
                     // Store pointer to temp local
                     self.current_instructions
@@ -2020,6 +2029,8 @@ impl<'a> MirCodeGenerator<'a> {
                 // Allocate a temporary local to hold the pointer
                 let temp_local = self.next_local_index;
                 self.next_local_index += 1;
+                // Track type: string pointers are i32
+                self.temp_local_types.insert(temp_local, ValType::I32);
 
                 // Store pointer to temp local
                 self.current_instructions
@@ -2487,13 +2498,17 @@ impl<'a> MirCodeGenerator<'a> {
             }
         }
 
-        // Also add any temporary locals created during code generation
+        // CRITICAL FIX: Add tracked temporary locals created during code generation
         // (e.g., for string expansion in load_string_argument_for_print)
-        for i in 0..self.next_local_index {
-            if !local_types_map.contains_key(&i) {
-                // This is a temporary local, default to i32
-                debug_mir!("DEBUG MIR: Temporary local {} defaulting to i32", i);
-                local_types_map.insert(i, ValType::I32);
+        // Use temp_local_types to get the correct type instead of defaulting to i32
+        for (&local_index, &wasm_type) in &self.temp_local_types {
+            if !local_types_map.contains_key(&local_index) {
+                debug_mir!(
+                    "DEBUG MIR: Adding temporary local {} with tracked type {:?}",
+                    local_index,
+                    wasm_type
+                );
+                local_types_map.insert(local_index, wasm_type);
             }
         }
 
