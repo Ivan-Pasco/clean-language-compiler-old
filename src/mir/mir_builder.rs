@@ -418,23 +418,32 @@ impl MirBuilder {
         };
 
         // For class methods and constructors, add implicit 'this' parameter as the first parameter
+        // EXCEPT for static methods which don't need 'this'
+        eprintln!(
+            "DEBUG THIS PARAM: Function '{}' has_class_context={} is_static={}",
+            tast_function.name,
+            class_context.is_some(),
+            tast_function.is_static
+        );
         if let Some(_class_ctx) = class_context {
-            let this_value_id = ValueId(context.function.next_value_id);
-            context.function.next_value_id += 1;
+            if !tast_function.is_static {
+                let this_value_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
 
-            // Create 'this' parameter with class type
-            let this_param = MirParameter {
-                value_id: this_value_id,
-                name: "this".to_string(),
-                param_type: MirType::I32, // Instance pointer is i32 in WASM
-                location: tast_function.location.clone(),
-            };
+                // Create 'this' parameter with class type
+                let this_param = MirParameter {
+                    value_id: this_value_id,
+                    name: "this".to_string(),
+                    param_type: MirType::I32, // Instance pointer is i32 in WASM
+                    location: tast_function.location.clone(),
+                };
 
-            context.function.parameters.push(this_param);
+                context.function.parameters.push(this_param);
 
-            // Add 'this' to scope
-            if let Some(current_scope) = context.scope_stack.last_mut() {
-                current_scope.insert("this".to_string(), this_value_id);
+                // Add 'this' to scope
+                if let Some(current_scope) = context.scope_stack.last_mut() {
+                    current_scope.insert("this".to_string(), this_value_id);
+                }
             }
         }
 
@@ -1666,13 +1675,26 @@ impl MirBuilder {
                     let result_id = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;
 
-                    // CRITICAL FIX: Pass operator to infer correct result type
-                    // Comparison operations always return i32 (boolean), not the operand type
-                    let result_type = self.infer_binary_operation_type(
-                        &left.expr_type,
-                        &right.expr_type,
-                        operator,
-                    );
+                    // CRITICAL FIX: Use actual MIR types from built expressions, not TAST expr_type
+                    // TAST expr_type may be Unknown for method calls like toNumber()
+                    let left_mir_type = context
+                        .function
+                        .locals
+                        .get(&left_id)
+                        .map(|local| local.local_type.clone())
+                        .unwrap_or_else(|| MirType::from_concrete_type(&left.expr_type));
+                    let right_mir_type = context
+                        .function
+                        .locals
+                        .get(&right_id)
+                        .map(|local| local.local_type.clone())
+                        .unwrap_or_else(|| MirType::from_concrete_type(&right.expr_type));
+
+                    let left_concrete = Self::mir_type_to_concrete(&left_mir_type);
+                    let right_concrete = Self::mir_type_to_concrete(&right_mir_type);
+
+                    let result_type =
+                        self.infer_binary_operation_type(&left_concrete, &right_concrete, operator);
                     self.register_temp_local(
                         context,
                         result_id,
@@ -1923,10 +1945,28 @@ impl MirBuilder {
                 // For void functions, set dest = None so codegen knows not to store the result
                 let dest_opt = if is_void { None } else { Some(result_id) };
 
+                // CRITICAL FIX: For namespace functions (SymbolId(0)), create NamedFunction operand
+                // so codegen can look up the function by name instead of symbol ID
+                let function_operand = if function_symbol_id.0 == 0 {
+                    // Get function name from the Variable expression
+                    let function_name = match &function.kind {
+                        TastExpressionKind::Variable { name, .. } => name.clone(),
+                        _ => String::from("unknown"),
+                    };
+                    eprintln!("DEBUG MIR FUNCTIONCALL: Creating NamedFunction for function_name='{}' with SymbolId(0)",
+                              function_name);
+                    MirOperand::NamedFunction {
+                        name: function_name,
+                        symbol_id: function_symbol_id,
+                    }
+                } else {
+                    MirOperand::Function(function_symbol_id)
+                };
+
                 let instruction = MirInstruction {
                     dest: dest_opt,
                     operation: MirOperation::Call {
-                        function: MirOperand::Function(function_symbol_id),
+                        function: function_operand,
                         arguments: mir_arguments,
                     },
                     location: expression.location.clone(),
@@ -2129,30 +2169,50 @@ impl MirBuilder {
                         }
                         // Array/List methods
                         (ConcreteType::Array(_), "size" | "length") => {
-                            // Call list_size (SymbolId 53) with the array value
-                            (SymbolId(53), vec![MirOperand::Value(receiver_id)])
+                            // Call list_size - look up from symbol table
+                            let list_size_symbol = self.symbol_table.lookup_symbol("list_size")
+                                .unwrap_or_else(|| {
+                                    eprintln!("WARNING: list_size not found in symbol table, using fallback");
+                                    *method_symbol
+                                });
+                            (list_size_symbol, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::Array(_), "add" | "push") => {
-                            // Call list_push (SymbolId 54) with array and element
+                            // Call list_push - look up from symbol table
+                            let list_push_symbol = self.symbol_table.lookup_symbol("list_push")
+                                .unwrap_or_else(|| {
+                                    eprintln!("WARNING: list_push not found in symbol table, using fallback");
+                                    *method_symbol
+                                });
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
                                 args.push(MirOperand::Value(arg_id));
                             }
-                            (SymbolId(54), args)
+                            (list_push_symbol, args)
                         }
                         (ConcreteType::Array(_), "remove" | "pop") => {
-                            // Call list_pop (SymbolId 55) with the array value
-                            (SymbolId(55), vec![MirOperand::Value(receiver_id)])
+                            // Call list_pop - look up from symbol table
+                            let list_pop_symbol = self.symbol_table.lookup_symbol("list_pop")
+                                .unwrap_or_else(|| {
+                                    eprintln!("WARNING: list_pop not found in symbol table, using fallback");
+                                    *method_symbol
+                                });
+                            (list_pop_symbol, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::Array(_), "get") => {
-                            // Call list_get (SymbolId 56)
+                            // Call list_get - look up from symbol table
+                            let list_get_symbol = self.symbol_table.lookup_symbol("list_get")
+                                .unwrap_or_else(|| {
+                                    eprintln!("WARNING: list_get not found in symbol table, using fallback");
+                                    *method_symbol
+                                });
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
                                 args.push(MirOperand::Value(arg_id));
                             }
-                            (SymbolId(56), args)
+                            (list_get_symbol, args)
                         }
                         // For other built-in methods, fall back to treating as instance method
                         _ => {
@@ -2187,12 +2247,14 @@ impl MirBuilder {
                 let result_type = self.convert_concrete_type(&expression.expr_type);
 
                 // CRITICAL FIX: Check if this is a void method
-                // Void methods have Null or Undefined types, which convert to void-related MIR types
-                let is_void = matches!(
-                    expression.expr_type,
-                    ConcreteType::Null | ConcreteType::Undefined
-                ) || matches!(result_type, MirType::Void)
-                    || matches!(&result_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
+                // Unknown types should NOT be treated as void - they represent unresolved return types
+                // that likely return values. Only explicitly Null/Undefined should be treated as void.
+                let is_void = !matches!(expression.expr_type, ConcreteType::Unknown)
+                    && (matches!(
+                        expression.expr_type,
+                        ConcreteType::Null | ConcreteType::Undefined
+                    ) || matches!(result_type, MirType::Void)
+                        || matches!(&result_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void)));
 
                 eprintln!(
                     "DEBUG MIR METHODCALL: {:?} is_void={} expr_type={:?} mir_type={:?}",
@@ -2220,6 +2282,73 @@ impl MirBuilder {
                     dest: dest_opt,
                     operation: MirOperation::Call {
                         function: MirOperand::Function(function_symbol),
+                        arguments: mir_arguments,
+                    },
+                    location: expression.location.clone(),
+                };
+
+                self.add_instruction(context, instruction);
+                Ok(result_id)
+            }
+
+            TastExpressionKind::StaticMethodCall {
+                class_name,
+                method_name,
+                method_symbol,
+                arguments,
+                type_args: _,
+            } => {
+                // Build all arguments (NO 'this' parameter for static methods!)
+                let mut mir_arguments = Vec::new();
+                for arg in arguments {
+                    let arg_id = self.build_expression(context, arg)?;
+                    mir_arguments.push(MirOperand::Value(arg_id));
+                }
+
+                // Create result
+                let result_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+
+                // Get return type from expression
+                let mir_return_type = self.convert_concrete_type(&expression.expr_type);
+
+                // Register result local
+                self.register_temp_local(
+                    context,
+                    result_id,
+                    mir_return_type.clone(),
+                    expression.location.clone(),
+                );
+
+                // Check if this is a namespace function (like math.pow, string.length)
+                // These use SymbolId(0) and need to be looked up by name
+                eprintln!("DEBUG MIR STATIC CALL: class_name='{}', method_name='{}', method_symbol=SymbolId({})",
+                          class_name, method_name, method_symbol.0);
+                let function_operand = if method_symbol.0 == 0 {
+                    // Namespace function - use NamedFunction pattern
+                    let full_name = format!("{}.{}", class_name, method_name);
+                    eprintln!(
+                        "DEBUG MIR STATIC CALL: Creating NamedFunction with name='{}'",
+                        full_name
+                    );
+                    MirOperand::NamedFunction {
+                        name: full_name,
+                        symbol_id: *method_symbol,
+                    }
+                } else {
+                    // Regular static method - use symbol ID directly
+                    eprintln!(
+                        "DEBUG MIR STATIC CALL: Creating Function(SymbolId({}))",
+                        method_symbol.0
+                    );
+                    MirOperand::Function(*method_symbol)
+                };
+
+                // Emit Call instruction - NO 'this' parameter prepended!
+                let instruction = MirInstruction {
+                    dest: Some(result_id),
+                    operation: MirOperation::Call {
+                        function: function_operand,
                         arguments: mir_arguments,
                     },
                     location: expression.location.clone(),
@@ -2298,9 +2427,11 @@ impl MirBuilder {
                 context.function.next_value_id += 1;
 
                 // Add Load result to locals
+                // Use the actual field type from the expression instead of hardcoding I32
+                let field_type = self.convert_concrete_type(&expression.expr_type);
                 let load_local = MirLocal {
                     name: Some(format!("field_{}", property_name)),
-                    local_type: MirType::I32, // Field value type - TODO: Get actual field type
+                    local_type: field_type,
                     is_mutable: false,
                     location: expression.location.clone(),
                 };
@@ -2691,6 +2822,39 @@ impl MirBuilder {
         }
     }
 
+    /// Convert MirType back to ConcreteType for type inference
+    /// This is the inverse of MirType::from_concrete_type()
+    fn mir_type_to_concrete(mir_type: &MirType) -> ConcreteType {
+        match mir_type {
+            MirType::I32 => ConcreteType::Integer,
+            MirType::F64 => ConcreteType::Number,
+            MirType::Bool => ConcreteType::Boolean,
+            MirType::Void => ConcreteType::Undefined,
+            MirType::Ptr(inner) => {
+                match **inner {
+                    MirType::I8 => ConcreteType::String,
+                    MirType::Void => ConcreteType::Null,
+                    _ => ConcreteType::Null, // Fallback for other pointer types
+                }
+            }
+            MirType::StringTuple => ConcreteType::String,
+            MirType::Function {
+                parameters,
+                return_type,
+            } => ConcreteType::Function {
+                parameters: parameters.iter().map(Self::mir_type_to_concrete).collect(),
+                return_type: Box::new(Self::mir_type_to_concrete(return_type)),
+                is_async: false,
+            },
+            // For types that can't be precisely converted back, use safe defaults
+            MirType::I8 | MirType::I16 | MirType::I64 => ConcreteType::Integer,
+            MirType::U8 | MirType::U16 | MirType::U32 | MirType::U64 => ConcreteType::Integer,
+            MirType::F32 => ConcreteType::Number,
+            MirType::Array(_, _) => ConcreteType::Array(Box::new(ConcreteType::Integer)),
+            MirType::Struct(_) => ConcreteType::Null,
+        }
+    }
+
     /// Infer the result type of a binary operation
     fn infer_binary_operation_type(
         &self,
@@ -2698,6 +2862,12 @@ impl MirBuilder {
         right_type: &ConcreteType,
         operator: &BinaryOperator,
     ) -> MirType {
+        // DEBUG: Log type inference for binary operations
+        eprintln!(
+            "DEBUG TYPE INFER: Binary {:?}: left={:?}, right={:?}",
+            operator, left_type, right_type
+        );
+
         // CRITICAL FIX: Comparison and logical operations always return i32 (boolean)
         match operator {
             BinaryOperator::Equal
@@ -2708,13 +2878,14 @@ impl MirBuilder {
             | BinaryOperator::GreaterThanOrEqual
             | BinaryOperator::And
             | BinaryOperator::Or => {
+                eprintln!("DEBUG TYPE INFER: Comparison/logical op -> I32");
                 return MirType::I32; // Boolean result
             }
             _ => {}
         }
 
         // For arithmetic and other operations, infer from operand types
-        match (left_type, right_type) {
+        let result = match (left_type, right_type) {
             // Arithmetic operations between numeric types
             (ConcreteType::Integer, ConcreteType::Integer) => MirType::I32,
             (ConcreteType::Number, ConcreteType::Number) => MirType::F64,
@@ -2744,7 +2915,9 @@ impl MirBuilder {
             // Mixed types or unknown - use left operand type as fallback
             // This handles cases like Class operations, Function operations, etc.
             (left, _) => MirType::from_concrete_type(left),
-        }
+        };
+        eprintln!("DEBUG TYPE INFER: Result type -> {:?}", result);
+        result
     }
 
     /// Infer the result type of a unary operation

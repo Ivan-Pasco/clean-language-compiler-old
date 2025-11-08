@@ -880,6 +880,18 @@ impl<'a> TypeInference<'a> {
             HirType::String => ConcreteType::String,
             HirType::Boolean => ConcreteType::Boolean,
             HirType::Void => ConcreteType::Null,
+            // CRITICAL FIX: Handle precision types (number:32, number:64, integer:8, etc.)
+            // All integer precision types map to Integer
+            HirType::Integer8
+            | HirType::Integer8u
+            | HirType::Integer16
+            | HirType::Integer16u
+            | HirType::Integer32
+            | HirType::Integer32u
+            | HirType::Integer64
+            | HirType::Integer64u => ConcreteType::Integer,
+            // All number precision types map to Number (f64 in WASM)
+            HirType::Number32 | HirType::Number64 => ConcreteType::Number,
             HirType::Named { name, .. } => {
                 // For now, map named types to concrete types by name
                 match name.as_str() {
@@ -1157,6 +1169,7 @@ impl<'a> TypeInference<'a> {
             generic_params: Vec::new(), // Would handle generics here
             constraints: Vec::new(),
             is_async: function.is_async,
+            is_static: false, // TODO: Detect if function doesn't use 'this' or instance fields
             visibility: Visibility::Public, // Would get from HIR
             location: function.location.clone(),
         })
@@ -1205,12 +1218,18 @@ impl<'a> TypeInference<'a> {
             generic_params: Vec::new(),
             constraints: Vec::new(),
             is_async: false,
+            is_static: false, // Constructors are never static
             visibility: Visibility::Public,
             location: constructor.location.clone(),
         })
     }
 
-    fn infer_method(&mut self, method: &ResolvedHirMethod) -> Result<TastFunction, CompilerError> {
+    fn infer_method(
+        &mut self,
+        method: &ResolvedHirMethod,
+        has_parent: bool,
+        has_fields: bool,
+    ) -> Result<TastFunction, CompilerError> {
         self.current_function = Some(method.symbol_id);
         self.current_return_type = Some(self.hir_type_to_concrete(&method.return_type));
 
@@ -1235,6 +1254,20 @@ impl<'a> TypeInference<'a> {
 
         let declared_return_type = self.hir_type_to_concrete(&method.return_type);
 
+        // REFINED FIX: Determine if method should be static based on class context
+        // For classes with inheritance OR instance fields: Always use instance methods
+        // - Method signatures must match across inheritance hierarchy for polymorphism
+        // - Example: Vehicle.getMaxSpeed() returns 60 (no 'this'), but Car.getMaxSpeed() uses this.isElectric
+        // For utility classes (no parent, no fields): Use heuristic to detect static methods
+        // - Allows methods like MathUtils.add(a, b) to be called statically
+        let is_static = if has_parent || has_fields {
+            // Class has inheritance or state - all methods must be instance methods
+            false
+        } else {
+            // Utility class - detect static methods using heuristic
+            !self.body_uses_this(&tast_body)
+        };
+
         Ok(TastFunction {
             symbol_id: method.symbol_id,
             name: method.name.clone(),
@@ -1244,6 +1277,7 @@ impl<'a> TypeInference<'a> {
             generic_params: Vec::new(), // Would handle generics here
             constraints: Vec::new(),
             is_async: false,                // Methods are typically not async
+            is_static,                      // Detected based on whether method uses 'this'
             visibility: Visibility::Public, // Would get from HIR
             location: method.location.clone(),
         })
@@ -1286,8 +1320,10 @@ impl<'a> TypeInference<'a> {
 
         // Convert methods
         let mut tast_methods = Vec::new();
+        let has_parent = class.parent.is_some();
+        let has_fields = !class.fields.is_empty();
         for method in &class.methods {
-            if let Ok(tast_method) = self.infer_method(method) {
+            if let Ok(tast_method) = self.infer_method(method, has_parent, has_fields) {
                 tast_methods.push(tast_method);
             }
         }
@@ -1307,6 +1343,87 @@ impl<'a> TypeInference<'a> {
             visibility: Visibility::Public, // Would get from HIR
             location: class.location.clone(),
         })
+    }
+
+    /// Check if a block uses 'this' or accesses instance fields
+    /// Returns true if the method is instance-dependent, false if it's static-safe
+    fn body_uses_this(&self, block: &TastBlock) -> bool {
+        // Check all statements in the block
+        for statement in &block.statements {
+            if self.statement_uses_this(statement) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a statement uses 'this'
+    fn statement_uses_this(&self, statement: &TastStatement) -> bool {
+        match statement {
+            TastStatement::Expression { expression, .. } => self.expression_uses_this(expression),
+            TastStatement::VariableDeclaration { initializer, .. } => initializer
+                .as_ref()
+                .map_or(false, |e| self.expression_uses_this(e)),
+            TastStatement::Assignment { target, value, .. } => {
+                self.expression_uses_this(target) || self.expression_uses_this(value)
+            }
+            TastStatement::Return { value, .. } => value
+                .as_ref()
+                .map_or(false, |e| self.expression_uses_this(e)),
+            TastStatement::If {
+                condition,
+                then_block,
+                else_block,
+                ..
+            } => {
+                self.expression_uses_this(condition)
+                    || self.body_uses_this(then_block)
+                    || else_block
+                        .as_ref()
+                        .map_or(false, |b| self.body_uses_this(b))
+            }
+            TastStatement::For { iterable, body, .. } => {
+                self.expression_uses_this(iterable) || self.body_uses_this(body)
+            }
+            TastStatement::While {
+                condition, body, ..
+            } => self.expression_uses_this(condition) || self.body_uses_this(body),
+            _ => false,
+        }
+    }
+
+    /// Check if an expression uses 'this'
+    fn expression_uses_this(&self, expression: &TastExpression) -> bool {
+        match &expression.kind {
+            TastExpressionKind::Variable { name, .. } => name == "this",
+            TastExpressionKind::PropertyAccess { object, .. } => self.expression_uses_this(object),
+            TastExpressionKind::MethodCall {
+                receiver,
+                arguments,
+                ..
+            } => {
+                self.expression_uses_this(receiver)
+                    || arguments.iter().any(|a| self.expression_uses_this(a))
+            }
+            TastExpressionKind::FunctionCall {
+                function,
+                arguments,
+                ..
+            } => {
+                self.expression_uses_this(function)
+                    || arguments.iter().any(|a| self.expression_uses_this(a))
+            }
+            TastExpressionKind::BinaryOperation { left, right, .. } => {
+                self.expression_uses_this(left) || self.expression_uses_this(right)
+            }
+            TastExpressionKind::UnaryOperation { operand, .. } => {
+                self.expression_uses_this(operand)
+            }
+            TastExpressionKind::ArrayLiteral { elements, .. } => {
+                elements.iter().any(|e| self.expression_uses_this(e))
+            }
+            _ => false,
+        }
     }
 
     /// Infer types for a block
@@ -1841,11 +1958,32 @@ impl<'a> TypeInference<'a> {
                     &tast_arguments,
                 )?;
 
+                // CRITICAL FIX: Use SymbolId(0) for namespace functions (string.*, math.*, etc.)
+                // This ensures MIR builder creates NamedFunction operands for proper symbol resolution
+                let is_namespace_function = function.contains('.')
+                    && (function.starts_with("string.")
+                        || function.starts_with("math.")
+                        || function.starts_with("list.")
+                        || function.starts_with("array.")
+                        || function.starts_with("compare.")
+                        || function.starts_with("file.")
+                        || function.starts_with("http."));
+
+                let resolved_symbol_id = if is_namespace_function {
+                    eprintln!(
+                        "DEBUG CALL: Using SymbolId(0) for namespace function '{}'",
+                        function
+                    );
+                    crate::resolver::symbol_table::SymbolId(0)
+                } else {
+                    *function_symbol_id
+                };
+
                 (
                     TastExpressionKind::FunctionCall {
                         function: Box::new(TastExpression {
                             kind: TastExpressionKind::Variable {
-                                symbol_id: *function_symbol_id,
+                                symbol_id: resolved_symbol_id,
                                 name: function.clone(),
                             },
                             expr_type: ConcreteType::Function {
@@ -2023,6 +2161,9 @@ impl<'a> TypeInference<'a> {
                 arguments,
                 location,
             } => {
+                eprintln!("DEBUG STATIC METHOD CALL: class_name='{}', method='{}', method_symbol_id=SymbolId({})",
+                          class_name, method, method_symbol_id.0);
+
                 let mut tast_arguments = Vec::new();
                 for arg in arguments {
                     tast_arguments.push(self.infer_expression(arg)?);
@@ -2044,25 +2185,38 @@ impl<'a> TypeInference<'a> {
                     &tast_arguments,
                 )?;
 
-                // For now, represent static method calls as function calls
-                // since TAST doesn't have StaticMethodCall yet
+                // CRITICAL FIX: Use SymbolId(0) for built-in namespace methods
+                // (string.*, math.*, list.*, etc.) so MIR builder creates NamedFunction operands
+                // For user-defined static methods, keep the actual method_symbol_id
+                let is_builtin_namespace =
+                    ["string", "math", "list", "array", "compare", "file", "http"]
+                        .iter()
+                        .any(|ns| {
+                            full_class_name.eq(*ns)
+                                || full_class_name.starts_with(&format!("{}.", ns))
+                        });
+
+                eprintln!("DEBUG TYPE INF STATIC: full_class_name='{}', method='{}', is_builtin={}, method_symbol_id=SymbolId({})",
+                          full_class_name, method, is_builtin_namespace, method_symbol_id.0);
+
+                let resolved_method_symbol = if is_builtin_namespace {
+                    eprintln!(
+                        "DEBUG TYPE INF STATIC: Setting SymbolId(0) for namespace method {}.{}",
+                        full_class_name, method
+                    );
+                    crate::resolver::symbol_table::SymbolId(0) // Force NamedFunction in MIR
+                } else {
+                    eprintln!("DEBUG TYPE INF STATIC: Keeping SymbolId({}) for user-defined static method", method_symbol_id.0);
+                    *method_symbol_id // Use actual symbol for user-defined static methods
+                };
+
+                // Use StaticMethodCall to properly represent static method calls
+                // This prevents incorrectly adding a 'this' parameter
                 (
-                    TastExpressionKind::FunctionCall {
-                        function: Box::new(TastExpression {
-                            kind: TastExpressionKind::Variable {
-                                symbol_id: *method_symbol_id,
-                                name: format!("{}.{}", full_class_name, method),
-                            },
-                            expr_type: ConcreteType::Function {
-                                parameters: tast_arguments
-                                    .iter()
-                                    .map(|a| a.expr_type.clone())
-                                    .collect(),
-                                return_type: Box::new(return_type.clone()),
-                                is_async: false,
-                            },
-                            location: location.clone(),
-                        }),
+                    TastExpressionKind::StaticMethodCall {
+                        class_name: full_class_name,
+                        method_name: method.clone(),
+                        method_symbol: resolved_method_symbol,
                         arguments: tast_arguments,
                         type_args: Vec::new(),
                     },
@@ -3088,6 +3242,112 @@ impl<'a> TypeInference<'a> {
             ("compare.number", "greaterEqual") => {
                 validate_arg_count(2, arg_count, &full_method_name)?;
                 Ok(ConcreteType::Boolean)
+            }
+
+            // list static methods - CRITICAL FIX: Add return types for list namespace functions
+            // These were returning Unknown, causing MIR to treat them as void
+            // Generic functions return types based on first argument (the list)
+            ("list", "add") | ("list", "push") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                // Returns list<T> - same type as first argument
+                // list.add(list<T>, T) -> list<T>
+                if !arguments.is_empty() {
+                    Ok(arguments[0].expr_type.clone())
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "pop") | ("list", "shift") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                // Returns T - the element type of the list
+                // list.pop(list<T>) -> T
+                if !arguments.is_empty() {
+                    match &arguments[0].expr_type {
+                        ConcreteType::Array(element_type) => Ok((**element_type).clone()),
+                        _ => Ok(ConcreteType::Unknown),
+                    }
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "unshift") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                // Returns list<T> - same type as first argument
+                // list.unshift(list<T>, T) -> list<T>
+                if !arguments.is_empty() {
+                    Ok(arguments[0].expr_type.clone())
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "insert") => {
+                validate_arg_count(3, arg_count, &full_method_name)?;
+                // Returns list<T> - same type as first argument
+                // list.insert(list<T>, integer, T) -> list<T>
+                if !arguments.is_empty() {
+                    Ok(arguments[0].expr_type.clone())
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "remove") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                // Returns list<T> - same type as first argument
+                // list.remove(list<T>, integer) -> list<T>
+                if !arguments.is_empty() {
+                    Ok(arguments[0].expr_type.clone())
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "size") | ("list", "length") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Integer)
+            }
+            ("list", "get") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                // Returns T - the element type of the list
+                // list.get(list<T>, integer) -> T
+                if !arguments.is_empty() {
+                    match &arguments[0].expr_type {
+                        ConcreteType::Array(element_type) => Ok((**element_type).clone()),
+                        _ => Ok(ConcreteType::Unknown),
+                    }
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "set") => {
+                validate_arg_count(3, arg_count, &full_method_name)?;
+                // Returns list<T> - same type as first argument
+                // list.set(list<T>, integer, T) -> list<T>
+                if !arguments.is_empty() {
+                    Ok(arguments[0].expr_type.clone())
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "clear") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                // Returns list<T> - same type as first argument
+                // list.clear(list<T>) -> list<T>
+                if !arguments.is_empty() {
+                    Ok(arguments[0].expr_type.clone())
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "fill") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                // Returns list<T> - creates a new list
+                // list.fill(integer, T) -> list<T>
+                if arguments.len() >= 2 {
+                    Ok(ConcreteType::Array(Box::new(
+                        arguments[1].expr_type.clone(),
+                    )))
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
             }
 
             // For unknown static method/class combinations, return Unknown

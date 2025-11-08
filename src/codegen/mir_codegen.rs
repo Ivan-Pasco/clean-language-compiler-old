@@ -531,7 +531,15 @@ impl<'a> MirCodeGenerator<'a> {
         );
         let mut wasm_function = WasmFunction::new(local_types);
         let mut instruction_count = 0;
-        for instruction in &self.current_instructions {
+        eprintln!(
+            "DEBUG COPY INSTRUCTIONS: Copying {} instructions for function '{}'",
+            self.current_instructions.len(),
+            function.name
+        );
+        for (idx, instruction) in self.current_instructions.iter().enumerate() {
+            if matches!(instruction, Instruction::Drop) {
+                eprintln!("DEBUG COPY: Instruction[{}] = DROP", idx);
+            }
             wasm_function.instruction(instruction);
             instruction_count += 1;
         }
@@ -796,13 +804,16 @@ impl<'a> MirCodeGenerator<'a> {
                 self.current_instructions
                     .push(Instruction::If(BlockType::Empty));
 
-                // Generate true branch (but don't follow jumps)
-                self.generate_block_body(function, *true_block, generated)?;
+                // CRITICAL FIX: Use generate_structured_blocks instead of generate_block_body
+                // to properly handle nested control flow (if statements inside loops)
+                // generate_block_body skips Branch terminators, which causes nested if statements
+                // to be lost, leaving function call results on the stack
+                self.generate_structured_blocks(function, *true_block, generated)?;
 
                 self.current_instructions.push(Instruction::Else);
 
-                // Generate false branch (but don't follow jumps)
-                self.generate_block_body(function, *false_block, generated)?;
+                // Generate false branch with nested control flow support
+                self.generate_structured_blocks(function, *false_block, generated)?;
 
                 self.current_instructions.push(Instruction::End);
 
@@ -920,15 +931,50 @@ impl<'a> MirCodeGenerator<'a> {
                         return Err(e);
                     }
                 }
-                // Add memory load instruction based on type
-                self.current_instructions
-                    .push(Instruction::I32Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 2,
-                        memory_index: 0,
-                    }));
-                debug_mir!("Added I32Load instruction");
+
+                // Add memory load instruction based on destination type
                 if let Some(dest) = instruction.dest {
+                    // Get the type of the destination to determine which load instruction to use
+                    let dest_type = self
+                        .value_to_type
+                        .get(&dest)
+                        .cloned()
+                        .unwrap_or(MirType::I32);
+
+                    match dest_type {
+                        MirType::F64 => {
+                            self.current_instructions.push(Instruction::F64Load(
+                                wasm_encoder::MemArg {
+                                    offset: 0,
+                                    align: 3, // f64 alignment is 8 bytes (2^3)
+                                    memory_index: 0,
+                                },
+                            ));
+                            debug_mir!("Added F64Load instruction");
+                        }
+                        MirType::F32 => {
+                            self.current_instructions.push(Instruction::F32Load(
+                                wasm_encoder::MemArg {
+                                    offset: 0,
+                                    align: 2, // f32 alignment is 4 bytes (2^2)
+                                    memory_index: 0,
+                                },
+                            ));
+                            debug_mir!("Added F32Load instruction");
+                        }
+                        _ => {
+                            // Default to I32Load for integer types and pointers
+                            self.current_instructions.push(Instruction::I32Load(
+                                wasm_encoder::MemArg {
+                                    offset: 0,
+                                    align: 2, // i32 alignment is 4 bytes (2^2)
+                                    memory_index: 0,
+                                },
+                            ));
+                            debug_mir!("Added I32Load instruction");
+                        }
+                    }
+
                     match self.store_to_local(dest) {
                         Ok(_) => debug_mir!("Load operation completed successfully"),
                         Err(e) => {
@@ -937,7 +983,13 @@ impl<'a> MirCodeGenerator<'a> {
                         }
                     }
                 } else {
-                    // No destination - drop the loaded value to avoid stack pollution
+                    // No destination - use I32Load as default and drop the loaded value
+                    self.current_instructions
+                        .push(Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }));
                     self.current_instructions.push(Instruction::Drop);
                 }
             }
@@ -946,12 +998,47 @@ impl<'a> MirCodeGenerator<'a> {
                 // Store to memory
                 self.load_operand(destination)?;
                 self.load_operand(value)?;
-                self.current_instructions
-                    .push(Instruction::I32Store(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 2,
-                        memory_index: 0,
-                    }));
+
+                // Determine store instruction based on value type
+                let value_type = if let MirOperand::Value(value_id) = value {
+                    self.value_to_type
+                        .get(value_id)
+                        .cloned()
+                        .unwrap_or(MirType::I32)
+                } else {
+                    MirType::I32 // Default for constants and other operands
+                };
+
+                match value_type {
+                    MirType::F64 => {
+                        self.current_instructions.push(Instruction::F64Store(
+                            wasm_encoder::MemArg {
+                                offset: 0,
+                                align: 3, // f64 alignment is 8 bytes (2^3)
+                                memory_index: 0,
+                            },
+                        ));
+                    }
+                    MirType::F32 => {
+                        self.current_instructions.push(Instruction::F32Store(
+                            wasm_encoder::MemArg {
+                                offset: 0,
+                                align: 2, // f32 alignment is 4 bytes (2^2)
+                                memory_index: 0,
+                            },
+                        ));
+                    }
+                    _ => {
+                        // Default to I32Store for integer types and pointers
+                        self.current_instructions.push(Instruction::I32Store(
+                            wasm_encoder::MemArg {
+                                offset: 0,
+                                align: 2, // i32 alignment is 4 bytes (2^2)
+                                memory_index: 0,
+                            },
+                        ));
+                    }
+                }
             }
 
             MirOperation::Call {
@@ -984,7 +1071,15 @@ impl<'a> MirCodeGenerator<'a> {
                             "DEBUG CALL NAMED FUNCTION: name='{}', SymbolId({})",
                             name, symbol_id.0
                         );
-                        let sig = self.function_signatures.get(symbol_id).cloned();
+                        // CRITICAL FIX: For namespace functions (SymbolId(0)), don't use the signature
+                        // because SymbolId(0) is shared by all namespace functions and maps to "print"
+                        // which has a Void return type. This causes namespace functions like list.add
+                        // to incorrectly be treated as void functions.
+                        let sig = if symbol_id.0 == 0 {
+                            None // Don't use signature for namespace functions
+                        } else {
+                            self.function_signatures.get(symbol_id).cloned()
+                        };
                         (Some(name.clone()), sig, Some(*symbol_id))
                     }
                     _ => (None, None, None),
@@ -1021,7 +1116,7 @@ impl<'a> MirCodeGenerator<'a> {
 
                 // CRITICAL FIX: String expansion should only happen for built-in functions
                 // User-defined functions receive string pointers (to [len|content] structure)
-                // Only print/println/printl/string_concat need expansion to (content_ptr, len)
+                // Functions that need string arguments expanded to (content_ptr, len)
                 match function_name.as_deref() {
                     Some("print") | Some("printl") | Some("println") => {
                         // Print functions need string arguments expanded to (content_ptr, length)
@@ -1034,6 +1129,27 @@ impl<'a> MirCodeGenerator<'a> {
                         // Just like print functions, we need to expand StringTuple to (ptr, len) pairs
                         for arg in arguments {
                             self.load_string_argument_for_print(arg)?;
+                        }
+                    }
+                    Some("input")
+                    | Some("input_string")
+                    | Some("input_integer")
+                    | Some("input_float")
+                    | Some("input_yesno") => {
+                        // Input functions expect (prompt_ptr, prompt_len) -> result_ptr
+                        for arg in arguments {
+                            self.load_string_argument_for_print(arg)?;
+                        }
+                    }
+                    Some("input_range") => {
+                        // input_range expects (prompt_ptr, prompt_len, min, max) -> result
+                        // Only expand the first argument (prompt string)
+                        if !arguments.is_empty() {
+                            self.load_string_argument_for_print(&arguments[0])?;
+                            // Load remaining arguments normally (min, max)
+                            for arg in &arguments[1..] {
+                                self.load_operand(arg)?;
+                            }
                         }
                     }
                     Some(name) if name.starts_with("math.") => {
@@ -1065,17 +1181,91 @@ impl<'a> MirCodeGenerator<'a> {
                             }
                         }
                     }
+                    Some(name)
+                        if name.starts_with("number")
+                            || name == "float_to_string"
+                            || name.ends_with(".toNumber") =>
+                    {
+                        // CRITICAL FIX: number conversion functions expect f64 parameters
+                        // number_to_string, float_to_string, etc. expect f64
+                        // Convert i32 (integer) arguments to f64 (number) automatically
+                        for arg in arguments {
+                            self.load_operand(arg)?;
+                            if matches!(arg, MirOperand::Constant(MirConstant::Integer(_))) {
+                                self.current_instructions.push(Instruction::F64ConvertI32S);
+                            } else if let Some(MirOperand::Value(value_id)) = Some(arg) {
+                                if let Some(mir_type) = self.value_to_type.get(value_id) {
+                                    if matches!(
+                                        mir_type,
+                                        MirType::I32
+                                            | MirType::I8
+                                            | MirType::I16
+                                            | MirType::U8
+                                            | MirType::U16
+                                            | MirType::U32
+                                    ) {
+                                        self.current_instructions.push(Instruction::F64ConvertI32S);
+                                    }
+                                }
+                            }
+                        }
+                    }
                     _ => {
-                        // For user-defined functions and other built-ins, load arguments normally
+                        // For user-defined functions and other built-ins, load arguments with automatic type conversion
                         // String parameters are passed as pointers to [len|content] structure
                         eprintln!(
                             "DEBUG CALL ARGS: Loading {} arguments for function {:?}",
                             arguments.len(),
                             function_name
                         );
+
+                        // Check if we have function signature to enable automatic type conversion
+                        let param_types = function_signature.as_ref().map(|sig| &sig.parameters);
+
                         for (i, arg) in arguments.iter().enumerate() {
                             eprintln!("DEBUG CALL ARGS:   Arg[{}]: {:?}", i, arg);
                             self.load_operand(arg)?;
+
+                            // Automatic type conversion: if parameter expects f64 but we have i32, convert
+                            if let Some(params) = param_types {
+                                if i < params.len() {
+                                    let expected_param = &params[i];
+
+                                    // Check if parameter expects f64
+                                    if matches!(expected_param.param_type, MirType::F64) {
+                                        // Check if argument is integer type
+                                        let arg_is_int = match arg {
+                                            MirOperand::Constant(MirConstant::Integer(_)) => true,
+                                            MirOperand::Value(value_id) => self
+                                                .value_to_type
+                                                .get(value_id)
+                                                .map(|t| {
+                                                    matches!(
+                                                        t,
+                                                        MirType::I32
+                                                            | MirType::I8
+                                                            | MirType::I16
+                                                            | MirType::U8
+                                                            | MirType::U16
+                                                            | MirType::U32
+                                                    )
+                                                })
+                                                .unwrap_or(false),
+                                            _ => false,
+                                        };
+
+                                        if arg_is_int {
+                                            eprintln!(
+                                                "DEBUG CALL ARGS:   Converting i32 arg[{}] to f64",
+                                                i
+                                            );
+                                            self.current_instructions
+                                                .push(Instruction::F64ConvertI32S);
+                                        }
+                                    }
+                                }
+                            }
+
                             eprintln!("DEBUG CALL ARGS:   Arg[{}] loaded successfully", i);
                         }
                         eprintln!(
@@ -1357,45 +1547,92 @@ impl<'a> MirCodeGenerator<'a> {
                     }
 
                     if let Some(signature) = &function_signature {
-                        match &signature.return_type {
-                            MirType::Void => {
-                                // No return value to store
-                                tracing::trace!(
-                                    function_name = ?function_name,
-                                    "Skipping return value store for void function"
-                                );
-                            }
-                            MirType::StringTuple => {
-                                // StringTuple functions return a SINGLE i32 pointer
-                                // The pointer references memory formatted as: [4-byte length][content bytes]
-                                // Just store the pointer directly - no Drop needed
-                                tracing::trace!(
-                                    function_name = ?function_name,
-                                    "Handling StringTuple return (storing single i32 pointer)"
-                                );
+                        // CRITICAL FIX: Check if dest_type is Ptr(Void) from Unknown types
+                        // If instruction has a dest, the function returns a value
+                        let dest_type = self.value_to_type.get(&dest);
+                        let is_ptr_void = matches!(dest_type, Some(MirType::Ptr(inner)) if matches!(**inner, MirType::Void));
 
-                                self.store_to_local(dest)?;
+                        if is_ptr_void {
+                            // Ptr(Void) dest_type means Unknown type - drop the actual return values
+                            // Use the ACTUAL signature return type to determine how many values to drop
+                            eprintln!("DEBUG SIG VOID: Unknown type dest {:?}, signature return type: {:?}", dest, signature.return_type);
 
-                                tracing::trace!("Stored StringTuple return as single i32 pointer");
+                            match &signature.return_type {
+                                MirType::Void => {
+                                    // Function truly returns nothing - no DROP needed
+                                    eprintln!(
+                                        "DEBUG SIG VOID: Function returns Void - no drop needed"
+                                    );
+                                }
+                                _ => {
+                                    // Function returns a value - drop it since we can't use it (Unknown type)
+                                    eprintln!(
+                                        "DEBUG SIG VOID: Dropping 1 value (return type: {:?})",
+                                        signature.return_type
+                                    );
+                                    self.current_instructions.push(Instruction::Drop);
+                                }
                             }
-                            _ => {
-                                // Regular single-value return
-                                self.store_to_local(dest)?;
+                        } else {
+                            match &signature.return_type {
+                                MirType::Void => {
+                                    // CRITICAL FIX: Void return type in signature means no value on stack
+                                    // No DROP needed - the function truly returns nothing
+                                    tracing::trace!(
+                                        function_name = ?function_name,
+                                        "Void function - no return value to store or drop"
+                                    );
+                                }
+                                MirType::StringTuple => {
+                                    // StringTuple functions return a SINGLE i32 pointer
+                                    // The pointer references memory formatted as: [4-byte length][content bytes]
+                                    // Just store the pointer directly - no Drop needed
+                                    tracing::trace!(
+                                        function_name = ?function_name,
+                                        "Handling StringTuple return (storing single i32 pointer)"
+                                    );
+
+                                    self.store_to_local(dest)?;
+
+                                    tracing::trace!(
+                                        "Stored StringTuple return as single i32 pointer"
+                                    );
+                                }
+                                _ => {
+                                    // Regular single-value return
+                                    self.store_to_local(dest)?;
+                                }
                             }
                         }
                     } else {
                         // Fallback: no signature available
                         // Check if the destination value was registered as Void type
                         if let Some(dest_type) = self.value_to_type.get(&dest) {
-                            if matches!(dest_type, MirType::Void) {
-                                tracing::trace!(
-                                    dest = ?dest,
-                                    "Skipping return value store for void destination"
+                            eprintln!(
+                                "DEBUG VOID CHECK: dest={:?}, dest_type={:?}, function={:?}",
+                                dest, dest_type, function_name
+                            );
+                            let is_ptr_void = matches!(dest_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
+
+                            // CRITICAL FIX: If dest_type is Ptr(Void), it means Unknown type
+                            // The presence of dest means the function returns a value, so drop it
+                            if is_ptr_void {
+                                // Ptr(Void) means Unknown type that actually returns a value
+                                // Without signature, we assume single return value (most common case)
+                                eprintln!(
+                                    "DEBUG VOID DEST: Dropping 1 value for Unknown type dest {:?}",
+                                    dest
                                 );
+                                self.current_instructions.push(Instruction::Drop);
                             } else {
+                                // Normal case: store the return value
                                 self.store_to_local(dest)?;
                             }
                         } else {
+                            eprintln!(
+                                "DEBUG VOID CHECK: dest={:?} not found in value_to_type",
+                                dest
+                            );
                             // Last resort: check if this is a known void-returning built-in function
                             if let Some(function_name) = &function_name {
                                 if function_name == "testFunction"
@@ -1443,14 +1680,14 @@ impl<'a> MirCodeGenerator<'a> {
                             eprintln!("DEBUG CALL NO DEST: Known void built-in function");
                             true
                         } else {
-                            // CRITICAL FIX: For user-defined functions without signatures,
-                            // default to void if being called as expression statement
-                            // This is safe because:
-                            // 1. If function returns a value AND it's being used, it would have a dest
-                            // 2. If function returns a value BUT it's not being used, MIR shouldn't have a dest
-                            // 3. Most expression statements are void function calls
-                            eprintln!("DEBUG CALL NO DEST: Unknown function without signature, defaulting to void (safe for expression statements)");
-                            true
+                            // CRITICAL FIX: For functions without signatures called as expression statements,
+                            // default to NON-VOID (add DROP) to prevent stack pollution
+                            // This is safer than defaulting to void because:
+                            // 1. Leaving values on stack causes WASM validation errors
+                            // 2. Adding DROP for void function would cause immediate error (helps catch bugs)
+                            // 3. Most builtins (like list.add) don't have registered signatures
+                            eprintln!("DEBUG CALL NO DEST: Unknown function without signature, defaulting to non-void (adding DROP for safety)");
+                            false
                         }
                     };
 

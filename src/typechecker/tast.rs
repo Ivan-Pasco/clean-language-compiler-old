@@ -34,6 +34,7 @@ pub struct TastFunction {
     pub generic_params: Vec<TypeParameter>,
     pub constraints: Vec<TypeConstraint>,
     pub is_async: bool,
+    pub is_static: bool,
     pub visibility: Visibility,
     pub location: SourceLocation,
 }
@@ -194,6 +195,13 @@ pub enum TastExpressionKind {
     },
     MethodCall {
         receiver: Box<TastExpression>,
+        method_name: String,
+        method_symbol: SymbolId,
+        arguments: Vec<TastExpression>,
+        type_args: Vec<ConcreteType>,
+    },
+    StaticMethodCall {
+        class_name: String,
         method_name: String,
         method_symbol: SymbolId,
         arguments: Vec<TastExpression>,

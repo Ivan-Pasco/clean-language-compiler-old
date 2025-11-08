@@ -5,6 +5,11 @@
       "args": ["run", "-n", "serena", "serena", "start-mcp-server", "--project", ".", "--context", "compiler-development", "--mode", "desktop-app,code-analysis", "--transport", "stdio"],
       "cwd": ".",
       "description": "Serena MCP server for Clean Language compiler semantic analysis"
+    },
+    "clean-language": {
+      "url": "https://mcp.cleanlanguage.dev",
+      "transport": "http",
+      "description": "Clean Language MCP server for language documentation and tooling"
     }
   }
 }

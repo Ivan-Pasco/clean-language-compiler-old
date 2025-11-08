@@ -1,8 +1,8 @@
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
-use crate::stdlib::register_stdlib_function;
+use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 use crate::types::WasmType;
-use wasm_encoder::{Instruction, MemArg};
+use wasm_encoder::{BlockType, Instruction, MemArg};
 
 /// List class implementation for Clean Language
 /// Provides comprehensive list manipulation capabilities as static methods
@@ -156,6 +156,16 @@ impl ListClass {
             self.generate_push(),
         )?;
 
+        // List.add(list lst, any value) -> list
+        // Alias for list.push for consistency with other languages
+        register_stdlib_function(
+            codegen,
+            "list.add",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            self.generate_push(),
+        )?;
+
         // List.pop(list lst) -> any
         register_stdlib_function(
             codegen,
@@ -287,12 +297,14 @@ impl ListClass {
             self.generate_equals(),
         )?;
 
-        // List.fill(list lst, any value) -> void
-        register_stdlib_function(
+        // List.fill(size: integer, value: any) -> list
+        // Creates a new list of given size, filled with value
+        register_stdlib_function_with_locals(
             codegen,
             "list.fill",
-            &[WasmType::I32, WasmType::I32],
-            None,
+            &[WasmType::I32, WasmType::I32], // size, value
+            Some(WasmType::I32),             // returns list pointer
+            &[WasmType::I32, WasmType::I32], // locals: list_ptr, i
             self.generate_fill(),
         )?;
 
@@ -654,16 +666,67 @@ impl ListClass {
     }
 
     fn generate_fill(&self) -> Vec<Instruction> {
-        // Simplified fill implementation to avoid control flow issues
-        // Parameters: list, value
-        // Returns: void (no return value)
+        // Parameters: size (local 0), value (local 1)
+        // Locals: list_ptr (local 2), i (local 3)
+        // Returns: list pointer
+
+        // Create a new empty list
+        // List structure: [4-byte size][elements...]
         vec![
-            // Consume the parameters to avoid stack mismatch
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
+            // mem_alloc signature: (type_id: i32, size: i32) -> i32
+            Instruction::I32Const(0), // type_id = 0 for generic list allocation
+            // Calculate memory needed: 4 bytes (size) + size * 4 bytes (elements)
+            Instruction::LocalGet(0), // size
+            Instruction::I32Const(4), // bytes per element
+            Instruction::I32Mul,      // size * 4
+            Instruction::I32Const(4), // + 4 bytes for size field
+            Instruction::I32Add,      // total bytes needed
+            // Call mem_alloc to allocate memory
+            Instruction::Call(7),     // mem_alloc function index
+            Instruction::LocalSet(2), // store list_ptr
+            // Write size to list header
+            Instruction::LocalGet(2), // list_ptr
+            Instruction::LocalGet(0), // size
+            Instruction::I32Store(MemArg {
+                align: 2,
+                offset: 0,
+                memory_index: 0,
+            }),
+            // Initialize loop counter
+            Instruction::I32Const(0),
+            Instruction::LocalSet(3), // i = 0
+            // Loop: while i < size
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            // Check if i < size
+            Instruction::LocalGet(3), // i
+            Instruction::LocalGet(0), // size
+            Instruction::I32GeS,      // i >= size?
+            Instruction::BrIf(1),     // if so, break out of loop
+            // Set list[i] = value
+            Instruction::LocalGet(2), // list_ptr
+            Instruction::I32Const(4), // offset to data area
+            Instruction::I32Add,
+            Instruction::LocalGet(3), // i
+            Instruction::I32Const(4), // element size
+            Instruction::I32Mul,
+            Instruction::I32Add,      // list_ptr + 4 + i*4
             Instruction::LocalGet(1), // value
-            Instruction::Drop,        // drop it
-                                      // This function has no return value, so we're done
+            Instruction::I32Store(MemArg {
+                align: 2,
+                offset: 0,
+                memory_index: 0,
+            }),
+            // i = i + 1
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0), // continue loop
+            Instruction::End,   // end loop
+            Instruction::End,   // end block
+            // Return list_ptr
+            Instruction::LocalGet(2),
         ]
     }
 
