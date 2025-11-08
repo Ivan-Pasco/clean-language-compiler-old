@@ -2,7 +2,7 @@ use clean_language_compiler::compile_minimal;
 use wasmtime::Module;
 
 fn main() {
-    let source = r#"
+    let source = r"
 start()
 	number sum = 0
 
@@ -14,7 +14,7 @@ start()
 	iterate n in numbers
 		if n > 3
 			sum = sum + n
-"#;
+";
 
     println!("Compiling with compile_minimal...");
     let wasm_binary = compile_minimal(source).expect("Failed to compile");

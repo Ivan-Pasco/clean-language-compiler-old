@@ -97,7 +97,7 @@ fn convert_wasm_to_wat(wasm_bytes: &[u8]) -> Result<String, Box<dyn std::error::
                             wasmparser::ValType::F64 => "f64",
                             _ => "unknown",
                         };
-                        output.push_str(&format!("    (local {} {})\n", count, type_str));
+                        output.push_str(&format!("    (local {count} {type_str})\n"));
                     }
                 }
 
@@ -107,10 +107,10 @@ fn convert_wasm_to_wat(wasm_bytes: &[u8]) -> Result<String, Box<dyn std::error::
                     let instruction = op?;
                     let instr_str = match instruction {
                         wasmparser::Operator::I32Const { value } => {
-                            format!("    i32.const {}", value)
+                            format!("    i32.const {value}")
                         }
                         wasmparser::Operator::I64Const { value } => {
-                            format!("    i64.const {}", value)
+                            format!("    i64.const {value}")
                         }
                         wasmparser::Operator::F32Const { value } => {
                             format!("    f32.const {}", f32::from_bits(value.bits()))
@@ -119,19 +119,19 @@ fn convert_wasm_to_wat(wasm_bytes: &[u8]) -> Result<String, Box<dyn std::error::
                             format!("    f64.const {}", f64::from_bits(value.bits()))
                         }
                         wasmparser::Operator::LocalGet { local_index } => {
-                            format!("    local.get {}", local_index)
+                            format!("    local.get {local_index}")
                         }
                         wasmparser::Operator::LocalSet { local_index } => {
-                            format!("    local.set {}", local_index)
+                            format!("    local.set {local_index}")
                         }
                         wasmparser::Operator::LocalTee { local_index } => {
-                            format!("    local.tee {}", local_index)
+                            format!("    local.tee {local_index}")
                         }
                         wasmparser::Operator::GlobalGet { global_index } => {
-                            format!("    global.get {}", global_index)
+                            format!("    global.get {global_index}")
                         }
                         wasmparser::Operator::GlobalSet { global_index } => {
-                            format!("    global.set {}", global_index)
+                            format!("    global.set {global_index}")
                         }
                         wasmparser::Operator::I32Add => "    i32.add".to_string(),
                         wasmparser::Operator::I32Sub => "    i32.sub".to_string(),
@@ -150,14 +150,14 @@ fn convert_wasm_to_wat(wasm_bytes: &[u8]) -> Result<String, Box<dyn std::error::
                         wasmparser::Operator::F64Mul => "    f64.mul".to_string(),
                         wasmparser::Operator::F64Div => "    f64.div".to_string(),
                         wasmparser::Operator::Call { function_index } => {
-                            format!("    call {}", function_index)
+                            format!("    call {function_index}")
                         }
                         wasmparser::Operator::Return => "    return".to_string(),
                         wasmparser::Operator::End => "    end".to_string(),
                         wasmparser::Operator::Drop => "    drop".to_string(),
-                        _ => format!("    ;; Unsupported instruction: {:?}", instruction),
+                        _ => format!("    ;; Unsupported instruction: {instruction:?}"),
                     };
-                    output.push_str(&format!("{}\n", instr_str));
+                    output.push_str(&format!("{instr_str}\n"));
                 }
 
                 output.push_str("  )\n");

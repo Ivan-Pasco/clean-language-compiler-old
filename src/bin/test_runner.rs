@@ -1,6 +1,6 @@
 //! Comprehensive test runner for Clean Language compiler
 //!
-//! NOTE: Uses deprecated SemanticAnalyzer.
+//! NOTE: Uses deprecated `SemanticAnalyzer`.
 //! Will be migrated to use modern pipeline before v0.11.0.
 
 #![allow(deprecated)]
@@ -297,9 +297,9 @@ fn main() {
     }
 
     println!("\n🎯 Overall Results:");
-    println!("  ✅ Passed: {}", total_passed);
-    println!("  ❌ Failed: {}", total_failed);
-    println!("  ⏱️  Total Time: {:.2?}", total_time);
+    println!("  ✅ Passed: {total_passed}");
+    println!("  ❌ Failed: {total_failed}");
+    println!("  ⏱️  Total Time: {total_time:.2?}");
 
     if total_failed > 0 {
         println!("\n🚨 Some tests failed! Please review the errors above.");

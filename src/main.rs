@@ -3,7 +3,7 @@
  *
  * Author: Ivan Pasco Lizarraga
  * Date: 17-07-2025
- * Website: https://www.cleanlanguage.dev
+ * Website: <https://www.cleanlanguage.dev>
  *
  * A modern, type-safe programming language that compiles to WebAssembly
  */
@@ -378,7 +378,7 @@ async fn handle_package(package_cmd: PackageCommands) -> Result<(), Box<dyn std:
             );
 
             match package_manager.add_dependency(&manifest_path, package, version_spec, dev) {
-                Ok(_) => println!("✅ Dependency added successfully!"),
+                Ok(()) => println!("✅ Dependency added successfully!"),
                 Err(e) => eprintln!("❌ Failed to add dependency: {e}"),
             }
         }
@@ -393,7 +393,7 @@ async fn handle_package(package_cmd: PackageCommands) -> Result<(), Box<dyn std:
             println!("📦 Removing dependency: {package}");
 
             match package_manager.remove_dependency(&manifest_path, &package) {
-                Ok(_) => println!("✅ Dependency removed successfully!"),
+                Ok(()) => println!("✅ Dependency removed successfully!"),
                 Err(e) => eprintln!("❌ Failed to remove dependency: {e}"),
             }
         }
@@ -517,12 +517,12 @@ async fn handle_test(verbose: bool, dirs: Vec<String>) -> Result<(), Box<dyn std
     }
 
     let status = cmd.status()?;
-    if !status.success() {
+    if status.success() {
+        println!("✓ All tests passed!");
+    } else {
         eprintln!("✗ Some tests failed");
         // Don't return error for test failures - just report them
         println!("Note: Test failures reported but not treating as critical error");
-    } else {
-        println!("✓ All tests passed!");
     }
     Ok(())
 }
@@ -810,7 +810,7 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
 
     // Use wasmtime to execute the WASM file
     use std::sync::Mutex;
-    use wasmtime::*;
+    use wasmtime::{Caller, Extern, Linker, Memory, Module, Store};
 
     // Global allocator for dynamic string storage
     static NEXT_ALLOCATION_OFFSET: Mutex<usize> = Mutex::new(2048);
@@ -1124,14 +1124,10 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
     // INTEGER conversion methods
     linker.func_wrap("env", "integer.toInteger", |value: i32| -> i32 { value })?;
     linker.func_wrap("env", "integer.toNumber", |value: i32| -> f64 {
-        value as f64
+        f64::from(value)
     })?;
     linker.func_wrap("env", "integer.toBoolean", |value: i32| -> i32 {
-        if value != 0 {
-            1
-        } else {
-            0
-        }
+        i32::from(value != 0)
     })?;
     linker.func_wrap("env", "integer.length", |_value: i32| -> i32 { 1 })?; // Integer length is always 1
 
@@ -1141,11 +1137,7 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
     })?;
     linker.func_wrap("env", "number.toNumber", |value: f64| -> f64 { value })?;
     linker.func_wrap("env", "number.toBoolean", |value: f64| -> i32 {
-        if value != 0.0 {
-            1
-        } else {
-            0
-        }
+        i32::from(value != 0.0)
     })?;
     linker.func_wrap("env", "number.length", |_value: f64| -> i32 { 1 })?; // Number length is always 1
 
@@ -1167,11 +1159,7 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
 
     // BOOLEAN conversion methods
     linker.func_wrap("env", "boolean.toInteger", |value: i32| -> i32 {
-        if value != 0 {
-            1
-        } else {
-            0
-        }
+        i32::from(value != 0)
     })?;
     linker.func_wrap("env", "boolean.toNumber", |value: i32| -> f64 {
         if value != 0 {
@@ -1307,11 +1295,7 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
                 if let Some(path_data) = data.get(path_ptr as usize..(path_ptr + path_len) as usize)
                 {
                     if let Ok(path) = std::str::from_utf8(path_data) {
-                        return if std::path::Path::new(path).exists() {
-                            1
-                        } else {
-                            0
-                        };
+                        return i32::from(std::path::Path::new(path).exists());
                     }
                 }
             }

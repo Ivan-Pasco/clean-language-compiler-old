@@ -37,14 +37,14 @@ fn benchmark_file(file_path: &str) -> BenchmarkResult {
     let mut result = BenchmarkResult::new(file_path.to_string());
 
     if !Path::new(file_path).exists() {
-        result.errors.push(format!("File not found: {}", file_path));
+        result.errors.push(format!("File not found: {file_path}"));
         return result;
     }
 
     let content = match fs::read_to_string(file_path) {
         Ok(content) => content,
         Err(e) => {
-            result.errors.push(format!("Failed to read file: {}", e));
+            result.errors.push(format!("Failed to read file: {e}"));
             return result;
         }
     };
@@ -61,7 +61,7 @@ fn benchmark_file(file_path: &str) -> BenchmarkResult {
         }
         Err(e) => {
             result.parse_time = parse_start.elapsed();
-            result.errors.push(format!("Parse error: {}", e));
+            result.errors.push(format!("Parse error: {e}"));
             return result;
         }
     };
@@ -76,7 +76,7 @@ fn benchmark_file(file_path: &str) -> BenchmarkResult {
         }
         Err(e) => {
             result.semantic_time = semantic_start.elapsed();
-            result.errors.push(format!("Semantic error: {}", e));
+            result.errors.push(format!("Semantic error: {e}"));
         }
     }
 
@@ -143,7 +143,7 @@ fn print_benchmark_report(results: &[BenchmarkResult]) {
 
         if !result.success {
             for error in &result.errors {
-                println!("   Error: {}", error);
+                println!("   Error: {error}");
             }
         }
     }
@@ -151,22 +151,22 @@ fn print_benchmark_report(results: &[BenchmarkResult]) {
     println!();
     println!("📊 SUMMARY");
     println!("----------");
-    println!("Files processed: {}/{}", successful_files, total_files);
+    println!("Files processed: {successful_files}/{total_files}");
     println!(
         "Average parse time: {:.2}ms",
-        total_parse_time.as_secs_f64() * 1000.0 / total_files as f64
+        total_parse_time.as_secs_f64() * 1000.0 / f64::from(total_files)
     );
     println!(
         "Average semantic time: {:.2}ms",
-        total_semantic_time.as_secs_f64() * 1000.0 / total_files as f64
+        total_semantic_time.as_secs_f64() * 1000.0 / f64::from(total_files)
     );
     println!(
         "Average total time: {:.2}ms",
-        total_compilation_time.as_secs_f64() * 1000.0 / total_files as f64
+        total_compilation_time.as_secs_f64() * 1000.0 / f64::from(total_files)
     );
 
     // Performance thresholds
-    let avg_total_ms = total_compilation_time.as_secs_f64() * 1000.0 / total_files as f64;
+    let avg_total_ms = total_compilation_time.as_secs_f64() * 1000.0 / f64::from(total_files);
     if avg_total_ms < 100.0 {
         println!("🎯 Performance: EXCELLENT (< 100ms average)");
     } else if avg_total_ms < 500.0 {

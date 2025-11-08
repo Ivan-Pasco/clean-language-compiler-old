@@ -3,13 +3,13 @@ use std::fs;
 use wasmtime::{Engine, Instance, Module, Store};
 
 fn main() {
-    let source = r#"functions:
+    let source = r"functions:
 	number add(number a, number b)
 		return a + b
 
 start()
 	number result = add(40, 2)
-	print(result)"#;
+	print(result)";
 
     println!("Compiling source...");
     let wasm_binary = match compile(source) {
@@ -62,7 +62,7 @@ start()
         println!("✓ Found start function, calling it...");
         let mut results = [];
         match start_func.call(&mut store, &[], &mut results) {
-            Ok(_) => println!("✓ Function call successful!"),
+            Ok(()) => println!("✓ Function call successful!"),
             Err(e) => println!("✗ Function call failed: {e}"),
         }
     } else {

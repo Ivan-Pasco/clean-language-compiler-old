@@ -244,7 +244,7 @@ fn main() {
 
     // Run tests with coverage
     if let Err(e) = run_tests_with_coverage() {
-        eprintln!("❌ Coverage analysis failed: {}", e);
+        eprintln!("❌ Coverage analysis failed: {e}");
         std::process::exit(1);
     }
 
@@ -254,7 +254,7 @@ fn main() {
 
     // Generate HTML report
     if let Err(e) = generate_html_report() {
-        eprintln!("⚠️  HTML report generation failed: {}", e);
+        eprintln!("⚠️  HTML report generation failed: {e}");
     }
 
     // Exit with error code if coverage is too low

@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Payload::ExportSection(reader) => {
                 println!("📤 Export Section:");
-                for export in reader.into_iter() {
+                for export in reader {
                     let exp = export?;
                     println!(
                         "  Export '{}': {:?} index {}",

@@ -640,51 +640,6 @@ impl<'a> MirCodeGenerator<'a> {
         Ok(())
     }
 
-    /// Generate just the body of a block (instructions only, skip jump terminators)
-    fn generate_block_body(
-        &mut self,
-        function: &MirFunction,
-        block_id: BasicBlockId,
-        generated: &mut std::collections::HashSet<BasicBlockId>,
-    ) -> Result<(), CompilerError> {
-        // Skip if already generated
-        if generated.contains(&block_id) {
-            return Ok(());
-        }
-        generated.insert(block_id);
-
-        let block = match function.blocks.get(&block_id) {
-            Some(b) => b,
-            None => return Ok(()),
-        };
-
-        // Generate block instructions
-        for instruction in &block.instructions {
-            self.generate_instruction(instruction)?;
-        }
-
-        // Don't generate jump terminators (they're handled by structured control flow)
-        // But do generate return/unreachable
-        match &block.terminator {
-            MirTerminator::Return { value } => {
-                if let Some(return_value) = value {
-                    if !matches!(return_value, MirOperand::Constant(MirConstant::Undefined)) {
-                        self.load_operand(return_value)?;
-                    }
-                }
-                self.current_instructions.push(Instruction::Return);
-            }
-            MirTerminator::Unreachable => {
-                self.current_instructions.push(Instruction::Unreachable);
-            }
-            MirTerminator::Jump { .. } | MirTerminator::Branch { .. } => {
-                // Skip - handled by structured control flow
-            }
-        }
-
-        Ok(())
-    }
-
     /// Helper function to check if a block and all its successors eventually return
     /// Returns true if all execution paths from this block lead to a return
     fn block_always_returns(&self, function: &MirFunction, block_id: BasicBlockId) -> bool {

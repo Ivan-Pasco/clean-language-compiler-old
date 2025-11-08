@@ -4,7 +4,7 @@
 use std::env;
 use std::fs;
 use std::sync::Mutex;
-use wasmtime::*;
+use wasmtime::{Caller, Extern, Linker, Memory, Module, Result, Store};
 
 // Global allocator for dynamic string storage
 static NEXT_ALLOCATION_OFFSET: Mutex<usize> = Mutex::new(2048); // Start after static data
@@ -72,20 +72,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "env",
         "print",
         |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-            let mem = match caller.get_export("memory") {
-                Some(Extern::Memory(mem)) => mem,
-                _ => {
-                    print!("[print: ptr={ptr}, len={len}]");
-                    return;
-                }
+            let mem = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+                mem
+            } else {
+                print!("[print: ptr={ptr}, len={len}]");
+                return;
             };
 
-            let data = match mem.data(&caller).get(ptr as usize..(ptr + len) as usize) {
-                Some(data) => data,
-                None => {
-                    print!("[print: invalid range ptr={}, len={}]", ptr, len);
-                    return;
-                }
+            let data = if let Some(data) = mem.data(&caller).get(ptr as usize..(ptr + len) as usize)
+            {
+                data
+            } else {
+                print!("[print: invalid range ptr={}, len={}]", ptr, len);
+                return;
             };
 
             match std::str::from_utf8(data) {
@@ -102,20 +101,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "env",
         "printl",
         |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-            let mem = match caller.get_export("memory") {
-                Some(Extern::Memory(mem)) => mem,
-                _ => {
-                    println!("[printl: ptr={ptr}, len={len}]");
-                    return;
-                }
+            let mem = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+                mem
+            } else {
+                println!("[printl: ptr={ptr}, len={len}]");
+                return;
             };
 
-            let data = match mem.data(&caller).get(ptr as usize..(ptr + len) as usize) {
-                Some(data) => data,
-                None => {
-                    println!("[printl: invalid range ptr={ptr}, len={len}]");
-                    return;
-                }
+            let data = if let Some(data) = mem.data(&caller).get(ptr as usize..(ptr + len) as usize)
+            {
+                data
+            } else {
+                println!("[printl: invalid range ptr={ptr}, len={len}]");
+                return;
             };
 
             match std::str::from_utf8(data) {
@@ -338,20 +336,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             // Get memory
-            let memory = match caller.get_export("memory") {
-                Some(Extern::Memory(mem)) => mem,
-                _ => {
-                    eprintln!("❌ string_concat: Failed to get memory");
-                    return 0; // Return null on failure
-                }
+            let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+                mem
+            } else {
+                eprintln!("❌ string_concat: Failed to get memory");
+                return 0; // Return null on failure
             };
 
             // Read first string
-            let str1 = match memory
+            let str1 = if let Some(data) = memory
                 .data(&caller)
                 .get(ptr1 as usize..(ptr1 + len1) as usize)
             {
-                Some(data) => match std::str::from_utf8(data) {
+                match std::str::from_utf8(data) {
                     Ok(s) => {
                         eprintln!("✅ string_concat: str1 = '{}'", s);
                         s.to_string()
@@ -360,19 +357,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("❌ string_concat: str1 UTF-8 error: {}", e);
                         return 0;
                     }
-                },
-                None => {
-                    eprintln!("❌ string_concat: str1 out of bounds");
-                    return 0;
                 }
+            } else {
+                eprintln!("❌ string_concat: str1 out of bounds");
+                return 0;
             };
 
             // Read second string
-            let str2 = match memory
+            let str2 = if let Some(data) = memory
                 .data(&caller)
                 .get(ptr2 as usize..(ptr2 + len2) as usize)
             {
-                Some(data) => match std::str::from_utf8(data) {
+                match std::str::from_utf8(data) {
                     Ok(s) => {
                         eprintln!("✅ string_concat: str2 = '{}'", s);
                         s.to_string()
@@ -381,11 +377,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("❌ string_concat: str2 UTF-8 error: {}", e);
                         return 0;
                     }
-                },
-                None => {
-                    eprintln!("❌ string_concat: str2 out of bounds");
-                    return 0;
                 }
+            } else {
+                eprintln!("❌ string_concat: str2 out of bounds");
+                return 0;
             };
 
             // Concatenate strings
@@ -440,14 +435,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     linker.func_wrap("env", "integer.toInteger", |value: i32| -> i32 { value })?;
     linker.func_wrap("env", "integer.toNumber", |value: i32| -> f64 {
-        value as f64
+        f64::from(value)
     })?;
     linker.func_wrap("env", "integer.toBoolean", |value: i32| -> i32 {
-        if value != 0 {
-            1
-        } else {
-            0
-        }
+        i32::from(value != 0)
     })?;
     linker.func_wrap("env", "integer.length", |_: i32| -> i32 { 0 })?;
 
@@ -473,11 +464,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     linker.func_wrap("env", "number.toNumber", |value: f64| -> f64 { value })?;
     linker.func_wrap("env", "number.toBoolean", |value: f64| -> i32 {
-        if value != 0.0 {
-            1
-        } else {
-            0
-        }
+        i32::from(value != 0.0)
     })?;
     linker.func_wrap("env", "number.length", |_: f64| -> i32 { 0 })?;
 
@@ -506,7 +493,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     linker.func_wrap("env", "boolean.toInteger", |value: i32| -> i32 { value })?;
     linker.func_wrap("env", "boolean.toNumber", |value: i32| -> f64 {
-        value as f64
+        f64::from(value)
     })?;
     linker.func_wrap("env", "boolean.toBoolean", |value: i32| -> i32 { value })?;
     linker.func_wrap("env", "boolean.length", |_: i32| -> i32 { 0 })?;
@@ -520,12 +507,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "env",
         "array_get",
         |mut caller: Caller<'_, ()>, array_ptr: i32, index: i32| -> i32 {
-            let memory = match caller.get_export("memory") {
-                Some(Extern::Memory(mem)) => mem,
-                _ => {
-                    println!("[array_get: no memory export]");
-                    return 0; // Return 0 on error
-                }
+            let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+                mem
+            } else {
+                println!("[array_get: no memory export]");
+                return 0; // Return 0 on error
             };
 
             let data = memory.data(&caller);
@@ -599,24 +585,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|| instance.get_func(&mut store, "main"))
         .or_else(|| instance.get_func(&mut store, "_main"));
 
-    match start_func {
-        Some(func) => {
-            println!("🎯 Executing start function...");
-            println!("--- Output ---");
-            func.call(&mut store, &[], &mut [])?;
-            println!("--- End Output ---");
-            println!("✅ Execution completed successfully!");
-        }
-        None => {
-            println!("⚠️  No start function found. Available exports:");
-            for export in instance.exports(&mut store) {
-                let name = export.name().to_string();
-                if export.into_func().is_some() {
-                    println!("  • {} (function)", name);
-                }
+    if let Some(func) = start_func {
+        println!("🎯 Executing start function...");
+        println!("--- Output ---");
+        func.call(&mut store, &[], &mut [])?;
+        println!("--- End Output ---");
+        println!("✅ Execution completed successfully!");
+    } else {
+        println!("⚠️  No start function found. Available exports:");
+        for export in instance.exports(&mut store) {
+            let name = export.name().to_string();
+            if export.into_func().is_some() {
+                println!("  • {} (function)", name);
             }
-            return Err(anyhow::anyhow!("No start/main function found").into());
         }
+        return Err(anyhow::anyhow!("No start/main function found").into());
     }
 
     Ok(())
