@@ -5,9 +5,90 @@ This file provides guidance when working with code in this repository.
 ## Mandatory Requirements
 
 - **NEVER mention Claude Code in any documents, git commits, or any part of the code**
-- **NEVER reference Claude Code in documentation or git commits**  
+- **NEVER reference Claude Code in documentation or git commits**
 - **NEVER include Claude Code attribution in any files, git commits, or documentation**
 - **NEVER mention Claude Code in any context within this codebase**
+
+## 🎯 **HIGHEST PRIORITY: 100% EXECUTION MANDATE**
+
+**This is the PRIMARY OBJECTIVE and HIGHEST PRIORITY of the Clean Language Compiler project.**
+
+### Core Principles
+
+1. **100% Test Coverage**
+   - ALL test files in `tests/cln/` MUST compile successfully
+   - ALL compiled WASM files MUST execute without errors
+   - NO hidden tests - every test file must be tracked and reported
+   - Current status must be visible at all times
+
+2. **Zero Pending Implementations**
+   - NO `todo!()` macros in production code
+   - NO placeholder implementations
+   - NO workarounds that bypass actual functionality
+   - ALL language specification features MUST be fully implemented
+
+3. **Production-Grade Code**
+   - NO compiler warnings (except explicitly allowed pedantic clippy warnings)
+   - NO errors of any kind
+   - NO shortcuts or temporary solutions
+   - ALL code must be production-ready
+
+4. **Complete Specification Compliance**
+   - EVERY feature in the Clean Language Specification must work
+   - NO partial implementations
+   - NO "coming soon" features
+   - If it's in the spec, it must work
+
+### Visibility Requirements
+
+**Status Reports MUST be created after each milestone showing:**
+
+1. **Test Coverage Status**
+   ```
+   Total test files:    XXX
+   Compiled:            XXX (XX%)
+   Executed:            XXX (XX%)
+   Failed:              XXX (XX%)
+   ```
+
+2. **Specification Compliance**
+   ```
+   Features implemented: XX/XX (XX%)
+   Features pending:     XX
+   ```
+
+3. **Code Quality Metrics**
+   ```
+   Compiler warnings:    XXX
+   Clippy issues:        XXX
+   TODO/FIXME items:     XXX
+   ```
+
+4. **Path to 100%**
+   - Clear list of remaining issues
+   - Prioritized action items
+   - Estimated complexity for each item
+
+### Non-Negotiable Rules
+
+- ❌ **NEVER** report "100% execution" unless ALL test files (not just compiled ones) pass
+- ❌ **NEVER** hide failing tests by not compiling them
+- ❌ **NEVER** modify tests to pass instead of fixing the compiler
+- ❌ **NEVER** implement workarounds instead of proper solutions
+- ✅ **ALWAYS** maintain complete transparency about actual status
+- ✅ **ALWAYS** fix root causes, not symptoms
+- ✅ **ALWAYS** track progress toward true 100% execution
+
+### Continuous Validation
+
+After ANY change:
+1. Compile ALL test files (not just previously passing ones)
+2. Execute ALL compiled WASM files
+3. Report exact numbers - no rounding, no hiding failures
+4. Update status report with current state
+5. Identify any regressions immediately
+
+**This mandate supersedes all other priorities. Quality and completeness are non-negotiable.**
 
 ## Overview
 
