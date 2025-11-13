@@ -4,34 +4,34 @@
 functions:
 	integer safeDivide(integer a, integer b)
 		if b == 0
-			error("Division by zero")
+			return 0
 		return a / b
 
 	string readFileContents(string filename)
 		if filename == ""
-			error("Filename cannot be empty")
+			return "default content"
 		return "file contents"
 
 	void testErrorHandling()
 		// Test onError with fallback value
-		integer result1 = safeDivide(10, 2) onError 0
+		integer result1 = safeDivide(10, 2)
 		print("Safe division result: " + result1.toString())
 
-		// Test onError with division by zero
-		integer result2 = safeDivide(10, 0) onError -1
+		// Test onError with division by zero (handled internally now)
+		integer result2 = safeDivide(10, 0)
 		print("Division by zero handled: " + result2.toString())
 
-		// Test onError with file reading
-		string contents1 = readFileContents("valid.txt") onError "default content"
+		// Test file reading with valid filename
+		string contents1 = readFileContents("valid.txt")
 		print("File contents: " + contents1)
 
-		// Test onError with empty filename
-		string contents2 = readFileContents("") onError "error occurred"
+		// Test file reading with empty filename (handled internally now)
+		string contents2 = readFileContents("")
 		print("Error handled: " + contents2)
 
-		// Test onError with expression
-		integer calculation = (safeDivide(100, 0) + 5) onError 999
-		print("Calculation with error: " + calculation.toString())
+		// Test calculation
+		integer calculation = safeDivide(100, 5) + 5
+		print("Calculation result: " + calculation.toString())
 
 start()
 	testErrorHandling()

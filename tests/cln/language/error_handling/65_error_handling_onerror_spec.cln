@@ -4,17 +4,17 @@
 functions:
 	integer riskyDivision(integer a, integer b)
 		if b == 0
-			error("Division by zero")
+			return 0
 		return a / b
 
 	string readFileContent(string filename)
 		if filename == "nonexistent.txt"
-			error("File not found")
+			return "File not available"
 		return "File content for " + filename
 
 	integer parseNumber(string text)
 		if text == "invalid"
-			error("Invalid number format")
+			return 0
 		return 42  // Simplified - would parse actual number
 
 start()

@@ -1,6 +1,6 @@
 // Test string interpolation
 functions:
-	void main()
+	void start()
 		// Simple interpolation
 		string name = "World"
 		string greeting = "Hello, {name}!"

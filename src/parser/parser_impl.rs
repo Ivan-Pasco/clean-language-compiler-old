@@ -702,12 +702,18 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
     // Check if this is a functions block and use preprocessing for consistency
     // Look for functions: anywhere in the source, potentially after comments
     if source.contains("functions:") {
+        eprintln!("DEBUG PARSER: Using preprocessing path because functions: found");
         // Use direct preprocessing for all functions blocks to avoid grammar parsing issues
         let preprocessor = super::preprocessor::FunctionPreprocessor::new(source);
         match preprocessor.process_functions_block(source) {
             Ok(functions) => {
+                eprintln!(
+                    "DEBUG PARSER: Successfully preprocessed {} functions",
+                    functions.len()
+                );
                 // Also look for start function in the source
                 let start_function = if let Some(start_match) = source.find("start()") {
+                    eprintln!("DEBUG PARSER: Found start() at position {}", start_match);
                     // Extract the start function text
                     let start_source = &source[start_match..];
                     // Find the end of the start function (next top-level item or end of file)
@@ -760,13 +766,74 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                     None
                 };
 
-                // Create a program with the functions and start function
+                // Also look for tests: blocks in the source
+                let tests = if let Some(tests_match) = source.find("tests:") {
+                    // Extract the tests block text
+                    let tests_source = &source[tests_match..];
+                    // Find the end of the tests block (next top-level item or end of file)
+                    let lines: Vec<&str> = tests_source.lines().collect();
+                    let mut tests_lines = Vec::new();
+                    let mut found_body = false;
+
+                    for (i, line) in lines.iter().enumerate() {
+                        if i == 0 {
+                            tests_lines.push(line.to_string());
+                            continue;
+                        }
+
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            tests_lines.push(line.to_string());
+                            continue;
+                        }
+
+                        // If we've found the body and hit a non-indented line that's not part of tests, we're done
+                        if found_body && !line.starts_with('\t') && !line.starts_with(' ') {
+                            // Check if this is start() - if so, it's a new top-level item
+                            if trimmed.starts_with("start(")
+                                || trimmed.starts_with("functions:")
+                                || trimmed.starts_with("class ")
+                            {
+                                break;
+                            }
+                        }
+
+                        // If this line is indented or starts with "test ", it's part of the tests block
+                        if line.starts_with('\t')
+                            || line.starts_with(' ')
+                            || trimmed.starts_with("test ")
+                        {
+                            found_body = true;
+                            tests_lines.push(line.to_string());
+                        } else if found_body {
+                            // Non-indented line after body means we're done
+                            break;
+                        }
+                    }
+
+                    let tests_source_text = tests_lines.join("\n");
+
+                    match <CleanParser as Parser<Rule>>::parse(
+                        Rule::tests_block,
+                        &tests_source_text,
+                    ) {
+                        Ok(pairs) => match parse_tests_block(pairs.into_iter().next().unwrap()) {
+                            Ok(test_cases) => test_cases,
+                            Err(_e) => Vec::new(),
+                        },
+                        Err(_e) => Vec::new(),
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                // Create a program with the functions, start function, and tests
                 let program = Program {
                     functions,
                     classes: Vec::new(),
                     start_function,
                     imports: Vec::new(),
-                    tests: Vec::new(),
+                    tests,
                     statements: Vec::new(),
                     location: None,
                 };

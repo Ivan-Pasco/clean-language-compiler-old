@@ -1,3 +1,7 @@
 functions:
 	string first()
 		return "hello"
+
+start()
+	string result = first()
+	print(result)

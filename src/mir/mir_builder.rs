@@ -1094,7 +1094,10 @@ impl MirBuilder {
                     "DEBUG THEN CHECK: then_block={:?}, terminator={:?}",
                     then_block_id, then_terminator
                 );
-                let has_return = matches!(then_terminator, Some(MirTerminator::Return { .. }));
+                let has_return = matches!(
+                    then_terminator,
+                    Some(MirTerminator::Return { .. }) | Some(MirTerminator::Unreachable)
+                );
 
                 if !has_return {
                     eprintln!("DEBUG THEN: Adding Jump to continue block");
@@ -1153,7 +1156,12 @@ impl MirBuilder {
                             .function
                             .blocks
                             .get(&final_block_id)
-                            .map(|b| matches!(b.terminator, MirTerminator::Return { .. }))
+                            .map(|b| {
+                                matches!(
+                                    b.terminator,
+                                    MirTerminator::Return { .. } | MirTerminator::Unreachable
+                                )
+                            })
                             .unwrap_or(false)
                     } else {
                         false
