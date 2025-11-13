@@ -1,5 +1,0 @@
-functions:
-	void test()
-		println:
-			"First line"
-			"Second line"

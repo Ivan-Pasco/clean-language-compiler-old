@@ -166,10 +166,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "http_options", |_: i32, _: i32| -> i32 { 0 })?;
 
     // Add additional required imports
-    linker.func_wrap("env", "input", |_: i32, _: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "input_integer", |_: i32, _: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "input_float", |_: i32, _: i32| -> f64 { 0.0 })?;
-    linker.func_wrap("env", "input_yesno", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "input", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "input_integer", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "input_float", |_: i32| -> f64 { 0.0 })?;
+    linker.func_wrap("env", "input_yesno", |_: i32| -> i32 { 0 })?;
     linker.func_wrap(
         "env",
         "input_range",

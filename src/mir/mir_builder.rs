@@ -522,6 +522,18 @@ impl MirBuilder {
         self.stats.ssa_values_created += context.function.next_value_id;
         self.stats.phi_nodes_inserted += context.pending_phis.len();
 
+        // DEBUG: Check all blocks for proper terminators
+        if context.function.name == "test" {
+            eprintln!(
+                "DEBUG FINAL MIR: Function '{}' has {} blocks",
+                context.function.name,
+                context.function.blocks.len()
+            );
+            for (block_id, block) in &context.function.blocks {
+                eprintln!("  Block {:?}: terminator={:?}", block_id, block.terminator);
+            }
+        }
+
         Ok(context.function)
     }
 
@@ -731,16 +743,79 @@ impl MirBuilder {
                     TastExpressionKind::PropertyAccess {
                         object,
                         property_name,
-                        property_symbol: _,
+                        property_symbol,
                     } => {
                         // Handle field assignments like obj.field = value or this.field = value
-                        let _object_value = self.build_expression(context, object)?;
+                        // Build the object expression first
+                        let object_id = self.build_expression(context, object)?;
 
-                        // For now, treat field assignments as simple variable assignments
-                        // In a class context, this.field = value becomes field = value
-                        // TODO: Implement proper field assignment with object context
+                        // Get the class from the object's type
+                        let object_class_symbol = match &object.expr_type {
+                            ConcreteType::Class { symbol_id, .. } => Some(*symbol_id),
+                            _ => None,
+                        };
 
-                        // Store the value for field assignment
+                        // Find the actual field index in the class hierarchy (including inherited fields)
+                        let field_index_value = if let Some(class_symbol) = object_class_symbol {
+                            // Search for the field in the object's class and all parent classes
+                            self.find_field_index_for_class(context, class_symbol, property_symbol)
+                                .ok_or_else(|| {
+                                    vec![CompilerError::validation_error(
+                                        &format!(
+                                            "Field '{}' not found in class or parent classes",
+                                            property_name
+                                        ),
+                                        target.location.clone(),
+                                    )]
+                                })? as i64
+                        } else {
+                            // Object doesn't have a class type - this shouldn't happen for field access
+                            return Err(vec![CompilerError::validation_error(
+                                &format!(
+                                    "Cannot assign to field '{}' on non-class type: {:?}",
+                                    property_name, object.expr_type
+                                ),
+                                target.location.clone(),
+                            )]);
+                        };
+
+                        // Generate GetElementPtr to get the field address
+                        let field_ptr_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+
+                        // Add GetElementPtr result to locals
+                        let gep_local = MirLocal {
+                            name: None,               // Temporary value
+                            local_type: MirType::I32, // Pointer type
+                            is_mutable: false,
+                            location: target.location.clone(),
+                        };
+                        context.function.locals.insert(field_ptr_id, gep_local);
+
+                        let field_index =
+                            MirOperand::Constant(MirConstant::Integer(field_index_value));
+                        let gep_instruction = MirInstruction {
+                            dest: Some(field_ptr_id),
+                            operation: MirOperation::GetElementPtr {
+                                base: MirOperand::Value(object_id),
+                                indices: vec![field_index],
+                            },
+                            location: target.location.clone(),
+                        };
+                        self.add_instruction(context, gep_instruction);
+
+                        // Generate Store instruction to write the value to the field
+                        let store_instruction = MirInstruction {
+                            dest: None, // Store doesn't produce a value
+                            operation: MirOperation::Store {
+                                destination: MirOperand::Value(field_ptr_id),
+                                value: MirOperand::Value(value_id),
+                            },
+                            location: target.location.clone(),
+                        };
+                        self.add_instruction(context, store_instruction);
+
+                        // Also update the scope for simple field references (for optimization)
                         if let Some(current_scope) = context.scope_stack.last_mut() {
                             current_scope.insert(property_name.clone(), value_id);
                         }
@@ -944,7 +1019,8 @@ impl MirBuilder {
                 // Build condition expression
                 let condition_id = self.build_expression(context, condition)?;
 
-                // Create basic blocks for then, else (if present), and continuation
+                // CRITICAL FIX: Create basic blocks for then, else, AND continue upfront
+                // This prevents block ID collisions when nested statements create new blocks
                 let then_block_id = BasicBlockId(context.function.blocks.len());
                 let else_block_id = if else_block.is_some() {
                     Some(BasicBlockId(context.function.blocks.len() + 1))
@@ -953,6 +1029,20 @@ impl MirBuilder {
                 };
                 let continue_block_id = BasicBlockId(
                     context.function.blocks.len() + if else_block.is_some() { 2 } else { 1 },
+                );
+
+                // Pre-allocate continue block to reserve its ID
+                context.function.blocks.insert(
+                    continue_block_id,
+                    MirBasicBlock {
+                        id: continue_block_id,
+                        label: Some("continue".to_string()),
+                        instructions: Vec::new(),
+                        terminator: MirTerminator::Unreachable, // Will be replaced
+                        predecessors: HashSet::new(),
+                        successors: HashSet::new(),
+                        location: location.clone(),
+                    },
                 );
 
                 // Create conditional branch in current block
@@ -991,26 +1081,40 @@ impl MirBuilder {
                     self.build_statement(context, stmt)?;
                 }
 
-                // Only jump to continue block if the block doesn't already have a Return terminator
-                // (return statements set Return terminators, which should not be overwritten)
-                let current_terminator = self
-                    .current_block
-                    .and_then(|bid| context.function.blocks.get(&bid))
+                // CRITICAL FIX: Check the THEN BLOCK's terminator, not current_block
+                // After processing nested statements (like nested If), current_block may point
+                // to a different block. We need to check the then block we just built.
+                let then_terminator = context
+                    .function
+                    .blocks
+                    .get(&then_block_id)
                     .map(|b| &b.terminator);
 
-                let has_return = matches!(current_terminator, Some(MirTerminator::Return { .. }));
+                eprintln!(
+                    "DEBUG THEN CHECK: then_block={:?}, terminator={:?}",
+                    then_block_id, then_terminator
+                );
+                let has_return = matches!(then_terminator, Some(MirTerminator::Return { .. }));
 
                 if !has_return {
+                    eprintln!("DEBUG THEN: Adding Jump to continue block");
+                    // Set the then block's terminator to jump to continuation
+                    // Save current_block and restore after
+                    let saved_current = self.current_block;
+                    self.current_block = Some(then_block_id);
                     self.set_block_terminator(
                         context,
                         MirTerminator::Jump {
                             target: continue_block_id,
                         },
                     );
+                    self.current_block = saved_current;
+                } else {
+                    eprintln!("DEBUG THEN: Already has return, skipping Jump");
                 }
 
-                // Build else block if present
-                if let Some(else_stmt_block) = else_block {
+                // Track whether the else branch returns (all paths)
+                let else_returns_all_paths = if let Some(else_stmt_block) = else_block {
                     let else_id = else_block_id.unwrap();
                     context.function.blocks.insert(
                         else_id,
@@ -1026,44 +1130,61 @@ impl MirBuilder {
                     );
                     self.current_block = Some(else_id);
 
+                    // Save current_block before processing else block
+                    let before_else = self.current_block;
+
                     // Process else block statements
                     for stmt in &else_stmt_block.statements {
                         self.build_statement(context, stmt)?;
                     }
 
-                    // Only jump to continue block if the block doesn't already have a Return terminator
-                    // (return statements set Return terminators, which should not be overwritten)
-                    let current_terminator = self
-                        .current_block
-                        .and_then(|bid| context.function.blocks.get(&bid))
-                        .map(|b| &b.terminator);
+                    // CRITICAL FIX: Check if current_block is None after processing else block
+                    // If current_block is None, it means all paths in the else block returned
+                    // This handles nested if-else-if chains correctly
+                    let after_else = self.current_block;
 
-                    let has_return =
-                        matches!(current_terminator, Some(MirTerminator::Return { .. }));
+                    // Check if all paths return:
+                    // 1. current_block is None (nested if set it to None because both branches returned)
+                    // 2. OR current_block points to a block with a Return terminator
+                    let else_returns = if after_else.is_none() {
+                        true
+                    } else if let Some(final_block_id) = after_else {
+                        context
+                            .function
+                            .blocks
+                            .get(&final_block_id)
+                            .map(|b| matches!(b.terminator, MirTerminator::Return { .. }))
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
 
-                    if !has_return {
-                        self.set_block_terminator(
-                            context,
-                            MirTerminator::Jump {
-                                target: continue_block_id,
-                            },
-                        );
+                    eprintln!("DEBUG ELSE RETURN CHECK: before_else={:?}, after_else={:?}, else_returns={}", before_else, after_else, else_returns);
+
+                    if !else_returns {
+                        // At least one path doesn't return - add jump to continuation
+                        let saved_current = self.current_block;
+                        if let Some(curr) = saved_current {
+                            self.current_block = Some(curr);
+                            self.set_block_terminator(
+                                context,
+                                MirTerminator::Jump {
+                                    target: continue_block_id,
+                                },
+                            );
+                        }
+                        self.current_block = saved_current;
+                    } else {
+                        eprintln!("DEBUG ELSE: All paths return");
                     }
-                }
 
-                // Create continue block
-                context.function.blocks.insert(
-                    continue_block_id,
-                    MirBasicBlock {
-                        id: continue_block_id,
-                        label: Some("continue".to_string()),
-                        instructions: Vec::new(),
-                        terminator: MirTerminator::Unreachable, // Will be replaced
-                        predecessors: HashSet::new(),
-                        successors: HashSet::new(),
-                        location: location.clone(),
-                    },
-                );
+                    else_returns
+                } else {
+                    false
+                };
+
+                // Continue block was already created above to reserve its ID
+                // No need to create it again here
 
                 // Check if both branches have return terminators
                 let then_has_return = context
@@ -1073,14 +1194,19 @@ impl MirBuilder {
                     .map(|b| matches!(b.terminator, MirTerminator::Return { .. }))
                     .unwrap_or(false);
 
-                let else_has_return = else_block_id
-                    .and_then(|id| context.function.blocks.get(&id))
-                    .map(|b| matches!(b.terminator, MirTerminator::Return { .. }))
-                    .unwrap_or(false);
+                eprintln!("DEBUG IF FINAL: then_has_return={}, else_returns_all_paths={}, current_block before={:?}", then_has_return, else_returns_all_paths, self.current_block);
 
-                // Only set continue block as current if at least one branch doesn't return
-                // (if both branches return, the continue block is unreachable)
-                if !(then_has_return && else_has_return) {
+                // CRITICAL FIX: Handle continue block based on whether branches return
+                // Use else_returns_all_paths instead of checking the else block's entry terminator
+                if then_has_return && else_returns_all_paths && else_block.is_some() {
+                    // Both branches return - continue block is truly unreachable
+                    // Set current_block to None to prevent ensure_function_termination from adding a return
+                    eprintln!("DEBUG IF FINAL: Both branches return, setting current_block to None (unreachable)");
+                    self.current_block = None;
+                } else {
+                    // At least one branch doesn't return - continue block is reachable
+                    // Set current_block to continue block so execution can proceed
+                    eprintln!("DEBUG IF FINAL: At least one branch continues, setting current_block to continue_block={:?}", continue_block_id);
                     self.current_block = Some(continue_block_id);
                 }
             }
@@ -1927,11 +2053,14 @@ impl MirBuilder {
 
                 // CRITICAL FIX: Check if this is a void function
                 // Void functions have Null or Undefined types, which convert to void-related MIR types
+                eprintln!("DEBUG IS_VOID CHECK: function_symbol_id={:?}, expression.expr_type={:?}, result_type={:?}",
+                          function_symbol_id, expression.expr_type, result_type);
                 let is_void = matches!(
                     expression.expr_type,
                     ConcreteType::Null | ConcreteType::Undefined
                 ) || matches!(result_type, MirType::Void)
                     || matches!(&result_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
+                eprintln!("DEBUG IS_VOID RESULT: is_void={}", is_void);
 
                 // ALWAYS register the local to maintain SSA invariant (learned from Context7)
                 // This ensures every ValueId has a corresponding entry in the locals map
@@ -3053,6 +3182,12 @@ impl MirBuilder {
     ) {
         if let Some(block_id) = self.current_block {
             if let Some(block) = context.function.blocks.get_mut(&block_id) {
+                if block_id == BasicBlockId(3) && context.function.name == "test" {
+                    eprintln!(
+                        "DEBUG SET_TERM BasicBlockId(3): old={:?}, new={:?}",
+                        block.terminator, terminator
+                    );
+                }
                 block.terminator = terminator;
             }
         }
@@ -3068,6 +3203,8 @@ impl MirBuilder {
             if let Some(block) = context.function.blocks.get_mut(&block_id) {
                 // Check if block already has a terminator other than Unreachable
                 if matches!(block.terminator, MirTerminator::Unreachable) {
+                    // If this block is the current_block at function termination time,
+                    // it means it's reachable (execution reaches here), so add implicit return.
                     // Add implicit return
                     let return_value = if matches!(return_type, ConcreteType::Undefined) {
                         None

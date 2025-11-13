@@ -1,6 +1,0 @@
-functions:
-	void testWhileConcat()
-		list<string> tasks = ["task1", "task2"]
-		while tasks.size() > 0
-			string currentTask = tasks.remove()
-			print("Processing: " + currentTask)

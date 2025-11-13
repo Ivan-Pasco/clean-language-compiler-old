@@ -587,7 +587,7 @@ impl ListClass {
             // mem_alloc signature: (type_id: i32, size: i32) -> i32
             Instruction::I32Const(0),  // type_id = 0 for generic allocation
             Instruction::I32Const(12), // Basic list header size
-            Instruction::Call(2),      // memory_runtime.mem_alloc to create new list
+            Instruction::Call(7),      // memory_runtime.mem_alloc (import index 7)
         ]
     }
 
@@ -605,7 +605,7 @@ impl ListClass {
             // mem_alloc signature: (type_id: i32, size: i32) -> i32
             Instruction::I32Const(0),  // type_id = 0 for generic allocation
             Instruction::I32Const(24), // Estimated size for concatenated list
-            Instruction::Call(2),      // memory_runtime.mem_alloc to create new list
+            Instruction::Call(7),      // memory_runtime.mem_alloc (import index 7)
         ]
     }
 

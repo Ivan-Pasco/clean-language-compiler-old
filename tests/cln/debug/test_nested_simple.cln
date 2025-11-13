@@ -1,0 +1,8 @@
+// Test nested if without else
+start()
+	integer x = 10
+	integer y = 5
+
+	if x > 0
+		if y > 0
+			print("Both positive")

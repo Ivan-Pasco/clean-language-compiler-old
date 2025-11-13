@@ -10,7 +10,8 @@ impl CodeGenerator {
     pub fn register_stdlib_functions(&mut self) -> Result<(), CompilerError> {
         // COMPLETE STANDARD LIBRARY: Enable all functions for full Clean Language support
         self.register_math_operations()?; // Re-enabled for power operator support
-        self.register_console_operations()?; // Needed for print statements
+        // REMOVED: self.register_console_operations() creates obsolete wrapper functions
+        // Console imports (print, printl, input, input_integer, etc.) are registered separately in new()
         self.register_type_conversion_operations()?; // Needed for toString() calls
         self.register_string_operations()?; // Critical for string methods like length()
         self.register_list_operations()?; // Critical for list methods like size()
@@ -225,12 +226,12 @@ impl CodeGenerator {
         self.register_import_function("env", "console_input", vec![ValType::I32], vec![ValType::I32]);
 
         // Direct input function (alias for console_input)
-        self.register_import_function("env", "input", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "input", vec![ValType::I32], vec![ValType::I32]);
 
         // Input namespace methods - require host support
-        self.register_import_function("env", "input_integer", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "input_float", vec![ValType::I32, ValType::I32], vec![ValType::F64]);
-        self.register_import_function("env", "input_yesno", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "input_integer", vec![ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "input_float", vec![ValType::I32], vec![ValType::F64]);
+        self.register_import_function("env", "input_yesno", vec![ValType::I32], vec![ValType::I32]);
         self.register_import_function("env", "input_range", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
 
         Ok(())
@@ -870,44 +871,19 @@ impl CodeGenerator {
         }
     }
 
+    // OLD CODE PATH DELETED - Input static methods now handled by MIR codegen
+    // with single-parameter (ptr only) signature per system specification
     fn generate_input_static_method(
         &mut self,
         method_name: &str,
-        arguments: &[crate::ast::Expression],
-        instructions: &mut Vec<Instruction>,
+        _arguments: &[crate::ast::Expression],
+        _instructions: &mut Vec<Instruction>,
     ) -> Result<WasmType, CompilerError> {
-        // Generate arguments
-        for arg in arguments {
-            self.generate_expression(arg, instructions)?;
-        }
-
-        match method_name {
-            "integer" => {
-                let func_index = self.get_function_index_or_error("input.integer")?;
-                instructions.push(Instruction::Call(func_index));
-                Ok(WasmType::I32)
-            },
-            "number" => {
-                let func_index = self.get_function_index_or_error("input.number")?;
-                instructions.push(Instruction::Call(func_index));
-                Ok(WasmType::F64)
-            },
-            "boolean" => {
-                let func_index = self.get_function_index_or_error("input.boolean")?;
-                instructions.push(Instruction::Call(func_index));
-                Ok(WasmType::I32)
-            },
-            "yesNo" => {
-                let func_index = self.get_function_index_or_error("input.yesNo")?;
-                instructions.push(Instruction::Call(func_index));
-                Ok(WasmType::I32)
-            },
-            _ => Err(CompilerError::codegen_error(
-                format!("Unknown Input static method: {}", method_name),
-                None,
-                None
-            ))
-        }
+        Err(CompilerError::codegen_error(
+            format!("Input static method '{}' should be handled by MIR codegen, not legacy AST codegen", method_name),
+            None,
+            None
+        ))
     }
 
     fn generate_file_static_method(

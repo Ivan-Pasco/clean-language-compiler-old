@@ -1,6 +1,0 @@
-functions:
-	void testFunc()
-		print("Hello")
-
-start()
-	testFunc()

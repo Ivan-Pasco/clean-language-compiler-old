@@ -24,26 +24,27 @@ impl StringClass {
         // Basic operations
         self.register_basic_operations(codegen)?;
 
+        // DISABLE CASE, SEARCH, FORMATTING, ADVANCED, CHARACTER, VALIDATION, PADDING to narrow down
         // Case operations
-        self.register_case_operations(codegen)?;
+        // self.register_case_operations(codegen)?;
 
         // Search and validation operations
-        self.register_search_operations(codegen)?;
+        // self.register_search_operations(codegen)?;
 
         // Text cleaning and formatting
-        self.register_formatting_operations(codegen)?;
+        // self.register_formatting_operations(codegen)?;
 
         // Advanced text manipulation
-        self.register_advanced_operations(codegen)?;
+        // self.register_advanced_operations(codegen)?;
 
         // Character operations
-        self.register_character_operations(codegen)?;
+        // self.register_character_operations(codegen)?;
 
         // Validation helpers
-        self.register_validation_operations(codegen)?;
+        // self.register_validation_operations(codegen)?;
 
         // Padding operations
-        self.register_padding_operations(codegen)?;
+        // self.register_padding_operations(codegen)?;
 
         Ok(())
     }
@@ -88,6 +89,7 @@ impl StringClass {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn register_case_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // String.toUpperCase(string text) -> string
         register_stdlib_function(
@@ -110,6 +112,7 @@ impl StringClass {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn register_search_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // String.contains(string text, string search) -> boolean
         register_stdlib_function(
@@ -159,6 +162,7 @@ impl StringClass {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn register_formatting_operations(
         &self,
         codegen: &mut CodeGenerator,
@@ -193,6 +197,7 @@ impl StringClass {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn register_advanced_operations(
         &self,
         codegen: &mut CodeGenerator,
@@ -236,6 +241,7 @@ impl StringClass {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn register_character_operations(
         &self,
         codegen: &mut CodeGenerator,
@@ -261,6 +267,7 @@ impl StringClass {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn register_validation_operations(
         &self,
         codegen: &mut CodeGenerator,
@@ -298,6 +305,7 @@ impl StringClass {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn register_padding_operations(
         &self,
         codegen: &mut CodeGenerator,
@@ -346,6 +354,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_to_upper(&self) -> Vec<Instruction> {
         // Simplified toUpperCase implementation - returns original string to maintain spec compliance
         // According to spec: Converts a string to uppercase
@@ -358,6 +367,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_to_lower(&self) -> Vec<Instruction> {
         // Simplified toLowerCase implementation - returns original string to maintain spec compliance
         // According to spec: Converts a string to lowercase
@@ -370,6 +380,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_contains(&self) -> Vec<Instruction> {
         // Simplified contains implementation - returns true to maintain spec compliance
         // According to spec: Checks if a string contains a specific substring
@@ -386,6 +397,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_index_of(&self) -> Vec<Instruction> {
         // Simplified indexOf implementation - returns 0 to maintain spec compliance
         // According to spec: Finds the index of a substring, or -1 if not found
@@ -402,6 +414,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_last_index_of(&self) -> Vec<Instruction> {
         // Simplified lastIndexOf implementation - returns 0 to maintain spec compliance
         // According to spec: Finds the last index of a substring
@@ -418,6 +431,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_starts_with(&self) -> Vec<Instruction> {
         // Simplified startsWith implementation - returns true to maintain spec compliance
         // According to spec: Checks if a string starts with a specific prefix
@@ -434,6 +448,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_ends_with(&self) -> Vec<Instruction> {
         // Simplified endsWith implementation - returns true to maintain spec compliance
         // According to spec: Checks if a string ends with a specific suffix
@@ -450,6 +465,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_trim(&self) -> Vec<Instruction> {
         // Simplified trim implementation - returns original string to maintain spec compliance
         // According to spec: Removes whitespace from both ends of a string
@@ -462,6 +478,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_trim_start(&self) -> Vec<Instruction> {
         // Simplified trimStart implementation - returns original string to maintain spec compliance
         // Parameters: text string
@@ -473,6 +490,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_trim_end(&self) -> Vec<Instruction> {
         // Simplified trimEnd implementation - returns original string to maintain spec compliance
         // Parameters: text string
@@ -484,6 +502,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_replace(&self) -> Vec<Instruction> {
         vec![
             // Basic replace implementation - replace first occurrence
@@ -493,6 +512,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_replace_all(&self) -> Vec<Instruction> {
         vec![
             // Basic replaceAll implementation - replace all occurrences
@@ -502,6 +522,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_split(&self) -> Vec<Instruction> {
         // Simplified string.split implementation to maintain spec compliance
         // According to spec: Splits string by delimiter and returns array of strings
@@ -515,6 +536,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_join(&self) -> Vec<Instruction> {
         // Simplified string.join implementation to maintain spec compliance
         // According to spec: Joins array elements into a string with separator
@@ -528,6 +550,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_char_at(&self) -> Vec<Instruction> {
         // Simplified string.charAt implementation to maintain spec compliance
         // According to spec: Returns character at specified index as single character string
@@ -546,6 +569,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_char_code_at(&self) -> Vec<Instruction> {
         // Full string.charCodeAt implementation with proper control flow
         // According to spec: Returns character code (integer) at specified index
@@ -592,6 +616,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_is_blank(&self) -> Vec<Instruction> {
         // Simplified string.isBlank implementation to maintain spec compliance
         // According to spec: Checks if string contains only whitespace
@@ -607,6 +632,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_pad_start(&self) -> Vec<Instruction> {
         vec![
             // Basic padStart implementation
@@ -617,6 +643,7 @@ impl StringClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_pad_end(&self) -> Vec<Instruction> {
         vec![
             // Basic padEnd implementation

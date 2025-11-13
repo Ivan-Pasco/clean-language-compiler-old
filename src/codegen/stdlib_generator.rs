@@ -74,7 +74,9 @@ impl StdlibGenerator {
         self.register_file_operations()?;
         self.register_basic_array_get_fallback()?;
         self.pre_allocate_conversion_strings()?;
-        self.register_console_operations()?;
+        // REMOVED: This was calling mod.rs implementation which creates ConsoleOperations
+        // builtin_generator.rs already calls the correct import registration
+        // self.register_console_operations()?;
         self.register_http_operations()?;
         self.register_math_operations()?;
         self.register_string_class_operations()?;
@@ -284,12 +286,24 @@ mod tests {
         assert!(stdlib_gen.register_stdlib_functions().is_ok());
 
         // Verify some functions are registered
-        assert!(stdlib_gen.is_function_registered("sin"));
-        assert!(stdlib_gen.is_function_registered("print"));
-        assert!(stdlib_gen.is_function_registered("toString"));
+        // Note: print is an import, not a stdlib function, so it won't be in registered_functions
+        assert!(
+            stdlib_gen.is_function_registered("sin"),
+            "Math function 'sin' should be registered"
+        );
+        assert!(
+            stdlib_gen.is_function_registered("toString"),
+            "Type conversion function 'toString' should be registered"
+        );
+        // Note: Many other functions are registered but have different names than expected
 
-        // Test function count
-        assert!(stdlib_gen.get_function_count() > 0);
+        // Test function count - should have many functions registered
+        let count = stdlib_gen.get_function_count();
+        assert!(
+            count > 10,
+            "Should have at least 10 functions registered, got {}",
+            count
+        );
     }
 
     #[test]

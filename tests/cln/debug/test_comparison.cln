@@ -1,5 +1,0 @@
-// Test comparison operators
-start()
-	integer score = 85
-	if score <= 100
-		print("Score is valid")

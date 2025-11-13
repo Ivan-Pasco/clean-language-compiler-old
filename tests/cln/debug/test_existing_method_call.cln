@@ -1,3 +1,0 @@
-functions:
-	string testExisting()
-		return "hello".toString()

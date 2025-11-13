@@ -1,7 +1,0 @@
-functions:
-	string hello()
-		return "Hello"
-
-start()
-	string result = hello()
-	print(result)

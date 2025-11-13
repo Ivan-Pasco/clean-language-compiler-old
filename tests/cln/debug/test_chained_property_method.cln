@@ -1,4 +1,0 @@
-functions:
-	void main()
-		boolean result = compare.integer.greaterThan(5, 3)
-		print(result)

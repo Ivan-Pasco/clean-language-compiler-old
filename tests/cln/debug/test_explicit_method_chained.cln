@@ -1,5 +1,0 @@
-functions:
-	void main()
-		integer obj = 10
-		boolean result = compare.integer.greaterThan(obj, 5)
-		print(result)

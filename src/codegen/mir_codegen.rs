@@ -523,6 +523,24 @@ impl<'a> MirCodeGenerator<'a> {
             instructions = self.current_instructions.len(),
             "Creating WASM function"
         );
+        // CRITICAL FIX: For void functions, check if we need to drop a value
+        // This prevents "type mismatch at end of function, expected [] but got [X]" errors
+        let is_void_function = matches!(function.return_type, MirType::Void)
+            || matches!(&function.return_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
+
+        eprintln!(
+            "DEBUG VOID FUNCTION CHECK: Function '{}', is_void={}, has {} instructions",
+            function.name,
+            is_void_function,
+            self.current_instructions.len()
+        );
+        if is_void_function && self.current_instructions.len() >= 10 {
+            eprintln!("DEBUG LAST 10 INSTRUCTIONS:");
+            for (i, inst) in self.current_instructions.iter().rev().take(10).enumerate() {
+                eprintln!("  [-{}]: {:?}", i + 1, inst);
+            }
+        }
+
         eprintln!(
             "DEBUG BEFORE COPY TO WASM_FUNCTION: Function '{}' has {} instructions, {} local_types",
             function.name,
@@ -548,37 +566,22 @@ impl<'a> MirCodeGenerator<'a> {
             function.name, instruction_count
         );
 
-        // CRITICAL FIX: For void functions, check if we need to drop a value
-        // This prevents "type mismatch at end of function, expected [] but got [X]" errors
-        let is_void_function = matches!(function.return_type, MirType::Void)
-            || matches!(&function.return_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
+        // NOTE: Void functions don't need a final DROP instruction.
+        // With structured control flow generation, all execution paths are properly handled:
+        // - Paths with explicit returns will have Return instructions
+        // - Paths that fall through will naturally END the function (valid for void functions)
+        // Adding a DROP here causes validation errors when the stack is already empty.
 
-        if is_void_function && !self.current_instructions.is_empty() {
-            // Check if the very last instruction is a Return
-            // Void functions that don't end with an explicit return will have their last
-            // expression statement leave a value on the stack that needs to be dropped
-            let last_is_return = self
-                .current_instructions
-                .last()
-                .map(|inst| matches!(inst, Instruction::Return))
-                .unwrap_or(false);
-
-            if !last_is_return {
-                // The function doesn't end with an explicit return, so it falls through
-                // We need to ensure the stack is empty before END
-                // Add DROP to consume any value left by the last expression
-                eprintln!(
-                    "DEBUG VOID DROP: Adding DROP for void function '{}' (last instruction: {:?})",
-                    function.name,
-                    self.current_instructions.last()
-                );
-                wasm_function.instruction(&Instruction::Drop);
-            } else {
-                eprintln!(
-                    "DEBUG VOID DROP: Skipping DROP for '{}' - has explicit return",
-                    function.name
-                );
-            }
+        // CONSTRUCTOR FIX: Add implicit return of 'this' pointer for constructors
+        // Constructors must return the instance pointer (i32) which is parameter 0
+        let is_constructor =
+            function.name == "constructor" || function.name.ends_with(".constructor");
+        if is_constructor {
+            eprintln!(
+                "DEBUG CONSTRUCTOR: Adding implicit return of 'this' for constructor '{}'",
+                function.name
+            );
+            wasm_function.instruction(&Instruction::LocalGet(0));
         }
 
         // CRITICAL: Add END instruction to properly close the function
@@ -642,12 +645,103 @@ impl<'a> MirCodeGenerator<'a> {
 
     /// Helper function to check if a block and all its successors eventually return
     /// Returns true if all execution paths from this block lead to a return
+    /// Check if a block directly returns (without following Jump terminators).
+    /// This is used to determine if an if-else branch exits via return/unreachable,
+    /// versus exiting via a Jump to a continuation block.
+    fn block_directly_returns(&self, function: &MirFunction, block_id: BasicBlockId) -> bool {
+        let mut visited = std::collections::HashSet::new();
+        self.block_directly_returns_recursive(function, block_id, &mut visited)
+    }
+
+    fn block_directly_returns_recursive(
+        &self,
+        function: &MirFunction,
+        block_id: BasicBlockId,
+        visited: &mut std::collections::HashSet<BasicBlockId>,
+    ) -> bool {
+        // Prevent infinite loops
+        if visited.contains(&block_id) {
+            return false;
+        }
+        visited.insert(block_id);
+
+        let block = match function.blocks.get(&block_id) {
+            Some(b) => b,
+            None => return false,
+        };
+
+        match &block.terminator {
+            MirTerminator::Return { .. } | MirTerminator::Unreachable => true,
+            MirTerminator::Branch {
+                true_block,
+                false_block,
+                ..
+            } => {
+                // Both branches must directly return
+                self.block_directly_returns_recursive(function, *true_block, visited)
+                    && self.block_directly_returns_recursive(function, *false_block, visited)
+            }
+            MirTerminator::Jump { .. } => {
+                // Jump means this branch exits to a continuation - NOT a direct return
+                false
+            }
+        }
+    }
+
+    /// Helper function to check if false_block is a continuation (not a real else clause).
+    /// A false_block is a continuation if:
+    /// 1. It's empty (no instructions) with Unreachable/Jump/Return terminator, OR
+    /// 2. The true_block jumps directly to it (indicating no else clause in source)
+    /// This is used to detect when an if statement has NO else clause.
+    fn is_continuation_not_else(
+        &self,
+        function: &MirFunction,
+        true_block: BasicBlockId,
+        false_block: BasicBlockId,
+    ) -> bool {
+        let false_blk = match function.blocks.get(&false_block) {
+            Some(b) => b,
+            None => return false,
+        };
+
+        // Check #1: Empty block with simple terminator
+        if false_blk.instructions.is_empty() {
+            match &false_blk.terminator {
+                MirTerminator::Unreachable | MirTerminator::Jump { .. } => return true,
+                MirTerminator::Return { value } => {
+                    // Empty continuation if returning nothing or undefined
+                    if matches!(
+                        value,
+                        None | Some(MirOperand::Constant(MirConstant::Undefined))
+                    ) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Check #2: True branch jumps to false_block
+        if let Some(true_blk) = function.blocks.get(&true_block) {
+            if let MirTerminator::Jump { target } = &true_blk.terminator {
+                if *target == false_block {
+                    // True branch jumps to false_block, so false_block is continuation
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    #[allow(dead_code)]
     fn block_always_returns(&self, function: &MirFunction, block_id: BasicBlockId) -> bool {
         let mut visited = std::collections::HashSet::new();
         let mut on_stack = std::collections::HashSet::new();
         self.block_always_returns_recursive(function, block_id, &mut visited, &mut on_stack)
     }
 
+    #[allow(dead_code)]
     fn block_always_returns_recursive(
         &self,
         function: &MirFunction,
@@ -711,6 +805,137 @@ impl<'a> MirCodeGenerator<'a> {
     }
 
     /// Generate structured control flow for blocks
+    /// Generate a branch block body (for if/else branches) without following Jump terminators.
+    /// Jump terminators in branch blocks represent exits to continuation blocks that should
+    /// be generated after the if-else structure, not inside the branch.
+    fn generate_branch_block(
+        &mut self,
+        function: &MirFunction,
+        block_id: BasicBlockId,
+        generated: &mut std::collections::HashSet<BasicBlockId>,
+    ) -> Result<(), CompilerError> {
+        // Skip if already generated
+        if generated.contains(&block_id) {
+            return Ok(());
+        }
+        generated.insert(block_id);
+
+        let block = match function.blocks.get(&block_id) {
+            Some(b) => b,
+            None => return Ok(()),
+        };
+
+        // Generate block instructions
+        for instruction in &block.instructions {
+            self.generate_instruction(instruction)?;
+        }
+
+        // Handle terminator - but DON'T follow Jump terminators (those are exits to continuations)
+        match &block.terminator {
+            MirTerminator::Return { value } => {
+                if let Some(return_value) = value {
+                    if !matches!(return_value, MirOperand::Constant(MirConstant::Undefined)) {
+                        self.load_operand(return_value)?;
+                    }
+                }
+                self.current_instructions.push(Instruction::Return);
+            }
+
+            MirTerminator::Jump { .. } => {
+                // Don't follow jumps in branch blocks - they jump to continuations
+                // The continuation will be generated after the if-else structure
+            }
+
+            MirTerminator::Branch {
+                condition,
+                true_block,
+                false_block,
+            } => {
+                // Check if false_block is a continuation (no else clause in source)
+                let has_else_clause =
+                    !self.is_continuation_not_else(function, *true_block, *false_block);
+
+                // Nested if-else: generate it fully (including its own continuation handling)
+                self.load_operand(condition)?;
+                self.current_instructions
+                    .push(Instruction::If(BlockType::Empty));
+
+                self.generate_branch_block(function, *true_block, generated)?;
+
+                // Only generate else clause if false_block is NOT an empty continuation
+                if has_else_clause {
+                    self.current_instructions.push(Instruction::Else);
+                    self.generate_branch_block(function, *false_block, generated)?;
+                }
+
+                self.current_instructions.push(Instruction::End);
+
+                // After generating nested if-else, check if there's a continuation to inline.
+                // If both branches jump to the same continuation, generate it inline.
+                // If one branch returns and the other jumps, generate the jumped-to continuation.
+                let true_has_return = self.block_directly_returns(function, *true_block);
+                let false_has_return = if has_else_clause {
+                    self.block_directly_returns(function, *false_block)
+                } else {
+                    false // No else clause means false branch doesn't return
+                };
+
+                if true_has_return && false_has_return {
+                    // Both nested branches return - add unreachable
+                    self.current_instructions.push(Instruction::Unreachable);
+                } else {
+                    // Find continuation block (if any) to inline
+                    let mut continuation: Option<BasicBlockId> = None;
+
+                    if !true_has_return {
+                        if let Some(true_blk) = function.blocks.get(true_block) {
+                            if let MirTerminator::Jump { target } = &true_blk.terminator {
+                                continuation = Some(*target);
+                            }
+                        }
+                    }
+
+                    if !false_has_return && has_else_clause {
+                        if let Some(false_blk) = function.blocks.get(false_block) {
+                            if let MirTerminator::Jump { target } = &false_blk.terminator {
+                                // If true branch also jumps, verify same target
+                                if let Some(true_cont) = continuation {
+                                    if true_cont == *target {
+                                        // Both jump to same place - inline it
+                                        continuation = Some(*target);
+                                    } else {
+                                        // Different targets - don't inline
+                                        continuation = None;
+                                    }
+                                } else {
+                                    continuation = Some(*target);
+                                }
+                            }
+                        }
+                    }
+
+                    // If no else clause, false branch goes to continuation directly
+                    if !has_else_clause && continuation.is_none() {
+                        continuation = Some(*false_block);
+                    }
+
+                    // Inline continuation if found
+                    if let Some(cont) = continuation {
+                        self.generate_branch_block(function, cont, generated)?;
+                    }
+                }
+            }
+
+            MirTerminator::Unreachable => {
+                // CRITICAL FIX: Skip adding Unreachable - see comment in generate_structured_blocks
+                // MirTerminator::Unreachable is a placeholder that should not generate WASM Unreachable
+                // for void functions ending naturally.
+            }
+        }
+
+        Ok(())
+    }
+
     fn generate_structured_blocks(
         &mut self,
         function: &MirFunction,
@@ -754,53 +979,92 @@ impl<'a> MirCodeGenerator<'a> {
                 true_block,
                 false_block,
             } => {
+                // Check if false_block is a continuation (no else clause in source)
+                let has_else_clause =
+                    !self.is_continuation_not_else(function, *true_block, *false_block);
+
                 // Generate if/else structure
                 self.load_operand(condition)?;
                 self.current_instructions
                     .push(Instruction::If(BlockType::Empty));
 
-                // CRITICAL FIX: Use generate_structured_blocks instead of generate_block_body
-                // to properly handle nested control flow (if statements inside loops)
-                // generate_block_body skips Branch terminators, which causes nested if statements
-                // to be lost, leaving function call results on the stack
-                self.generate_structured_blocks(function, *true_block, generated)?;
+                // Use generate_branch_block to avoid following Jump terminators inside branches
+                self.generate_branch_block(function, *true_block, generated)?;
 
-                self.current_instructions.push(Instruction::Else);
-
-                // Generate false branch with nested control flow support
-                self.generate_structured_blocks(function, *false_block, generated)?;
+                // Only generate else clause if false_block is NOT an empty continuation
+                if has_else_clause {
+                    self.current_instructions.push(Instruction::Else);
+                    self.generate_branch_block(function, *false_block, generated)?;
+                }
 
                 self.current_instructions.push(Instruction::End);
 
-                // Check if both branches eventually return (recursively)
-                let true_has_return = self.block_always_returns(function, *true_block);
-                let false_has_return = self.block_always_returns(function, *false_block);
+                // Check if both branches directly return (without following Jumps to continuations)
+                let true_has_return = self.block_directly_returns(function, *true_block);
+                let false_has_return = if has_else_clause {
+                    self.block_directly_returns(function, *false_block)
+                } else {
+                    false // No else clause means false branch doesn't return
+                };
 
                 if true_has_return && false_has_return {
                     // Both branches return - add unreachable to indicate code after if-else is never reached
                     self.current_instructions.push(Instruction::Unreachable);
                 } else {
-                    // Find and generate continuation block (where both branches jump to)
-                    if let Some(true_blk) = function.blocks.get(true_block) {
-                        if let MirTerminator::Jump { target: cont } = &true_blk.terminator {
+                    // Find and generate continuation block
+                    // We need to find the continuation that at least one non-returning branch jumps to
+                    let mut continuation: Option<BasicBlockId> = None;
+
+                    // Check if true branch jumps to a continuation
+                    if !true_has_return {
+                        if let Some(true_blk) = function.blocks.get(true_block) {
+                            if let MirTerminator::Jump { target } = &true_blk.terminator {
+                                continuation = Some(*target);
+                            }
+                        }
+                    }
+
+                    // Check if false branch jumps to a continuation (should be same as true if both jump)
+                    if !false_has_return {
+                        if has_else_clause {
+                            // Real else clause - check where it jumps
                             if let Some(false_blk) = function.blocks.get(false_block) {
-                                if let MirTerminator::Jump { target: cont2 } = &false_blk.terminator
-                                {
-                                    if cont == cont2 {
-                                        // Both branches jump to same continuation
-                                        self.generate_structured_blocks(
-                                            function, *cont, generated,
-                                        )?;
+                                if let MirTerminator::Jump { target } = &false_blk.terminator {
+                                    if continuation.is_none() {
+                                        continuation = Some(*target);
+                                    } else {
+                                        // Both branches jump - verify they jump to the same place
+                                        debug_assert_eq!(continuation, Some(*target),
+                                            "Both branches jump but to different continuations - this indicates a CFG issue");
                                     }
                                 }
                             }
+                        } else {
+                            // No else clause - false_block IS the continuation
+                            if continuation.is_none() {
+                                continuation = Some(*false_block);
+                            }
                         }
+                    }
+
+                    // Generate the continuation block if we found one
+                    if let Some(cont) = continuation {
+                        self.generate_structured_blocks(function, cont, generated)?;
                     }
                 }
             }
 
             MirTerminator::Unreachable => {
-                self.current_instructions.push(Instruction::Unreachable);
+                // CRITICAL FIX: Only add Unreachable for truly unreachable code (inside branches with both returning)
+                // For void functions that reach the end naturally, we should NOT add Unreachable.
+                // The function will end with the End instruction added later.
+                //
+                // We only add Unreachable here if this block is NOT reachable from normal control flow.
+                // Since MirTerminator::Unreachable is used as a placeholder during MIR construction,
+                // reaching it at the end of function generation means the function ends naturally.
+                // For void functions, this is valid - no Unreachable needed.
+                //
+                // Skip adding Unreachable - let function end naturally with End instruction
             }
         }
 
@@ -1072,14 +1336,21 @@ impl<'a> MirCodeGenerator<'a> {
                 // CRITICAL FIX: String expansion should only happen for built-in functions
                 // User-defined functions receive string pointers (to [len|content] structure)
                 // Functions that need string arguments expanded to (content_ptr, len)
+                eprintln!(
+                    "DEBUG FUNCTION MATCH: function_name={:?}, arguments={}",
+                    function_name,
+                    arguments.len()
+                );
                 match function_name.as_deref() {
                     Some("print") | Some("printl") | Some("println") => {
+                        eprintln!("DEBUG: Matched print function");
                         // Print functions need string arguments expanded to (content_ptr, length)
                         for arg in arguments {
                             self.load_string_argument_for_print(arg)?;
                         }
                     }
                     Some("string_concat") => {
+                        eprintln!("DEBUG: Matched string_concat");
                         // string_concat expects 4 i32 arguments: (str1_ptr, str1_len, str2_ptr, str2_len) -> result_ptr
                         // Just like print functions, we need to expand StringTuple to (ptr, len) pairs
                         for arg in arguments {
@@ -1090,10 +1361,15 @@ impl<'a> MirCodeGenerator<'a> {
                     | Some("input_string")
                     | Some("input_integer")
                     | Some("input_float")
-                    | Some("input_yesno") => {
-                        // Input functions expect (prompt_ptr, prompt_len) -> result_ptr
+                    | Some("input_yesno")
+                    | Some("input.integer")  // Dot notation variants
+                    | Some("input.float")
+                    | Some("input.yesNo") => {
+                        eprintln!("DEBUG: Matched input function - using load_string_pointer_only");
+                        // FIXED: Input functions now expect only (prompt_ptr) -> result
+                        // They no longer take length parameter
                         for arg in arguments {
-                            self.load_string_argument_for_print(arg)?;
+                            self.load_string_pointer_only(arg)?;
                         }
                     }
                     Some("input_range") => {
@@ -1385,14 +1661,40 @@ impl<'a> MirCodeGenerator<'a> {
                             "DEBUG NAMED FUNCTION: Looking up function '{}' in function_map",
                             name
                         );
-                        if let Some(&function_index) = self.wasm_generator.function_map.get(name) {
+
+                        // Try direct lookup first
+                        let function_index =
+                            if let Some(&idx) = self.wasm_generator.function_map.get(name) {
+                                Some(idx)
+                            } else {
+                                // CRITICAL FIX: Try underscore/dot conversion
+                                // "input.integer" -> "input_integer" or vice versa
+                                let alt_name = if name.contains('.') {
+                                    name.replace('.', "_")
+                                } else if name.contains('_') {
+                                    name.replace('_', ".")
+                                } else {
+                                    String::new()
+                                };
+
+                                if !alt_name.is_empty() {
+                                    eprintln!(
+                                        "DEBUG NAMED FUNCTION FALLBACK: Trying alternate name '{}'",
+                                        alt_name
+                                    );
+                                    self.wasm_generator.function_map.get(&alt_name).copied()
+                                } else {
+                                    None
+                                }
+                            };
+
+                        if let Some(idx) = function_index {
                             tracing::trace!(
                                 name = %name,
-                                index = function_index,
+                                index = idx,
                                 "Calling named function at WASM index"
                             );
-                            self.current_instructions
-                                .push(Instruction::Call(function_index));
+                            self.current_instructions.push(Instruction::Call(idx));
                         } else {
                             // CRITICAL FIX: Return a proper error when named function is not found
                             eprintln!(
@@ -2056,6 +2358,92 @@ impl<'a> MirCodeGenerator<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    /// Load string pointer only (for input functions that don't need length)
+    fn load_string_pointer_only(&mut self, operand: &MirOperand) -> Result<(), CompilerError> {
+        tracing::trace!(
+            operand = ?operand,
+            "load_string_pointer_only called"
+        );
+        match operand {
+            MirOperand::Constant(MirConstant::String(index)) => {
+                // For string constants, push the pointer to the string structure
+                if let Some(string_pool) = &self.string_pool {
+                    if let Some(string_content) = string_pool.get(*index) {
+                        let data_offset = self
+                            .wasm_generator
+                            .get_or_create_string_offset(string_content)?;
+                        // Push pointer to string structure (includes length prefix)
+                        self.current_instructions
+                            .push(Instruction::I32Const(data_offset as i32));
+                    } else {
+                        return Err(CompilerError::Codegen {
+                            context: Box::new(crate::error::ErrorContext::new(
+                                format!("String constant {} not found in string pool", index),
+                                None,
+                                crate::error::ErrorType::Codegen,
+                                Some(crate::ast::SourceLocation::default()),
+                            )),
+                        });
+                    }
+                } else {
+                    return Err(CompilerError::Codegen {
+                        context: Box::new(crate::error::ErrorContext::new(
+                            "String pool not initialized for input function call".to_string(),
+                            None,
+                            crate::error::ErrorType::Codegen,
+                            Some(crate::ast::SourceLocation::default()),
+                        )),
+                    });
+                }
+            }
+            MirOperand::Value(value_id) => {
+                // Check if this value represents a string constant
+                if let Some(&string_index) = self.value_to_string_index.get(value_id) {
+                    // This value is a string constant - push pointer only
+                    if let Some(string_pool) = &self.string_pool {
+                        if let Some(string_content) = string_pool.get(string_index) {
+                            let data_offset = self
+                                .wasm_generator
+                                .get_or_create_string_offset(string_content)?;
+                            // Push pointer to string structure
+                            self.current_instructions
+                                .push(Instruction::I32Const(data_offset as i32));
+                        } else {
+                            return Err(CompilerError::Codegen {
+                                context: Box::new(crate::error::ErrorContext::new(
+                                    format!(
+                                        "String index {} not found in string pool",
+                                        string_index
+                                    ),
+                                    None,
+                                    crate::error::ErrorType::Codegen,
+                                    Some(crate::ast::SourceLocation::default()),
+                                )),
+                            });
+                        }
+                    } else {
+                        return Err(CompilerError::Codegen {
+                            context: Box::new(crate::error::ErrorContext::new(
+                                "String pool not initialized for input function call".to_string(),
+                                None,
+                                crate::error::ErrorType::Codegen,
+                                Some(crate::ast::SourceLocation::default()),
+                            )),
+                        });
+                    }
+                } else {
+                    // This is a string pointer value - just load it as-is
+                    self.load_operand(operand)?;
+                }
+            }
+            _ => {
+                // For other operand types, just load normally
+                self.load_operand(operand)?;
+            }
+        }
         Ok(())
     }
 
@@ -3088,16 +3476,6 @@ impl<'a> MirCodeGenerator<'a> {
         // Function names can collide (e.g., top-level start() and Vehicle.start() method)
         // but SymbolIds are unique
         if let Some(entry_function_index) = self.symbol_to_function_index.get(&entry_symbol_id) {
-            eprintln!(
-                "DEBUG MIR _start: Will call start() function at index {}",
-                entry_function_index
-            );
-            eprintln!(
-                "DEBUG MIR _start: Total imports = {}, Total functions = {}",
-                self.wasm_generator.imported_functions.len(),
-                self.wasm_generator.function_names.len()
-            );
-
             // Create a _start function that calls the entry function
             let type_index = self
                 .wasm_generator
@@ -3109,10 +3487,6 @@ impl<'a> MirCodeGenerator<'a> {
             // Call the start function
             // NOTE: entry_function_index from function_map is ALREADY absolute (includes imports)
             // because function_count is incremented for both imports and user functions
-            eprintln!(
-                "DEBUG MIR _start: Calling start() at WASM index {}",
-                entry_function_index
-            );
             instructions.push(Instruction::Call(*entry_function_index));
             // CRITICAL FIX: Only drop return value if the function actually returns something
             // The start function is void, so there's nothing to drop
@@ -3130,8 +3504,9 @@ impl<'a> MirCodeGenerator<'a> {
             self.wasm_generator.code_section.function(&start_function);
 
             // Export as _start
-            let start_func_index = self.wasm_generator.imported_functions.len() as u32
-                + self.wasm_generator.function_names.len() as u32;
+            // CRITICAL FIX: _start is the NEXT function after all existing functions
+            // Use function_count which tracks all functions (imports + defined functions)
+            let start_func_index = self.wasm_generator.function_count;
             self.wasm_generator.export_section.export(
                 "_start",
                 wasm_encoder::ExportKind::Func,

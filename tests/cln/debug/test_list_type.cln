@@ -1,8 +1,0 @@
-functions:
-	void testListType()
-		list<string> tasks = []
-		tasks.type = "line"
-		tasks.add("Task 1")
-		while tasks.size() > 0
-			string currentTask = tasks.remove()
-			print("Processing: " + currentTask)

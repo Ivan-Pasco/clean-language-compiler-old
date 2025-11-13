@@ -1,8 +1,0 @@
-functions:
-	string firstFunction()
-		if true
-			return "yes"
-		return "no"
-
-	string secondFunction()
-		return "works"

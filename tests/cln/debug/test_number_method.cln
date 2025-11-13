@@ -1,4 +1,0 @@
-functions:
-	string testNumber()
-		integer num = 42
-		return num.toString()

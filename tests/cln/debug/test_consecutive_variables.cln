@@ -1,4 +1,0 @@
-start()
-	integer count = 0
-	number value = 3.14
-	string message = "test"

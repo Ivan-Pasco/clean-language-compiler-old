@@ -1,4 +1,0 @@
-functions:
-	void test()
-		println:
-			"Hello"

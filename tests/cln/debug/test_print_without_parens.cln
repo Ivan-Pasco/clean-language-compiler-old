@@ -1,4 +1,0 @@
-functions:
-	void test()
-		string text = "Hello"
-		print "Done"

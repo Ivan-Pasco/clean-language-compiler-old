@@ -1,7 +1,0 @@
-functions:
-	test()
-		println:
-			"test message"
-
-start()
-	test()

@@ -1902,94 +1902,8 @@ impl CodeGenerator {
                     return self.generate_type_conversion_method(object, method, instructions);
                 }
 
-                // Check for console input method calls
-                if let Expression::Variable(var_name) = object.as_ref() {
-                    if var_name == "input" {
-                        return match method.as_str() {
-                            "integer" => {
-                                if arguments.len() != 1 {
-                                    return Err(CompilerError::codegen_error(
-                                        "input.integer() expects 1 argument",
-                                        None,
-                                        None,
-                                    ));
-                                }
-
-                                // Generate the string argument and convert to ptr+len
-                                self.generate_string_for_import(&arguments[0], instructions)?;
-
-                                // Call the imported function
-                                if let Some(&function_index) =
-                                    self.function_map.get("input.integer")
-                                {
-                                    instructions.push(Instruction::Call(function_index));
-                                    Ok(WasmType::I32) // Returns integer
-                                } else {
-                                    Err(CompilerError::codegen_error(
-                                        "input.integer function not found",
-                                        None,
-                                        None,
-                                    ))
-                                }
-                            }
-                            "number" => {
-                                if arguments.len() != 1 {
-                                    return Err(CompilerError::codegen_error(
-                                        "input.number() expects 1 argument",
-                                        None,
-                                        None,
-                                    ));
-                                }
-
-                                // Generate the string argument and convert to ptr+len
-                                self.generate_string_for_import(&arguments[0], instructions)?;
-
-                                // Call the imported function
-                                if let Some(&function_index) = self.function_map.get("input.number")
-                                {
-                                    instructions.push(Instruction::Call(function_index));
-                                    Ok(WasmType::F64) // Returns number
-                                } else {
-                                    Err(CompilerError::codegen_error(
-                                        "input.number function not found",
-                                        None,
-                                        None,
-                                    ))
-                                }
-                            }
-                            "yesNo" => {
-                                if arguments.len() != 1 {
-                                    return Err(CompilerError::codegen_error(
-                                        "input.yesNo() expects 1 argument",
-                                        None,
-                                        None,
-                                    ));
-                                }
-
-                                // Generate the string argument and convert to ptr+len
-                                self.generate_string_for_import(&arguments[0], instructions)?;
-
-                                // Call the imported function
-                                if let Some(&function_index) = self.function_map.get("input.yesNo")
-                                {
-                                    instructions.push(Instruction::Call(function_index));
-                                    Ok(WasmType::I32) // Returns boolean (as i32)
-                                } else {
-                                    Err(CompilerError::codegen_error(
-                                        "input.yesNo function not found",
-                                        None,
-                                        None,
-                                    ))
-                                }
-                            }
-                            _ => Err(CompilerError::codegen_error(
-                                format!("Unknown input method: {method}"),
-                                None,
-                                None,
-                            )),
-                        };
-                    }
-                }
+                // OLD CODE PATH DELETED - Input method calls now handled by MIR codegen
+                // with single-parameter (ptr only) signature per system specification
 
                 // Check for built-in module calls first
                 if let Expression::Variable(module_name) = object.as_ref() {
@@ -4846,17 +4760,21 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Register console operation functions using ConsoleOperations class
-    #[allow(dead_code)]
-    fn register_console_operations(&mut self) -> Result<(), CompilerError> {
-        use crate::stdlib::console_ops::ConsoleOperations;
-
-        // Create a ConsoleOperations instance and register its functions
-        let console_ops = ConsoleOperations::new(65536); // Use same heap start as other operations
-        console_ops.register_functions(self)?;
-
-        Ok(())
-    }
+    // REMOVED: register_console_operations - obsolete duplicate code
+    // ConsoleOperations from console_ops.rs was generating buggy wrapper functions
+    // that called env.input but didn't DROP the i32 return value, causing WASM validation errors.
+    // builtin_generator.rs already registers the correct imports with proper signatures.
+    // /// Register console operation functions using ConsoleOperations class
+    // #[allow(dead_code)]
+    // fn register_console_operations(&mut self) -> Result<(), CompilerError> {
+    //     use crate::stdlib::console_ops::ConsoleOperations;
+    //
+    //     // Create a ConsoleOperations instance and register its functions
+    //     let console_ops = ConsoleOperations::new(65536); // Use same heap start as other operations
+    //     console_ops.register_functions(self)?;
+    //
+    //     Ok(())
+    // }
 
     /// Register HTTP operation functions using HttpClass
     fn register_http_operations(&mut self) -> Result<(), CompilerError> {
@@ -8109,9 +8027,8 @@ impl CodeGenerator {
     /// Register console input function imports (legacy - not used by MirCodeGenerator)
     #[allow(dead_code)]
     fn register_console_imports(&mut self) -> Result<(), CompilerError> {
-        // input(prompt_ptr: i32, prompt_len: i32) -> string_ptr: i32
-        let input_type =
-            self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
+        // input(prompt_ptr: i32) -> string_ptr: i32
+        let input_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
         self.import_section.import(
             "env",
             "input",
@@ -8121,9 +8038,8 @@ impl CodeGenerator {
             .insert("input".to_string(), self.function_count);
         self.function_count += 1;
 
-        // input_integer(prompt_ptr: i32, prompt_len: i32) -> integer: i32
-        let input_integer_type =
-            self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
+        // input_integer(prompt_ptr: i32) -> integer: i32
+        let input_integer_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
         self.import_section.import(
             "env",
             "input_integer",
@@ -8133,9 +8049,8 @@ impl CodeGenerator {
             .insert("input.integer".to_string(), self.function_count);
         self.function_count += 1;
 
-        // input_float(prompt_ptr: i32, prompt_len: i32) -> number: f64
-        let input_number_type =
-            self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::F64))?;
+        // input_float(prompt_ptr: i32) -> number: f64
+        let input_number_type = self.add_function_type(&[WasmType::I32], Some(WasmType::F64))?;
         self.import_section.import(
             "env",
             "input_float",
@@ -8145,9 +8060,8 @@ impl CodeGenerator {
             .insert("input.number".to_string(), self.function_count);
         self.function_count += 1;
 
-        // input_yesno(prompt_ptr: i32, prompt_len: i32) -> boolean: i32
-        let input_yesno_type =
-            self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
+        // input_yesno(prompt_ptr: i32) -> boolean: i32
+        let input_yesno_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
         self.import_section.import(
             "env",
             "input_yesno",

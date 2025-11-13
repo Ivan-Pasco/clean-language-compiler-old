@@ -1,9 +1,0 @@
-// Test conditional namespace method call
-functions:
-
-	void testConditional()
-		integer result = conditional.integer(5 > 3, 10, 20)
-		print("Conditional result: ")
-		print(result.toString())
-start()
-	testConditional()

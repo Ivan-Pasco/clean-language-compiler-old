@@ -5,7 +5,8 @@ pub mod plugins;
 
 // Legacy modules (for backward compatibility)
 pub mod basic_ops;
-pub mod console_ops;
+// DISABLED: console_ops module is obsolete duplicate code
+// pub mod console_ops;
 pub mod error;
 pub mod list_ops;
 pub mod matrix_ops;
@@ -49,7 +50,8 @@ pub use async_programming::AsyncProgrammingManager;
 pub use basic_ops::basic_ops::*;
 pub use conditional::ConditionalManager;
 pub use console_input::ConsoleInputManager;
-pub use console_ops::{ConsoleClass, ConsoleOperations};
+// REMOVED EXPORT: ConsoleClass and ConsoleOperations are obsolete duplicate code
+// pub use console_ops::{ConsoleClass, ConsoleOperations};
 pub use default_parameters::DefaultParameterManager;
 pub use error::StdlibError;
 pub use error_handling::ErrorHandlingManager;
@@ -141,8 +143,9 @@ pub struct StandardLibrary {
     import_system: ImportSystemManager,
     #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
-    console_ops: ConsoleOperations,
-    console_class: ConsoleClass,
+    // REMOVED: console_ops and console_class - obsolete duplicate code
+    // console_ops: ConsoleOperations,
+    // console_class: ConsoleClass,
 }
 
 impl Default for StandardLibrary {
@@ -187,8 +190,9 @@ impl StandardLibrary {
             async_programming: AsyncProgrammingManager::new(memory_manager.clone()),
             import_system: ImportSystemManager::new(memory_manager.clone()),
             memory_manager,
-            console_ops: ConsoleOperations::new(HEAP_START),
-            console_class: ConsoleClass::new(),
+            // REMOVED: console_ops and console_class - obsolete duplicate code
+            // console_ops: ConsoleOperations::new(HEAP_START),
+            // console_class: ConsoleClass::new(),
         }
     }
 
@@ -219,11 +223,20 @@ impl StandardLibrary {
         self.math_advanced.register_functions(codegen)?;
         self.file_advanced.register_functions(codegen)?;
         self.http_advanced.register_functions(codegen)?;
-        self.console_input.register_functions(codegen)?;
+        // DISABLED: ConsoleInputManager generates buggy wrapper functions
+        // It registers "input" function with signature (i32)->i32 with 4 local variables
+        // The generated WASM code calls env.input but doesn't properly handle return values
+        // This creates func[63] and func[64] that fail validation with "expected [] but got [i32]"
+        // builtin_generator.rs already registers the correct env.input import
+        // self.console_input.register_functions(codegen)?;
         self.async_programming.register_functions(codegen)?;
         self.import_system.register_functions(codegen)?;
-        self.console_ops.register_functions(codegen)?;
-        self.console_class.register_functions(codegen)?;
+        // REMOVED: console_ops and console_class are obsolete duplicate code
+        // They registered wrapper functions with 2 parameters (ptr, len) that conflicted
+        // with the correct 1-parameter imports in builtin_generator.rs
+        // ConsoleInputManager provides the proper stdlib input functions
+        // self.console_ops.register_functions(codegen)?;
+        // self.console_class.register_functions(codegen)?;
         // All standard library functions registered successfully
         Ok(())
     }

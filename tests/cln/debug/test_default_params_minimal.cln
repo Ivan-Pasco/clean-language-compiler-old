@@ -1,8 +1,0 @@
-// Minimal test for default parameters
-functions:
-	string formatCurrency(number amount, string symbol="$", integer decimals=2)
-		return symbol + amount.toString()
-
-start()
-	string result = formatCurrency(19.99)
-	print(result)

@@ -1,8 +1,0 @@
-// Simple test for logical operations
-
-start()
-	boolean a = true
-	boolean b = false
-	boolean result = logical.and(a, b)
-	print("true AND false: ")
-	print(bool_to_string(result))

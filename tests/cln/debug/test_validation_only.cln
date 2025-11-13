@@ -1,4 +1,0 @@
-// Simple validation test without host functions
-functions:
-	integer simpleTest()
-		return 42

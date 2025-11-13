@@ -1,5 +1,0 @@
-// Test static method call
-start()
-	string text = "hello"
-	boolean empty = string.isEmpty(text)
-	print("Empty: " + empty.toString())

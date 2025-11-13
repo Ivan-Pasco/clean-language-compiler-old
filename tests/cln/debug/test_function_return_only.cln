@@ -1,7 +1,0 @@
-functions:
-	boolean test()
-		return true
-
-start()
-	test()
-	print("done")

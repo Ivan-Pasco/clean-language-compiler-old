@@ -1,4 +1,0 @@
-functions:
-	void main()
-		string s = "hello"
-		s.substring(1, 3)

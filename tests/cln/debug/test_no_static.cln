@@ -1,4 +1,0 @@
-// Test without static method call
-start()
-	string text = "hello"
-	print("Text: " + text)

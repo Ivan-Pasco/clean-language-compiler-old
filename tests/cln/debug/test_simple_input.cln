@@ -1,6 +1,0 @@
-functions:
-	void test()
-		integer result = input.integer("Enter: ")
-
-start()
-	test()

@@ -3350,6 +3350,20 @@ impl<'a> TypeInference<'a> {
                 }
             }
 
+            // Input static methods
+            ("input", "integer") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Integer)
+            }
+            ("input", "float") | ("input", "number") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Number)
+            }
+            ("input", "yesNo") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Boolean)
+            }
+
             // For unknown static method/class combinations, return Unknown
             _ => Ok(ConcreteType::Unknown),
         }

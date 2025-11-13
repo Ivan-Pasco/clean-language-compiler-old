@@ -1,6 +1,0 @@
-functions:
-	string testLiteralMethods()
-		string result = "hello".toString()
-		string n = 42.toString()
-		string b = true.toString()
-		return result

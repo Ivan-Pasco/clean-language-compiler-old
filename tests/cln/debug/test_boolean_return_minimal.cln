@@ -1,7 +1,0 @@
-functions:
-	boolean isEven(integer n)
-		return n % 2 == 0
-
-start()
-	boolean result = isEven(4)
-	print(result)

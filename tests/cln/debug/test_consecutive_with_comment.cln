@@ -1,4 +1,0 @@
-start()
-	// Test comment
-	integer a = 1
-	integer b = 2
