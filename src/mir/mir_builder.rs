@@ -2260,28 +2260,28 @@ impl MirBuilder {
                         }
                         // String methods - look up correct SymbolIds from symbol table
                         (ConcreteType::String, "length") => {
-                            // Call string_size with the string value
-                            let symbol_id = self.symbol_table.lookup_symbol("string_size")
+                            // Call string.length with the string value
+                            let symbol_id = self.symbol_table.lookup_symbol("string.length")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: string_size not found in symbol table, using SymbolId(67)");
+                                    eprintln!("WARNING: string.length not found in symbol table, using SymbolId(67)");
                                     SymbolId(67)
                                 });
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::String, "toUpperCase") => {
-                            // Call string_toUpperCase
-                            let symbol_id = self.symbol_table.lookup_symbol("string_toUpperCase")
+                            // Call string.toUpperCase
+                            let symbol_id = self.symbol_table.lookup_symbol("string.toUpperCase")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: string_toUpperCase not found in symbol table, using SymbolId(74)");
+                                    eprintln!("WARNING: string.toUpperCase not found in symbol table, using SymbolId(74)");
                                     SymbolId(74)
                                 });
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::String, "toLowerCase") => {
-                            // Call string_toLowerCase
-                            let symbol_id = self.symbol_table.lookup_symbol("string_toLowerCase")
+                            // Call string.toLowerCase
+                            let symbol_id = self.symbol_table.lookup_symbol("string.toLowerCase")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: string_toLowerCase not found in symbol table, using SymbolId(75)");
+                                    eprintln!("WARNING: string.toLowerCase not found in symbol table, using SymbolId(75)");
                                     SymbolId(75)
                                 });
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
@@ -2306,19 +2306,19 @@ impl MirBuilder {
                         }
                         // Array/List methods
                         (ConcreteType::Array(_), "size" | "length") => {
-                            // Call list_size - look up from symbol table
-                            let list_size_symbol = self.symbol_table.lookup_symbol("list_size")
+                            // Call list.size - look up from symbol table
+                            let list_size_symbol = self.symbol_table.lookup_symbol("list.size")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: list_size not found in symbol table, using fallback");
+                                    eprintln!("WARNING: list.size not found in symbol table, using fallback");
                                     *method_symbol
                                 });
                             (list_size_symbol, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::Array(_), "add" | "push") => {
-                            // Call list_push - look up from symbol table
-                            let list_push_symbol = self.symbol_table.lookup_symbol("list_push")
+                            // Call list.push - look up from symbol table
+                            let list_push_symbol = self.symbol_table.lookup_symbol("list.push")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: list_push not found in symbol table, using fallback");
+                                    eprintln!("WARNING: list.push not found in symbol table, using fallback");
                                     *method_symbol
                                 });
                             let mut args = vec![MirOperand::Value(receiver_id)];

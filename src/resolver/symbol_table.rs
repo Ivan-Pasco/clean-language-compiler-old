@@ -825,87 +825,87 @@ impl GlobalSymbolTable {
                 HirType::Number,
             ),
             // String namespace functions
-            // Canonical: string_size (not string_length - see Clean Language Specification)
-            ("string_size", vec![HirType::String], HirType::Integer),
+            // Use string.length to match semantic analyzer and codegen
+            ("string.length", vec![HirType::String], HirType::Integer),
             (
-                "string_concat",
+                "string.concat",
                 vec![HirType::String, HirType::String],
                 HirType::String,
             ),
-            ("string_isEmpty", vec![HirType::String], HirType::Boolean),
-            ("string_isBlank", vec![HirType::String], HirType::Boolean),
+            ("string.isEmpty", vec![HirType::String], HirType::Boolean),
+            ("string.isBlank", vec![HirType::String], HirType::Boolean),
             (
-                "string_indexOf",
+                "string.indexOf",
                 vec![HirType::String, HirType::String],
                 HirType::Integer,
             ),
             (
-                "string_lastIndexOf",
+                "string.lastIndexOf",
                 vec![HirType::String, HirType::String],
                 HirType::Integer,
             ),
             (
-                "string_substring",
+                "string.substring",
                 vec![HirType::String, HirType::Integer, HirType::Integer],
                 HirType::String,
             ),
-            ("string_toUpperCase", vec![HirType::String], HirType::String),
-            ("string_toLowerCase", vec![HirType::String], HirType::String),
-            ("string_trim", vec![HirType::String], HirType::String),
-            ("string_trimStart", vec![HirType::String], HirType::String),
-            ("string_trimEnd", vec![HirType::String], HirType::String),
+            ("string.toUpperCase", vec![HirType::String], HirType::String),
+            ("string.toLowerCase", vec![HirType::String], HirType::String),
+            ("string.trim", vec![HirType::String], HirType::String),
+            ("string.trimStart", vec![HirType::String], HirType::String),
+            ("string.trimEnd", vec![HirType::String], HirType::String),
             (
-                "string_split",
+                "string.split",
                 vec![HirType::String, HirType::String],
                 HirType::List(Box::new(HirType::String)),
             ),
             (
-                "string_join",
+                "string.join",
                 vec![HirType::List(Box::new(HirType::String)), HirType::String],
                 HirType::String,
             ),
             (
-                "string_padStart",
+                "string.padStart",
                 vec![HirType::String, HirType::Integer, HirType::String],
                 HirType::String,
             ),
             (
-                "string_padEnd",
+                "string.padEnd",
                 vec![HirType::String, HirType::Integer, HirType::String],
                 HirType::String,
             ),
             (
-                "string_charAt",
+                "string.charAt",
                 vec![HirType::String, HirType::Integer],
                 HirType::String,
             ),
             (
-                "string_charCodeAt",
+                "string.charCodeAt",
                 vec![HirType::String, HirType::Integer],
                 HirType::Integer,
             ),
             (
-                "string_contains",
+                "string.contains",
                 vec![HirType::String, HirType::String],
                 HirType::Boolean,
             ),
             (
-                "string_startsWith",
+                "string.startsWith",
                 vec![HirType::String, HirType::String],
                 HirType::Boolean,
             ),
             (
-                "string_endsWith",
+                "string.endsWith",
                 vec![HirType::String, HirType::String],
                 HirType::Boolean,
             ),
             (
-                "string_replace",
+                "string.replace",
                 vec![HirType::String, HirType::String, HirType::String],
                 HirType::String,
             ),
             (
-                "string_replaceAll",
+                "string.replaceAll",
                 vec![HirType::String, HirType::String, HirType::String],
                 HirType::String,
             ),
@@ -938,57 +938,57 @@ impl GlobalSymbolTable {
             // List namespace functions
             // Canonical: list_size (not list_length - see Clean Language Specification)
             (
-                "list_size",
+                "list.size",
                 vec![HirType::List(Box::new(HirType::Number))],
                 HirType::Integer,
             ),
             (
-                "list_isEmpty",
+                "list.isEmpty",
                 vec![HirType::List(Box::new(HirType::Number))],
                 HirType::Boolean,
             ),
             (
-                "list_isNotEmpty",
+                "list.isNotEmpty",
                 vec![HirType::List(Box::new(HirType::Number))],
                 HirType::Boolean,
             ),
             (
-                "list_push",
+                "list.push",
                 vec![HirType::List(Box::new(HirType::Number)), HirType::Number],
                 HirType::Void,
             ),
             (
-                "list_pop",
+                "list.pop",
                 vec![HirType::List(Box::new(HirType::Number))],
                 HirType::Number,
             ),
             (
-                "list_get",
+                "list.get",
                 vec![HirType::List(Box::new(HirType::Number)), HirType::Integer],
                 HirType::Number,
             ),
             (
-                "list_remove",
+                "list.remove",
                 vec![HirType::List(Box::new(HirType::Number)), HirType::Integer],
                 HirType::Number,
             ),
             (
-                "list_peek",
+                "list.peek",
                 vec![HirType::List(Box::new(HirType::Number))],
                 HirType::Number,
             ),
             (
-                "list_add",
+                "list.add",
                 vec![HirType::List(Box::new(HirType::Number)), HirType::Number],
                 HirType::Void,
             ),
             (
-                "list_contains",
+                "list.contains",
                 vec![HirType::List(Box::new(HirType::Number)), HirType::Number],
                 HirType::Boolean,
             ),
             (
-                "list_insert",
+                "list.insert",
                 vec![
                     HirType::List(Box::new(HirType::Number)),
                     HirType::Integer,
@@ -997,37 +997,37 @@ impl GlobalSymbolTable {
                 HirType::List(Box::new(HirType::Number)),
             ),
             (
-                "list_indexOf",
+                "list.indexOf",
                 vec![HirType::List(Box::new(HirType::Number)), HirType::Number],
                 HirType::Integer,
             ),
             (
-                "list_lastIndexOf",
+                "list.lastIndexOf",
                 vec![HirType::List(Box::new(HirType::Number)), HirType::Number],
                 HirType::Integer,
             ),
             (
-                "list_first",
+                "list.first",
                 vec![HirType::List(Box::new(HirType::Number))],
                 HirType::Number,
             ),
             (
-                "list_last",
+                "list.last",
                 vec![HirType::List(Box::new(HirType::Number))],
                 HirType::Number,
             ),
             (
-                "list_reverse",
+                "list.reverse",
                 vec![HirType::List(Box::new(HirType::Number))],
                 HirType::List(Box::new(HirType::Number)),
             ),
             (
-                "list_sort",
+                "list.sort",
                 vec![HirType::List(Box::new(HirType::Number))],
                 HirType::List(Box::new(HirType::Number)),
             ),
             (
-                "list_slice",
+                "list.slice",
                 vec![
                     HirType::List(Box::new(HirType::Number)),
                     HirType::Integer,
@@ -1036,7 +1036,7 @@ impl GlobalSymbolTable {
                 HirType::List(Box::new(HirType::Number)),
             ),
             (
-                "list_concat",
+                "list.concat",
                 vec![
                     HirType::List(Box::new(HirType::Number)),
                     HirType::List(Box::new(HirType::Number)),
@@ -1044,7 +1044,7 @@ impl GlobalSymbolTable {
                 HirType::List(Box::new(HirType::Number)),
             ),
             (
-                "list_fill",
+                "list.fill",
                 vec![
                     HirType::List(Box::new(HirType::Number)),
                     HirType::Number,
@@ -1053,47 +1053,47 @@ impl GlobalSymbolTable {
                 HirType::Void,
             ),
             (
-                "list_range",
+                "list.range",
                 vec![HirType::Integer, HirType::Integer],
                 HirType::List(Box::new(HirType::Integer)),
             ),
             (
-                "list_join",
+                "list.join",
                 vec![HirType::List(Box::new(HirType::Number)), HirType::String],
                 HirType::String,
             ),
             // HTTP namespace functions
-            ("http_get", vec![HirType::String], HirType::String),
+            ("http.get", vec![HirType::String], HirType::String),
             (
-                "http_post",
+                "http.post",
                 vec![HirType::String, HirType::String],
                 HirType::String,
             ),
             (
-                "http_put",
+                "http.put",
                 vec![HirType::String, HirType::String],
                 HirType::String,
             ),
             (
-                "http_patch",
+                "http.patch",
                 vec![HirType::String, HirType::String],
                 HirType::String,
             ),
-            ("http_delete", vec![HirType::String], HirType::String),
+            ("http.delete", vec![HirType::String], HirType::String),
             // File namespace functions
-            ("file_read", vec![HirType::String], HirType::String),
+            ("file.read", vec![HirType::String], HirType::String),
             (
-                "file_write",
+                "file.write",
                 vec![HirType::String, HirType::String],
                 HirType::Boolean,
             ),
             (
-                "file_append",
+                "file.append",
                 vec![HirType::String, HirType::String],
                 HirType::Boolean,
             ),
-            ("file_exists", vec![HirType::String], HirType::Boolean),
-            ("file_delete", vec![HirType::String], HirType::Boolean),
+            ("file.exists", vec![HirType::String], HirType::Boolean),
+            ("file.delete", vec![HirType::String], HirType::Boolean),
             // Comparison namespace functions (compare.integer.*, compare.number.*)
             (
                 "compare.integer_equal",
@@ -1272,38 +1272,38 @@ impl GlobalSymbolTable {
         self.builtins.insert(math_namespace_id);
 
         // String namespace - so "string" is recognized as a valid identifier
-        // Canonical: string_size (not string_length - see Clean Language Specification)
+        // Use string.length to match semantic analyzer and codegen
         let string_functions = vec![
-            self.lookup_symbol("string_size").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_concat").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_isEmpty").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_isBlank").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_indexOf").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_lastIndexOf")
+            self.lookup_symbol("string.length").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.concat").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.isEmpty").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.isBlank").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.indexOf").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.lastIndexOf")
                 .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_substring")
+            self.lookup_symbol("string.substring")
                 .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_toUpperCase")
+            self.lookup_symbol("string.toUpperCase")
                 .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_toLowerCase")
+            self.lookup_symbol("string.toLowerCase")
                 .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_trim").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_trimStart")
+            self.lookup_symbol("string.trim").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.trimStart")
                 .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_trimEnd").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_contains").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_startsWith")
+            self.lookup_symbol("string.trimEnd").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.contains").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.startsWith")
                 .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_endsWith").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_replace").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_replaceAll")
+            self.lookup_symbol("string.endsWith").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.replace").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.replaceAll")
                 .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_split").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_join").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_padStart").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_padEnd").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_charAt").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string_charCodeAt")
+            self.lookup_symbol("string.split").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.join").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.padStart").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.padEnd").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.charAt").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("string.charCodeAt")
                 .unwrap_or(SymbolId(0)),
         ];
 
@@ -1324,29 +1324,29 @@ impl GlobalSymbolTable {
         // Create list namespace
         // Canonical: list_size (not list_length - see Clean Language Specification)
         let list_functions = vec![
-            self.lookup_symbol("list_size").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_isEmpty").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_isNotEmpty").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_push").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_pop").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_get").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_remove").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_peek").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_add").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_contains").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_insert").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_indexOf").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_lastIndexOf")
+            self.lookup_symbol("list.size").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.isEmpty").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.isNotEmpty").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.push").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.pop").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.get").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.remove").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.peek").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.add").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.contains").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.insert").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.indexOf").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.lastIndexOf")
                 .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_first").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_last").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_reverse").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_sort").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_slice").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_concat").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_fill").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_range").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list_join").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.first").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.last").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.reverse").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.sort").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.slice").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.concat").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.fill").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.range").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.join").unwrap_or(SymbolId(0)),
         ];
 
         let list_namespace_id = self.create_symbol(
@@ -1391,11 +1391,11 @@ impl GlobalSymbolTable {
         self.builtins.insert(conditional_namespace_id);
 
         let http_functions = vec![
-            self.lookup_symbol("http_get").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http_post").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http_put").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http_patch").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http_delete").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.get").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.post").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.put").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.patch").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.delete").unwrap_or(SymbolId(0)),
         ];
 
         let http_namespace_id = self.create_symbol(
@@ -1414,11 +1414,11 @@ impl GlobalSymbolTable {
 
         // Create file namespace
         let file_functions = vec![
-            self.lookup_symbol("file_read").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("file_write").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("file_append").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("file_exists").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("file_delete").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("file.read").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("file.write").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("file.append").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("file.exists").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("file.delete").unwrap_or(SymbolId(0)),
         ];
 
         let file_namespace_id = self.create_symbol(
