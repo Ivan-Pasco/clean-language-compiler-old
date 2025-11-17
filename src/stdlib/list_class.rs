@@ -40,6 +40,25 @@ impl ListClass {
     }
 
     fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+        // CRITICAL: List.allocate(integer size) -> list
+        // Allocates a new list with the given initial capacity
+        // This is essential for array literal creation
+        use crate::stdlib::list_ops::ListManager;
+        use crate::stdlib::memory::MemoryManager;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(16))));
+        let list_manager = ListManager::new(memory_manager);
+
+        register_stdlib_function(
+            codegen,
+            "list.allocate",
+            &[WasmType::I32],    // Size
+            Some(WasmType::I32), // Pointer
+            list_manager.generate_list_allocate(),
+        )?;
+
         // List.size(list lst) -> integer
         // Returns the number of elements in the list
         register_stdlib_function(
@@ -324,16 +343,17 @@ impl ListClass {
 
     fn generate_list_get(&self) -> Vec<Instruction> {
         vec![
-            // Simplified list.get implementation - calculate element address and load
-            // List structure: [length][element0][element1]...
+            // CRITICAL FIX: List.get implementation with correct header offset
+            // List structure: [size(4)|capacity(4)|type_id(4)|padding(4)|elements...]
+            // Header is 16 bytes total, elements start at offset 16
             // Stack: [list_ptr, index]
-            Instruction::LocalGet(0), // list pointer (stack: [list_ptr])
-            Instruction::I32Const(4), // add offset for length field (stack: [list_ptr, 4])
-            Instruction::I32Add,      // list_ptr + 4 (stack: [data_ptr])
-            Instruction::LocalGet(1), // index (stack: [data_ptr, index])
-            Instruction::I32Const(4), // element size (stack: [data_ptr, index, 4])
-            Instruction::I32Mul,      // index * 4 (stack: [data_ptr, offset])
-            Instruction::I32Add,      // data_ptr + offset (stack: [element_addr])
+            Instruction::LocalGet(0),  // list pointer (stack: [list_ptr])
+            Instruction::I32Const(16), // FIXED: add 16 to skip full header (stack: [list_ptr, 16])
+            Instruction::I32Add,       // list_ptr + 16 (stack: [data_ptr])
+            Instruction::LocalGet(1),  // index (stack: [data_ptr, index])
+            Instruction::I32Const(4),  // element size (stack: [data_ptr, index, 4])
+            Instruction::I32Mul,       // index * 4 (stack: [data_ptr, offset])
+            Instruction::I32Add,       // data_ptr + offset (stack: [element_addr])
             Instruction::I32Load(MemArg {
                 offset: 0,
                 align: 2,
@@ -344,18 +364,19 @@ impl ListClass {
 
     fn generate_list_set(&self) -> Vec<Instruction> {
         vec![
-            // Simplified list.set implementation - calculate element address and store
-            // List structure: [length][element0][element1]...
+            // CRITICAL FIX: List.set implementation with correct header offset
+            // List structure: [size(4)|capacity(4)|type_id(4)|padding(4)|elements...]
+            // Header is 16 bytes total, elements start at offset 16
             // Parameters: list_ptr, index, value
             // Returns: void
-            Instruction::LocalGet(0), // list pointer (stack: [list_ptr])
-            Instruction::I32Const(4), // add offset for length field (stack: [list_ptr, 4])
-            Instruction::I32Add,      // list_ptr + 4 (stack: [data_ptr])
-            Instruction::LocalGet(1), // index (stack: [data_ptr, index])
-            Instruction::I32Const(4), // element size (stack: [data_ptr, index, 4])
-            Instruction::I32Mul,      // index * 4 (stack: [data_ptr, offset])
-            Instruction::I32Add,      // data_ptr + offset (stack: [element_addr])
-            Instruction::LocalGet(2), // value to store (stack: [element_addr, value])
+            Instruction::LocalGet(0),  // list pointer (stack: [list_ptr])
+            Instruction::I32Const(16), // FIXED: add 16 to skip full header (stack: [list_ptr, 16])
+            Instruction::I32Add,       // list_ptr + 16 (stack: [data_ptr])
+            Instruction::LocalGet(1),  // index (stack: [data_ptr, index])
+            Instruction::I32Const(4),  // element size (stack: [data_ptr, index, 4])
+            Instruction::I32Mul,       // index * 4 (stack: [data_ptr, offset])
+            Instruction::I32Add,       // data_ptr + offset (stack: [element_addr])
+            Instruction::LocalGet(2),  // value to store (stack: [element_addr, value])
             Instruction::I32Store(MemArg {
                 offset: 0,
                 align: 2,
@@ -437,10 +458,11 @@ impl ListClass {
                 align: 2,
                 memory_index: 0,
             }),
-            // Calculate position for new element (size * 4 + 8)
+            // CRITICAL FIX: Calculate position for new element (size * 4 + 16)
+            // List header is 16 bytes: [size(4)|capacity(4)|type_id(4)|padding(4)|elements...]
             Instruction::I32Const(4),
             Instruction::I32Mul,
-            Instruction::I32Const(8),
+            Instruction::I32Const(16),
             Instruction::I32Add,
             // Add to list_ptr to get storage address
             Instruction::LocalGet(0),

@@ -198,6 +198,8 @@ impl CodeGenerator {
         self.register_import_function("env", "array_contains", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
         
         // List namespace functions (used in static method calls like list.contains())
+        self.register_import_function("env", "list.allocate", vec![ValType::I32], vec![ValType::I32]); // CRITICAL: needed for array literals
+        self.register_import_function("env", "list.push", vec![ValType::I32, ValType::I32], vec![ValType::I32]); // CRITICAL: needed for array literals
         self.register_import_function("env", "list.length", vec![ValType::I32], vec![ValType::I32]);
         self.register_import_function("env", "list.add", vec![ValType::I32, ValType::I32], vec![]);
         self.register_import_function("env", "list.remove", vec![ValType::I32, ValType::I32], vec![ValType::I32]);

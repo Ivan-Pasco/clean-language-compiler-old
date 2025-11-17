@@ -1096,6 +1096,29 @@ impl<'a> MirCodeGenerator<'a> {
                 }
             }
 
+            MirOperation::Phi { incoming } => {
+                // SSA Phi nodes are NO-OPs in WASM structured control flow.
+                //
+                // Why: Phi marks where values from different control flow paths merge.
+                // In proper SSA with Phi nodes for loops:
+                // 1. INIT block: Sets initial value (e.g., counter = 0) to the Phi result local
+                // 2. HEADER block: Phi node (THIS - just a marker, NO-OP in WASM)
+                // 3. BODY block: Updates value, Copy to Phi result local
+                // 4. Jump back to HEADER
+                //
+                // The Phi result local ALREADY has the right value from:
+                // - First iteration: INIT block set it
+                // - Subsequent iterations: BODY's Copy instruction updated it
+                //
+                // If we generate code for Phi, we'd RESET the value every iteration!
+                // Therefore: Phi is a complete NO-OP in WASM codegen.
+                debug_mir!(
+                    "DEBUG PHI: Phi node is NO-OP: dest={:?}, incoming={:?}",
+                    instruction.dest,
+                    incoming
+                );
+            }
+
             MirOperation::BinaryOp { op, left, right } => {
                 // CRITICAL FIX: Type-aware binary operations with automatic conversions
                 let left_is_float = self.is_float_operand(left);

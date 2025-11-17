@@ -382,12 +382,18 @@ impl DeadCodeEliminationPass {
             MirOperation::Copy { source } => {
                 self.mark_operand_live(source, function);
             }
+            MirOperation::Move { source } => {
+                self.mark_operand_live(source, function);
+            }
             MirOperation::BinaryOp { left, right, .. } => {
                 self.mark_operand_live(left, function);
                 self.mark_operand_live(right, function);
             }
             MirOperation::UnaryOp { operand, .. } => {
                 self.mark_operand_live(operand, function);
+            }
+            MirOperation::Cast { value, .. } => {
+                self.mark_operand_live(value, function);
             }
             MirOperation::Call {
                 function: func,
@@ -398,7 +404,29 @@ impl DeadCodeEliminationPass {
                     self.mark_operand_live(arg, function);
                 }
             }
-            _ => {} // TODO: Handle other operation types
+            MirOperation::Load { source } => {
+                self.mark_operand_live(source, function);
+            }
+            MirOperation::GetElementPtr { base, indices } => {
+                self.mark_operand_live(base, function);
+                for index in indices {
+                    self.mark_operand_live(index, function);
+                }
+            }
+            MirOperation::Alloca { size, .. } => {
+                self.mark_operand_live(size, function);
+            }
+            MirOperation::Phi { incoming } => {
+                for (_block, operand) in incoming {
+                    self.mark_operand_live(operand, function);
+                }
+            }
+            MirOperation::AsyncAssign { source } => {
+                self.mark_operand_live(source, function);
+            }
+            MirOperation::Store { .. } => {
+                // Store is handled separately in optimize_function
+            }
         }
     }
 

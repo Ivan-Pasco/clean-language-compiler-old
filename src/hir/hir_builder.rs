@@ -594,10 +594,37 @@ impl HirBuilder {
     /// Convert AST expression to HIR expression
     fn build_expression(&mut self, expr: &Expression) -> Result<HirExpression, CompilerError> {
         match expr {
-            Expression::Literal(value) => Ok(HirExpression::Literal {
-                value: value.clone(),
-                location: SourceLocation::default(),
-            }),
+            Expression::Literal(value) => {
+                // CRITICAL FIX: Array literals must be converted to HirExpression::Array
+                // not HirExpression::Literal, otherwise they get converted to Null in type inference
+                match value {
+                    Value::List(elements) => {
+                        // Convert list literal to Array expression
+                        let mut hir_elements = Vec::new();
+                        for elem in elements {
+                            hir_elements
+                                .push(self.build_expression(&Expression::Literal(elem.clone()))?);
+                        }
+
+                        // Infer element type from first element, or use Void for empty lists
+                        let element_type = if let Some(first_elem) = elements.first() {
+                            self.value_to_hir_type(first_elem)
+                        } else {
+                            HirType::Void // Will be inferred from context in type checker
+                        };
+
+                        Ok(HirExpression::Array {
+                            elements: hir_elements,
+                            element_type,
+                            location: SourceLocation::default(),
+                        })
+                    }
+                    _ => Ok(HirExpression::Literal {
+                        value: value.clone(),
+                        location: SourceLocation::default(),
+                    }),
+                }
+            }
 
             Expression::Variable(name) => Ok(HirExpression::Variable {
                 name: name.clone(),
@@ -846,6 +873,41 @@ impl HirBuilder {
         match op {
             UnaryOperator::Negate => HirUnaryOp::Negate,
             UnaryOperator::Not => HirUnaryOp::Not,
+        }
+    }
+
+    fn value_to_hir_type(&self, value: &Value) -> HirType {
+        match value {
+            Value::Integer(_) => HirType::Integer,
+            Value::Number(_) => HirType::Number,
+            Value::String(_) => HirType::String,
+            Value::Boolean(_) => HirType::Boolean,
+            Value::Integer8(_) => HirType::Integer8,
+            Value::Integer8u(_) => HirType::Integer8u,
+            Value::Integer16(_) => HirType::Integer16,
+            Value::Integer16u(_) => HirType::Integer16u,
+            Value::Integer32(_) => HirType::Integer32,
+            Value::Integer64(_) => HirType::Integer64,
+            Value::Number32(_) => HirType::Number32,
+            Value::Number64(_) => HirType::Number64,
+            Value::List(elements) => {
+                let element_type = if let Some(first) = elements.first() {
+                    Box::new(self.value_to_hir_type(first))
+                } else {
+                    // Empty list - use Void as placeholder, will be inferred from context
+                    Box::new(HirType::Void)
+                };
+                HirType::List(element_type)
+            }
+            Value::Matrix(_) => {
+                // Matrix type will be inferred properly in type checker
+                HirType::Matrix(Box::new(HirType::Number))
+            }
+            Value::Pairs(_) => {
+                // Pairs type will be inferred properly in type checker
+                HirType::Pairs(Box::new(HirType::Void), Box::new(HirType::Void))
+            }
+            Value::Null | Value::Void => HirType::Void,
         }
     }
 }

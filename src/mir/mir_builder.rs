@@ -232,6 +232,13 @@ impl MirBuilder {
         mir_program
             .symbol_name_map
             .insert(SymbolId(1002), "math.pow".to_string());
+        // list.allocate and list.push for array literal creation
+        mir_program
+            .symbol_name_map
+            .insert(SymbolId(1003), "list.allocate".to_string());
+        mir_program
+            .symbol_name_map
+            .insert(SymbolId(1004), "list.push".to_string());
 
         // CRITICAL FIX: Add common name variations for builtin functions
         // Check symbol_name_map for variations and add correct WASM names
@@ -255,7 +262,7 @@ impl MirBuilder {
         }
 
         eprintln!(
-            "DEBUG MIR SYMBOLS: Added 3 synthetic SymbolIds (1000-1002) for MIR-generated builtins"
+            "DEBUG MIR SYMBOLS: Added 5 synthetic SymbolIds (1000-1004) for MIR-generated builtins"
         );
         eprintln!(
             "DEBUG MIR SYMBOLS: Final symbol_name_map has {} entries",
@@ -1094,15 +1101,15 @@ impl MirBuilder {
                     "DEBUG THEN CHECK: then_block={:?}, terminator={:?}",
                     then_block_id, then_terminator
                 );
-                let has_return = matches!(
-                    then_terminator,
-                    Some(MirTerminator::Return { .. }) | Some(MirTerminator::Unreachable)
-                );
+
+                // FIX: Only Return counts as "has_return"
+                // Unreachable here is just a placeholder that should be replaced with Jump
+                let has_return = matches!(then_terminator, Some(MirTerminator::Return { .. }));
 
                 if !has_return {
                     eprintln!("DEBUG THEN: Adding Jump to continue block");
                     // Set the then block's terminator to jump to continuation
-                    // Save current_block and restore after
+                    // This replaces the placeholder Unreachable or sets terminator if not set
                     let saved_current = self.current_block;
                     self.current_block = Some(then_block_id);
                     self.set_block_terminator(
@@ -1149,6 +1156,7 @@ impl MirBuilder {
                     // Check if all paths return:
                     // 1. current_block is None (nested if set it to None because both branches returned)
                     // 2. OR current_block points to a block with a Return terminator
+                    // FIX: Only Return counts, Unreachable is just a placeholder
                     let else_returns = if after_else.is_none() {
                         true
                     } else if let Some(final_block_id) = after_else {
@@ -1156,12 +1164,7 @@ impl MirBuilder {
                             .function
                             .blocks
                             .get(&final_block_id)
-                            .map(|b| {
-                                matches!(
-                                    b.terminator,
-                                    MirTerminator::Return { .. } | MirTerminator::Unreachable
-                                )
-                            })
+                            .map(|b| matches!(b.terminator, MirTerminator::Return { .. }))
                             .unwrap_or(false)
                     } else {
                         false
@@ -1251,6 +1254,30 @@ impl MirBuilder {
                 };
                 self.add_instruction(context, init_instruction);
 
+                // Save the init block ID (current block) for Phi node
+                let init_block_id = self.current_block.expect("No current block for loop init");
+
+                // We'll create current_index_value_id here so we can set it in init block
+                // (before creating header block)
+                let current_index_value_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+                self.register_temp_local(
+                    context,
+                    current_index_value_id,
+                    MirType::I32,
+                    location.clone(),
+                );
+
+                // Set current_index to initial value (0) in init block
+                let init_current_instruction = MirInstruction {
+                    dest: Some(current_index_value_id),
+                    operation: MirOperation::Copy {
+                        source: MirOperand::Value(index_value_id),
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, init_current_instruction);
+
                 // Create iterator value variable for current element
                 let iterator_value_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
@@ -1296,6 +1323,21 @@ impl MirBuilder {
                 );
                 self.current_block = Some(header_block_id);
 
+                // SSA FIX: Create Phi node to merge index values from different predecessors
+                // - From init block: initial 0
+                // - From body block: incremented value
+                // current_index_value_id was already created and set in init block
+                // Create Phi node with init block predecessor
+                // Body block predecessor will be added later after we know the incremented ValueId
+                let phi_instruction = MirInstruction {
+                    dest: Some(current_index_value_id),
+                    operation: MirOperation::Phi {
+                        incoming: vec![(init_block_id, MirOperand::Value(index_value_id))],
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, phi_instruction);
+
                 // Get array length (for bounds checking)
                 let length_value_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
@@ -1313,7 +1355,7 @@ impl MirBuilder {
                 };
                 self.add_instruction(context, length_instruction);
 
-                // Compare index < length
+                // Compare index < length (use the reloaded current_index_value_id)
                 let condition_value_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
@@ -1329,7 +1371,7 @@ impl MirBuilder {
                     dest: Some(condition_value_id),
                     operation: MirOperation::BinaryOp {
                         op: MirBinaryOp::Lt,
-                        left: MirOperand::Value(index_value_id),
+                        left: MirOperand::Value(current_index_value_id),
                         right: MirOperand::Value(length_value_id),
                     },
                     location: location.clone(),
@@ -1361,21 +1403,81 @@ impl MirBuilder {
                 );
                 self.current_block = Some(body_block_id);
 
-                // Load current array element: iterator_value = iterable[index]
-                let element_instruction = MirInstruction {
-                    dest: Some(iterator_value_id),
+                // CRITICAL FIX: Get the address of the element, then LOAD the value
+                // GetElementPtr returns a pointer, not the value itself!
+
+                // Step 1: Get element pointer
+                let element_ptr_value_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+                self.register_temp_local(
+                    context,
+                    element_ptr_value_id,
+                    MirType::Ptr(Box::new(MirType::I32)),
+                    location.clone(),
+                );
+
+                eprintln!(
+                    "DEBUG ITERATE: current_block before GetElementPtr = {:?}",
+                    self.current_block
+                );
+                let get_ptr_instruction = MirInstruction {
+                    dest: Some(element_ptr_value_id),
                     operation: MirOperation::GetElementPtr {
                         base: MirOperand::Value(iterable_value),
-                        indices: vec![MirOperand::Value(index_value_id)],
+                        indices: vec![MirOperand::Value(current_index_value_id)],
                     },
                     location: location.clone(),
                 };
-                self.add_instruction(context, element_instruction);
+                self.add_instruction(context, get_ptr_instruction);
+                eprintln!(
+                    "DEBUG ITERATE: after adding GetElementPtr, block has {} instructions",
+                    context
+                        .function
+                        .blocks
+                        .get(&body_block_id)
+                        .map(|b| b.instructions.len())
+                        .unwrap_or(0)
+                );
+
+                // Step 2: Load the actual value from that pointer
+                let load_element_instruction = MirInstruction {
+                    dest: Some(iterator_value_id),
+                    operation: MirOperation::Load {
+                        source: MirOperand::Value(element_ptr_value_id),
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, load_element_instruction);
+
+                // DEBUG: Check instructions before processing statements
+                eprintln!("DEBUG ITERATE (function={}): Before processing statements, body block has {} instructions",
+                    context.function.name,
+                    context.function.blocks.get(&body_block_id).map(|b| b.instructions.len()).unwrap_or(0));
 
                 // Process loop body statements
+                // CRITICAL FIX: Save the body block ID before processing statements
+                // IF statements inside the loop might change current_block to a continue block,
+                // but we need to ensure counter increment happens in the body block
+                let saved_body_block = body_block_id;
                 for stmt in &body.statements {
                     self.build_statement(context, stmt)?;
                 }
+
+                // DEBUG: Check instructions after processing statements
+                eprintln!(
+                    "DEBUG ITERATE: After processing statements, body block has {} instructions",
+                    context
+                        .function
+                        .blocks
+                        .get(&body_block_id)
+                        .map(|b| b.instructions.len())
+                        .unwrap_or(0)
+                );
+
+                // CRITICAL FIX: Restore body block as current after processing statements
+                // This ensures the counter increment is added to the body block,
+                // not to any continuation block created by IF statements
+                self.current_block = Some(saved_body_block);
 
                 // Increment index: index = index + 1
                 let incremented_value_id = ValueId(context.function.next_value_id);
@@ -1393,17 +1495,35 @@ impl MirBuilder {
                     dest: Some(incremented_value_id),
                     operation: MirOperation::BinaryOp {
                         op: MirBinaryOp::Add,
-                        left: MirOperand::Value(index_value_id),
+                        left: MirOperand::Value(current_index_value_id),
                         right: MirOperand::Constant(MirConstant::Integer(1)),
                     },
                     location: location.clone(),
                 };
                 self.add_instruction(context, increment_instruction);
 
-                // Update index variable (this is a bit tricky in SSA form)
-                // For simplicity, we'll create a new value ID for the incremented index
-                // In a real SSA implementation, we'd use phi nodes
-                // TODO: Implement proper SSA phi nodes for loop variables
+                // SSA FIX: Copy the incremented value to the Phi result local
+                // This ensures the Phi node sees the updated value on the next iteration
+                let update_phi_instruction = MirInstruction {
+                    dest: Some(current_index_value_id),
+                    operation: MirOperation::Copy {
+                        source: MirOperand::Value(incremented_value_id),
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, update_phi_instruction);
+
+                // SSA FIX: Update the Phi node in the header block with the body block's incremented value
+                // The Phi node merges:
+                // - init_block → index_value_id (0)
+                // - body_block → incremented_value_id (updated counter)
+                if let Some(header_block) = context.function.blocks.get_mut(&header_block_id) {
+                    if let Some(first_instr) = header_block.instructions.first_mut() {
+                        if let MirOperation::Phi { incoming } = &mut first_instr.operation {
+                            incoming.push((body_block_id, MirOperand::Value(incremented_value_id)));
+                        }
+                    }
+                }
 
                 // Jump back to header
                 self.set_block_terminator(
@@ -1439,6 +1559,16 @@ impl MirBuilder {
                 let body_block_id = BasicBlockId(context.function.blocks.len() + 1);
                 let exit_block_id = BasicBlockId(context.function.blocks.len() + 2);
 
+                // SSA FIX: Save current block ID and all variables in scope before the loop
+                // We'll need to create Phi nodes for these in the header
+                let init_block_id = self.current_block.expect("No current block for while loop");
+                let mut scope_variables: Vec<(String, ValueId)> = Vec::new();
+                if let Some(current_scope) = context.scope_stack.last() {
+                    for (name, value_id) in current_scope.iter() {
+                        scope_variables.push((name.clone(), *value_id));
+                    }
+                }
+
                 // Jump to header from current block
                 self.set_block_terminator(
                     context,
@@ -1462,7 +1592,44 @@ impl MirBuilder {
                 );
                 self.current_block = Some(header_block_id);
 
-                // Build condition expression in header block
+                // SSA FIX: Create Phi nodes for all variables in scope
+                // Map: variable name -> (phi_result_value_id, original_value_id)
+                let mut phi_variables: Vec<(String, ValueId, ValueId)> = Vec::new();
+                for (var_name, original_value_id) in &scope_variables {
+                    // Create Phi result ValueId
+                    let phi_result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    // Register Phi result as a local (use same type as original)
+                    if let Some(original_local) = context.function.locals.get(original_value_id) {
+                        let phi_local = MirLocal {
+                            name: Some(format!("{}_phi", var_name)),
+                            local_type: original_local.local_type.clone(),
+                            is_mutable: original_local.is_mutable,
+                            location: location.clone(),
+                        };
+                        context.function.locals.insert(phi_result_id, phi_local);
+                    }
+
+                    // Create Phi node with init block predecessor
+                    let phi_instruction = MirInstruction {
+                        dest: Some(phi_result_id),
+                        operation: MirOperation::Phi {
+                            incoming: vec![(init_block_id, MirOperand::Value(*original_value_id))],
+                        },
+                        location: location.clone(),
+                    };
+                    self.add_instruction(context, phi_instruction);
+
+                    // Update scope to use Phi result
+                    if let Some(current_scope) = context.scope_stack.last_mut() {
+                        current_scope.insert(var_name.clone(), phi_result_id);
+                    }
+
+                    phi_variables.push((var_name.clone(), phi_result_id, *original_value_id));
+                }
+
+                // Build condition expression in header block (now uses Phi results)
                 let condition_id = self.build_expression(context, condition)?;
 
                 // Create conditional branch: if condition then body else exit
@@ -1493,6 +1660,44 @@ impl MirBuilder {
                 // Process body statements
                 for stmt in &body.statements {
                     self.build_statement(context, stmt)?;
+                }
+
+                // SSA FIX: After processing body, copy updated variable values to Phi result locals
+                // and update the Phi nodes with the body block predecessor
+                for (var_name, phi_result_id, _original_value_id) in &phi_variables {
+                    // Get the current value of the variable (may have been updated in body)
+                    if let Some(current_scope) = context.scope_stack.last() {
+                        if let Some(&updated_value_id) = current_scope.get(var_name) {
+                            // Copy updated value to Phi result local
+                            let copy_instruction = MirInstruction {
+                                dest: Some(*phi_result_id),
+                                operation: MirOperation::Copy {
+                                    source: MirOperand::Value(updated_value_id),
+                                },
+                                location: location.clone(),
+                            };
+                            self.add_instruction(context, copy_instruction);
+
+                            // Update the Phi node in the header with the body predecessor
+                            if let Some(header_block) =
+                                context.function.blocks.get_mut(&header_block_id)
+                            {
+                                // Find the Phi instruction for this variable
+                                for instr in &mut header_block.instructions {
+                                    if instr.dest == Some(*phi_result_id) {
+                                        if let MirOperation::Phi { incoming } = &mut instr.operation
+                                        {
+                                            incoming.push((
+                                                body_block_id,
+                                                MirOperand::Value(updated_value_id),
+                                            ));
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Jump back to header at end of body (creating the loop)
@@ -2123,6 +2328,24 @@ impl MirBuilder {
                 // Build the receiver (object) first
                 let receiver_id = self.build_expression(context, receiver)?;
 
+                // CRITICAL FIX: Get the ACTUAL type of the receiver
+                // Priority: 1) Use TAST type if not Unknown, 2) Infer from locals map, 3) Use Unknown
+                let receiver_actual_type = if !matches!(receiver.expr_type, ConcreteType::Unknown) {
+                    // TAST has the type - use it
+                    receiver.expr_type.clone()
+                } else {
+                    // TAST type is Unknown - try to infer from locals map
+                    context
+                        .function
+                        .locals
+                        .get(&receiver_id)
+                        .map(|mir_local| Self::mir_type_to_concrete(&mir_local.local_type))
+                        .unwrap_or(ConcreteType::Unknown)
+                };
+
+                eprintln!("DEBUG MIR METHODCALL RECEIVER: method='{}', receiver_id={:?}, tast_type={:?}, actual_type={:?}",
+                    method_name, receiver_id, receiver.expr_type, receiver_actual_type);
+
                 // SPECIAL CASE: String.toString() is identity operation - just return the receiver
                 if method_symbol.0 == 0
                     && matches!(&receiver.expr_type, ConcreteType::String)
@@ -2228,7 +2451,8 @@ impl MirBuilder {
                 // SymbolId(0) is used as a placeholder for built-in methods that don't have real symbols
                 let (function_symbol, mir_arguments) = if method_symbol.0 == 0 {
                     // This is a built-in method - determine the correct function based on receiver type and method name
-                    let receiver_type = &receiver.expr_type;
+                    // CRITICAL FIX: Use actual_type instead of TAST expr_type to handle inferred types correctly
+                    let receiver_type = &receiver_actual_type;
                     match (receiver_type, method_name.as_str()) {
                         // Type conversion methods - look up correct SymbolIds from symbol table
                         (ConcreteType::Integer, "toString") => {
@@ -2380,22 +2604,36 @@ impl MirBuilder {
                     result_id, method_name
                 );
 
+                // CRITICAL FIX: For list.get and toString, infer return type from receiver instead of using Unknown
+                // The typechecker returns Unknown for these methods, but we can infer from the receiver type
+                let inferred_type = if method_name == "get" {
+                    if let ConcreteType::Array(element_type) = &receiver.expr_type {
+                        // Extract element type from Array<T> -> T
+                        element_type.as_ref().clone()
+                    } else {
+                        expression.expr_type.clone()
+                    }
+                } else if method_name == "toString" {
+                    // toString always returns String
+                    ConcreteType::String
+                } else {
+                    expression.expr_type.clone()
+                };
+
                 // Convert the expression type to MIR type
-                let result_type = self.convert_concrete_type(&expression.expr_type);
+                let result_type = self.convert_concrete_type(&inferred_type);
 
                 // CRITICAL FIX: Check if this is a void method
                 // Unknown types should NOT be treated as void - they represent unresolved return types
                 // that likely return values. Only explicitly Null/Undefined should be treated as void.
-                let is_void = !matches!(expression.expr_type, ConcreteType::Unknown)
-                    && (matches!(
-                        expression.expr_type,
-                        ConcreteType::Null | ConcreteType::Undefined
-                    ) || matches!(result_type, MirType::Void)
+                let is_void = !matches!(inferred_type, ConcreteType::Unknown)
+                    && (matches!(inferred_type, ConcreteType::Null | ConcreteType::Undefined)
+                        || matches!(result_type, MirType::Void)
                         || matches!(&result_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void)));
 
                 eprintln!(
-                    "DEBUG MIR METHODCALL: {:?} is_void={} expr_type={:?} mir_type={:?}",
-                    result_id, is_void, expression.expr_type, result_type
+                    "DEBUG MIR METHODCALL: {:?} is_void={} inferred_type={:?} mir_type={:?}",
+                    result_id, is_void, inferred_type, result_type
                 );
 
                 // ALWAYS register the local to maintain SSA invariant (learned from Context7)
@@ -2793,6 +3031,119 @@ impl MirBuilder {
                 Ok(result_id)
             }
 
+            TastExpressionKind::ArrayLiteral {
+                elements,
+                element_type: _,
+            } => {
+                // CRITICAL FIX: Handle array literal creation properly
+                // Array literals like [1, 2, 3] need to be materialized into actual memory
+                eprintln!(
+                    "DEBUG MIR ARRAYLITERAL: Creating list with {} elements",
+                    elements.len()
+                );
+
+                // Strategy:
+                // 1. Allocate empty list using list.allocate (synthetic SymbolId(1003))
+                // 2. For each element, call list.push (synthetic SymbolId(1004)) to add it
+                // 3. Return the list pointer
+
+                // Allocate the result ValueId for the list
+                let list_value_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+
+                // Register the list as a Ptr(I32) local
+                self.register_temp_local(
+                    context,
+                    list_value_id,
+                    MirType::Ptr(Box::new(MirType::I32)),
+                    expression.location.clone(),
+                );
+
+                // Call list.allocate(size) to create initial list
+                // Use synthetic SymbolId(1003) for list.allocate
+                let size_value_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+
+                self.register_temp_local(
+                    context,
+                    size_value_id,
+                    MirType::I32,
+                    expression.location.clone(),
+                );
+
+                // Create size constant
+                let size_instruction = MirInstruction {
+                    dest: Some(size_value_id),
+                    operation: MirOperation::Copy {
+                        source: MirOperand::Constant(MirConstant::Integer(elements.len() as i64)),
+                    },
+                    location: expression.location.clone(),
+                };
+                self.add_instruction(context, size_instruction);
+
+                // Call list.allocate with synthetic SymbolId(1003)
+                let alloc_instruction = MirInstruction {
+                    dest: Some(list_value_id),
+                    operation: MirOperation::Call {
+                        function: MirOperand::Function(SymbolId(1003)),
+                        arguments: vec![MirOperand::Value(size_value_id)],
+                    },
+                    location: expression.location.clone(),
+                };
+                self.add_instruction(context, alloc_instruction);
+
+                // Now add each element using list.push (synthetic SymbolId(1004))
+                for (idx, element) in elements.iter().enumerate() {
+                    eprintln!("DEBUG MIR ARRAYLITERAL: Adding element {}", idx);
+
+                    // Build the element expression
+                    let element_value_id = self.build_expression(context, element)?;
+
+                    // Call list.push(list, element)
+                    // Note: list.push returns the list pointer, so we need to capture it
+                    let push_result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    self.register_temp_local(
+                        context,
+                        push_result_id,
+                        MirType::Ptr(Box::new(MirType::I32)),
+                        expression.location.clone(),
+                    );
+
+                    let push_instruction = MirInstruction {
+                        dest: Some(push_result_id),
+                        operation: MirOperation::Call {
+                            function: MirOperand::Function(SymbolId(1004)),
+                            arguments: vec![
+                                MirOperand::Value(list_value_id),
+                                MirOperand::Value(element_value_id),
+                            ],
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, push_instruction);
+
+                    // Update list_value_id to point to the result of push
+                    // (list.push returns the updated list pointer)
+                    // We need to copy this back to list_value_id for the next iteration
+                    let copy_instruction = MirInstruction {
+                        dest: Some(list_value_id),
+                        operation: MirOperation::Copy {
+                            source: MirOperand::Value(push_result_id),
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, copy_instruction);
+                }
+
+                eprintln!(
+                    "DEBUG MIR ARRAYLITERAL: Array literal created, returning ValueId({:?})",
+                    list_value_id
+                );
+                Ok(list_value_id)
+            }
+
             _ => {
                 // TODO: Implement other expression types
                 Err(vec![CompilerError::validation_error(
@@ -3175,6 +3526,22 @@ impl MirBuilder {
 
     /// Add instruction to current basic block
     fn add_instruction(&mut self, context: &mut FunctionBuildContext, instruction: MirInstruction) {
+        // DEBUG: Track GetElementPtr/Load instructions
+        if matches!(instruction.operation, MirOperation::GetElementPtr { .. }) {
+            eprintln!(
+                "DEBUG ADD_INSTR: Adding GetElementPtr to block {:?}",
+                self.current_block
+            );
+        }
+        if matches!(instruction.operation, MirOperation::Load { .. })
+            && self.current_block == Some(BasicBlockId(2))
+        {
+            eprintln!(
+                "DEBUG ADD_INSTR: Adding Load to body block {:?}",
+                self.current_block
+            );
+        }
+
         if let Some(block_id) = self.current_block {
             if let Some(block) = context.function.blocks.get_mut(&block_id) {
                 block.instructions.push(instruction);

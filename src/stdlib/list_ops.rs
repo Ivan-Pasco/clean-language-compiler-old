@@ -167,50 +167,95 @@ impl ListManager {
     }
 
     pub fn generate_list_allocate(&self) -> Vec<Instruction> {
+        // CRITICAL FIX: Implement bump allocator for dynamic heap allocation
+        // Memory layout:
+        //   [0-3]: Global heap pointer (initially 1024)
+        //   [1024+]: Heap space for allocations
+        //
+        // Bump allocator algorithm:
+        //   1. Load current heap pointer from address 0
+        //   2. Calculate allocation size: header (16 bytes) + (capacity * 4 bytes)
+        //   3. Store new heap pointer (old + size) back to address 0
+        //   4. Use old pointer as the allocated address
+        //   5. Initialize list header at allocated address
+
         vec![
-            // Simplified list allocation - use fixed heap base
-            Instruction::I32Const(1000), // heap base
-            Instruction::LocalSet(1),    // store heap pointer in local 1 (consumes the value)
-            // Initialize list header at allocated location
-            Instruction::LocalGet(1), // heap pointer
-            Instruction::LocalGet(0), // size
+            // Load current heap pointer from address 0 (global heap pointer)
+            Instruction::I32Const(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(1), // local 1 = current heap pointer (allocated address)
+            // Calculate allocation size = 16 (header) + capacity * 4
+            Instruction::LocalGet(0),  // capacity
+            Instruction::I32Const(4),  // element size
+            Instruction::I32Mul,       // capacity * 4
+            Instruction::I32Const(16), // header size
+            Instruction::I32Add,       // total size = header + (capacity * 4)
+            Instruction::LocalSet(2),  // local 2 = allocation size
+            // Update global heap pointer: heap_ptr + allocation_size
+            Instruction::I32Const(0), // address of global heap pointer
+            Instruction::LocalGet(1), // current heap pointer
+            Instruction::LocalGet(2), // allocation size
+            Instruction::I32Add,      // new heap pointer
             Instruction::I32Store(MemArg {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
-            }), // store size
-            Instruction::LocalGet(1), // heap pointer
-            Instruction::LocalGet(0), // size (capacity = size for now)
+            }), // store new heap pointer back to address 0
+            // Initialize list header at allocated address (local 1)
+            // List memory layout: [size:i32|capacity:i32|type_id:i32|padding:i32|elements...]
+
+            // Store size = 0 (empty list)
+            Instruction::LocalGet(1),
+            Instruction::I32Const(0),
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store capacity
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(0), // capacity parameter
             Instruction::I32Store(MemArg {
                 offset: 4,
                 align: 2,
                 memory_index: 0,
-            }), // store capacity
-            Instruction::LocalGet(1), // heap pointer
-            Instruction::I32Const(LIST_TYPE_ID as i32), // type id
+            }),
+            // Store type_id
+            Instruction::LocalGet(1),
+            Instruction::I32Const(LIST_TYPE_ID as i32),
             Instruction::I32Store(MemArg {
                 offset: 8,
                 align: 2,
                 memory_index: 0,
-            }), // store type
-            // Return list pointer
+            }),
+            // Return allocated list pointer
             Instruction::LocalGet(1),
         ]
     }
 
     pub fn generate_list_get(&self) -> Vec<Instruction> {
-        // SIMPLIFIED: List get - return element pointer without bounds checking
+        // List get - returns element VALUE at the given index
         // Parameters: list_ptr, index
-        // Returns: calculated element pointer (simplified implementation)
+        // Returns: element value (i32)
         vec![
             // Calculate element pointer: list_ptr + header_size + (index * element_size)
             Instruction::LocalGet(0),  // list_ptr
-            Instruction::I32Const(16), // Header size
+            Instruction::I32Const(16), // Header size (16 bytes)
             Instruction::I32Add,
             Instruction::LocalGet(1), // index
-            Instruction::I32Const(8), // Element size
+            Instruction::I32Const(4), // Element size (4 bytes for i32)
             Instruction::I32Mul,
             Instruction::I32Add,
+            // Load the value from the calculated address
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
         ]
     }
 
@@ -224,7 +269,7 @@ impl ListManager {
             Instruction::I32Const(16), // Header size
             Instruction::I32Add,
             Instruction::LocalGet(1), // index
-            Instruction::I32Const(8), // Element size
+            Instruction::I32Const(4), // Element size (4 bytes for i32)
             Instruction::I32Mul,
             Instruction::I32Add,
             // Load value from value_ptr
@@ -282,7 +327,7 @@ impl ListManager {
             Instruction::LocalGet(2), // list_length
             Instruction::I32Const(4),
             Instruction::I32Mul,
-            Instruction::I32Const(8), // Add header size
+            Instruction::I32Const(16), // Add header size (16 bytes)
             Instruction::I32Add,
             Instruction::LocalSet(3), // total_size
             // For now, return a mock mapped list pointer
@@ -304,8 +349,8 @@ impl ListManager {
                 align: 2,
                 memory_index: 0,
             }), // size
-            // Calculate position for new element (size * 8 + 16)
-            Instruction::I32Const(8), // element size
+            // Calculate position for new element (size * 4 + 16)
+            Instruction::I32Const(4), // element size (4 bytes for i32)
             Instruction::I32Mul,
             Instruction::I32Const(16), // header size
             Instruction::I32Add,
@@ -367,7 +412,7 @@ impl ListManager {
             }), // size
             Instruction::I32Const(1),
             Instruction::I32Sub,      // size - 1
-            Instruction::I32Const(8), // element size
+            Instruction::I32Const(4), // element size (4 bytes for i32)
             Instruction::I32Mul,
             Instruction::I32Const(16), // header size
             Instruction::I32Add,
@@ -446,11 +491,11 @@ impl ListManager {
                 memory_index: 0,
             }),
             Instruction::LocalSet(1), // list_length
-            // Calculate total size needed (length * 4 + 8 for header)
+            // Calculate total size needed (length * 4 + 16 for header)
             Instruction::LocalGet(1), // list_length
             Instruction::I32Const(4),
             Instruction::I32Mul,
-            Instruction::I32Const(8), // Add header size
+            Instruction::I32Const(16), // Add header size (16 bytes)
             Instruction::I32Add,
             Instruction::LocalSet(2), // total_size
             // For now, return a mock reversed list pointer
