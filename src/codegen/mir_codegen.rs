@@ -734,6 +734,21 @@ impl<'a> MirCodeGenerator<'a> {
         false
     }
 
+    /// Detects if a block is a loop header by checking for backedges.
+    /// A block is a loop header if a LATER block (higher ID) jumps back to it.
+    /// This is the key characteristic of loops in SSA form.
+    fn is_loop_header(&self, function: &MirFunction, block_id: BasicBlockId) -> bool {
+        function.blocks.iter().any(|(source_id, source_block)| {
+            // Only consider blocks that come AFTER the current block (backedge)
+            if source_id.0 > block_id.0 {
+                // Check if this later block jumps back to our block
+                matches!(&source_block.terminator, MirTerminator::Jump { target } if *target == block_id)
+            } else {
+                false
+            }
+        })
+    }
+
     #[allow(dead_code)]
     fn block_always_returns(&self, function: &MirFunction, block_id: BasicBlockId) -> bool {
         let mut visited = std::collections::HashSet::new();
@@ -953,9 +968,15 @@ impl<'a> MirCodeGenerator<'a> {
             None => return Ok(()),
         };
 
-        // Generate block instructions
-        for instruction in &block.instructions {
-            self.generate_instruction(instruction)?;
+        // CRITICAL: Check if this block is a loop header BEFORE generating instructions
+        // For loop headers, instructions must be generated INSIDE the loop
+        let is_loop_header = self.is_loop_header(function, block_id);
+
+        // Generate block instructions (UNLESS this is a loop header - those go inside the loop)
+        if !is_loop_header {
+            for instruction in &block.instructions {
+                self.generate_instruction(instruction)?;
+            }
         }
 
         // Handle terminator with structured control flow
@@ -979,77 +1000,137 @@ impl<'a> MirCodeGenerator<'a> {
                 true_block,
                 false_block,
             } => {
-                // Check if false_block is a continuation (no else clause in source)
-                let has_else_clause =
-                    !self.is_continuation_not_else(function, *true_block, *false_block);
+                // CRITICAL FIX: Check if this block is a loop header (has backedge)
+                let is_loop = self.is_loop_header(function, block_id);
 
-                // Generate if/else structure
-                self.load_operand(condition)?;
-                self.current_instructions
-                    .push(Instruction::If(BlockType::Empty));
+                if is_loop {
+                    debug_mir!(
+                        "DEBUG LOOP: Block {:?} is a loop header, generating loop structure",
+                        block_id
+                    );
 
-                // Use generate_branch_block to avoid following Jump terminators inside branches
-                self.generate_branch_block(function, *true_block, generated)?;
+                    // Generate loop structure:
+                    // block (outer - for exit via br_if 1)
+                    //   loop (inner - for continue via br 0)
+                    //     header block instructions (condition evaluation)
+                    //     condition check
+                    //     br_if 1 (!condition) - exit if condition is false
+                    //     body (true_block)
+                    //     br 0 - jump back to loop header (backedge handled by MirTerminator::Jump)
+                    //   end
+                    // end
+                    // continuation (false_block)
 
-                // Only generate else clause if false_block is NOT an empty continuation
-                if has_else_clause {
-                    self.current_instructions.push(Instruction::Else);
-                    self.generate_branch_block(function, *false_block, generated)?;
-                }
+                    self.current_instructions
+                        .push(Instruction::Block(BlockType::Empty)); // label @1 (exit target)
+                    self.current_instructions
+                        .push(Instruction::Loop(BlockType::Empty)); // label @0 (loop target)
 
-                self.current_instructions.push(Instruction::End);
+                    // CRITICAL: Generate header block instructions INSIDE the loop
+                    // This ensures condition is re-evaluated on each iteration
+                    for instruction in &block.instructions {
+                        self.generate_instruction(instruction)?;
+                    }
 
-                // Check if both branches directly return (without following Jumps to continuations)
-                let true_has_return = self.block_directly_returns(function, *true_block);
-                let false_has_return = if has_else_clause {
-                    self.block_directly_returns(function, *false_block)
-                } else {
-                    false // No else clause means false branch doesn't return
-                };
+                    // Load condition and negate it (br_if when condition is FALSE)
+                    self.load_operand(condition)?;
+                    self.current_instructions.push(Instruction::I32Eqz); // Negate: br_if when 0 (false)
+                    self.current_instructions.push(Instruction::BrIf(1)); // Exit to block @1 if condition is false
 
-                if true_has_return && false_has_return {
-                    // Both branches return - add unreachable to indicate code after if-else is never reached
-                    self.current_instructions.push(Instruction::Unreachable);
-                } else {
-                    // Find and generate continuation block
-                    // We need to find the continuation that at least one non-returning branch jumps to
-                    let mut continuation: Option<BasicBlockId> = None;
+                    // Generate loop body (true_block) - this will have a Jump back to block_id
+                    // Mark the loop body as generated to prevent infinite recursion
+                    self.generate_branch_block(function, *true_block, generated)?;
 
-                    // Check if true branch jumps to a continuation
-                    if !true_has_return {
-                        if let Some(true_blk) = function.blocks.get(true_block) {
-                            if let MirTerminator::Jump { target } = &true_blk.terminator {
-                                continuation = Some(*target);
-                            }
+                    // The body should end with a Jump back to this block (the loop header)
+                    // That Jump becomes an implicit br 0 (continue loop) in WASM structured control flow
+                    // We need to explicitly add br 0 here to jump back to the loop header
+                    if let Some(body_block) = function.blocks.get(true_block) {
+                        if matches!(&body_block.terminator, MirTerminator::Jump { target } if *target == block_id)
+                        {
+                            debug_mir!("DEBUG LOOP: Body block {:?} jumps back to header {:?}, adding br 0", true_block, block_id);
+                            self.current_instructions.push(Instruction::Br(0)); // Jump back to loop (label @0)
                         }
                     }
 
-                    // Check if false branch jumps to a continuation (should be same as true if both jump)
-                    if !false_has_return {
-                        if has_else_clause {
-                            // Real else clause - check where it jumps
-                            if let Some(false_blk) = function.blocks.get(false_block) {
-                                if let MirTerminator::Jump { target } = &false_blk.terminator {
-                                    if continuation.is_none() {
-                                        continuation = Some(*target);
-                                    } else {
-                                        // Both branches jump - verify they jump to the same place
-                                        debug_assert_eq!(continuation, Some(*target),
-                                            "Both branches jump but to different continuations - this indicates a CFG issue");
-                                    }
+                    self.current_instructions.push(Instruction::End); // end loop
+                    self.current_instructions.push(Instruction::End); // end block
+
+                    // Generate continuation (false_block) - this is where we exit to
+                    self.generate_structured_blocks(function, *false_block, generated)?;
+                } else {
+                    // Regular if/else (not a loop)
+                    // Check if false_block is a continuation (no else clause in source)
+                    let has_else_clause =
+                        !self.is_continuation_not_else(function, *true_block, *false_block);
+
+                    // Generate if/else structure
+                    self.load_operand(condition)?;
+                    self.current_instructions
+                        .push(Instruction::If(BlockType::Empty));
+
+                    // Use generate_branch_block to avoid following Jump terminators inside branches
+                    self.generate_branch_block(function, *true_block, generated)?;
+
+                    // Only generate else clause if false_block is NOT an empty continuation
+                    if has_else_clause {
+                        self.current_instructions.push(Instruction::Else);
+                        self.generate_branch_block(function, *false_block, generated)?;
+                    }
+
+                    self.current_instructions.push(Instruction::End);
+
+                    // Check if both branches directly return (without following Jumps to continuations)
+                    let true_has_return = self.block_directly_returns(function, *true_block);
+                    let false_has_return = if has_else_clause {
+                        self.block_directly_returns(function, *false_block)
+                    } else {
+                        false // No else clause means false branch doesn't return
+                    };
+
+                    if true_has_return && false_has_return {
+                        // Both branches return - add unreachable to indicate code after if-else is never reached
+                        self.current_instructions.push(Instruction::Unreachable);
+                    } else {
+                        // Find and generate continuation block
+                        // We need to find the continuation that at least one non-returning branch jumps to
+                        let mut continuation: Option<BasicBlockId> = None;
+
+                        // Check if true branch jumps to a continuation
+                        if !true_has_return {
+                            if let Some(true_blk) = function.blocks.get(true_block) {
+                                if let MirTerminator::Jump { target } = &true_blk.terminator {
+                                    continuation = Some(*target);
                                 }
                             }
-                        } else {
-                            // No else clause - false_block IS the continuation
-                            if continuation.is_none() {
-                                continuation = Some(*false_block);
+                        }
+
+                        // Check if false branch jumps to a continuation (should be same as true if both jump)
+                        if !false_has_return {
+                            if has_else_clause {
+                                // Real else clause - check where it jumps
+                                if let Some(false_blk) = function.blocks.get(false_block) {
+                                    if let MirTerminator::Jump { target } = &false_blk.terminator {
+                                        if continuation.is_none() {
+                                            continuation = Some(*target);
+                                        } else {
+                                            // Both branches jump - verify they jump to the same place
+                                            debug_assert_eq!(continuation, Some(*target),
+                                                "Both branches jump but to different continuations - this indicates a CFG issue");
+                                        }
+                                    }
+                                }
+                            } else {
+                                // No else clause - false_block IS the continuation
+                                if continuation.is_none() {
+                                    continuation = Some(*false_block);
+                                }
                             }
                         }
-                    }
 
-                    // Generate the continuation block if we found one
-                    if let Some(cont) = continuation {
-                        self.generate_structured_blocks(function, cont, generated)?;
+                        // Generate the continuation block if we found one
+                        if let Some(cont) = continuation {
+                            self.generate_structured_blocks(function, cont, generated)?;
+                        }
                     }
                 }
             }
