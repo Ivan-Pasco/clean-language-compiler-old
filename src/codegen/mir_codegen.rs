@@ -2118,10 +2118,20 @@ impl<'a> MirCodeGenerator<'a> {
                     match self.load_operand(index) {
                         Ok(_) => {
                             debug_mir!(index_num = i, "Index loaded successfully");
-                            // Calculate element address: base + (index * element_size)
+                            // Calculate element address: base + 16 + (index * element_size)
+                            // CRITICAL FIX: Clean Language array layout has 16-byte header
+                            // Clean Language array layout:
+                            //   Offset 0-3: Type marker (0)
+                            //   Offset 4-7: Array length (i32)
+                            //   Offset 8-11: Element size (4)
+                            //   Offset 12-15: Unused
+                            //   Offset 16+: Elements start here
                             // For simplicity, assume 4-byte elements (i32/f32)
                             self.current_instructions.push(Instruction::I32Const(4));
                             self.current_instructions.push(Instruction::I32Mul);
+                            self.current_instructions.push(Instruction::I32Add);
+                            // Add array header offset (16 bytes for header)
+                            self.current_instructions.push(Instruction::I32Const(16));
                             self.current_instructions.push(Instruction::I32Add);
                         }
                         Err(e) => {

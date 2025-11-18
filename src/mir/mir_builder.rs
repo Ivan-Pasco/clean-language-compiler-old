@@ -2354,10 +2354,112 @@ impl MirBuilder {
                     return Ok(receiver_id);
                 }
 
-                // SPECIAL CASE: Type conversion methods - emit Cast instructions
+                // SPECIAL CASE: Type conversion methods - emit Cast instructions or builtin calls
                 if method_symbol.0 == 0 {
                     let receiver_type = &receiver.expr_type;
                     match (receiver_type, method_name.as_str()) {
+                        // Integer to String conversion - call int_to_string
+                        (ConcreteType::Integer, "toString") => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            // Register the result as i32 (string pointer)
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32,
+                                expression.location.clone(),
+                            );
+
+                            let symbol_id = self
+                                .symbol_table
+                                .lookup_symbol("int_to_string")
+                                .unwrap_or_else(|| {
+                                    eprintln!("WARNING: int_to_string not found in symbol table, using SymbolId(166)");
+                                    SymbolId(166)
+                                });
+
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::Function(symbol_id),
+                                    arguments: vec![MirOperand::Value(receiver_id)],
+                                },
+                                location: expression.location.clone(),
+                            };
+
+                            self.add_instruction(context, instruction);
+
+                            return Ok(result_id);
+                        }
+                        // Number to String conversion - call float_to_string
+                        (ConcreteType::Number, "toString") => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            // Register the result as i32 (string pointer)
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32,
+                                expression.location.clone(),
+                            );
+
+                            let symbol_id = self
+                                .symbol_table
+                                .lookup_symbol("float_to_string")
+                                .unwrap_or_else(|| {
+                                    eprintln!("WARNING: float_to_string not found in symbol table, using SymbolId(167)");
+                                    SymbolId(167)
+                                });
+
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::Function(symbol_id),
+                                    arguments: vec![MirOperand::Value(receiver_id)],
+                                },
+                                location: expression.location.clone(),
+                            };
+
+                            self.add_instruction(context, instruction);
+
+                            return Ok(result_id);
+                        }
+                        // Boolean to String conversion - call bool_to_string
+                        (ConcreteType::Boolean, "toString") => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            // Register the result as i32 (string pointer)
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32,
+                                expression.location.clone(),
+                            );
+
+                            let symbol_id = self
+                                .symbol_table
+                                .lookup_symbol("bool_to_string")
+                                .unwrap_or_else(|| {
+                                    eprintln!("WARNING: bool_to_string not found in symbol table, using SymbolId(165)");
+                                    SymbolId(165)
+                                });
+
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::Function(symbol_id),
+                                    arguments: vec![MirOperand::Value(receiver_id)],
+                                },
+                                location: expression.location.clone(),
+                            };
+
+                            self.add_instruction(context, instruction);
+
+                            return Ok(result_id);
+                        }
                         // Number to Integer conversion (f64 -> i32)
                         (ConcreteType::Number, "toInteger") => {
                             let result_id = ValueId(context.function.next_value_id);
@@ -2481,6 +2583,47 @@ impl MirBuilder {
                                     SymbolId(165)
                                 });
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
+                        }
+                        // Generic type with toString() - infer from MIR type
+                        (ConcreteType::Generic { .. } | ConcreteType::Unknown, "toString") => {
+                            // Check the MIR type to determine which conversion function to use
+                            let mir_type = context
+                                .function
+                                .locals
+                                .get(&receiver_id)
+                                .map(|l| l.local_type.clone())
+                                .unwrap_or(MirType::I32);
+
+                            eprintln!(
+                                "DEBUG GENERIC toString: receiver_id={:?}, mir_type={:?}",
+                                receiver_id, mir_type
+                            );
+
+                            match mir_type {
+                                MirType::I32 => {
+                                    // Call int_to_string
+                                    let symbol_id = self.symbol_table.lookup_symbol("int_to_string")
+                                        .unwrap_or_else(|| {
+                                            eprintln!("WARNING: int_to_string not found in symbol table, using SymbolId(166)");
+                                            SymbolId(166)
+                                        });
+                                    (symbol_id, vec![MirOperand::Value(receiver_id)])
+                                }
+                                MirType::F64 => {
+                                    // Call float_to_string
+                                    let symbol_id = self.symbol_table.lookup_symbol("float_to_string")
+                                        .unwrap_or_else(|| {
+                                            eprintln!("WARNING: float_to_string not found in symbol table, using SymbolId(167)");
+                                            SymbolId(167)
+                                        });
+                                    (symbol_id, vec![MirOperand::Value(receiver_id)])
+                                }
+                                _ => {
+                                    // Assume it's already a string or object with built-in toString
+                                    eprintln!("WARNING: Unknown MIR type {:?} for Generic.toString(), treating as string", mir_type);
+                                    (*method_symbol, vec![MirOperand::Value(receiver_id)])
+                                }
+                            }
                         }
                         // String methods - look up correct SymbolIds from symbol table
                         (ConcreteType::String, "length") => {
