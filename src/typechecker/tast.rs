@@ -120,11 +120,6 @@ pub enum TastStatement {
         result_type: ConcreteType,
         location: SourceLocation,
     },
-    While {
-        condition: TastExpression,
-        body: TastBlock,
-        location: SourceLocation,
-    },
     For {
         iterator: SymbolId,
         iterator_name: String, // Variable name for the iterator
@@ -256,6 +251,11 @@ pub enum TastExpressionKind {
     BaseCall {
         parent_class_symbol_id: SymbolId,
         arguments: Vec<TastExpression>,
+    },
+    Range {
+        start: Box<TastExpression>,
+        end: Box<TastExpression>,
+        inclusive: bool,
     },
 }
 

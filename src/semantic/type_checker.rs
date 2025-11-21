@@ -145,20 +145,6 @@ impl TypeChecker {
                 }
                 Ok(())
             }
-            Statement::While { condition, body, location } => {
-                let cond_type = self.infer_type(condition)?;
-                if cond_type != Type::Bool {
-                    return Err(CompilerError::type_error(
-                        location.line,
-                        location.column,
-                        "While condition must be a boolean expression".to_string(),
-                    ));
-                }
-                for stmt in body {
-                    self.check_statement(stmt)?;
-                }
-                Ok(())
-            }
             Statement::Expression(expr) => {
                 self.infer_type(expr)?;
                 Ok(())

@@ -13,7 +13,7 @@ EMPTY_LINE_TRIVIA = _{ INDENT* ~ NEWLINE }
 TRIVIA = _{ LINE_TRIVIA | BLOCK_TRIVIA | EMPTY_LINE_TRIVIA }
 
 // Keywords and identifiers
-keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "while" | "print") ~ !(ASCII_ALPHANUMERIC | "_") }
+keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print") ~ !(ASCII_ALPHANUMERIC | "_") }
 identifier = @{ !keyword ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Extended numeric literals
@@ -437,9 +437,6 @@ else_block = { NEWLINE ~ (empty_line)* ~ INDENT* ~ "else" ~ (WHITESPACE* ~ "if" 
 iterate_stmt = { "iterate" ~ WHITESPACE* ~ identifier ~ WHITESPACE* ~ "in" ~ WHITESPACE* ~ expression ~ indented_block }
 range_iterate_stmt = { "iterate" ~ WHITESPACE* ~ identifier ~ WHITESPACE* ~ "in" ~ WHITESPACE* ~ expression ~ WHITESPACE* ~ "to" ~ WHITESPACE* ~ expression ~ (WHITESPACE* ~ "step" ~ WHITESPACE* ~ expression)? ~ indented_block }
 
-// While loops
-while_stmt = { "while" ~ WHITESPACE* ~ expression ~ indented_block }
-
 // Test
 test = { "test" ~ string ~ indented_block }
 
@@ -451,7 +448,7 @@ return_stmt = { "return" ~ (WHITESPACE* ~ expression)? }
 // Parameter definitions for function declarations
 parameter_list = { parameter ~ ("," ~ " "* ~ parameter)* }
 parameter_name = @{ !critical_keyword ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* | "base" }
-critical_keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "while") ~ !(ASCII_ALPHANUMERIC | "_") }
+critical_keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start") ~ !(ASCII_ALPHANUMERIC | "_") }
 parameter = { parameter_type? ~ " "* ~ parameter_name ~ (" "* ~ "=" ~ " "* ~ logical_expression)? }
 parameter_type = {
     matrix_type |
@@ -652,7 +649,6 @@ statement = {
     return_stmt |
     error_stmt |
     if_stmt |
-    while_stmt |
     iterate_stmt |
     range_iterate_stmt |
     test |

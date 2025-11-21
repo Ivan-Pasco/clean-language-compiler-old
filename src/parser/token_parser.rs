@@ -1980,7 +1980,6 @@ impl TokenParser {
         match self.current_kind() {
             TokenKind::Return => self.parse_return(),
             TokenKind::If => self.parse_if(),
-            TokenKind::While => self.parse_while(),
             TokenKind::For => self.parse_for(),
             TokenKind::Iterate => self.parse_iterate(),
             TokenKind::Later => self.parse_later_assignment(),
@@ -2557,23 +2556,6 @@ impl TokenParser {
             then_branch,
             else_branch,
             location: Some(if_token.location),
-        })
-    }
-
-    fn parse_while(&mut self) -> Result<Statement, CompilerError> {
-        let while_token = self.expect(&TokenKind::While)?;
-        self.skip_whitespace();
-
-        let condition = self.parse_expression()?;
-        self.skip_whitespace();
-        // DON'T skip indentation - let parse_block() handle it
-
-        let body = self.parse_block()?;
-
-        Ok(Statement::While {
-            condition,
-            body,
-            location: Some(while_token.location),
         })
     }
 

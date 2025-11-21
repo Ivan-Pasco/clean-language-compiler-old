@@ -10,6 +10,8 @@ import:
 private:
 	internalValidation
 	secretKey
+	logUserAction
+	clearCache
 
 functions:
 	// Public function using method-style and static calls

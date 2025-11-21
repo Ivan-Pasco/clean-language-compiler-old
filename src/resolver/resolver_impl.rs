@@ -756,21 +756,6 @@ impl NameResolver {
                 })
             }
 
-            HirStatement::While {
-                condition,
-                body,
-                location,
-            } => {
-                let resolved_condition = self.resolve_expression(condition)?;
-                let resolved_body = self.resolve_block(body)?;
-
-                Ok(ResolvedHirStatement::While {
-                    condition: resolved_condition,
-                    body: resolved_body,
-                    location: location.clone(),
-                })
-            }
-
             HirStatement::For {
                 variable,
                 iterable,
@@ -1773,6 +1758,24 @@ impl NameResolver {
                 Ok(ResolvedHirExpression::BaseCall {
                     parent_class_symbol_id,
                     arguments: resolved_arguments,
+                    location: location.clone(),
+                })
+            }
+
+            HirExpression::Range {
+                start,
+                end,
+                inclusive,
+                location,
+            } => {
+                // Resolve start and end expressions
+                let resolved_start = Box::new(self.resolve_expression(start)?);
+                let resolved_end = Box::new(self.resolve_expression(end)?);
+
+                Ok(ResolvedHirExpression::Range {
+                    start: resolved_start,
+                    end: resolved_end,
+                    inclusive: *inclusive,
                     location: location.clone(),
                 })
             }

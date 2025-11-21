@@ -171,13 +171,6 @@ pub enum ResolvedHirStatement {
         location: SourceLocation,
     },
 
-    /// While loop with resolved condition and body
-    While {
-        condition: ResolvedHirExpression,
-        body: ResolvedHirBlock,
-        location: SourceLocation,
-    },
-
     /// For loop with resolved iterable and body
     For {
         variable: String,
@@ -334,6 +327,40 @@ pub enum ResolvedHirExpression {
         arguments: Vec<ResolvedHirExpression>,
         location: SourceLocation,
     },
+
+    /// Range expression (start..end or start..=end)
+    Range {
+        start: Box<ResolvedHirExpression>,
+        end: Box<ResolvedHirExpression>,
+        inclusive: bool,
+        location: SourceLocation,
+    },
+}
+
+impl ResolvedHirExpression {
+    /// Get the source location of this expression
+    pub fn location(&self) -> &SourceLocation {
+        match self {
+            ResolvedHirExpression::Literal { location, .. } => location,
+            ResolvedHirExpression::Variable { location, .. } => location,
+            ResolvedHirExpression::BinaryOp { location, .. } => location,
+            ResolvedHirExpression::UnaryOp { location, .. } => location,
+            ResolvedHirExpression::Call { location, .. } => location,
+            ResolvedHirExpression::MethodCall { location, .. } => location,
+            ResolvedHirExpression::StaticMethodCall { location, .. } => location,
+            ResolvedHirExpression::FieldAccess { location, .. } => location,
+            ResolvedHirExpression::Index { location, .. } => location,
+            ResolvedHirExpression::Array { location, .. } => location,
+            ResolvedHirExpression::Constructor { location, .. } => location,
+            ResolvedHirExpression::This { location, .. } => location,
+            ResolvedHirExpression::Cast { location, .. } => location,
+            ResolvedHirExpression::Assignment { location, .. } => location,
+            ResolvedHirExpression::OnError { location, .. } => location,
+            ResolvedHirExpression::Conditional { location, .. } => location,
+            ResolvedHirExpression::BaseCall { location, .. } => location,
+            ResolvedHirExpression::Range { location, .. } => location,
+        }
+    }
 }
 
 /// Resolved HIR L-value with resolved symbol references

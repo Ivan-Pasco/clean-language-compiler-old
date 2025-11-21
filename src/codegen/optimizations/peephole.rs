@@ -341,19 +341,6 @@ impl PeepholeOptimizer {
                     results.total_optimizations += 1;
                 }
             }
-            Statement::While { condition, body } => {
-                let cond_results = self.optimize_expression(condition)?;
-                let body_results = self.optimize_statement(body)?;
-                self.merge_results(&mut results, cond_results);
-                self.merge_results(&mut results, body_results);
-
-                // Check for constant false condition
-                if let Some(false) = self.evaluate_constant_boolean(condition) {
-                    *statement = Statement::Block(vec![]); // Replace with empty block
-                    results.patterns_applied.insert("constant_false_while".to_string(), 1);
-                    results.total_optimizations += 1;
-                }
-            }
             Statement::For { init, condition, update, body } => {
                 if let Some(init) = init {
                     let init_results = self.optimize_statement(init)?;

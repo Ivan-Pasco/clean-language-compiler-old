@@ -498,13 +498,6 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
-    // While loops
-    While {
-        condition: Expression,
-        body: Vec<Statement>,
-        location: Option<SourceLocation>,
-    },
-
     // Match expressions
     Match {
         value: Expression,

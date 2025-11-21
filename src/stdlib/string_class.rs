@@ -24,27 +24,26 @@ impl StringClass {
         // Basic operations
         self.register_basic_operations(codegen)?;
 
-        // DISABLE CASE, SEARCH, FORMATTING, ADVANCED, CHARACTER, VALIDATION, PADDING to narrow down
         // Case operations
-        // self.register_case_operations(codegen)?;
+        self.register_case_operations(codegen)?;
 
         // Search and validation operations
-        // self.register_search_operations(codegen)?;
+        self.register_search_operations(codegen)?;
 
         // Text cleaning and formatting
-        // self.register_formatting_operations(codegen)?;
+        self.register_formatting_operations(codegen)?;
 
         // Advanced text manipulation
-        // self.register_advanced_operations(codegen)?;
+        self.register_advanced_operations(codegen)?;
 
         // Character operations
-        // self.register_character_operations(codegen)?;
+        self.register_character_operations(codegen)?;
 
         // Validation helpers
-        // self.register_validation_operations(codegen)?;
+        self.register_validation_operations(codegen)?;
 
         // Padding operations
-        // self.register_padding_operations(codegen)?;
+        self.register_padding_operations(codegen)?;
 
         Ok(())
     }
@@ -54,6 +53,25 @@ impl StringClass {
         register_stdlib_function(
             codegen,
             "string.length",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            vec![
+                // Get string pointer
+                Instruction::LocalGet(0),
+                // Load string length (first 4 bytes)
+                Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }),
+            ],
+        )?;
+
+        // String.size(string text) -> integer (alias for string.length)
+        // Returns the number of characters in the string
+        register_stdlib_function(
+            codegen,
+            "string.size",
             &[WasmType::I32],
             Some(WasmType::I32),
             vec![
@@ -84,6 +102,16 @@ impl StringClass {
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_substring(),
+        )?;
+
+        // String.charAt(string text, integer index) -> string
+        // Returns a single-character string at the specified index
+        register_stdlib_function(
+            codegen,
+            "string.charAt",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            self.generate_char_at(),
         )?;
 
         Ok(())

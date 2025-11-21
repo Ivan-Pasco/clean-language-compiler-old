@@ -13,6 +13,7 @@ impl CodeGenerator {
         statement: &Statement,
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
+        eprintln!("DEBUG: generate_statement called with: {:?}", std::mem::discriminant(statement));
         match statement {
             Statement::VariableDecl { name, type_, initializer, .. } => {
                 self.generate_variable_declaration(name, &Some(type_.clone()), initializer, instructions)
@@ -34,9 +35,6 @@ impl CodeGenerator {
             },
             Statement::If { condition, then_branch, else_branch, .. } => {
                 self.generate_if_statement(condition, then_branch, else_branch, instructions)
-            },
-            Statement::While { condition, body, .. } => {
-                self.generate_while_statement(condition, body, instructions)
             },
             // For loops and try-catch are handled by other statement types
             Statement::Test { name, body, .. } => {
@@ -67,6 +65,7 @@ impl CodeGenerator {
                 self.generate_iterate_statement(&iterator, collection, body, instructions)
             },
             Statement::Expression { expr, .. } => {
+                eprintln!("DEBUG: Generating Statement::Expression");
                 self.generate_expression_statement(expr, instructions)
             },
             Statement::TypeApplyBlock { type_, assignments, .. } => {
@@ -349,9 +348,18 @@ impl CodeGenerator {
         expr: &Expression,
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
-        // Generate the expression and drop its result
-        self.generate_expression(expr, instructions)?;
-        instructions.push(Instruction::Drop);
+        // Generate the expression
+        let result_type = self.generate_expression(expr, instructions)?;
+
+        // Only drop if the expression actually produces a value
+        // Use the computed result type to determine this reliably
+        if result_type != WasmType::Unit {
+            eprintln!("DEBUG: Expression statement returning {:?}, adding Drop", result_type);
+            instructions.push(Instruction::Drop);
+        } else {
+            eprintln!("DEBUG: Expression statement returning Unit, no Drop needed");
+        }
+
         Ok(())
     }
 
@@ -433,39 +441,6 @@ impl CodeGenerator {
         }
         
         instructions.push(Instruction::End);
-        Ok(())
-    }
-
-    fn generate_while_statement(
-        &mut self,
-        condition: &Expression,
-        body: &[Statement],
-        instructions: &mut Vec<Instruction>,
-    ) -> Result<(), CompilerError> {
-        let _loop_label = self.next_label();
-        let _end_label = self.next_label();
-        
-        // Start loop
-        instructions.push(Instruction::Loop(BlockType::Empty));
-        
-        // Generate condition
-        self.generate_expression(condition, instructions)?;
-        
-        // Branch out if condition is false
-        instructions.push(Instruction::I32Eqz);
-        instructions.push(Instruction::BrIf(1)); // Break out of loop
-        
-        // Generate body
-        for stmt in body {
-            self.generate_statement(stmt, instructions)?;
-        }
-        
-        // Continue loop
-        instructions.push(Instruction::Br(0)); // Back to start of loop
-        
-        // End loop
-        instructions.push(Instruction::End);
-        
         Ok(())
     }
 

@@ -84,10 +84,9 @@ functions:
 
 	void testBehaviorSwitching()
 		print("=== Dynamic Behavior Switching ===")
-		list<integer> dynamicList = []
+		list<integer> dynamicList = [1]
 
-		// Start as default list
-		dynamicList.add(1)
+		// Start as default list (already has 1)
 		dynamicList.add(2)
 		dynamicList.add(3)
 		print("Default list size: " + dynamicList.size().toString())

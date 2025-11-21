@@ -10,10 +10,8 @@ functions:
 		if exponent == 0
 			return 1
 		integer result = value
-		integer counter = 1
-		while counter < exponent
+		iterate counter in 1 to (exponent - 1)
 			result = result * value
-			counter = counter + 1
 		return result
 
 	void logMessage(string message, string level="INFO")

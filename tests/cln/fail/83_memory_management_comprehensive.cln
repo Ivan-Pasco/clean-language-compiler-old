@@ -39,28 +39,22 @@ start()
 	list<LargeObject> objectList = []
 
 	// Create multiple objects
-	integer i = 0
-	while i < 3
+	iterate i in 0 to 2
 		LargeObject tempObj = LargeObject("TempObject" + i.toString(), 100)
 		objectList = list.add(objectList, tempObj)
-		i = i + 1
 
 	print("Created " + objectList.size().toString() + " objects in list")
 	// Test large data structures
 	list<list<integer>> nestedList = []
-	integer j = 0
-	while j < 10
+	iterate j in 0 to 9
 		list<integer> innerList = list.fill(100, j)
 		nestedList = list.add(nestedList, innerList)
-		j = j + 1
 
 	print("Created nested list structure")
 	// Test string memory management
 	string largeString = ""
-	integer k = 0
-	while k < 100
+	iterate k in 0 to 99
 		largeString = largeString + "This is line " + k.toString() + "\n"
-		k = k + 1
 
 	integer strLength = string.length(largeString)
 	print("Large string length: " + strLength.toString())

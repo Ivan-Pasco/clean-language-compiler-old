@@ -515,16 +515,6 @@ impl HirValidator {
                 }
             }
 
-            HirStatement::While {
-                condition, body, ..
-            } => {
-                Self::validate_expression(context, condition);
-
-                context.push_scope();
-                Self::validate_block(context, body);
-                context.pop_scope();
-            }
-
             HirStatement::For {
                 variable,
                 iterable,
@@ -722,6 +712,12 @@ impl HirValidator {
                 }
                 // Note: Validation of whether base() is used in proper context (constructor of derived class)
                 // is done during resolution phase, not here
+            }
+
+            HirExpression::Range { start, end, .. } => {
+                // Validate start and end expressions
+                Self::validate_expression(context, start);
+                Self::validate_expression(context, end);
             }
         }
     }

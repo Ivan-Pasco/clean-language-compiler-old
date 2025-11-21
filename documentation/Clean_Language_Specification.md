@@ -193,11 +193,11 @@ $name       // Special characters not allowed
 Reserved keywords in Clean Language:
 
 ```
-and        class       constructor  else        error       false      
-for        from        function     if          import      in         
-iterate    not         onError      or          print       println    
-return     start       step         test        tests       this        
-to         true        while        is          returns     description 
+and        class       constructor  else        error       false
+for        from        function     if          import      in
+iterate    not         onError      or          print       println
+return     start       step         test        tests       this
+to         true        is           returns     description
 input      unit        private      constant    functions
 ```
 
@@ -416,7 +416,7 @@ functions:
         tasks.add("Task 3")
         
         // Process tasks (from front)
-        while tasks.size() > 0
+        iterate i in 1 to 3
             string currentTask = tasks.remove()  // Gets "Task 1", then "Task 2", etc.
             println("Processing: " + currentTask)
 ```
@@ -443,7 +443,7 @@ functions:
         actions.add("Save file")
         
         // Undo actions (remove from top)
-        while actions.size() > 0
+        iterate i in 1 to 3
             string lastAction = actions.remove()  // Gets "Save file", then "Edit text", etc.
             println("Undoing: " + lastAction)
 ```

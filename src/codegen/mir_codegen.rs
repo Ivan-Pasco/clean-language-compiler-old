@@ -180,6 +180,20 @@ impl<'a> MirCodeGenerator<'a> {
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: Type conversion imports registered");
 
+            // CRITICAL: Register HTTP imports (http_get, http_post, etc.)
+            debug_mir!("DEBUG MIR: Registering HTTP imports");
+            self.wasm_generator
+                .register_http_imports()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: HTTP imports registered");
+
+            // CRITICAL: Register file imports (file_read, file_write, file_exists, etc.)
+            debug_mir!("DEBUG MIR: Registering file imports");
+            self.wasm_generator
+                .register_file_imports()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: File imports registered");
+
             // CRITICAL: Register math operations (abs, max, min, sqrt, pow, etc.)
             debug_mir!("DEBUG MIR: Registering math operation imports");
             self.wasm_generator
@@ -200,6 +214,27 @@ impl<'a> MirCodeGenerator<'a> {
                 .register_list_class_operations()
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: List class operations registered");
+
+            // CRITICAL: Register conditional operations (compare.integer.*, logical.*, etc.)
+            debug_mir!("DEBUG MIR: Registering conditional operations");
+            self.wasm_generator
+                .register_conditional_operations()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: Conditional operations registered");
+
+            // CRITICAL: Register HTTP operations (http.get, http.post, etc.)
+            debug_mir!("DEBUG MIR: Registering HTTP operations");
+            self.wasm_generator
+                .register_http_operations()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: HTTP operations registered");
+
+            // CRITICAL: Register file operations (file.read, file.write, file.exists, etc.)
+            debug_mir!("DEBUG MIR: Registering file operations");
+            self.wasm_generator
+                .register_file_operations()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: File operations registered");
         }
 
         // Set up memory section
@@ -525,8 +560,8 @@ impl<'a> MirCodeGenerator<'a> {
         );
         // CRITICAL FIX: For void functions, check if we need to drop a value
         // This prevents "type mismatch at end of function, expected [] but got [X]" errors
-        let is_void_function = matches!(function.return_type, MirType::Void)
-            || matches!(&function.return_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
+        // NOTE: Ptr(Void) represents the "any" type and DOES return a value (i32), so don't treat it as void
+        let is_void_function = matches!(function.return_type, MirType::Void);
 
         eprintln!(
             "DEBUG VOID FUNCTION CHECK: Function '{}', is_void={}, has {} instructions",
@@ -558,6 +593,9 @@ impl<'a> MirCodeGenerator<'a> {
             if matches!(instruction, Instruction::Drop) {
                 eprintln!("DEBUG COPY: Instruction[{}] = DROP", idx);
             }
+            if let Instruction::Call(func_idx) = instruction {
+                eprintln!("DEBUG COPY: Instruction[{}] = Call({})", idx, func_idx);
+            }
             wasm_function.instruction(instruction);
             instruction_count += 1;
         }
@@ -582,6 +620,23 @@ impl<'a> MirCodeGenerator<'a> {
                 function.name
             );
             wasm_function.instruction(&Instruction::LocalGet(0));
+        }
+
+        // CRITICAL FIX: For non-void functions, ensure all paths return
+        // If the function returns a value and doesn't end with a Return instruction, add Unreachable
+        let is_non_void = !matches!(function.return_type, MirType::Void);
+        let last_instruction_is_return = self
+            .current_instructions
+            .last()
+            .map(|inst| matches!(inst, Instruction::Return | Instruction::Unreachable))
+            .unwrap_or(false);
+
+        if is_non_void && !last_instruction_is_return && !is_constructor {
+            eprintln!(
+                "DEBUG NON-VOID FUNCTION: Function '{}' returns {:?} but last instruction is not Return/Unreachable, adding Unreachable",
+                function.name, function.return_type
+            );
+            wasm_function.instruction(&Instruction::Unreachable);
         }
 
         // CRITICAL: Add END instruction to properly close the function
@@ -749,6 +804,22 @@ impl<'a> MirCodeGenerator<'a> {
         })
     }
 
+    /// Check if a block is the exit continuation of any loop
+    /// (i.e., the false_block of a loop header's Branch)
+    fn is_loop_exit_continuation(&self, function: &MirFunction, block_id: BasicBlockId) -> bool {
+        function.blocks.iter().any(|(loop_id, loop_block)| {
+            // Check if this block is a loop header
+            let is_header = self.is_loop_header(function, *loop_id);
+            if !is_header {
+                return false;
+            }
+
+            // Check if the loop header's Branch has our block as the false_block (exit)
+            matches!(&loop_block.terminator,
+                MirTerminator::Branch { false_block, .. } if *false_block == block_id)
+        })
+    }
+
     #[allow(dead_code)]
     fn block_always_returns(&self, function: &MirFunction, block_id: BasicBlockId) -> bool {
         let mut visited = std::collections::HashSet::new();
@@ -831,8 +902,16 @@ impl<'a> MirCodeGenerator<'a> {
     ) -> Result<(), CompilerError> {
         // Skip if already generated
         if generated.contains(&block_id) {
+            eprintln!(
+                "DEBUG BRANCH_BLOCK: Skipping already-generated block {:?} in function '{}'",
+                block_id, function.name
+            );
             return Ok(());
         }
+        eprintln!(
+            "DEBUG BRANCH_BLOCK: Inserting block {:?} into generated set for function '{}'",
+            block_id, function.name
+        );
         generated.insert(block_id);
 
         let block = match function.blocks.get(&block_id) {
@@ -870,6 +949,9 @@ impl<'a> MirCodeGenerator<'a> {
                 let has_else_clause =
                     !self.is_continuation_not_else(function, *true_block, *false_block);
 
+                eprintln!("DEBUG BRANCH_BLOCK: Processing nested Branch in function '{}', true_block={:?}, false_block={:?}, has_else_clause={}",
+                    function.name, true_block, false_block, has_else_clause);
+
                 // Nested if-else: generate it fully (including its own continuation handling)
                 self.load_operand(condition)?;
                 self.current_instructions
@@ -877,10 +959,20 @@ impl<'a> MirCodeGenerator<'a> {
 
                 self.generate_branch_block(function, *true_block, generated)?;
 
-                // Only generate else clause if false_block is NOT an empty continuation
-                if has_else_clause {
+                // Only generate else clause if false_block is NOT a loop exit continuation
+                // CRITICAL FIX: If false_block is the exit continuation of any loop in the function,
+                // it will be generated by the loop structure itself. Don't generate it as an else clause.
+                let is_loop_exit = self.is_loop_exit_continuation(function, *false_block);
+
+                eprintln!("DEBUG BRANCH_BLOCK: function='{}', block={:?}, false_block={:?}, is_loop_exit={}",
+                    function.name, block_id, false_block, is_loop_exit);
+
+                if has_else_clause && !is_loop_exit {
                     self.current_instructions.push(Instruction::Else);
                     self.generate_branch_block(function, *false_block, generated)?;
+                } else if is_loop_exit {
+                    eprintln!("DEBUG BRANCH_BLOCK: Skipping false_block {:?} - detected as loop exit continuation in function '{}'",
+                        false_block, function.name);
                 }
 
                 self.current_instructions.push(Instruction::End);
@@ -931,12 +1023,24 @@ impl<'a> MirCodeGenerator<'a> {
 
                     // If no else clause, false branch goes to continuation directly
                     if !has_else_clause && continuation.is_none() {
+                        eprintln!("DEBUG BRANCH_BLOCK: No else clause in nested if, setting continuation to false_block {:?} in function '{}'",
+                            false_block, function.name);
                         continuation = Some(*false_block);
                     }
 
                     // Inline continuation if found
+                    // BUT: Don't inline if the continuation block will be generated by an outer structure
+                    // Check if continuation is already marked for generation by checking if it's
+                    // already in the generated set (if so, skip)
                     if let Some(cont) = continuation {
-                        self.generate_branch_block(function, cont, generated)?;
+                        if !generated.contains(&cont) {
+                            eprintln!("DEBUG BRANCH_BLOCK: Inlining continuation block {:?} for nested if in function '{}'",
+                                cont, function.name);
+                            self.generate_branch_block(function, cont, generated)?;
+                        } else {
+                            eprintln!("DEBUG BRANCH_BLOCK: Skipping continuation block {:?} - already marked for generation by outer structure in function '{}'",
+                                cont, function.name);
+                        }
                     }
                 }
             }
@@ -959,14 +1063,31 @@ impl<'a> MirCodeGenerator<'a> {
     ) -> Result<(), CompilerError> {
         // Skip if already generated
         if generated.contains(&block_id) {
+            eprintln!("DEBUG GENERATE_BLOCKS: Skipping already-generated block {:?} in function '{}', generated set contains {} blocks",
+                block_id, function.name, generated.len());
             return Ok(());
         }
+        eprintln!(
+            "DEBUG GENERATE_BLOCKS: Inserting block {:?} into generated set for function '{}'",
+            block_id, function.name
+        );
         generated.insert(block_id);
 
         let block = match function.blocks.get(&block_id) {
             Some(b) => b,
-            None => return Ok(()),
+            None => {
+                eprintln!(
+                    "DEBUG GENERATE_BLOCKS: Block {:?} not found in function '{}'",
+                    block_id, function.name
+                );
+                return Ok(());
+            }
         };
+
+        eprintln!(
+            "DEBUG GENERATE_BLOCKS: Generating block {:?} in function '{}', terminator={:?}",
+            block_id, function.name, block.terminator
+        );
 
         // CRITICAL: Check if this block is a loop header BEFORE generating instructions
         // For loop headers, instructions must be generated INSIDE the loop
@@ -1003,11 +1124,12 @@ impl<'a> MirCodeGenerator<'a> {
                 // CRITICAL FIX: Check if this block is a loop header (has backedge)
                 let is_loop = self.is_loop_header(function, block_id);
 
+                eprintln!("DEBUG BRANCH: Block {:?} in function '{}', is_loop={}, true_block={:?}, false_block={:?}",
+                    block_id, function.name, is_loop, true_block, false_block);
+
                 if is_loop {
-                    debug_mir!(
-                        "DEBUG LOOP: Block {:?} is a loop header, generating loop structure",
-                        block_id
-                    );
+                    eprintln!("DEBUG LOOP: Block {:?} is a loop header in function '{}', generating loop structure with false_block={:?} as continuation",
+                        block_id, function.name, false_block);
 
                     // Generate loop structure:
                     // block (outer - for exit via br_if 1)
@@ -1037,18 +1159,40 @@ impl<'a> MirCodeGenerator<'a> {
                     self.current_instructions.push(Instruction::I32Eqz); // Negate: br_if when 0 (false)
                     self.current_instructions.push(Instruction::BrIf(1)); // Exit to block @1 if condition is false
 
-                    // Generate loop body (true_block) - this will have a Jump back to block_id
+                    // Generate loop body (true_block) - this will have a Jump to increment or back to header
                     // Mark the loop body as generated to prevent infinite recursion
                     self.generate_branch_block(function, *true_block, generated)?;
 
-                    // The body should end with a Jump back to this block (the loop header)
-                    // That Jump becomes an implicit br 0 (continue loop) in WASM structured control flow
-                    // We need to explicitly add br 0 here to jump back to the loop header
+                    // CRITICAL FIX: Check if body jumps to an increment block (for-loop structure)
+                    // If so, generate the increment block INSIDE the loop
                     if let Some(body_block) = function.blocks.get(true_block) {
-                        if matches!(&body_block.terminator, MirTerminator::Jump { target } if *target == block_id)
+                        if let MirTerminator::Jump {
+                            target: increment_target,
+                        } = &body_block.terminator
                         {
-                            debug_mir!("DEBUG LOOP: Body block {:?} jumps back to header {:?}, adding br 0", true_block, block_id);
-                            self.current_instructions.push(Instruction::Br(0)); // Jump back to loop (label @0)
+                            // Check if increment block jumps back to header
+                            if let Some(increment_block) = function.blocks.get(increment_target) {
+                                if matches!(&increment_block.terminator, MirTerminator::Jump { target } if *target == block_id)
+                                {
+                                    debug_mir!(
+                                        "DEBUG LOOP: Body block {:?} jumps to increment {:?}, which jumps back to header {:?}",
+                                        true_block, increment_target, block_id
+                                    );
+
+                                    // Generate increment block instructions INSIDE the loop
+                                    for instruction in &increment_block.instructions {
+                                        self.generate_instruction(instruction)?;
+                                    }
+                                    generated.insert(*increment_target);
+
+                                    // Add br 0 to jump back to loop header
+                                    self.current_instructions.push(Instruction::Br(0));
+                                } else if *increment_target == block_id {
+                                    // Body jumps directly back to header (simple while loop)
+                                    debug_mir!("DEBUG LOOP: Body block {:?} jumps directly back to header {:?}, adding br 0", true_block, block_id);
+                                    self.current_instructions.push(Instruction::Br(0));
+                                }
+                            }
                         }
                     }
 
@@ -1056,6 +1200,10 @@ impl<'a> MirCodeGenerator<'a> {
                     self.current_instructions.push(Instruction::End); // end block
 
                     // Generate continuation (false_block) - this is where we exit to
+                    eprintln!(
+                        "DEBUG LOOP: Generating continuation block {:?} for loop in function '{}'",
+                        false_block, function.name
+                    );
                     self.generate_structured_blocks(function, *false_block, generated)?;
                 } else {
                     // Regular if/else (not a loop)
@@ -1086,6 +1234,9 @@ impl<'a> MirCodeGenerator<'a> {
                     } else {
                         false // No else clause means false branch doesn't return
                     };
+
+                    eprintln!("DEBUG RETURN CHECK: Function '{}', Block {:?}, true_has_return={}, false_has_return={}, has_else_clause={}",
+                        function.name, block_id, true_has_return, false_has_return, has_else_clause);
 
                     if true_has_return && false_has_return {
                         // Both branches return - add unreachable to indicate code after if-else is never reached
@@ -1447,16 +1598,18 @@ impl<'a> MirCodeGenerator<'a> {
                 );
                 match function_name.as_deref() {
                     Some("print") | Some("printl") | Some("println") => {
-                        eprintln!("DEBUG: Matched print function");
+                        eprintln!("DEBUG: Matched print function, loading {} arguments", arguments.len());
                         // Print functions need string arguments expanded to (content_ptr, length)
-                        for arg in arguments {
+                        for (i, arg) in arguments.iter().enumerate() {
+                            eprintln!("DEBUG: Loading print arg[{}]: {:?}", i, arg);
                             self.load_string_argument_for_print(arg)?;
                         }
                     }
                     Some("string_concat") => {
                         eprintln!("DEBUG: Matched string_concat");
-                        // string_concat expects 4 i32 arguments: (str1_ptr, str1_len, str2_ptr, str2_len) -> result_ptr
-                        // Just like print functions, we need to expand StringTuple to (ptr, len) pairs
+                        // CRITICAL FIX: string_concat expects 4 i32 arguments: (ptr1, len1, ptr2, len2) -> result_ptr
+                        // This matches the runtime host function signature
+                        // We need to expand StringTuple to (ptr, len) pairs
                         for arg in arguments {
                             self.load_string_argument_for_print(arg)?;
                         }
@@ -1484,6 +1637,43 @@ impl<'a> MirCodeGenerator<'a> {
                             // Load remaining arguments normally (min, max)
                             for arg in &arguments[1..] {
                                 self.load_operand(arg)?;
+                            }
+                        }
+                    }
+                    Some(name) if name.starts_with("http.") => {
+                        // HTTP functions need string arguments expanded to (content_ptr, length)
+                        // http.get(url) -> http_get(url_ptr, url_len)
+                        // http.post(url, data) -> http_post(url_ptr, url_len, data_ptr, data_len)
+                        eprintln!("DEBUG: Matched HTTP function '{}', expanding string arguments", name);
+                        for arg in arguments {
+                            self.load_string_argument_for_print(arg)?;
+                        }
+                    }
+                    Some("conditional.number") => {
+                        // conditional.number(bool, f64, f64) -> f64
+                        // Need to convert integer arguments to f64
+                        eprintln!("DEBUG: Matched conditional.number, converting integer args to f64");
+                        for (i, arg) in arguments.iter().enumerate() {
+                            self.load_operand(arg)?;
+                            // Convert second and third arguments (true/false values) from i32 to f64 if needed
+                            if i > 0 && matches!(arg, MirOperand::Constant(MirConstant::Integer(_))) {
+                                self.current_instructions.push(Instruction::F64ConvertI32S);
+                            } else if i > 0 {
+                                if let Some(MirOperand::Value(value_id)) = Some(arg) {
+                                    if let Some(mir_type) = self.value_to_type.get(value_id) {
+                                        if matches!(
+                                            mir_type,
+                                            MirType::I32
+                                                | MirType::I8
+                                                | MirType::I16
+                                                | MirType::U8
+                                                | MirType::U16
+                                                | MirType::U32
+                                        ) {
+                                            self.current_instructions.push(Instruction::F64ConvertI32S);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1793,6 +1983,10 @@ impl<'a> MirCodeGenerator<'a> {
                             };
 
                         if let Some(idx) = function_index {
+                            eprintln!(
+                                "DEBUG NAMED FUNCTION CALL: Calling '{}' at WASM index {}",
+                                name, idx
+                            );
                             tracing::trace!(
                                 name = %name,
                                 index = idx,
@@ -1918,20 +2112,32 @@ impl<'a> MirCodeGenerator<'a> {
                             // Use the ACTUAL signature return type to determine how many values to drop
                             eprintln!("DEBUG SIG VOID: Unknown type dest {:?}, signature return type: {:?}", dest, signature.return_type);
 
-                            match &signature.return_type {
-                                MirType::Void => {
-                                    // Function truly returns nothing - no DROP needed
-                                    eprintln!(
-                                        "DEBUG SIG VOID: Function returns Void - no drop needed"
-                                    );
-                                }
-                                _ => {
-                                    // Function returns a value - drop it since we can't use it (Unknown type)
-                                    eprintln!(
-                                        "DEBUG SIG VOID: Dropping 1 value (return type: {:?})",
-                                        signature.return_type
-                                    );
-                                    self.current_instructions.push(Instruction::Drop);
+                            // CRITICAL FIX: Check if this is a known void function by name first
+                            // Some functions like list.add have incorrect I32 signatures but actually return void
+                            let is_known_void_by_name = function_name.as_deref()
+                                == Some("list.add")
+                                || function_name.as_deref() == Some("list.push");
+
+                            if is_known_void_by_name {
+                                eprintln!(
+                                    "DEBUG SIG VOID: Known void function by name - no DROP needed"
+                                );
+                            } else {
+                                match &signature.return_type {
+                                    MirType::Void => {
+                                        // Function truly returns nothing - no DROP needed
+                                        eprintln!(
+                                            "DEBUG SIG VOID: Function returns Void - no drop needed"
+                                        );
+                                    }
+                                    _ => {
+                                        // Function returns a value - drop it since we can't use it (Unknown type)
+                                        eprintln!(
+                                            "DEBUG SIG VOID: Dropping 1 value (return type: {:?})",
+                                            signature.return_type
+                                        );
+                                        self.current_instructions.push(Instruction::Drop);
+                                    }
                                 }
                             }
                         } else {
@@ -2566,6 +2772,7 @@ impl<'a> MirCodeGenerator<'a> {
         &mut self,
         operand: &MirOperand,
     ) -> Result<(), CompilerError> {
+        eprintln!("DEBUG LOAD_STRING: Called with operand: {:?}", operand);
         tracing::trace!(
             operand = ?operand,
             "load_string_argument_for_print called"
@@ -2620,12 +2827,18 @@ impl<'a> MirCodeGenerator<'a> {
                 }
             }
             MirOperand::Value(value_id) => {
+                eprintln!("DEBUG LOAD_STRING: Processing Value({:?})", value_id);
                 // Check if this value represents a string constant
                 tracing::trace!(
                     value_id = ?value_id.0,
                     "Checking ValueId for string mapping"
                 );
+                eprintln!(
+                    "DEBUG LOAD_STRING: Checking value_to_string_index for ValueId({:?})",
+                    value_id.0
+                );
                 if let Some(&string_index) = self.value_to_string_index.get(value_id) {
+                    eprintln!("DEBUG LOAD_STRING: Found string_index={}", string_index);
                     tracing::trace!(
                         value_id = ?value_id.0,
                         string_index = string_index,
@@ -2672,6 +2885,9 @@ impl<'a> MirCodeGenerator<'a> {
                         });
                     }
                 } else {
+                    eprintln!(
+                        "DEBUG LOAD_STRING: No string_index found, expanding as string pointer"
+                    );
                     // This is a string VALUE (from function return like .toString())
                     // We need to expand from pointer to (pointer, length)
                     tracing::trace!(
@@ -2680,25 +2896,30 @@ impl<'a> MirCodeGenerator<'a> {
                     );
 
                     // Load the string pointer into a local variable
+                    eprintln!("DEBUG LOAD_STRING: Loading operand to stack");
                     self.load_operand(operand)?;
 
                     // Allocate a temporary local to hold the pointer
                     let temp_local = self.next_local_index;
+                    eprintln!("DEBUG LOAD_STRING: Allocated temp_local={}", temp_local);
                     self.next_local_index += 1;
                     // Track type: string pointers are i32
                     self.temp_local_types.insert(temp_local, ValType::I32);
 
                     // Store pointer to temp local
+                    eprintln!("DEBUG LOAD_STRING: Storing pointer to temp_local");
                     self.current_instructions
                         .push(Instruction::LocalSet(temp_local));
 
                     // Calculate content pointer (ptr + 4, skipping length field)
+                    eprintln!("DEBUG LOAD_STRING: Calculating content_ptr = base_ptr + 4");
                     self.current_instructions
                         .push(Instruction::LocalGet(temp_local));
                     self.current_instructions.push(Instruction::I32Const(4));
                     self.current_instructions.push(Instruction::I32Add);
 
                     // Load length from memory at pointer location
+                    eprintln!("DEBUG LOAD_STRING: Loading length from base_ptr");
                     self.current_instructions
                         .push(Instruction::LocalGet(temp_local));
                     self.current_instructions
@@ -2708,6 +2929,7 @@ impl<'a> MirCodeGenerator<'a> {
                             memory_index: 0,
                         }));
 
+                    eprintln!("DEBUG LOAD_STRING: String pointer expansion completed - stack should have [content_ptr, length]");
                     debug_mir!("DEBUG MIR: String pointer expansion completed");
                 }
             }

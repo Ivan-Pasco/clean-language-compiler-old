@@ -17,7 +17,6 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
         Rule::print_newline_stmt => parse_print_newline_statement(inner, ast_location),
         Rule::print_bare_stmt => parse_print_bare_statement(inner, ast_location),
         Rule::if_stmt => parse_if_statement(inner, ast_location),
-        Rule::while_stmt => parse_while_statement(inner, ast_location),
         Rule::iterate_stmt => parse_iterate_statement(inner, ast_location),
         Rule::range_iterate_stmt => parse_range_iterate_statement(inner, ast_location),
         Rule::test => parse_test_statement(inner, ast_location),
@@ -352,31 +351,6 @@ fn parse_if_statement(
         condition,
         then_branch,
         else_branch,
-        location: Some(ast_location),
-    })
-}
-
-fn parse_while_statement(
-    pair: Pair<Rule>,
-    ast_location: crate::ast::SourceLocation,
-) -> Result<Statement, CompilerError> {
-    let mut parts = pair.into_inner();
-    let condition = parse_expression(parts.next().unwrap())?;
-
-    let mut body = Vec::new();
-    for part in parts {
-        if part.as_rule() == Rule::indented_block {
-            for stmt_pair in part.into_inner() {
-                if stmt_pair.as_rule() == Rule::statement {
-                    body.push(parse_statement(stmt_pair)?);
-                }
-            }
-        }
-    }
-
-    Ok(Statement::While {
-        condition,
-        body,
         location: Some(ast_location),
     })
 }

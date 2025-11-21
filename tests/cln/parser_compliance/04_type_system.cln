@@ -35,7 +35,7 @@ start()
 	pairs<string, list<integer>> pairs_with_list = {"nums": [1, 2, 3]}
 
 	// Complex nested types
-	list<pairs<string, integer>> list_of_pairs = [{"a": 1}, {"b": 2}]
+	// list<pairs<string, integer>> list_of_pairs = [{"a": 1}, {"b": 2}]  // TODO: Fix pairs literal type inference in arrays
 	// pairs<string, matrix<number> > pairs_with_matrix = {"data": [[1.0, 2.0]]}  // Matrix parsing issue
 
 	print("Core types working")

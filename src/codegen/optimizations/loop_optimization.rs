@@ -119,14 +119,6 @@ impl LoopOptimizer {
                     results.strength_reductions += loop_results.strength_reductions;
                     results.dead_loops_eliminated += loop_results.dead_loops_eliminated;
                 }
-                Statement::While { condition, body } => {
-                    let loop_info = self.analyze_while_loop(condition, body)?;
-                    let loop_results = self.optimize_while_loop(&mut function.body, i, &loop_info)?;
-                    results.loops_unrolled += loop_results.loops_unrolled;
-                    results.invariant_expressions_moved += loop_results.invariant_expressions_moved;
-                    results.strength_reductions += loop_results.strength_reductions;
-                    results.dead_loops_eliminated += loop_results.dead_loops_eliminated;
-                }
                 Statement::Block(statements) => {
                     // Recursively process nested blocks
                     let mut nested_function = Function {
@@ -407,9 +399,6 @@ impl LoopOptimizer {
                 reductions += self.apply_strength_reduction_to_expression(value)?;
             }
             Statement::For { body, .. } => {
-                reductions += self.apply_strength_reduction_to_statement(body)?;
-            }
-            Statement::While { body, .. } => {
                 reductions += self.apply_strength_reduction_to_statement(body)?;
             }
             Statement::Block(statements) => {

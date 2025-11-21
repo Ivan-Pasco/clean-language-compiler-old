@@ -2693,24 +2693,6 @@ impl SemanticAnalyzer {
                 Ok(())
             }
 
-            Statement::While {
-                condition, body, ..
-            } => {
-                // While loop - check condition and body
-                let condition_type = self.check_expression(condition)?;
-                if !matches!(condition_type, Type::Boolean) {
-                    return Err(CompilerError::type_error(
-                        "While condition must be boolean".to_string(),
-                        None,
-                        None,
-                    ));
-                }
-                for stmt in body {
-                    self.check_statement(stmt)?;
-                }
-                Ok(())
-            }
-
             Statement::Match { value, cases, .. } => {
                 // Match statement - check value and all cases
                 let _value_type = self.check_expression(value)?;

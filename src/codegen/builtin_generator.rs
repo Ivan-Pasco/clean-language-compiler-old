@@ -73,19 +73,19 @@ impl CodeGenerator {
         self.register_function("math_abs", vec![ValType::F64], vec![ValType::F64], &abs_instructions)?;
         
         // Math.pow - critical for power operator (^) - needs host implementation
-        self.register_import_function("env", "math_pow", vec![ValType::F64, ValType::F64], vec![ValType::F64]);
+        self.register_import_function("env", "math_pow", vec![ValType::F64, ValType::F64], vec![ValType::F64])?;
         
         // Math.sqrt - commonly used mathematical function
-        self.register_import_function("env", "math_sqrt", vec![ValType::F64], vec![ValType::F64]);
+        self.register_import_function("env", "math_sqrt", vec![ValType::F64], vec![ValType::F64])?;
         
         // Math.sin - trigonometric function
-        self.register_import_function("env", "math_sin", vec![ValType::F64], vec![ValType::F64]);
+        self.register_import_function("env", "math_sin", vec![ValType::F64], vec![ValType::F64])?;
         
         // Math.cos - trigonometric function
-        self.register_import_function("env", "math_cos", vec![ValType::F64], vec![ValType::F64]);
+        self.register_import_function("env", "math_cos", vec![ValType::F64], vec![ValType::F64])?;
         
         // Math.tan - trigonometric function
-        self.register_import_function("env", "math_tan", vec![ValType::F64], vec![ValType::F64]);
+        self.register_import_function("env", "math_tan", vec![ValType::F64], vec![ValType::F64])?;
         
         // Math.max - native implementation
         let max_instructions = vec![
@@ -144,34 +144,35 @@ impl CodeGenerator {
 
     fn register_string_operations(&mut self) -> Result<(), CompilerError> {
         // String operations - require host functions due to memory management complexity
-        self.register_import_function("env", "string_length", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_concat", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_substring", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_index_of", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_to_upper", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_to_lower", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_trim", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_replace", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_split", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_starts_with", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_ends_with", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_contains", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_compare", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "string_length", vec![ValType::I32], vec![ValType::I32])?;
+        // CRITICAL FIX: string_concat takes 4 args (ptr1, len1, ptr2, len2) matching host function
+        self.register_import_function("env", "string_concat", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_substring", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_index_of", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_to_upper", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_to_lower", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_trim", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_replace", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_split", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_starts_with", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_ends_with", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_contains", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_compare", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         
         // String namespace functions (static method style)
-        self.register_import_function("env", "string.length", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.contains", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.indexOf", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.lastIndexOf", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.startsWith", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.endsWith", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.trim", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.trimStart", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.trimEnd", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.replace", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.substring", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.toUpperCase", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.toLowerCase", vec![ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "string.length", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.contains", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.indexOf", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.lastIndexOf", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.startsWith", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.endsWith", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.trim", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.trimStart", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.trimEnd", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.replace", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.substring", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.toUpperCase", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.toLowerCase", vec![ValType::I32], vec![ValType::I32])?;
 
         // Also register the underscore versions for method calls
         self.register_import_function("env", "string_toUpperCase", vec![ValType::I32], vec![ValType::I32])?;
@@ -182,59 +183,60 @@ impl CodeGenerator {
 
     fn register_list_operations(&mut self) -> Result<(), CompilerError> {
         // Basic array operations - these require host functions for memory management
-        self.register_import_function("env", "array_get", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "array_set", vec![ValType::I32, ValType::I32, ValType::I32], vec![]);
-        self.register_import_function("env", "array_length", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "array_push", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "array_pop", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "array_slice", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "array_concat", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "array_reverse", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "array_sort", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "array_filter", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "array_map", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "array_reduce", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "array_find", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "array_contains", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        
+        self.register_import_function("env", "array_get", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "array_set", vec![ValType::I32, ValType::I32, ValType::I32], vec![])?;
+        self.register_import_function("env", "array_length", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "array_push", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "array_pop", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "array_slice", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "array_concat", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "array_reverse", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "array_sort", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "array_filter", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "array_map", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "array_reduce", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "array_find", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "array_contains", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+
         // List namespace functions (used in static method calls like list.contains())
-        self.register_import_function("env", "list.allocate", vec![ValType::I32], vec![ValType::I32]); // CRITICAL: needed for array literals
-        self.register_import_function("env", "list.push", vec![ValType::I32, ValType::I32], vec![ValType::I32]); // CRITICAL: needed for array literals
-        self.register_import_function("env", "list.length", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "list.add", vec![ValType::I32, ValType::I32], vec![]);
-        self.register_import_function("env", "list.remove", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "list.contains", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "list.get", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "list.set", vec![ValType::I32, ValType::I32, ValType::I32], vec![]);
-        self.register_import_function("env", "list.clear", vec![ValType::I32], vec![]);
-        self.register_import_function("env", "list.isEmpty", vec![ValType::I32], vec![ValType::I32]);
-        
+        self.register_import_function("env", "list.allocate", vec![ValType::I32], vec![ValType::I32])?; // CRITICAL: needed for array literals
+        self.register_import_function("env", "list.push", vec![ValType::I32, ValType::I32], vec![ValType::I32])?; // CRITICAL: needed for integer array literals
+        self.register_import_function("env", "list.push_f64", vec![ValType::I32, ValType::F64], vec![ValType::I32])?; // CRITICAL: needed for float array literals
+        self.register_import_function("env", "list.length", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "list.add", vec![ValType::I32, ValType::I32], vec![])?;
+        self.register_import_function("env", "list.remove", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "list.contains", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "list.get", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "list.set", vec![ValType::I32, ValType::I32, ValType::I32], vec![])?;
+        self.register_import_function("env", "list.clear", vec![ValType::I32], vec![])?;
+        self.register_import_function("env", "list.isEmpty", vec![ValType::I32], vec![ValType::I32])?;
+
         Ok(())
     }
 
     fn register_console_operations(&mut self) -> Result<(), CompilerError> {
         // Core print/println functions - these match the host function signatures
-        self.register_import_function("env", "print", vec![ValType::I32, ValType::I32], vec![]);
-        self.register_import_function("env", "printl", vec![ValType::I32, ValType::I32], vec![]);
+        self.register_import_function("env", "print", vec![ValType::I32, ValType::I32], vec![])?;
+        self.register_import_function("env", "printl", vec![ValType::I32, ValType::I32], vec![])?;
 
         // Console operations - these need host environment support for actual I/O
-        self.register_import_function("env", "print_string", vec![ValType::I32], vec![]);
-        self.register_import_function("env", "print_integer", vec![ValType::I32], vec![]);
-        self.register_import_function("env", "print_float", vec![ValType::F64], vec![]);
-        self.register_import_function("env", "print_boolean", vec![ValType::I32], vec![]);
-        self.register_import_function("env", "console_log", vec![ValType::I32], vec![]);
-        self.register_import_function("env", "console_error", vec![ValType::I32], vec![]);
-        self.register_import_function("env", "console_warn", vec![ValType::I32], vec![]);
-        self.register_import_function("env", "console_input", vec![ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "print_string", vec![ValType::I32], vec![])?;
+        self.register_import_function("env", "print_integer", vec![ValType::I32], vec![])?;
+        self.register_import_function("env", "print_float", vec![ValType::F64], vec![])?;
+        self.register_import_function("env", "print_boolean", vec![ValType::I32], vec![])?;
+        self.register_import_function("env", "console_log", vec![ValType::I32], vec![])?;
+        self.register_import_function("env", "console_error", vec![ValType::I32], vec![])?;
+        self.register_import_function("env", "console_warn", vec![ValType::I32], vec![])?;
+        self.register_import_function("env", "console_input", vec![ValType::I32], vec![ValType::I32])?;
 
         // Direct input function (alias for console_input)
-        self.register_import_function("env", "input", vec![ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "input", vec![ValType::I32], vec![ValType::I32])?;
 
         // Input namespace methods - require host support
-        self.register_import_function("env", "input_integer", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "input_float", vec![ValType::I32], vec![ValType::F64]);
-        self.register_import_function("env", "input_yesno", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "input_range", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "input_integer", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "input_float", vec![ValType::I32], vec![ValType::F64])?;
+        self.register_import_function("env", "input_yesno", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "input_range", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
 
         Ok(())
     }
@@ -317,24 +319,24 @@ impl CodeGenerator {
         self.register_function("number.toBoolean", vec![ValType::F64], vec![ValType::I32], &num_to_bool_instructions)?;
         
         // String conversions require host functions for now
-        self.register_import_function("env", "int_to_string", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "float_to_string", vec![ValType::F64], vec![ValType::I32]);
-        self.register_import_function("env", "bool_to_string", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_to_int", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string_to_float", vec![ValType::I32], vec![ValType::F64]);
-        self.register_import_function("env", "string_to_bool", vec![ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "int_to_string", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "float_to_string", vec![ValType::F64], vec![ValType::I32])?;
+        self.register_import_function("env", "bool_to_string", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_to_int", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string_to_float", vec![ValType::I32], vec![ValType::F64])?;
+        self.register_import_function("env", "string_to_bool", vec![ValType::I32], vec![ValType::I32])?;
         
         // Method-style string conversions
-        self.register_import_function("env", "integer.toString", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "number.toString", vec![ValType::F64], vec![ValType::I32]);
-        self.register_import_function("env", "boolean.toString", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.toInteger", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.toNumber", vec![ValType::I32], vec![ValType::F64]);
-        self.register_import_function("env", "string.toBoolean", vec![ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "integer.toString", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "number.toString", vec![ValType::F64], vec![ValType::I32])?;
+        self.register_import_function("env", "boolean.toString", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.toInteger", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.toNumber", vec![ValType::I32], vec![ValType::F64])?;
+        self.register_import_function("env", "string.toBoolean", vec![ValType::I32], vec![ValType::I32])?;
         
         // String operations (require host functions)
-        self.register_import_function("env", "string.toUpperCase", vec![ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "string.toLowerCase", vec![ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "string.toUpperCase", vec![ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "string.toLowerCase", vec![ValType::I32], vec![ValType::I32])?;
         
         Ok(())
     }
@@ -401,7 +403,7 @@ impl CodeGenerator {
         ];
 
         for (name, params, returns) in &http_functions {
-            let index = self.register_import_function("env", name, params.clone(), returns.clone());
+            let index = self.register_import_function("env", name, params.clone(), returns.clone())?;
             self.http_import_indices.insert(name.to_string(), index);
         }
         
@@ -414,58 +416,58 @@ impl CodeGenerator {
         // 2. Dotted namespace names for modern calls (compare.integer.equal)
 
         // Comparison functions for integers - underscored names
-        self.register_import_function("env", "compare_integer_equal", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "compare_integer_notEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "compare_integer_lessThan", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "compare_integer_greaterThan", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "compare_integer_lessEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "compare_integer_greaterEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "compare_integer_equal", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "compare_integer_notEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "compare_integer_lessThan", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "compare_integer_greaterThan", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "compare_integer_lessEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "compare_integer_greaterEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
 
         // Comparison functions for integers - dotted namespace names
-        self.register_import_function("env", "compare.integer.equal", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "compare.integer.notEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "compare.integer.lessThan", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "compare.integer.greaterThan", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "compare.integer.lessEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "compare.integer.greaterEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "compare.integer.equal", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "compare.integer.notEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "compare.integer.lessThan", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "compare.integer.greaterThan", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "compare.integer.lessEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "compare.integer.greaterEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
 
         // Comparison functions for numbers - underscored names
-        self.register_import_function("env", "compare_number_equal", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
-        self.register_import_function("env", "compare_number_notEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
-        self.register_import_function("env", "compare_number_lessThan", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
-        self.register_import_function("env", "compare_number_greaterThan", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
-        self.register_import_function("env", "compare_number_lessEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
-        self.register_import_function("env", "compare_number_greaterEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
+        self.register_import_function("env", "compare_number_equal", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
+        self.register_import_function("env", "compare_number_notEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
+        self.register_import_function("env", "compare_number_lessThan", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
+        self.register_import_function("env", "compare_number_greaterThan", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
+        self.register_import_function("env", "compare_number_lessEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
+        self.register_import_function("env", "compare_number_greaterEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
 
         // Comparison functions for numbers - dotted namespace names
-        self.register_import_function("env", "compare.number.equal", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
-        self.register_import_function("env", "compare.number.notEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
-        self.register_import_function("env", "compare.number.lessThan", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
-        self.register_import_function("env", "compare.number.greaterThan", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
-        self.register_import_function("env", "compare.number.lessEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
-        self.register_import_function("env", "compare.number.greaterEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32]);
+        self.register_import_function("env", "compare.number.equal", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
+        self.register_import_function("env", "compare.number.notEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
+        self.register_import_function("env", "compare.number.lessThan", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
+        self.register_import_function("env", "compare.number.greaterThan", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
+        self.register_import_function("env", "compare.number.lessEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
+        self.register_import_function("env", "compare.number.greaterEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
 
         // Conditional functions - underscored names
-        self.register_import_function("env", "conditional_integer", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "conditional_number", vec![ValType::I32, ValType::F64, ValType::F64], vec![ValType::F64]);
-        self.register_import_function("env", "conditional_string", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "conditional_boolean", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "conditional_integer", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "conditional_number", vec![ValType::I32, ValType::F64, ValType::F64], vec![ValType::F64])?;
+        self.register_import_function("env", "conditional_string", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "conditional_boolean", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
 
         // Conditional functions - dotted namespace names
-        self.register_import_function("env", "conditional.integer", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "conditional.number", vec![ValType::I32, ValType::F64, ValType::F64], vec![ValType::F64]);
-        self.register_import_function("env", "conditional.string", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "conditional.boolean", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "conditional.integer", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "conditional.number", vec![ValType::I32, ValType::F64, ValType::F64], vec![ValType::F64])?;
+        self.register_import_function("env", "conditional.string", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "conditional.boolean", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
 
         // Logical functions - underscored names
-        self.register_import_function("env", "logical_and", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "logical_or", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "logical_not", vec![ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "logical_and", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "logical_or", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "logical_not", vec![ValType::I32], vec![ValType::I32])?;
 
         // Logical functions - dotted namespace names
-        self.register_import_function("env", "logical.and", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "logical.or", vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        self.register_import_function("env", "logical.not", vec![ValType::I32], vec![ValType::I32]);
+        self.register_import_function("env", "logical.and", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "logical.or", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        self.register_import_function("env", "logical.not", vec![ValType::I32], vec![ValType::I32])?;
 
         Ok(())
     }

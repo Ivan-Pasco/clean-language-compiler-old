@@ -948,40 +948,6 @@ impl CodeGenerator {
                 }
             }
 
-            Statement::While {
-                condition, body, ..
-            } => {
-                // While loop - generate WASM loop/block structure
-                // Pattern: (block (loop (condition) (br_if 1) (body) (br 0)))
-
-                // Start block (for breaking out of loop)
-                instructions.push(Instruction::Block(BlockType::Empty));
-
-                // Start loop (for continuing loop)
-                instructions.push(Instruction::Loop(BlockType::Empty));
-
-                // Generate condition
-                self.generate_expression(condition, instructions)?;
-
-                // If condition is false (i32 0), break out of the block (exit loop)
-                instructions.push(Instruction::I32Eqz); // Invert condition (true if should exit)
-                instructions.push(Instruction::BrIf(1)); // Break to outer block if condition false
-
-                // Generate loop body
-                for stmt in body {
-                    self.generate_statement(stmt, instructions)?;
-                }
-
-                // Continue loop (branch back to loop start)
-                instructions.push(Instruction::Br(0)); // Branch back to loop
-
-                // End loop
-                instructions.push(Instruction::End);
-
-                // End block
-                instructions.push(Instruction::End);
-            }
-
             Statement::Match { value, cases, .. } => {
                 // Match statement - generate WASM if-else chain for pattern matching
                 // Generate value to match against
@@ -1874,9 +1840,31 @@ impl CodeGenerator {
                         // This is a namespace function call - treat as namespace.function(args)
                         let full_function_name = format!("{}.{}", namespace, method);
 
-                        // Generate arguments
-                        for arg in arguments {
-                            self.generate_expression(arg, instructions)?;
+                        // Special handling for conditional.number - convert integer args to f64
+                        if full_function_name == "conditional.number" && arguments.len() == 3 {
+                            // First argument: boolean condition (i32)
+                            self.generate_expression(&arguments[0], instructions)?;
+
+                            // Second argument: true value - convert to f64 if integer
+                            let arg1_type =
+                                self.generate_expression(&arguments[1], instructions)?;
+                            if arg1_type == WasmType::I32 {
+                                // Convert i32 to f64
+                                instructions.push(Instruction::F64ConvertI32S);
+                            }
+
+                            // Third argument: false value - convert to f64 if integer
+                            let arg2_type =
+                                self.generate_expression(&arguments[2], instructions)?;
+                            if arg2_type == WasmType::I32 {
+                                // Convert i32 to f64
+                                instructions.push(Instruction::F64ConvertI32S);
+                            }
+                        } else {
+                            // Generate arguments normally for other namespace functions
+                            for arg in arguments {
+                                self.generate_expression(arg, instructions)?;
+                            }
                         }
 
                         // Find the function index
@@ -1908,7 +1896,56 @@ impl CodeGenerator {
                 // Check for built-in module calls first
                 if let Expression::Variable(module_name) = object.as_ref() {
                     match module_name.as_str() {
-                        "http" | "math" | "array" | "string" | "file" | "list" => {
+                        "http" => {
+                            // HTTP functions need special handling for string expansion
+                            let function_name = format!("{module_name}.{method}");
+
+                            // HTTP functions that take a URL (ptr, len)
+                            if matches!(method.as_str(), "get" | "delete" | "head" | "options") {
+                                if arguments.len() != 1 {
+                                    return Err(CompilerError::codegen_error(
+                                        format!("HTTP method '{method}' expects 1 argument"),
+                                        None,
+                                        None,
+                                    ));
+                                }
+                                // Generate URL string with proper expansion to (ptr, len)
+                                self.generate_string_for_import(&arguments[0], instructions)?;
+                            }
+                            // HTTP functions that take URL and data (ptr, len, ptr, len)
+                            else if matches!(method.as_str(), "post" | "put" | "patch") {
+                                if arguments.len() != 2 {
+                                    return Err(CompilerError::codegen_error(
+                                        format!("HTTP method '{method}' expects 2 arguments"),
+                                        None,
+                                        None,
+                                    ));
+                                }
+                                // Generate URL string with proper expansion to (ptr, len)
+                                self.generate_string_for_import(&arguments[0], instructions)?;
+                                // Generate data string with proper expansion to (ptr, len)
+                                self.generate_string_for_import(&arguments[1], instructions)?;
+                            } else {
+                                return Err(CompilerError::codegen_error(
+                                    format!("Unknown HTTP method: {method}"),
+                                    None,
+                                    None,
+                                ));
+                            }
+
+                            // Find and call the function
+                            if let Some(&function_index) = self.function_map.get(&function_name) {
+                                instructions.push(Instruction::Call(function_index));
+                                return Ok(self.get_function_return_type_by_name(&function_name));
+                            } else {
+                                return Err(CompilerError::codegen_error(
+                                    format!("Function '{function_name}' not found"),
+                                    None,
+                                    None,
+                                ));
+                            }
+                        }
+                        "math" | "array" | "string" | "file" | "list" => {
                             let mut function_name = format!("{module_name}.{method}");
 
                             // Special handling for polymorphic math.abs - determine the correct function variant
@@ -4303,10 +4340,10 @@ impl CodeGenerator {
         eprintln!("DEBUG MOD: Conditional operations registered successfully");
 
         // 15. Register HTTP operations
-        // println!("DEBUG: About to register HTTP operations");
+        eprintln!("DEBUG: About to register HTTP operations");
         match self.register_http_operations() {
-            Ok(()) => {}  // println!("DEBUG: HTTP operations registered successfully"),
-            Err(_e) => {} // println!("DEBUG: HTTP operations registration failed: {:?}", e),
+            Ok(()) => eprintln!("DEBUG: HTTP operations registered successfully"),
+            Err(e) => eprintln!("DEBUG: HTTP operations registration failed: {:?}", e),
         }
 
         // 11. Register math operations - TEST THIS ONE
@@ -7622,8 +7659,11 @@ impl CodeGenerator {
             "file_write",
             wasm_encoder::EntityType::Function(write_type),
         );
+        let write_index = self.function_count;
         self.file_import_indices
-            .insert("file_write".to_string(), self.function_count);
+            .insert("file_write".to_string(), write_index);
+        self.function_map
+            .insert("file.write".to_string(), write_index);
         self.function_count += 1;
 
         // file_read(pathPtr: i32, pathLen: i32, resultPtr: i32) -> i32 (returns length or -1 for error)
@@ -7648,8 +7688,11 @@ impl CodeGenerator {
             "file_exists",
             wasm_encoder::EntityType::Function(exists_type),
         );
+        let exists_index = self.function_count;
         self.file_import_indices
-            .insert("file_exists".to_string(), self.function_count);
+            .insert("file_exists".to_string(), exists_index);
+        self.function_map
+            .insert("file.exists".to_string(), exists_index);
         self.function_count += 1;
 
         // file_delete(pathPtr: i32, pathLen: i32) -> i32 (returns 0 for success, -1 for error)
@@ -7694,8 +7737,10 @@ impl CodeGenerator {
             "http_get",
             wasm_encoder::EntityType::Function(get_type),
         );
+        let get_index = self.function_count;
         self.http_import_indices
-            .insert("http_get".to_string(), self.function_count);
+            .insert("http_get".to_string(), get_index);
+        self.function_map.insert("http.get".to_string(), get_index);
         self.function_count += 1;
 
         // http_post(urlPtr: i32, urlLen: i32, bodyPtr: i32, bodyLen: i32) -> i32 (returns string pointer)
@@ -8034,9 +8079,14 @@ impl CodeGenerator {
             "input",
             wasm_encoder::EntityType::Function(input_type),
         );
+        let input_func_index = self.function_count;
         self.function_map
-            .insert("input".to_string(), self.function_count);
+            .insert("input".to_string(), input_func_index);
         self.function_count += 1;
+
+        // input.string (alias for input) - dotted namespace version
+        self.function_map
+            .insert("input.string".to_string(), input_func_index);
 
         // input_integer(prompt_ptr: i32) -> integer: i32
         let input_integer_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;

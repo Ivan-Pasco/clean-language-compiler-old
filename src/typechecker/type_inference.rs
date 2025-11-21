@@ -1293,7 +1293,28 @@ impl<'a> TypeInference<'a> {
             let field_type = self.hir_type_to_concrete(&field.field_type);
 
             let default_value = if let Some(init_expr) = &field.initializer {
-                Some(self.infer_expression(init_expr)?)
+                // Special handling for empty literals with explicit type annotations
+                let is_empty_literal = match init_expr {
+                    ResolvedHirExpression::Literal { value, .. } => match value {
+                        crate::ast::Value::List(elements) => elements.is_empty(),
+                        crate::ast::Value::Pairs(pairs) => pairs.is_empty(),
+                        _ => false,
+                    },
+                    _ => false,
+                };
+
+                if is_empty_literal {
+                    // For empty literals, use the declared field type directly
+                    Some(TastExpression {
+                        kind: TastExpressionKind::Literal {
+                            value: TastLiteral::Null,
+                        },
+                        expr_type: field_type.clone(),
+                        location: init_expr.location().clone(),
+                    })
+                } else {
+                    Some(self.infer_expression(init_expr)?)
+                }
             } else {
                 None
             };
@@ -1385,9 +1406,6 @@ impl<'a> TypeInference<'a> {
             TastStatement::For { iterable, body, .. } => {
                 self.expression_uses_this(iterable) || self.body_uses_this(body)
             }
-            TastStatement::While {
-                condition, body, ..
-            } => self.expression_uses_this(condition) || self.body_uses_this(body),
             _ => false,
         }
     }
@@ -1527,14 +1545,42 @@ impl<'a> TypeInference<'a> {
                 let declared_type = self.hir_type_to_concrete(var_type);
 
                 let tast_initializer = if let Some(init_expr) = initializer {
-                    let tast_init = self.infer_expression(init_expr)?;
+                    // Special handling for empty literals with explicit type annotations
+                    // Check if this is an empty array [] or empty pairs {} literal
+                    let is_empty_literal = match init_expr {
+                        // Empty array literal []
+                        ResolvedHirExpression::Array { elements, .. } => elements.is_empty(),
+                        // Empty pairs literal {}
+                        ResolvedHirExpression::Literal { value, .. } => match value {
+                            crate::ast::Value::Pairs(pairs) => pairs.is_empty(),
+                            _ => false,
+                        },
+                        _ => false,
+                    };
 
-                    // Add constraint that initializer type matches declared type
-                    self.add_constraint(TypeConstraint::Equality {
-                        left: tast_init.expr_type.clone(),
-                        right: declared_type.clone(),
-                        location: location.clone(),
-                    });
+                    let tast_init = if is_empty_literal {
+                        // For empty literals, use the declared type directly
+                        // This ensures list<integer> myList = [] works correctly
+                        TastExpression {
+                            kind: TastExpressionKind::Literal {
+                                value: TastLiteral::Null,
+                            },
+                            expr_type: declared_type.clone(),
+                            location: init_expr.location().clone(),
+                        }
+                    } else {
+                        // Normal inference for non-empty literals
+                        let tast_init = self.infer_expression(init_expr)?;
+
+                        // Add constraint that initializer type matches declared type
+                        self.add_constraint(TypeConstraint::Equality {
+                            left: tast_init.expr_type.clone(),
+                            right: declared_type.clone(),
+                            location: location.clone(),
+                        });
+
+                        tast_init
+                    };
 
                     Some(tast_init)
                 } else {
@@ -1650,29 +1696,6 @@ impl<'a> TypeInference<'a> {
                 })
             }
 
-            ResolvedHirStatement::While {
-                condition,
-                body,
-                location,
-            } => {
-                // Infer condition type and ensure it's boolean
-                let tast_condition = self.infer_expression(condition)?;
-                self.add_constraint(TypeConstraint::Equality {
-                    left: tast_condition.expr_type.clone(),
-                    right: ConcreteType::Boolean,
-                    location: location.clone(),
-                });
-
-                // Infer body
-                let tast_body = self.infer_block(body)?;
-
-                Ok(TastStatement::While {
-                    condition: tast_condition,
-                    body: tast_body,
-                    location: location.clone(),
-                })
-            }
-
             ResolvedHirStatement::For {
                 variable,
                 variable_symbol_id,
@@ -1718,8 +1741,63 @@ impl<'a> TypeInference<'a> {
                 value,
                 location,
             } => {
-                // Infer the value expression first
-                let tast_value = self.infer_expression(value)?;
+                // Determine target type first to handle empty literals correctly
+                let target_type = match target {
+                    ResolvedHirLValue::Variable { symbol_id, .. } => self
+                        .type_env
+                        .get(symbol_id)
+                        .cloned()
+                        .unwrap_or(ConcreteType::Unknown),
+                    ResolvedHirLValue::FieldAccess {
+                        field_symbol_id, ..
+                    } => {
+                        // Look up field type from symbol table to get the HirType
+                        if let Some(symbol) = self.symbol_table.get_symbol(*field_symbol_id) {
+                            if let SymbolKind::Field { field_type, .. } = &symbol.kind {
+                                self.hir_type_to_concrete(field_type)
+                            } else {
+                                ConcreteType::Unknown
+                            }
+                        } else {
+                            ConcreteType::Unknown
+                        }
+                    }
+                    ResolvedHirLValue::Index { array, .. } => {
+                        // Infer array type to get element type
+                        let tast_array = self.infer_expression(array)?;
+                        match &tast_array.expr_type {
+                            ConcreteType::Array(element_type) => (**element_type).clone(),
+                            _ => ConcreteType::Unknown,
+                        }
+                    }
+                };
+
+                // Special handling for empty literals with known target type
+                let is_empty_literal = match value {
+                    // Empty array literal []
+                    ResolvedHirExpression::Array { elements, .. } => elements.is_empty(),
+                    // Empty pairs literal {}
+                    ResolvedHirExpression::Literal { value: val, .. } => match val {
+                        crate::ast::Value::Pairs(pairs) => pairs.is_empty(),
+                        _ => false,
+                    },
+                    _ => false,
+                };
+
+                let tast_value =
+                    if is_empty_literal && !matches!(target_type, ConcreteType::Unknown) {
+                        // Use target type for empty literals
+                        TastExpression {
+                            kind: TastExpressionKind::Literal {
+                                value: TastLiteral::Null,
+                            },
+                            expr_type: target_type.clone(),
+                            location: value.location().clone(),
+                        }
+                    } else {
+                        // Normal inference
+                        self.infer_expression(value)?
+                    };
 
                 // For now, handle simple variable assignments (most common case)
                 // TODO: Implement field access assignments (obj.field = value)
@@ -1729,19 +1807,15 @@ impl<'a> TypeInference<'a> {
                         symbol_id,
                         location: var_location,
                     } => {
-                        // Look up the variable's declared type from our type environment
-                        let target_type = self
-                            .type_env
-                            .get(symbol_id)
-                            .cloned()
-                            .unwrap_or(ConcreteType::Unknown);
-
-                        // Add constraint that value type matches target type
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: tast_value.expr_type.clone(),
-                            right: target_type.clone(),
-                            location: location.clone(),
-                        });
+                        // Only add constraint if not an empty literal (already handled)
+                        if !is_empty_literal {
+                            // Add constraint that value type matches target type
+                            self.add_constraint(TypeConstraint::Equality {
+                                left: tast_value.expr_type.clone(),
+                                right: target_type.clone(),
+                                location: location.clone(),
+                            });
+                        }
 
                         TastExpression {
                             kind: TastExpressionKind::Variable {
@@ -1761,16 +1835,15 @@ impl<'a> TypeInference<'a> {
                         // Handle field assignments like obj.field = value
                         let tast_object = self.infer_expression(object)?;
 
-                        // For field access, we need to determine the field type
-                        // This is complex and depends on the object's type
-                        let field_type = ConcreteType::Unknown; // TODO: Look up field type from class
-
-                        // Add constraint that value type matches field type
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: tast_value.expr_type.clone(),
-                            right: field_type.clone(),
-                            location: location.clone(),
-                        });
+                        // Only add constraint if not an empty literal (already handled)
+                        if !is_empty_literal {
+                            // Add constraint that value type matches field type
+                            self.add_constraint(TypeConstraint::Equality {
+                                left: tast_value.expr_type.clone(),
+                                right: target_type.clone(),
+                                location: location.clone(),
+                            });
+                        }
 
                         TastExpression {
                             kind: TastExpressionKind::PropertyAccess {
@@ -1778,7 +1851,7 @@ impl<'a> TypeInference<'a> {
                                 property_name: field.clone(),
                                 property_symbol: *field_symbol_id,
                             },
-                            expr_type: field_type,
+                            expr_type: target_type,
                             location: field_location.clone(),
                         }
                     }
@@ -2509,6 +2582,31 @@ impl<'a> TypeInference<'a> {
                     location.clone(),
                 )
             }
+
+            ResolvedHirExpression::Range {
+                start,
+                end,
+                inclusive,
+                location,
+            } => {
+                // Infer types for start and end
+                let tast_start = self.infer_expression(start)?;
+                let tast_end = self.infer_expression(end)?;
+
+                // Both start and end should be integers
+                // For now, we'll type the range as an Array<Integer>
+                // The MIR/codegen will handle actually generating the range values
+
+                (
+                    TastExpressionKind::Range {
+                        start: Box::new(tast_start),
+                        end: Box::new(tast_end),
+                        inclusive: *inclusive,
+                    },
+                    ConcreteType::Array(Box::new(ConcreteType::Integer)),
+                    location.clone(),
+                )
+            }
         };
 
         self.recursion_depth -= 1;
@@ -2731,31 +2829,56 @@ impl<'a> TypeInference<'a> {
                 matches!(
                     symbol.name.as_str(),
                     "list_fill"
+                        | "list.fill"
                         | "list_add"
+                        | "list.add"
                         | "list_push"
+                        | "list.push"
                         | "list_insert"
+                        | "list.insert"
                         | "list_contains"
+                        | "list.contains"
                         | "list_indexOf"
+                        | "list.indexOf"
                         | "list_index_of"
                         | "list_lastIndexOf"
+                        | "list.lastIndexOf"
                         | "list_size"
+                        | "list.size"
                         | "list_length"
+                        | "list.length"
                         | "list_isEmpty"
+                        | "list.isEmpty"
                         | "list_isNotEmpty"
+                        | "list.isNotEmpty"
                         | "list_get"
+                        | "list.get"
                         | "list_set"
+                        | "list.set"
                         | "list_remove"
+                        | "list.remove"
                         | "list_pop"
+                        | "list.pop"
                         | "list_peek"
+                        | "list.peek"
                         | "list_first"
+                        | "list.first"
                         | "list_last"
+                        | "list.last"
                         | "list_sort"
+                        | "list.sort"
                         | "list_reverse"
+                        | "list.reverse"
                         | "list_slice"
+                        | "list.slice"
                         | "list_concat"
+                        | "list.concat"
                         | "list_join"
+                        | "list.join"
                         | "list_clear"
-                        | "list_range" // list_range creates lists, doesn't take list argument
+                        | "list.clear"
+                        | "list_range"
+                        | "list.range" // creates lists, doesn't take list argument
                 )
             } else {
                 false
@@ -2839,50 +2962,82 @@ impl<'a> TypeInference<'a> {
         arguments: &[TastExpression],
     ) -> Result<ConcreteType, CompilerError> {
         // Special handling for generic list namespace functions FIRST
-        if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
-            let function_name = &symbol.name;
+        // Use the function_name parameter directly for SymbolId(0) namespace functions
+        // to avoid incorrect matching with the "print" symbol at SymbolId(0)
 
-            // Functions that return the element type of their list argument
-            if (function_name == "list_remove"
-                || function_name == "list_get"
-                || function_name == "list_pop"
-                || function_name == "list_peek"
-                || function_name == "list_first"
-                || function_name == "list_last")
-                && !arguments.is_empty()
-            {
-                let resolved_arg_type = self.resolve_type(&arguments[0].expr_type);
-                if let ConcreteType::Array(element_type) = resolved_arg_type {
-                    return Ok((*element_type).clone());
-                }
-            }
+        // Functions that always return integer
+        if function_name == "list_indexOf"
+            || function_name == "list.indexOf"
+            || function_name == "list_lastIndexOf"
+            || function_name == "list.lastIndexOf"
+        {
+            return Ok(ConcreteType::Integer);
+        }
 
-            // Functions that return the same list type as their input
-            if (function_name == "list_add"
-                || function_name == "list_push"
-                || function_name == "list_sort"
-                || function_name == "list_reverse"
-                || function_name == "list_insert"
-                || function_name == "list_slice"
-                || function_name == "list_concat")
-                && !arguments.is_empty()
-            {
-                let resolved_arg_type = self.resolve_type(&arguments[0].expr_type);
-                if let ConcreteType::Array(_) = resolved_arg_type {
-                    return Ok(resolved_arg_type);
-                }
-            }
+        // Functions that always return boolean
+        if function_name == "list_contains"
+            || function_name == "list.contains"
+            || function_name == "list_isEmpty"
+            || function_name == "list.isEmpty"
+            || function_name == "list_isNotEmpty"
+            || function_name == "list.isNotEmpty"
+        {
+            return Ok(ConcreteType::Boolean);
+        }
 
-            // Functions that create new lists with element type from second argument
-            if (function_name == "list_fill") && arguments.len() >= 2 {
-                let element_type = self.resolve_type(&arguments[1].expr_type);
-                return Ok(ConcreteType::Array(Box::new(element_type)));
+        // Functions that return the element type of their list argument
+        if (function_name == "list_remove"
+            || function_name == "list.remove"
+            || function_name == "list_get"
+            || function_name == "list.get"
+            || function_name == "list_pop"
+            || function_name == "list.pop"
+            || function_name == "list_peek"
+            || function_name == "list.peek"
+            || function_name == "list_first"
+            || function_name == "list.first"
+            || function_name == "list_last"
+            || function_name == "list.last")
+            && !arguments.is_empty()
+        {
+            let resolved_arg_type = self.resolve_type(&arguments[0].expr_type);
+            if let ConcreteType::Array(element_type) = resolved_arg_type {
+                return Ok((*element_type).clone());
             }
+        }
 
-            // list_range always returns list<integer>
-            if function_name == "list_range" {
-                return Ok(ConcreteType::Array(Box::new(ConcreteType::Integer)));
+        // Functions that return the same list type as their input
+        if (function_name == "list_add"
+            || function_name == "list.add"
+            || function_name == "list_push"
+            || function_name == "list.push"
+            || function_name == "list_sort"
+            || function_name == "list.sort"
+            || function_name == "list_reverse"
+            || function_name == "list.reverse"
+            || function_name == "list_insert"
+            || function_name == "list.insert"
+            || function_name == "list_slice"
+            || function_name == "list.slice"
+            || function_name == "list_concat"
+            || function_name == "list.concat")
+            && !arguments.is_empty()
+        {
+            let resolved_arg_type = self.resolve_type(&arguments[0].expr_type);
+            if let ConcreteType::Array(_) = resolved_arg_type {
+                return Ok(resolved_arg_type);
             }
+        }
+
+        // Functions that create new lists with element type from second argument
+        if (function_name == "list_fill" || function_name == "list.fill") && arguments.len() >= 2 {
+            let element_type = self.resolve_type(&arguments[1].expr_type);
+            return Ok(ConcreteType::Array(Box::new(element_type)));
+        }
+
+        // list_range always returns list<integer>
+        if function_name == "list_range" || function_name == "list.range" {
+            return Ok(ConcreteType::Array(Box::new(ConcreteType::Integer)));
         }
 
         // Look up function type from symbol table
@@ -3292,10 +3447,13 @@ impl<'a> TypeInference<'a> {
             }
             ("list", "remove") => {
                 validate_arg_count(2, arg_count, &full_method_name)?;
-                // Returns list<T> - same type as first argument
-                // list.remove(list<T>, integer) -> list<T>
+                // Returns T - the element type of the list
+                // list.remove(list<T>, integer) -> T
                 if !arguments.is_empty() {
-                    Ok(arguments[0].expr_type.clone())
+                    match &arguments[0].expr_type {
+                        ConcreteType::Array(element_type) => Ok((**element_type).clone()),
+                        _ => Ok(ConcreteType::Unknown),
+                    }
                 } else {
                     Ok(ConcreteType::Unknown)
                 }
@@ -3348,6 +3506,114 @@ impl<'a> TypeInference<'a> {
                 } else {
                     Ok(ConcreteType::Unknown)
                 }
+            }
+            ("list", "range") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                // Returns list<integer> - creates a new list with integer range
+                // list.range(integer, integer) -> list<integer>
+                Ok(ConcreteType::Array(Box::new(ConcreteType::Integer)))
+            }
+            ("list", "indexOf") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                // Returns integer - index of element or -1 if not found
+                // list.indexOf(list<T>, T) -> integer
+                Ok(ConcreteType::Integer)
+            }
+            ("list", "lastIndexOf") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                // Returns integer - last index of element or -1 if not found
+                // list.lastIndexOf(list<T>, T) -> integer
+                Ok(ConcreteType::Integer)
+            }
+            ("list", "contains") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                // Returns boolean - whether the list contains the element
+                // list.contains(list<T>, T) -> boolean
+                Ok(ConcreteType::Boolean)
+            }
+            ("list", "isEmpty") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                // Returns boolean - whether the list is empty
+                // list.isEmpty(list<T>) -> boolean
+                Ok(ConcreteType::Boolean)
+            }
+            ("list", "isNotEmpty") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                // Returns boolean - whether the list is not empty
+                // list.isNotEmpty(list<T>) -> boolean
+                Ok(ConcreteType::Boolean)
+            }
+            ("list", "first") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                // Returns T - the first element of the list
+                // list.first(list<T>) -> T
+                if !arguments.is_empty() {
+                    match &arguments[0].expr_type {
+                        ConcreteType::Array(element_type) => Ok((**element_type).clone()),
+                        _ => Ok(ConcreteType::Unknown),
+                    }
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "last") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                // Returns T - the last element of the list
+                // list.last(list<T>) -> T
+                if !arguments.is_empty() {
+                    match &arguments[0].expr_type {
+                        ConcreteType::Array(element_type) => Ok((**element_type).clone()),
+                        _ => Ok(ConcreteType::Unknown),
+                    }
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "slice") => {
+                validate_arg_count(3, arg_count, &full_method_name)?;
+                // Returns list<T> - a new list containing the sliced elements
+                // list.slice(list<T>, integer, integer) -> list<T>
+                if !arguments.is_empty() {
+                    Ok(arguments[0].expr_type.clone())
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "concat") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                // Returns list<T> - a new list containing elements from both lists
+                // list.concat(list<T>, list<T>) -> list<T>
+                if !arguments.is_empty() {
+                    Ok(arguments[0].expr_type.clone())
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "reverse") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                // Returns list<T> - a new list with elements in reverse order
+                // list.reverse(list<T>) -> list<T>
+                if !arguments.is_empty() {
+                    Ok(arguments[0].expr_type.clone())
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "sort") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                // Returns list<T> - a new sorted list
+                // list.sort(list<T>) -> list<T>
+                if !arguments.is_empty() {
+                    Ok(arguments[0].expr_type.clone())
+                } else {
+                    Ok(ConcreteType::Unknown)
+                }
+            }
+            ("list", "join") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                // Returns string - joined elements
+                // list.join(list<T>, string) -> string
+                Ok(ConcreteType::String)
             }
 
             // Input static methods
@@ -3851,7 +4117,6 @@ impl StatementLocation for ResolvedHirStatement {
             ResolvedHirStatement::VariableDeclaration { location, .. } => location,
             ResolvedHirStatement::Return { location, .. } => location,
             ResolvedHirStatement::If { location, .. } => location,
-            ResolvedHirStatement::While { location, .. } => location,
             ResolvedHirStatement::Assignment { location, .. } => location,
             ResolvedHirStatement::For { location, .. } => location,
             ResolvedHirStatement::Print { location, .. } => location,

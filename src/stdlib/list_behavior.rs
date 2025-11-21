@@ -58,8 +58,8 @@ impl ListBehaviorManager {
             codegen,
             "list.add",
             &[WasmType::I32, WasmType::I32], // list_ptr, value
-            None,
-            &[WasmType::I32], // Local 2: behavior_flags
+            Some(WasmType::I32),             // Returns modified list pointer
+            &[WasmType::I32],                // Local 2: behavior_flags
             self.generate_list_add(),
         )?;
 
@@ -192,7 +192,8 @@ impl ListBehaviorManager {
             // For now, skip uniqueness check
             Instruction::I32Const(0), // Assume not found
             Instruction::If(BlockType::Empty),
-            // Value exists, return without adding
+            // Value exists, return list pointer without adding
+            Instruction::LocalGet(0), // list_ptr
             Instruction::Return,
             Instruction::End,
             Instruction::End,
@@ -200,7 +201,8 @@ impl ListBehaviorManager {
             // For line (FIFO) and default: add to end
             // For pile (LIFO): also add to end (remove from end)
             // TODO: Implement actual list push operation
-            // For now, just return (no-op)
+            // For now, return the list pointer (simulating successful add)
+            Instruction::LocalGet(0), // Return list_ptr
         ]
     }
 

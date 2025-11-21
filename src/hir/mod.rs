@@ -189,14 +189,7 @@ pub enum HirStatement {
         location: SourceLocation,
     },
 
-    /// While loop
-    While {
-        condition: HirExpression,
-        body: HirBlock,
-        location: SourceLocation,
-    },
-
-    /// For loop - desugared to while loop with iterator
+    /// For loop - desugared to iterate with iterator
     For {
         variable: String,
         iterable: HirExpression,
@@ -343,6 +336,14 @@ pub enum HirExpression {
         arguments: Vec<HirExpression>,
         location: SourceLocation,
     },
+
+    /// Range expression (start..end or start..=end)
+    Range {
+        start: Box<HirExpression>,
+        end: Box<HirExpression>,
+        inclusive: bool,
+        location: SourceLocation,
+    },
 }
 
 /// HIR L-value (left-hand side of assignment)
@@ -419,6 +420,7 @@ impl HirExpression {
             HirExpression::OnError { location, .. } => location,
             HirExpression::Conditional { location, .. } => location,
             HirExpression::BaseCall { location, .. } => location,
+            HirExpression::Range { location, .. } => location,
         }
     }
 }

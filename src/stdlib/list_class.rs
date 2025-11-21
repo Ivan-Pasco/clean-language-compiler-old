@@ -78,6 +78,25 @@ impl ListClass {
             ],
         )?;
 
+        // List.length(list lst) -> integer (alias for list.size)
+        // Returns the number of elements in the list
+        register_stdlib_function(
+            codegen,
+            "list.length",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            vec![
+                // Get list pointer
+                Instruction::LocalGet(0),
+                // Load list size (first 4 bytes)
+                Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }),
+            ],
+        )?;
+
         // List.isEmpty(list lst) -> boolean
         register_stdlib_function(
             codegen,
@@ -99,6 +118,28 @@ impl ListClass {
             ],
         )?;
 
+        // List.isNotEmpty(list lst) -> boolean
+        // Returns true if the list has at least one element
+        register_stdlib_function(
+            codegen,
+            "list.isNotEmpty",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            vec![
+                // Get list pointer
+                Instruction::LocalGet(0),
+                // Load list length
+                Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }),
+                // Check if length != 0 (equivalent to length > 0)
+                Instruction::I32Const(0),
+                Instruction::I32Ne,
+            ],
+        )?;
+
         // List.get(list lst, integer index) -> any
         register_stdlib_function(
             codegen,
@@ -115,6 +156,26 @@ impl ListClass {
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             None,
             self.generate_list_set(),
+        )?;
+
+        // List.first(list lst) -> any
+        // Returns the first element of the list
+        register_stdlib_function(
+            codegen,
+            "list.first",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            self.generate_first(),
+        )?;
+
+        // List.last(list lst) -> any
+        // Returns the last element of the list
+        register_stdlib_function(
+            codegen,
+            "list.last",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            self.generate_last(),
         )?;
 
         Ok(())
@@ -140,15 +201,13 @@ impl ListClass {
         )?;
 
         // List.contains(list lst, any value) -> boolean
-        // NOTE: Temporarily disabled to avoid duplicate registration with list_behavior.rs
-        // The list_behavior.rs implementation is more complete
-        // register_stdlib_function(
-        //     codegen,
-        //     "list.contains",
-        //     &[WasmType::I32, WasmType::I32],
-        //     Some(WasmType::I32),
-        //     self.generate_contains(),
-        // )?;
+        register_stdlib_function(
+            codegen,
+            "list.contains",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            self.generate_contains(),
+        )?;
 
         // List.find(list lst, any value) -> any
         register_stdlib_function(
@@ -175,6 +234,16 @@ impl ListClass {
             self.generate_push(),
         )?;
 
+        // CRITICAL FIX: List.push_f64(list lst, number value) -> list
+        // Variant of push that accepts f64 elements for float array literals like [1.1, 2.2, 3.3]
+        register_stdlib_function(
+            codegen,
+            "list.push_f64",
+            &[WasmType::I32, WasmType::F64],
+            Some(WasmType::I32),
+            self.generate_push_f64(),
+        )?;
+
         // List.add(list lst, any value) -> list
         // Alias for list.push for consistency with other languages
         register_stdlib_function(
@@ -192,6 +261,44 @@ impl ListClass {
             &[WasmType::I32],
             Some(WasmType::I32),
             self.generate_pop(),
+        )?;
+
+        // List.peek(list lst) -> any
+        // Returns the last element without removing it
+        register_stdlib_function(
+            codegen,
+            "list.peek",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            vec![
+                // Get list pointer
+                Instruction::LocalGet(0),
+                // Duplicate for offset calculation
+                Instruction::LocalGet(0),
+                // Load list size
+                Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }),
+                // Calculate last index (size - 1)
+                Instruction::I32Const(1),
+                Instruction::I32Sub,
+                // Multiply by 4 for byte offset
+                Instruction::I32Const(4),
+                Instruction::I32Mul,
+                // Add header offset (16 bytes)
+                Instruction::I32Const(16),
+                Instruction::I32Add,
+                // Add to list pointer
+                Instruction::I32Add,
+                // Load the element
+                Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }),
+            ],
         )?;
 
         // List.shift(list lst) -> any
@@ -327,6 +434,17 @@ impl ListClass {
             self.generate_fill(),
         )?;
 
+        // List.range(start: integer, end: integer) -> list<integer>
+        // Creates a new list with integer values from start to end (exclusive)
+        register_stdlib_function_with_locals(
+            codegen,
+            "list.range",
+            &[WasmType::I32, WasmType::I32], // start, end
+            Some(WasmType::I32),             // returns list pointer
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // locals: list_ptr, current, size
+            self.generate_range(),
+        )?;
+
         // List.toString(list lst) -> string
         register_stdlib_function(
             codegen,
@@ -415,7 +533,6 @@ impl ListClass {
         ]
     }
 
-    #[allow(dead_code)]
     fn generate_contains(&self) -> Vec<Instruction> {
         // Simplified contains implementation to avoid control flow issues
         // Parameters: list, value to find
@@ -472,6 +589,55 @@ impl ListClass {
             Instruction::I32Store(MemArg {
                 offset: 0,
                 align: 2,
+                memory_index: 0,
+            }),
+            // Increment list size
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return list pointer
+            Instruction::LocalGet(0),
+        ]
+    }
+
+    fn generate_push_f64(&self) -> Vec<Instruction> {
+        // CRITICAL FIX: Implementation of push_f64 - adds F64 element to end of list
+        // This is needed for float array literals like [1.1, 2.2, 3.3]
+        // Parameters: list_ptr (0), item_f64 (1)
+        // Returns: list pointer
+        vec![
+            // Get current size
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Calculate position for new element (size * 8 + 16)
+            // F64 elements are 8 bytes each (not 4 like I32)
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Const(16),
+            Instruction::I32Add,
+            // Add to list_ptr to get storage address
+            Instruction::LocalGet(0),
+            Instruction::I32Add,
+            // Store the new F64 value
+            Instruction::LocalGet(1),
+            Instruction::F64Store(MemArg {
+                offset: 0,
+                align: 3, // 2^3 = 8 byte alignment for F64
                 memory_index: 0,
             }),
             // Increment list size
@@ -652,10 +818,18 @@ impl ListClass {
     }
 
     fn generate_join(&self) -> Vec<Instruction> {
+        // Simplified join implementation
+        // Parameters: list_ptr (0), separator (1)
+        // Returns: string pointer
+        // For now, returns an empty string to maintain proper stack behavior
         vec![
-            // Basic join - return empty string for now
-            // Full implementation would concatenate elements with separator
-            Instruction::I32Const(0), // Empty string pointer
+            // Consume the parameters to avoid stack mismatch
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::Drop,        // drop it
+            Instruction::LocalGet(1), // separator
+            Instruction::Drop,        // drop it
+            // Return empty string pointer (simplified implementation)
+            Instruction::I32Const(0),
         ]
     }
 
@@ -752,11 +926,141 @@ impl ListClass {
         ]
     }
 
+    fn generate_range(&self) -> Vec<Instruction> {
+        // Parameters: start (local 0), end (local 1)
+        // Locals: list_ptr (local 2), current (local 3), size (local 4)
+        // Returns: list pointer
+
+        // Calculate size = end - start
+        // Create a new list with integer values from start to end (exclusive)
+        // List structure: [4-byte size][elements...]
+        vec![
+            // Calculate size = end - start
+            Instruction::LocalGet(1), // end
+            Instruction::LocalGet(0), // start
+            Instruction::I32Sub,      // end - start
+            Instruction::LocalSet(4), // size = end - start
+            // mem_alloc signature: (type_id: i32, size: i32) -> i32
+            Instruction::I32Const(0), // type_id = 0 for generic list allocation
+            // Calculate memory needed: 4 bytes (size) + size * 4 bytes (elements)
+            Instruction::LocalGet(4), // size
+            Instruction::I32Const(4), // bytes per element
+            Instruction::I32Mul,      // size * 4
+            Instruction::I32Const(4), // + 4 bytes for size field
+            Instruction::I32Add,      // total bytes needed
+            // Call mem_alloc to allocate memory
+            Instruction::Call(7),     // mem_alloc function index
+            Instruction::LocalSet(2), // store list_ptr
+            // Write size to list header
+            Instruction::LocalGet(2), // list_ptr
+            Instruction::LocalGet(4), // size
+            Instruction::I32Store(MemArg {
+                align: 2,
+                offset: 0,
+                memory_index: 0,
+            }),
+            // Initialize current = start
+            Instruction::LocalGet(0), // start
+            Instruction::LocalSet(3), // current = start
+            // Loop: while current < end
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            // Check if current >= end
+            Instruction::LocalGet(3), // current
+            Instruction::LocalGet(1), // end
+            Instruction::I32GeS,      // current >= end?
+            Instruction::BrIf(1),     // if so, break out of loop
+            // Calculate index = current - start
+            // Set list[index] = current
+            Instruction::LocalGet(2), // list_ptr
+            Instruction::I32Const(4), // offset to data area
+            Instruction::I32Add,
+            Instruction::LocalGet(3), // current
+            Instruction::LocalGet(0), // start
+            Instruction::I32Sub,      // current - start = index
+            Instruction::I32Const(4), // element size
+            Instruction::I32Mul,
+            Instruction::I32Add,      // list_ptr + 4 + index*4
+            Instruction::LocalGet(3), // current value
+            Instruction::I32Store(MemArg {
+                align: 2,
+                offset: 0,
+                memory_index: 0,
+            }),
+            // current = current + 1
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0), // continue loop
+            Instruction::End,   // end loop
+            Instruction::End,   // end block
+            // Return list_ptr
+            Instruction::LocalGet(2),
+        ]
+    }
+
     fn generate_to_string(&self) -> Vec<Instruction> {
         vec![
             // Basic toString - return empty string for now
             // Full implementation would convert list to string representation
             Instruction::I32Const(0), // Empty string pointer
+        ]
+    }
+
+    fn generate_first(&self) -> Vec<Instruction> {
+        // List.first(list lst) -> any
+        // Returns the first element of the list (element at index 0)
+        // Parameters: list_ptr (0)
+        // Returns: first element value
+        vec![
+            // Get list pointer
+            Instruction::LocalGet(0),
+            // Add header offset (16 bytes)
+            Instruction::I32Const(16),
+            Instruction::I32Add,
+            // Load first element (at index 0)
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+        ]
+    }
+
+    fn generate_last(&self) -> Vec<Instruction> {
+        // List.last(list lst) -> any
+        // Returns the last element of the list (element at index size-1)
+        // Parameters: list_ptr (0)
+        // Returns: last element value
+        vec![
+            // Get list pointer
+            Instruction::LocalGet(0),
+            // Duplicate for offset calculation
+            Instruction::LocalGet(0),
+            // Load list size
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Calculate last index (size - 1)
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            // Multiply by 4 for byte offset
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            // Add header offset (16 bytes)
+            Instruction::I32Const(16),
+            Instruction::I32Add,
+            // Add to list pointer
+            Instruction::I32Add,
+            // Load the last element
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
         ]
     }
 }

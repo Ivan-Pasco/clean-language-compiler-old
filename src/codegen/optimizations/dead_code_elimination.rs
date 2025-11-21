@@ -148,14 +148,6 @@ impl DeadCodeEliminator {
                     }
                 }
             }
-            Statement::While {
-                condition, body, ..
-            } => {
-                self.find_called_functions_in_expression(condition, called);
-                for stmt in body {
-                    self.find_called_functions_in_statement(stmt, called);
-                }
-            }
             Statement::Iterate {
                 collection, body, ..
             } => {
@@ -331,14 +323,6 @@ impl DeadCodeEliminator {
                     }
                 }
             }
-            Statement::While {
-                condition, body, ..
-            } => {
-                self.find_used_variables_in_expression(condition, used);
-                for stmt in body {
-                    self.find_used_variables_in_statement(stmt, used);
-                }
-            }
             Statement::Iterate {
                 collection, body, ..
             } => {
@@ -470,12 +454,6 @@ impl DeadCodeEliminator {
                         if let Some(else_branch) = else_branch {
                             self.remove_unreachable_code(else_branch);
                         }
-                    }
-                }
-                Statement::While { .. } => {
-                    // Process while loop body
-                    if let Statement::While { body, .. } = &mut statements[i] {
-                        self.remove_unreachable_code(body);
                     }
                 }
                 Statement::Iterate { .. } | Statement::RangeIterate { .. } => {

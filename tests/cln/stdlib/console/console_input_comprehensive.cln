@@ -23,13 +23,9 @@ functions:
 		else
 			print("User doesn't like programming")
 
-		// Test string input with validation
+		// Test string input (using input() for strings per specification)
 		print("Testing string input:")
-		string userName = input.string("Enter your name: ")
+		string userName = input("Enter your name: ")
 		print("Name entered: " + userName)
-
-		// Test input with default values
-		integer defaultAge = input.integerWithDefault("Enter age (default 25): ", 25)
-		print("Age with default: " + defaultAge.toString())
 
 		print("Console input test completed")

@@ -1046,11 +1046,10 @@ impl GlobalSymbolTable {
             (
                 "list.fill",
                 vec![
-                    HirType::List(Box::new(HirType::Number)),
-                    HirType::Number,
-                    HirType::Integer,
+                    HirType::Integer, // size parameter
+                    HirType::Number,  // value parameter (generic placeholder)
                 ],
-                HirType::Void,
+                HirType::List(Box::new(HirType::Number)), // returns new list
             ),
             (
                 "list.range",

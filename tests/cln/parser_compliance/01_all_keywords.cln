@@ -16,8 +16,8 @@ start()
 	else
 		print("condition false")
 
-	// Basic while loop (iterate not implemented)
-	while count < 3
+	// Iterate loop
+	iterate i in 1 to 3
 		count = count + 1
 		print(count)
 

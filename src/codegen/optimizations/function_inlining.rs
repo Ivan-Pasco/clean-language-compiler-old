@@ -166,10 +166,6 @@ impl FunctionInliner {
                     self.count_calls_in_statement(else_stmt, call_counts);
                 }
             }
-            Statement::While { condition, body } => {
-                self.count_calls_in_expression(condition, call_counts);
-                self.count_calls_in_statement(body, call_counts);
-            }
             Statement::For { init, condition, update, body } => {
                 if let Some(init) = init {
                     self.count_calls_in_statement(init, call_counts);
@@ -271,9 +267,6 @@ impl FunctionInliner {
                     } else { 0 };
                     1 + then_count + else_count
                 }
-                Statement::While { body, .. } => {
-                    1 + self.count_statements(&[(**body).clone()])
-                }
                 Statement::For { body, .. } => {
                     1 + self.count_statements(&[(**body).clone()])
                 }
@@ -307,10 +300,6 @@ impl FunctionInliner {
                 self.check_side_effects_in_expression(condition) ||
                 self.check_side_effects_in_statement(then_stmt) ||
                 else_stmt.as_ref().map_or(false, |stmt| self.check_side_effects_in_statement(stmt))
-            }
-            Statement::While { condition, body } => {
-                self.check_side_effects_in_expression(condition) ||
-                self.check_side_effects_in_statement(body)
             }
             Statement::For { init, condition, update, body } => {
                 init.as_ref().map_or(false, |stmt| self.check_side_effects_in_statement(stmt)) ||

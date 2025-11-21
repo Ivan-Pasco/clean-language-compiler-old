@@ -137,25 +137,6 @@ impl ConstantFolder {
                     }
                 }
             }
-            Statement::While { condition, body } => {
-                if self.fold_expression(condition)? {
-                    results.constants_folded += 1;
-                }
-
-                // Check for constant false condition (infinite loop detection)
-                if self.is_constant_expression(condition) {
-                    if let Some(const_value) = self.evaluate_boolean_expression(condition) {
-                        if !const_value && self.debug {
-                            println!("CF: Warning - while loop with constant false condition");
-                        }
-                    }
-                }
-
-                let body_results = self.fold_in_statement(body)?;
-                results.constants_folded += body_results.constants_folded;
-                results.expressions_simplified += body_results.expressions_simplified;
-                results.branches_eliminated += body_results.branches_eliminated;
-            }
             Statement::For { init, condition, update, body } => {
                 if let Some(init) = init {
                     let init_results = self.fold_in_statement(init)?;

@@ -184,6 +184,11 @@ impl<'a> ConstraintSolver<'a> {
             // Type variable unification
             (ConcreteType::Generic { name: var_name, .. }, t)
             | (t, ConcreteType::Generic { name: var_name, .. }) => {
+                // Special handling for 'any' - it unifies with any type
+                if var_name == "any" {
+                    return Ok(());
+                }
+
                 // Extract type variable ID (simplified - in real implementation would be more complex)
                 if let Ok(var_id) = var_name.parse::<usize>() {
                     let type_var = TypeVarId(var_id);

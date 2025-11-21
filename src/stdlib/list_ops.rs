@@ -19,6 +19,30 @@ impl ListManager {
     }
 
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+        eprintln!("DEBUG LIST_OPS: Starting list function registration");
+
+        // CRITICAL FIX: Register list.push as import functions with proper type signatures
+        // list.push for i32 elements (integers, booleans, pointers)
+        eprintln!("DEBUG LIST_OPS: Registering list.push...");
+        let idx1 = codegen.register_import_function(
+            "env",
+            "list.push",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+        eprintln!("DEBUG LIST_OPS: list.push registered at index {}", idx1);
+
+        // CRITICAL FIX: list.push_f64 for f64 elements (floats, numbers)
+        // This is needed for float array literals like [1.1, 2.2, 3.3]
+        eprintln!("DEBUG LIST_OPS: Registering list.push_f64...");
+        let idx2 = codegen.register_import_function(
+            "env",
+            "list.push_f64",
+            &[WasmType::I32, WasmType::F64],
+            Some(WasmType::I32),
+        )?;
+        eprintln!("DEBUG LIST_OPS: list.push_f64 registered at index {}", idx2);
+
         // Register list allocation function
         register_stdlib_function(
             codegen,

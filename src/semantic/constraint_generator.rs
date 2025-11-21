@@ -310,25 +310,6 @@ impl ConstraintGenerator {
                 }
             }
 
-            Statement::While {
-                condition,
-                body,
-                location,
-            } => {
-                // Condition must be boolean
-                let condition_type = self.generate_expression_constraints(condition)?;
-                self.constraints.add_equality(
-                    condition_type,
-                    ConstraintType::Concrete(Type::Boolean),
-                    location.clone(),
-                    "While condition type".to_string(),
-                );
-
-                for stmt in body {
-                    self.generate_statement_constraints(stmt)?;
-                }
-            }
-
             Statement::Print {
                 expression,
                 location,

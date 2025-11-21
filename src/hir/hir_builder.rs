@@ -342,9 +342,10 @@ impl HirBuilder {
                 location: SourceLocation::default(),
             }),
             Type::Any => {
-                self.type_inference_counter += 1;
-                Ok(HirType::Inferred {
-                    id: self.type_inference_counter,
+                // Treat 'any' as a named generic type, not inferred
+                // This allows proper type checking with empty literals
+                Ok(HirType::Named {
+                    name: "any".to_string(),
                     location: SourceLocation::default(),
                 })
             }
@@ -524,21 +525,6 @@ impl HirBuilder {
                 })
             }
 
-            Statement::While {
-                condition,
-                body,
-                location,
-            } => {
-                let hir_condition = self.build_expression(condition)?;
-                let hir_body = self.build_block(body)?;
-
-                Ok(HirStatement::While {
-                    condition: hir_condition,
-                    body: hir_body,
-                    location: location.clone().unwrap_or_default(),
-                })
-            }
-
             Statement::Iterate {
                 iterator,
                 collection,
@@ -551,6 +537,41 @@ impl HirBuilder {
                 Ok(HirStatement::For {
                     variable: iterator.clone(),
                     iterable: hir_iterable,
+                    body: hir_body,
+                    location: location.clone().unwrap_or_default(),
+                })
+            }
+
+            Statement::RangeIterate {
+                iterator,
+                start,
+                end,
+                step,
+                body,
+                location,
+            } => {
+                // Convert RangeIterate to For with a Range expression as the iterable
+                let hir_start = self.build_expression(start)?;
+                let hir_end = self.build_expression(end)?;
+
+                // For now, ignore step - will need to handle this in codegen
+                // TODO: Handle step parameter in range iteration
+                if step.is_some() {
+                    eprintln!("WARNING: Range iteration with step is not yet fully supported");
+                }
+
+                let range_expr = HirExpression::Range {
+                    start: Box::new(hir_start),
+                    end: Box::new(hir_end),
+                    inclusive: true, // "iterate i in 0 to 10" is inclusive
+                    location: location.clone().unwrap_or_default(),
+                };
+
+                let hir_body = self.build_block(body)?;
+
+                Ok(HirStatement::For {
+                    variable: iterator.clone(),
+                    iterable: range_expr,
                     body: hir_body,
                     location: location.clone().unwrap_or_default(),
                 })
@@ -833,6 +854,23 @@ impl HirBuilder {
 
                 Ok(HirExpression::BaseCall {
                     arguments: hir_args,
+                    location: location.clone(),
+                })
+            }
+
+            Expression::Range {
+                start,
+                end,
+                inclusive,
+                location,
+            } => {
+                let hir_start = self.build_expression(start)?;
+                let hir_end = self.build_expression(end)?;
+
+                Ok(HirExpression::Range {
+                    start: Box::new(hir_start),
+                    end: Box::new(hir_end),
+                    inclusive: *inclusive,
                     location: location.clone(),
                 })
             }
