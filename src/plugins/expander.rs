@@ -290,12 +290,6 @@ impl<'a> PluginExpander<'a> {
     }
 }
 
-/// Convenience function to expand a program with a registry
-pub fn expand_program(program: Program, registry: &PluginRegistry) -> Result<Program, PluginError> {
-    let mut expander = PluginExpander::new(registry);
-    expander.expand_program(program)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,7 +335,8 @@ mod tests {
         let registry = PluginRegistry::new();
         let program = make_test_program(vec![]);
 
-        let result = expand_program(program, &registry);
+        let mut expander = PluginExpander::new(&registry);
+        let result = expander.expand_program(program);
         assert!(result.is_ok());
     }
 
@@ -357,7 +352,8 @@ mod tests {
             location: None,
         }]);
 
-        let result = expand_program(program, &registry).unwrap();
+        let mut expander = PluginExpander::new(&registry);
+        let result = expander.expand_program(program).unwrap();
 
         assert_eq!(result.statements.len(), 1);
         assert!(matches!(result.statements[0], Statement::Print { .. }));
@@ -375,7 +371,8 @@ mod tests {
         }]);
 
         // Unknown blocks should pass through (will fail later in semantic analysis)
-        let result = expand_program(program, &registry).unwrap();
+        let mut expander = PluginExpander::new(&registry);
+        let result = expander.expand_program(program).unwrap();
         assert_eq!(result.statements.len(), 1);
         assert!(matches!(
             result.statements[0],
