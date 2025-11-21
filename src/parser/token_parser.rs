@@ -1474,7 +1474,17 @@ impl TokenParser {
                         // No space: Minus followed by Greater  (->)
                         (TokenKind::Greater, TokenKind::Minus) |
                         // No space: before/after Divide (for paths like /users/{id})
-                        (TokenKind::Divide, _) | (_, TokenKind::Divide)
+                        (TokenKind::Divide, _) | (_, TokenKind::Divide) |
+                        // No space: LeftBrace after Divide (/{)
+                        (TokenKind::LeftBrace, TokenKind::Divide) |
+                        // No space: Divide after RightBrace (}/)
+                        (TokenKind::Divide, TokenKind::RightBrace) |
+                        // No space: after InterpolationStart (we add { manually)
+                        (_, TokenKind::InterpolationStart) |
+                        // No space: before/after InterpolationMid (we add }{  manually)
+                        (TokenKind::InterpolationMid, _) | (_, TokenKind::InterpolationMid) |
+                        // No space: before InterpolationEnd (we add } manually)
+                        (TokenKind::InterpolationEnd, _)
                     );
                     !should_skip_space
                 } else {
@@ -1485,7 +1495,26 @@ impl TokenParser {
                     line_text.push(' ');
                 }
 
-                line_text.push_str(&token.text);
+                // Handle interpolation tokens - reconstruct the curly braces
+                match &curr_kind {
+                    TokenKind::InterpolationStart => {
+                        line_text.push_str(&token.text);
+                        line_text.push('{');
+                    }
+                    TokenKind::InterpolationMid => {
+                        line_text.push('}');
+                        line_text.push_str(&token.text);
+                        line_text.push('{');
+                    }
+                    TokenKind::InterpolationEnd => {
+                        line_text.push('}');
+                        line_text.push_str(&token.text);
+                    }
+                    _ => {
+                        line_text.push_str(&token.text);
+                    }
+                }
+
                 prev_kind = Some(curr_kind);
                 self.bump();
             }
