@@ -153,6 +153,14 @@ indented_expressions = {
 // Helper rule to detect the start of a new apply-block
 apply_block_start = { (sized_type | core_type | matrix_type | list_type | pairs_type) ~ ":" | identifier ~ ("." ~ identifier)+ ~ ":" | "constant" ~ ":" | function_name_in_apply_block ~ ":" }
 
+// Framework blocks for DSL plugins (endpoints:, data, component, etc.)
+// Captures raw content without parsing - plugins handle their own DSL syntax
+framework_block = { !keyword ~ !("constant" | "functions" | "tests" | "private") ~ identifier ~ ":" ~ framework_block_content }
+framework_block_content = @{
+    NEWLINE ~ (empty_line)* ~
+    (INDENT+ ~ (!NEWLINE ~ ANY)* ~ (NEWLINE | EOI))+
+}
+
 // Setup blocks for functions
 description_block = { "description" ~ string }
 input_type = { 
@@ -640,6 +648,7 @@ statement = {
     (print_newline_stmt |
     print_parenthesized_stmt |
     print_bare_stmt |
+    framework_block |
     apply_block |
     standalone_on_error |
     on_error_block |
@@ -661,7 +670,7 @@ statement = {
 }
 
 // Program with proper newline handling
-program_item = { import_block | import_stmt | private_block | start_function | implicit_start_function | functions_block | tests_block | class_decl | apply_block }
+program_item = { import_block | import_stmt | private_block | framework_block | start_function | implicit_start_function | functions_block | tests_block | class_decl | apply_block }
 program = { SOI ~ (empty_line)* ~ (program_item ~ (empty_line)*)* ~ EOI }
 
 // Start function - the entry point of a Clean Language program

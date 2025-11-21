@@ -2730,6 +2730,18 @@ impl SemanticAnalyzer {
                 self.check_class(class)?;
                 Ok(())
             }
+
+            Statement::FrameworkBlock { name, location, .. } => {
+                // Framework blocks should be expanded by plugins before semantic analysis
+                Err(CompilerError::syntax_error(
+                    format!(
+                        "Unexpanded framework block '{}:'. Framework blocks must be expanded by plugins before semantic analysis.",
+                        name
+                    ),
+                    Some("Ensure framework plugins are loaded and the expansion pass runs before semantic analysis".to_string()),
+                    location.clone(),
+                ))
+            }
         }
     }
 

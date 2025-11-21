@@ -134,6 +134,25 @@ impl TokenParser {
                         Err(e) => self.errors.push(e),
                     }
                 }
+                TokenKind::Identifier(name) => {
+                    // Check if this is a framework block (identifier followed by colon)
+                    if self.peek_kind() == Some(&TokenKind::Colon) {
+                        eprintln!("DEBUG TOKEN PARSER: Found framework block: {}", name);
+                        match self.parse_framework_block() {
+                            Ok(stmt) => statements.push(stmt),
+                            Err(e) => self.errors.push(e),
+                        }
+                    } else {
+                        // Not a framework block, unexpected token
+                        let token = self.current();
+                        self.errors.push(CompilerError::parse_error(
+                            format!("Unexpected identifier at top level: {:?}", name),
+                            Some(token.location.clone()),
+                            Some("Expected 'functions:', 'class', 'start()', or framework block (e.g., 'endpoints:')".to_string()),
+                        ));
+                        self.bump();
+                    }
+                }
                 _ => {
                     let token = self.current();
                     self.errors.push(CompilerError::parse_error(
@@ -1356,6 +1375,147 @@ impl TokenParser {
     fn parse_method(&mut self) -> Result<Function, CompilerError> {
         // Methods are just functions within a class
         self.parse_function()
+    }
+
+    /// Parse a framework block (e.g., endpoints:, data, component)
+    /// These are captured as raw text for plugin expansion
+    fn parse_framework_block(&mut self) -> Result<Statement, CompilerError> {
+        let start_location = self.current().location.clone();
+
+        // Get the block name
+        let block_name = if let TokenKind::Identifier(name) = self.current_kind() {
+            name.clone()
+        } else {
+            return Err(CompilerError::parse_error(
+                "Expected identifier for framework block name".to_string(),
+                Some(start_location),
+                None,
+            ));
+        };
+
+        self.bump(); // Consume identifier
+        self.skip_whitespace();
+
+        // Expect colon
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Expect newline after colon
+        self.eat(&TokenKind::Newline);
+        self.skip_whitespace();
+
+        // Collect indented content as raw text
+        let mut content_lines = Vec::new();
+
+        // Determine the block's indentation level
+        let block_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            if let TokenKind::Indent(level) = self.current_kind() {
+                *level
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+
+        // Collect all lines that are indented at or deeper than block_indent_level
+        while !self.is_at_end() {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for dedent that exits the block
+            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                if *dedent_level < block_indent_level {
+                    // Block ended, don't consume the dedent
+                    break;
+                } else {
+                    // Dedent within the block, consume it
+                    self.bump();
+                    continue;
+                }
+            }
+
+            // Consume indent
+            if let TokenKind::Indent(indent_level) = self.current_kind() {
+                if *indent_level < block_indent_level {
+                    // Not part of this block
+                    break;
+                }
+                self.bump(); // Consume indent
+            }
+
+            // Collect the line content with smart spacing
+            let mut line_text = String::new();
+            let mut prev_kind: Option<TokenKind> = None;
+
+            while !self.is_at_end()
+                && !matches!(
+                    self.current_kind(),
+                    TokenKind::Newline | TokenKind::Dedent(_)
+                )
+            {
+                let token = self.current();
+                let curr_kind = token.kind.clone();
+
+                // Determine if we need a space before this token
+                let needs_space = if let Some(ref prev) = prev_kind {
+                    // Default: add space
+                    let should_skip_space = matches!(
+                        (&curr_kind, prev),
+                        // No space: after LeftBrace
+                        (_, TokenKind::LeftBrace) |
+                        // No space: before RightBrace
+                        (TokenKind::RightBrace, _) |
+                        // No space: before/after Dot
+                        (TokenKind::Dot, _) | (_, TokenKind::Dot) |
+                        // No space: Minus followed by Greater  (->)
+                        (TokenKind::Greater, TokenKind::Minus) |
+                        // No space: before/after Divide (for paths like /users/{id})
+                        (TokenKind::Divide, _) | (_, TokenKind::Divide)
+                    );
+                    !should_skip_space
+                } else {
+                    false
+                };
+
+                if needs_space && !line_text.is_empty() {
+                    line_text.push(' ');
+                }
+
+                line_text.push_str(&token.text);
+                prev_kind = Some(curr_kind);
+                self.bump();
+            }
+
+            if !line_text.is_empty() {
+                eprintln!("DEBUG: Collected line: '{}'", line_text);
+                content_lines.push(line_text);
+            }
+
+            // Consume newline if present
+            if matches!(self.current_kind(), TokenKind::Newline) {
+                self.bump();
+            }
+        }
+
+        let content = content_lines.join("\n");
+
+        eprintln!(
+            "DEBUG TOKEN PARSER: Parsed framework block '{}' with {} lines",
+            block_name,
+            content_lines.len()
+        );
+        eprintln!("DEBUG TOKEN PARSER: Block content:\n{}", content);
+
+        Ok(Statement::FrameworkBlock {
+            name: block_name,
+            content,
+            attributes: vec![], // TODO: Support attributes
+            location: Some(start_location),
+        })
     }
 
     fn parse_tests_block(&mut self) -> Result<Vec<TestCase>, CompilerError> {

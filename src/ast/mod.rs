@@ -528,6 +528,16 @@ pub enum Statement {
         text: String,
         location: Option<SourceLocation>,
     },
+
+    // Framework extension block (for Clean Frame plugins)
+    // Generic container for DSL blocks like endpoints:, data, component
+    // These are expanded by plugins before HIR transformation
+    FrameworkBlock {
+        name: String,    // Block identifier: "endpoints", "data", "component", etc.
+        content: String, // Raw content of the block (unparsed DSL)
+        attributes: Vec<FrameworkAttribute>, // Optional attributes like @pk, @unique
+        location: Option<SourceLocation>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -554,6 +564,24 @@ pub struct TestCase {
     pub description: Option<String>, // None for anonymous tests
     pub test_expression: Expression,
     pub expected_value: Expression,
+    pub location: Option<SourceLocation>,
+}
+
+/// Attribute for framework DSL elements (e.g., @pk, @unique, @required)
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameworkAttribute {
+    pub name: String,          // Attribute name: "pk", "unique", "required"
+    pub value: Option<String>, // Optional value: @default("value")
+    pub location: Option<SourceLocation>,
+}
+
+/// Framework block container for plugin expansion
+/// This is the structured form passed to plugins for DSL transformation
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameworkBlock {
+    pub name: String,    // Block identifier: "endpoints", "data", "component"
+    pub content: String, // Raw content of the block (unparsed DSL)
+    pub attributes: Vec<FrameworkAttribute>, // Optional attributes
     pub location: Option<SourceLocation>,
 }
 

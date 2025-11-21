@@ -1,0 +1,29 @@
+// Test Clean Frame endpoints: DSL block - simple version without path params
+// This should be expanded by the WebPlugin into router registration code
+
+class Router
+	constructor()
+
+	functions:
+		void get(string path, any handler)
+			print("Registered GET " + path)
+
+		void post(string path, any handler)
+			print("Registered POST " + path)
+
+endpoints:
+	GET "/users" -> listUsers
+	POST "/users" -> createUser
+
+functions:
+	void listUsers()
+		print("Listing all users")
+
+	void createUser()
+		print("Creating new user")
+
+start()
+	Router router = Router()
+	print("API server ready")
+	__frame_register_routes()
+	listUsers()

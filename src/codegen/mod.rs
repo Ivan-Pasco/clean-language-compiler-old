@@ -1053,6 +1053,19 @@ impl CodeGenerator {
                 // Class definition - generate class code
                 self.generate_class(class)?;
             }
+
+            Statement::FrameworkBlock { name, location, .. } => {
+                // Framework blocks should be expanded by plugins before codegen
+                // If we reach here, it means the plugin expansion pass didn't run
+                return Err(CompilerError::codegen_error(
+                    format!(
+                        "Unexpanded framework block '{}:'. Framework blocks must be expanded by plugins before code generation.",
+                        name
+                    ),
+                    Some("Ensure framework plugins are loaded and the expansion pass runs before codegen".to_string()),
+                    location.clone(),
+                ));
+            }
         }
         Ok(())
     }

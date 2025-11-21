@@ -390,3 +390,63 @@ impl Keywords {
         }
     }
 }
+
+/// Impl block for TokenKind
+impl TokenKind {
+    /// Convert token back to source string representation
+    /// Used for capturing raw content in framework blocks
+    pub fn to_source_string(&self) -> String {
+        match self {
+            TokenKind::IntegerLiteral(n) => n.to_string(),
+            TokenKind::NumberLiteral(n) => n.to_string(),
+            TokenKind::StringLiteral(s) => format!("\"{}\"", s),
+            TokenKind::BooleanLiteral(b) => b.to_string(),
+            TokenKind::Identifier(s) => s.clone(),
+            TokenKind::And => "and".to_string(),
+            TokenKind::Background => "background".to_string(),
+            TokenKind::Class => "class".to_string(),
+            TokenKind::Constructor => "constructor".to_string(),
+            TokenKind::Else => "else".to_string(),
+            TokenKind::Error => "error".to_string(),
+            TokenKind::Functions => "functions".to_string(),
+            TokenKind::If => "if".to_string(),
+            TokenKind::Import => "import".to_string(),
+            TokenKind::In => "in".to_string(),
+            TokenKind::Is => "is".to_string(),
+            TokenKind::Iterate => "iterate".to_string(),
+            TokenKind::Later => "later".to_string(),
+            TokenKind::Not => "not".to_string(),
+            TokenKind::OnError => "onError".to_string(),
+            TokenKind::Or => "or".to_string(),
+            TokenKind::Private => "private".to_string(),
+            TokenKind::Return => "return".to_string(),
+            TokenKind::Start => "start".to_string(),
+            TokenKind::Tests => "tests".to_string(),
+            TokenKind::To => "to".to_string(),
+            TokenKind::Step => "step".to_string(),
+            TokenKind::Plus => "+".to_string(),
+            TokenKind::Minus => "-".to_string(),
+            TokenKind::Multiply => "*".to_string(),
+            TokenKind::Divide => "/".to_string(),
+            TokenKind::Modulo => "%".to_string(),
+            TokenKind::Power => "^".to_string(),
+            TokenKind::Equal => "==".to_string(),
+            TokenKind::NotEqual => "!=".to_string(),
+            TokenKind::Less => "<".to_string(),
+            TokenKind::LessEqual => "<=".to_string(),
+            TokenKind::Greater => ">".to_string(),
+            TokenKind::GreaterEqual => ">=".to_string(),
+            TokenKind::Assign => "=".to_string(),
+            TokenKind::Comma => ",".to_string(),
+            TokenKind::Colon => ":".to_string(),
+            TokenKind::LeftParen => "(".to_string(),
+            TokenKind::RightParen => ")".to_string(),
+            TokenKind::LeftBracket => "[".to_string(),
+            TokenKind::RightBracket => "]".to_string(),
+            TokenKind::Dot => ".".to_string(),
+            TokenKind::LeftBrace => "{".to_string(),
+            TokenKind::RightBrace => "}".to_string(),
+            _ => String::new(),
+        }
+    }
+}

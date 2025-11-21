@@ -29,6 +29,7 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
         Rule::function_apply_block => parse_function_apply_block_statement(inner, ast_location),
         Rule::method_apply_block => parse_method_apply_block_statement(inner, ast_location),
         Rule::constant_apply_block => parse_constant_apply_block_statement(inner, ast_location),
+        Rule::framework_block => parse_framework_block_statement(inner, ast_location),
         Rule::background_stmt => parse_background_statement(inner, ast_location),
         Rule::later_assignment => parse_later_assignment_statement(inner, ast_location),
         Rule::import_block => parse_import_block_statement(inner, ast_location),
@@ -990,4 +991,81 @@ fn parse_private_block_statement(
         imports: private_items,
         location: Some(ast_location),
     })
+}
+
+/// Parse framework block statement (e.g., endpoints:, data, component)
+/// These blocks are captured as raw text and expanded by plugins
+fn parse_framework_block_statement(
+    pair: Pair<Rule>,
+    ast_location: crate::ast::SourceLocation,
+) -> Result<Statement, CompilerError> {
+    let mut parts = pair.into_inner();
+
+    // First part is the block name (identifier)
+    let name_pair = parts.next().ok_or_else(|| {
+        CompilerError::parse_error(
+            "Missing block name in framework block".to_string(),
+            Some(ast_location.clone()),
+            None,
+        )
+    })?;
+    let name = name_pair.as_str().to_string();
+
+    // Second part is the content (raw text captured by framework_block_content)
+    let content_pair = parts.next().ok_or_else(|| {
+        CompilerError::parse_error(
+            format!("Missing content in framework block '{}'", name),
+            Some(ast_location.clone()),
+            None,
+        )
+    })?;
+
+    // Extract raw content and clean up indentation
+    let raw_content = content_pair.as_str();
+    let content = clean_framework_block_content(raw_content);
+
+    tracing::debug!(
+        block_name = %name,
+        content_length = content.len(),
+        "Parsed framework block"
+    );
+
+    Ok(Statement::FrameworkBlock {
+        name,
+        content,
+        attributes: vec![], // TODO: Support attributes like @version("v1")
+        location: Some(ast_location),
+    })
+}
+
+/// Clean up framework block content by removing common indentation
+fn clean_framework_block_content(raw_content: &str) -> String {
+    let lines: Vec<&str> = raw_content.lines().collect();
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    // Find minimum indentation (count leading tabs)
+    let min_indent = lines
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.chars().take_while(|&c| c == '\t').count())
+        .min()
+        .unwrap_or(0);
+
+    // Remove the common indentation from each line
+    lines
+        .iter()
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else {
+                line.chars().skip(min_indent).collect()
+            }
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }

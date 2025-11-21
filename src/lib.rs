@@ -56,6 +56,7 @@ pub mod mir;
 pub mod module;
 pub mod package;
 pub mod parser;
+pub mod plugins;
 pub mod resolver;
 pub mod runtime;
 pub mod semantic;
@@ -125,12 +126,33 @@ pub fn compile_with_file(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<C
     tracing::debug!("Starting Stage 2: Parsing to AST");
     use crate::parser::SpecificationParser;
     let mut parser = SpecificationParser::new(tokens, file_path.to_string());
-    let ast = parser.parse_program().map_err(|e| vec![e])?;
+    let parsed_ast = parser.parse_program().map_err(|e| vec![e])?;
     tracing::debug!(
-        functions = ast.functions.len(),
-        statements = ast.statements.len(),
-        classes = ast.classes.len(),
+        functions = parsed_ast.functions.len(),
+        statements = parsed_ast.statements.len(),
+        classes = parsed_ast.classes.len(),
         "Stage 2 complete: AST created"
+    );
+
+    // Stage 2.5: Plugin Expansion - transform framework blocks into Clean AST
+    tracing::debug!("Starting Stage 2.5: Plugin Expansion");
+    use crate::plugins::{PluginExpander, PluginRegistry, WebPlugin};
+    use std::sync::Arc;
+    let mut registry = PluginRegistry::new();
+    // Register built-in Clean Frame plugins
+    let _ = registry.register(Arc::new(WebPlugin::new()));
+    let mut expander = PluginExpander::new(&registry);
+    let ast = expander.expand_program(parsed_ast).map_err(|e| {
+        vec![CompilerError::syntax_error(
+            e.to_string(),
+            Some("Plugin expansion failed".to_string()),
+            None,
+        )]
+    })?;
+    tracing::debug!(
+        blocks_expanded = expander.blocks_expanded(),
+        statements_generated = expander.statements_generated(),
+        "Stage 2.5 complete: Plugin expansion finished"
     );
 
     // Stage 3: AST to HIR - validation and desugaring per specification
