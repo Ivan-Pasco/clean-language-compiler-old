@@ -40,7 +40,6 @@ enum Commands {
     /// Compile a Clean Language file to WebAssembly
     Compile {
         /// Input file to compile
-        #[arg(short, long)]
         input: String,
 
         /// Output file for the WebAssembly binary
@@ -81,7 +80,6 @@ enum Commands {
     /// Debug a Clean Language file with enhanced error reporting
     Debug {
         /// Input file to debug
-        #[arg(short, long)]
         input: String,
 
         /// Show AST structure
@@ -99,7 +97,6 @@ enum Commands {
     /// Validate Clean Language code style and conventions
     Lint {
         /// Input file or directory to lint
-        #[arg(short, long)]
         input: String,
 
         /// Fix issues automatically where possible
@@ -113,7 +110,6 @@ enum Commands {
     /// Parse a file and show detailed parsing information
     Parse {
         /// Input file to parse
-        #[arg(short, long)]
         input: String,
 
         /// Show detailed parse tree
@@ -127,7 +123,6 @@ enum Commands {
     /// Run a Clean Language source file or WebAssembly binary
     Run {
         /// Input file to run (.cln source file or .wasm binary)
-        #[arg(short, long)]
         input: String,
 
         /// Enable debug output
@@ -934,10 +929,34 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
     )?;
 
     // Input functions - complete implementation for basic I/O
-    let debug_input = debug;
+    // Simple input without prompt (1 parameter version)
+    let debug_input_simple = debug;
     linker.func_wrap(
         "env",
         "input",
+        move |mut caller: Caller<'_, ()>, _unused: i32| -> i32 {
+            // Read input from stdin without prompt
+            use std::io::{stdin, BufRead, BufReader};
+            let input = BufReader::new(stdin());
+            if let Ok(line) = input.lines().next().unwrap_or(Ok(String::new())) {
+                if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+                    return allocate_string_in_memory(
+                        &memory,
+                        &mut caller,
+                        &line,
+                        debug_input_simple,
+                    );
+                }
+            }
+            0
+        },
+    )?;
+
+    // Input with prompt (2 parameter version)
+    let debug_input = debug;
+    linker.func_wrap(
+        "env",
+        "input_with_prompt",
         move |mut caller: Caller<'_, ()>, prompt_ptr: i32, prompt_len: i32| -> i32 {
             // Read prompt from WASM memory and display it
             if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
@@ -964,93 +983,45 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
         },
     )?;
 
-    linker.func_wrap(
-        "env",
-        "input_integer",
-        |mut caller: Caller<'_, ()>, prompt_ptr: i32, prompt_len: i32| -> i32 {
-            // Read prompt from WASM memory and display it
-            if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
-                if let Some(data) = memory
-                    .data(&caller)
-                    .get(prompt_ptr as usize..(prompt_ptr + prompt_len) as usize)
-                {
-                    if let Ok(prompt) = std::str::from_utf8(data) {
-                        print!("{}", prompt);
-                        std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
-                    }
-                }
+    // Simple input_integer without prompt (1 parameter version)
+    linker.func_wrap("env", "input_integer", |_unused: i32| -> i32 {
+        // Read integer from stdin without prompt
+        use std::io::{stdin, BufRead, BufReader};
+        let input = BufReader::new(stdin());
+        if let Ok(line) = input.lines().next().unwrap_or(Ok(String::new())) {
+            if let Ok(value) = line.trim().parse::<i32>() {
+                return value;
             }
+        }
+        0
+    })?;
 
-            // Read integer from stdin
-            use std::io::{stdin, BufRead, BufReader};
-            let input = BufReader::new(stdin());
-            if let Ok(line) = input.lines().next().unwrap_or(Ok(String::new())) {
-                if let Ok(value) = line.trim().parse::<i32>() {
-                    return value;
-                }
+    // Simple input_float without prompt (1 parameter version)
+    linker.func_wrap("env", "input_float", |_unused: i32| -> f64 {
+        // Read float from stdin without prompt
+        use std::io::{stdin, BufRead, BufReader};
+        let input = BufReader::new(stdin());
+        if let Ok(line) = input.lines().next().unwrap_or(Ok(String::new())) {
+            if let Ok(value) = line.trim().parse::<f64>() {
+                return value;
             }
-            0
-        },
-    )?;
+        }
+        0.0
+    })?;
 
-    linker.func_wrap(
-        "env",
-        "input_float",
-        |mut caller: Caller<'_, ()>, prompt_ptr: i32, prompt_len: i32| -> f64 {
-            // Read prompt from WASM memory and display it
-            if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
-                if let Some(data) = memory
-                    .data(&caller)
-                    .get(prompt_ptr as usize..(prompt_ptr + prompt_len) as usize)
-                {
-                    if let Ok(prompt) = std::str::from_utf8(data) {
-                        print!("{}", prompt);
-                        std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
-                    }
-                }
+    // Simple input_yesno without prompt (1 parameter version)
+    linker.func_wrap("env", "input_yesno", |_unused: i32| -> i32 {
+        // Read yes/no from stdin without prompt
+        use std::io::{stdin, BufRead, BufReader};
+        let input = BufReader::new(stdin());
+        if let Ok(line) = input.lines().next().unwrap_or(Ok(String::new())) {
+            let answer = line.trim().to_lowercase();
+            if answer == "y" || answer == "yes" || answer == "true" || answer == "1" {
+                return 1;
             }
-
-            // Read float from stdin
-            use std::io::{stdin, BufRead, BufReader};
-            let input = BufReader::new(stdin());
-            if let Ok(line) = input.lines().next().unwrap_or(Ok(String::new())) {
-                if let Ok(value) = line.trim().parse::<f64>() {
-                    return value;
-                }
-            }
-            0.0
-        },
-    )?;
-
-    linker.func_wrap(
-        "env",
-        "input_yesno",
-        |mut caller: Caller<'_, ()>, prompt_ptr: i32, prompt_len: i32| -> i32 {
-            // Read prompt from WASM memory and display it
-            if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
-                if let Some(data) = memory
-                    .data(&caller)
-                    .get(prompt_ptr as usize..(prompt_ptr + prompt_len) as usize)
-                {
-                    if let Ok(prompt) = std::str::from_utf8(data) {
-                        print!("{}", prompt);
-                        std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
-                    }
-                }
-            }
-
-            // Read yes/no from stdin
-            use std::io::{stdin, BufRead, BufReader};
-            let input = BufReader::new(stdin());
-            if let Ok(line) = input.lines().next().unwrap_or(Ok(String::new())) {
-                let answer = line.trim().to_lowercase();
-                if answer == "y" || answer == "yes" || answer == "true" || answer == "1" {
-                    return 1;
-                }
-            }
-            0
-        },
-    )?;
+        }
+        0
+    })?;
 
     linker.func_wrap(
         "env",
@@ -1156,6 +1127,11 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
     linker.func_wrap("env", "string.concat", |ptr1: i32, _ptr2: i32| -> i32 {
         ptr1
     })?; // Stub - return first pointer
+    linker.func_wrap(
+        "env",
+        "string_concat",
+        |ptr1: i32, _len1: i32, _ptr2: i32, _len2: i32| -> i32 { ptr1 },
+    )?; // Stub - return first pointer (4-param version)
 
     // BOOLEAN conversion methods
     linker.func_wrap("env", "boolean.toInteger", |value: i32| -> i32 {
@@ -1451,8 +1427,12 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
         );
     }
 
-    // Get and call the start function
-    if let Some(start_func) = instance.get_func(&mut store, "start") {
+    // Get and call the start function (try both "_start" and "start")
+    let start_func = instance
+        .get_func(&mut store, "_start")
+        .or_else(|| instance.get_func(&mut store, "start"));
+
+    if let Some(start_func) = start_func {
         if debug {
             println!("🎯 Executing start function...");
             println!("--- Output ---");
