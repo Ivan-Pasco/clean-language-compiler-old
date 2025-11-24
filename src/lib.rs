@@ -69,6 +69,13 @@ pub mod types;
 
 use crate::error::CompilerError;
 
+/// Compiler version (from Cargo.toml)
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Minimum compatible compiler version for plugins
+/// Plugins should check compatibility using semver rules
+pub const MIN_PLUGIN_VERSION: &str = "0.14.0";
+
 /// Initialize structured logging with the specified level
 ///
 /// This should be called once at application startup. Valid levels are:
@@ -96,12 +103,72 @@ pub fn init_logging(level: &str) {
 }
 
 /// Compiles Clean Language source code to WebAssembly using the specification-compliant 7-stage pipeline
+///
+/// **Note:** This compiles with NO plugins (pure Clean Language).
+/// For framework features (endpoints:, data:, component:), use a framework compiler that provides plugins.
 pub fn compile(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
-    compile_with_file(source, "<unknown>")
+    compile_pure(source, "<unknown>")
 }
 
 /// Compiles Clean Language source code to WebAssembly with file path for better error reporting
+///
+/// **Note:** This compiles with NO plugins (pure Clean Language).
+/// For framework features (endpoints:, data:, component:), use `compile_with_plugins`.
 pub fn compile_with_file(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
+    compile_pure(source, file_path)
+}
+
+/// Compiles Clean Language source code with NO plugins (pure language)
+///
+/// This is for compiling pure Clean Language code without framework extensions.
+/// Framework DSL blocks (endpoints:, data:, component:) will fail with "unknown block" errors.
+///
+/// # Arguments
+/// * `source` - The Clean Language source code
+/// * `file_path` - Path for error reporting
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
+/// * `Err(Vec<CompilerError>)` - Compilation errors
+///
+/// # Example
+/// ```ignore
+/// let wasm = compile_pure(source, "main.cln")?;
+/// ```
+pub fn compile_pure(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
+    let registry = plugins::PluginRegistry::builder()
+        .build()
+        .expect("Empty registry should always build");
+    compile_with_plugins(source, file_path, &registry)
+}
+
+/// Compiles Clean Language source code with custom plugin registry
+///
+/// This is the main compilation entry point for frameworks that provide DSL plugins.
+/// The plugin registry determines which DSL blocks are supported.
+///
+/// # Arguments
+/// * `source` - The Clean Language source code
+/// * `file_path` - Path for error reporting
+/// * `registry` - Plugin registry with registered DSL handlers
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
+/// * `Err(Vec<CompilerError>)` - Compilation errors
+///
+/// # Example
+/// ```ignore
+/// use clean_language_compiler::plugins::PluginRegistry;
+/// use frame_compiler_plugins::create_frame_registry;
+///
+/// let registry = create_frame_registry()?;
+/// let wasm = compile_with_plugins(source, "main.cln", &registry)?;
+/// ```
+pub fn compile_with_plugins(
+    source: &str,
+    file_path: &str,
+    registry: &plugins::PluginRegistry,
+) -> Result<Vec<u8>, Vec<CompilerError>> {
     use crate::lexer::specification_lexer::SpecificationLexer;
     use crate::mir::lower_tast_to_mir_with_opt_level;
     use crate::resolver::Resolver;
@@ -136,12 +203,8 @@ pub fn compile_with_file(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<C
 
     // Stage 2.5: Plugin Expansion - transform framework blocks into Clean AST
     tracing::debug!("Starting Stage 2.5: Plugin Expansion");
-    use crate::plugins::{PluginExpander, PluginRegistry, WebPlugin};
-    use std::sync::Arc;
-    let mut registry = PluginRegistry::new();
-    // Register built-in Clean Frame plugins
-    let _ = registry.register(Arc::new(WebPlugin::new()));
-    let mut expander = PluginExpander::new(&registry);
+    use crate::plugins::PluginExpander;
+    let mut expander = PluginExpander::new(registry);
     let ast = expander.expand_program(parsed_ast).map_err(|e| {
         vec![CompilerError::syntax_error(
             e.to_string(),

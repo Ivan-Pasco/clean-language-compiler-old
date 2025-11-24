@@ -123,6 +123,20 @@ impl std::error::Error for PluginError {}
 /// Maintains a mapping from block identifiers to plugin handlers.
 /// When a FrameworkBlock is encountered, the registry dispatches
 /// to the appropriate plugin for expansion.
+///
+/// **Immutable after creation** - plugins cannot be added/removed after building.
+/// This prevents plugin injection mid-compilation.
+///
+/// # Example
+///
+/// ```ignore
+/// use my_framework_plugins::MyPlugin;
+///
+/// let registry = PluginRegistry::builder()
+///     .add(MyPlugin::new())
+///     .build()
+///     .expect("Failed to build registry");
+/// ```
 pub struct PluginRegistry {
     /// Map from block identifier (e.g., "endpoints") to plugin
     handlers: HashMap<String, Arc<dyn FrameworkPlugin>>,
@@ -132,12 +146,18 @@ pub struct PluginRegistry {
 
 impl Default for PluginRegistry {
     fn default() -> Self {
-        Self::new()
+        Self::builder()
+            .build()
+            .expect("Default registry should build")
     }
 }
 
 impl PluginRegistry {
     /// Create a new empty plugin registry
+    ///
+    /// **Deprecated**: Use `PluginRegistry::builder()` instead.
+    /// This method is kept for backward compatibility.
+    #[deprecated(since = "0.13.1", note = "Use PluginRegistry::builder() instead")]
     pub fn new() -> Self {
         Self {
             handlers: HashMap::new(),
@@ -145,7 +165,25 @@ impl PluginRegistry {
         }
     }
 
+    /// Create a builder for constructing an immutable plugin registry
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use my_framework_plugins::MyPlugin;
+    ///
+    /// let registry = PluginRegistry::builder()
+    ///     .add(MyPlugin::new())
+    ///     .build()?;
+    /// ```
+    pub fn builder() -> PluginRegistryBuilder {
+        PluginRegistryBuilder::new()
+    }
+
     /// Register a plugin with the registry
+    ///
+    /// **Deprecated**: Use the builder pattern instead.
+    /// This method is kept for backward compatibility only.
     ///
     /// # Arguments
     /// * `plugin` - The plugin to register
@@ -153,6 +191,10 @@ impl PluginRegistry {
     /// # Returns
     /// * `Ok(())` if registration succeeds
     /// * `Err(PluginError::RegistrationConflict)` if a handler already exists
+    #[deprecated(
+        since = "0.13.1",
+        note = "Use PluginRegistry::builder().add(plugin).build()"
+    )]
     pub fn register(&mut self, plugin: Arc<dyn FrameworkPlugin>) -> Result<(), PluginError> {
         let plugin_name = plugin.name().to_string();
 
@@ -250,6 +292,116 @@ impl fmt::Debug for PluginRegistry {
             .field("registered_plugins", &self.registered_plugins)
             .field("handlers", &self.handlers.keys().collect::<Vec<_>>())
             .finish()
+    }
+}
+
+/// Builder for creating an immutable PluginRegistry
+///
+/// This builder allows plugins to be added fluently, then builds
+/// an immutable registry that cannot be modified after creation.
+///
+/// # Example
+///
+/// ```ignore
+/// use my_framework_plugins::MyPlugin;
+///
+/// let registry = PluginRegistryBuilder::new()
+///     .add(MyPlugin::new())
+///     .build()?;
+/// ```
+pub struct PluginRegistryBuilder {
+    plugins: Vec<Arc<dyn FrameworkPlugin>>,
+}
+
+impl PluginRegistryBuilder {
+    /// Create a new empty builder
+    pub fn new() -> Self {
+        Self {
+            plugins: Vec::new(),
+        }
+    }
+
+    /// Add a plugin to the registry
+    ///
+    /// Plugins are validated for conflicts when `build()` is called.
+    ///
+    /// # Arguments
+    /// * `plugin` - The plugin to add
+    ///
+    /// # Returns
+    /// Self for method chaining
+    pub fn add(mut self, plugin: impl FrameworkPlugin + 'static) -> Self {
+        self.plugins.push(Arc::new(plugin));
+        self
+    }
+
+    /// Add a plugin via Arc (for when you already have an Arc)
+    ///
+    /// # Arguments
+    /// * `plugin` - The plugin Arc to add
+    ///
+    /// # Returns
+    /// Self for method chaining
+    pub fn add_arc(mut self, plugin: Arc<dyn FrameworkPlugin>) -> Self {
+        self.plugins.push(plugin);
+        self
+    }
+
+    /// Build the immutable plugin registry
+    ///
+    /// This validates that there are no block type conflicts between plugins.
+    ///
+    /// # Returns
+    /// * `Ok(PluginRegistry)` - The immutable registry
+    /// * `Err(PluginError::RegistrationConflict)` - If plugins conflict
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use my_framework_plugins::MyPlugin;
+    ///
+    /// let registry = PluginRegistry::builder()
+    ///     .add(MyPlugin::new())
+    ///     .build()?;
+    /// ```
+    pub fn build(self) -> Result<PluginRegistry, PluginError> {
+        let mut handlers = HashMap::new();
+        let mut registered_plugins = Vec::new();
+
+        // Validate and register all plugins
+        for plugin in self.plugins {
+            let plugin_name = plugin.name().to_string();
+
+            // Check for conflicts first
+            for block_name in plugin.handles() {
+                if let Some(existing) = handlers.get(*block_name) {
+                    let existing_plugin: &Arc<dyn FrameworkPlugin> = existing;
+                    return Err(PluginError::RegistrationConflict {
+                        block_name: block_name.to_string(),
+                        existing_plugin: existing_plugin.name().to_string(),
+                        new_plugin: plugin_name,
+                    });
+                }
+            }
+
+            // Register all handlers for this plugin
+            for block_name in plugin.handles() {
+                handlers.insert(block_name.to_string(), Arc::clone(&plugin));
+            }
+
+            registered_plugins.push(plugin_name);
+        }
+
+        Ok(PluginRegistry {
+            handlers,
+            registered_plugins,
+        })
+    }
+}
+
+impl Default for PluginRegistryBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -564,7 +564,9 @@ impl HirValidator {
             }
 
             HirExpression::Variable { name, location } => {
-                if context.lookup_variable(name).is_none() {
+                // Check if it's a variable or a function reference
+                if context.lookup_variable(name).is_none() && !context.functions.contains_key(name)
+                {
                     context.error(&format!("Undefined variable '{}'", name), location.clone());
                 }
             }

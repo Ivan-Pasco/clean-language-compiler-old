@@ -537,7 +537,9 @@ fn benchmark_runtimes(file_path: &str) -> Result<(), CompilerError> {
         )
     })?;
 
-    // Compile to WASM
+    // Compile to WASM (pure Clean Language, no framework plugins)
+    // compile_with_file() internally uses compile_pure() which creates an empty plugin registry
+    // Framework features (endpoints:, data:, component:) are NOT supported in the cln binary
     let wasm_bytes =
         clean_language_compiler::compile_with_file(&source, file_path).map_err(|errors| {
             if let Some(first_error) = errors.first() {
@@ -631,7 +633,9 @@ fn compile_file(input_file: &str, output_file: &str) -> Result<(), CompilerError
     // Read the input file
     let source = read_source_file(input_file)?;
 
-    // Use the new MIR-based compilation pipeline with all fixes
+    // Compile with pure Clean Language (no framework plugins)
+    // compile_with_file() internally uses compile_pure() which creates an empty plugin registry
+    // Framework features (endpoints:, data:, component:) are NOT supported in the cln binary
     let wasm_binary =
         clean_language_compiler::compile_with_file(&source, input_file).map_err(|errors| {
             for error in &errors {

@@ -1885,6 +1885,34 @@ impl MirBuilder {
                     return Ok(value_id);
                 }
 
+                // Check if this is a function reference (first-class function)
+                // Functions can be referenced by name and passed as values
+                let is_function = self.all_functions.iter().any(|f| &f.name == name);
+
+                if is_function {
+                    // This is a function reference - for now, we don't have full support for function pointers
+                    // Just allocate a ValueId as a placeholder to avoid compilation errors
+                    // TODO: Implement proper function pointers/references with actual WASM function table support
+                    let value_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    // Register this as a local with function pointer type (represented as I32 pointer for now)
+                    let local = MirLocal {
+                        name: Some(format!("funcref_{}", name)),
+                        local_type: MirType::I32, // Function reference placeholder
+                        is_mutable: false,
+                        location: expression.location.clone(),
+                    };
+                    context.function.locals.insert(value_id, local);
+
+                    tracing::warn!(
+                        "Function reference '{}' used but function pointers not fully implemented",
+                        name
+                    );
+
+                    return Ok(value_id);
+                }
+
                 // TODO: Implement parent class field access with proper load instructions
                 // For now, only current class fields are supported
 

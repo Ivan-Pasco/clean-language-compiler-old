@@ -16,25 +16,27 @@
  *
  * ## Usage
  *
+ * Framework implementations should create their own plugin crates and register them:
+ *
  * ```ignore
- * use clean_language_compiler::plugins::{PluginRegistry, FrameworkPlugin};
+ * use clean_language_compiler::plugins::PluginRegistry;
+ * use my_framework_plugins::MyPlugin;
  *
- * // Create registry and register plugins
- * let mut registry = PluginRegistry::new();
- * registry.register(Arc::new(WebPlugin::new()));
+ * // Create immutable registry with builder pattern
+ * let registry = PluginRegistry::builder()
+ *     .add(MyPlugin::new())
+ *     .build()?;
  *
- * // Expand framework blocks in AST
- * let expanded_ast = registry.expand_program(ast)?;
+ * // Compile with plugins
+ * compile_with_plugins(source, file_path, &registry)?;
  * ```
  */
 
 mod expander;
-pub mod frame_web;
 mod registry;
 
 pub use expander::PluginExpander;
-pub use frame_web::WebPlugin;
-pub use registry::{PluginError, PluginRegistry};
+pub use registry::{PluginError, PluginRegistry, PluginRegistryBuilder};
 
 use crate::ast::{SourceLocation, Statement};
 
@@ -49,19 +51,19 @@ pub type PluginResult<T> = Result<T, PluginError>;
 /// ## Example Implementation
 ///
 /// ```ignore
-/// struct WebPlugin;
+/// struct MyFrameworkPlugin;
 ///
-/// impl FrameworkPlugin for WebPlugin {
+/// impl FrameworkPlugin for MyFrameworkPlugin {
 ///     fn name(&self) -> &'static str {
-///         "frame.web"
+///         "my.framework"
 ///     }
 ///
 ///     fn handles(&self) -> &'static [&'static str] {
-///         &["endpoints"]
+///         &["myblock"]
 ///     }
 ///
 ///     fn expand(&self, block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
-///         // Parse endpoints: block content and generate Clean AST
+///         // Parse DSL block content and generate Clean AST
 ///         // ...
 ///     }
 /// }
