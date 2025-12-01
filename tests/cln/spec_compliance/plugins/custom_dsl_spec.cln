@@ -1,0 +1,16 @@
+// Spec Section: 18 - Plugin System
+// Tests: Custom DSL block definition
+
+schema:
+	table users
+		field id: integer
+		field name: string
+		field email: string
+
+	table posts
+		field id: integer
+		field userId: integer
+		field title: string
+
+start()
+	print("Custom DSL schema test completed")

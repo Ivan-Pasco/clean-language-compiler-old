@@ -1,0 +1,53 @@
+// Spec Section: 14.3 - List Operations
+// Tests: List manipulation functions (add, remove, contains, first, last)
+
+start()
+	// Test 1: list.add - adding elements
+	list<integer> nums = [1, 2, 3]
+	list<integer> nums2 = list.add(nums, 4)
+	integer addedLen = list.length(nums2)
+	print("After add length: " + addedLen.toString())
+
+	// Test 2: list.size - getting list size
+	list<string> words = ["hello", "world"]
+	integer wordCount = list.size(words)
+	print("Word count: " + wordCount.toString())
+
+	// Test 3: list.get with different indices
+	list<integer> values = [10, 20, 30, 40, 50]
+	integer first = list.get(values, 0)
+	integer middle = list.get(values, 2)
+	integer last = list.get(values, 4)
+	print("First: " + first.toString())
+	print("Middle: " + middle.toString())
+	print("Last: " + last.toString())
+
+	// Test 4: list.set - modifying elements
+	list<integer> data = [1, 2, 3]
+	list.set(data, 1, 99)
+	integer modified = list.get(data, 1)
+	print("Modified element: " + modified.toString())
+
+	// Test 5: list.first and list.last
+	list<string> names = ["Alice", "Bob", "Charlie"]
+	string firstName = list.first(names)
+	string lastName = list.last(names)
+	print("First name: " + firstName)
+	print("Last name: " + lastName)
+
+	// Test 6: list.contains - searching
+	list<integer> scores = [85, 92, 78, 96]
+	boolean hasScore = list.contains(scores, 92)
+	boolean noScore = list.contains(scores, 100)
+	print("Has 92: " + hasScore.toString())
+	print("Has 100: " + noScore.toString())
+
+	// Test 7: list.isEmpty
+	list<integer> empty = []
+	list<integer> notEmpty = [1]
+	boolean isEmpty1 = list.isEmpty(empty)
+	boolean isEmpty2 = list.isEmpty(notEmpty)
+	print("Empty list isEmpty: " + isEmpty1.toString())
+	print("Non-empty isEmpty: " + isEmpty2.toString())
+
+	print("List operations test completed")

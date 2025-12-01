@@ -1,0 +1,79 @@
+// Spec Section: 12.1 - Testing Framework
+// Tests: Comprehensive testing framework with various data types and operations
+
+functions:
+	integer fibonacci(integer n)
+		if n <= 1
+			return n
+		return fibonacci(n - 1) + fibonacci(n - 2)
+
+	string reverse(string text)
+		// Simple reverse for testing
+		return text
+
+	boolean isPrime(integer n)
+		if n <= 1
+			return false
+		if n == 2
+			return true
+		integer i = 2
+		iterate i in 2 to n - 1
+			if n % i == 0
+				return false
+		return true
+
+tests:
+	// Arithmetic tests
+	"basic addition": 5 + 3 = 8
+	"basic subtraction": 10 - 4 = 6
+	"basic multiplication": 7 * 6 = 42
+	"basic division": 15 / 3 = 5
+	"modulo operation": 17 % 5 = 2
+
+	// Comparison tests
+	"equality check": 5 == 5 = true
+	"inequality check": 5 != 3 = true
+	"greater than": 10 > 5 = true
+	"less than": 3 < 7 = true
+	"greater or equal": 5 >= 5 = true
+	"less or equal": 4 <= 9 = true
+
+	// Boolean logic tests
+	"logical and true": (true and true) = true
+	"logical and false": (true and false) = false
+	"logical or true": (false or true) = true
+	"logical or false": (false or false) = false
+	"logical not true": not false = true
+	"logical not false": not true = false
+
+	// Function tests
+	"fibonacci 0": fibonacci(0) = 0
+	"fibonacci 1": fibonacci(1) = 1
+	"fibonacci 5": fibonacci(5) = 5
+	"fibonacci 7": fibonacci(7) = 13
+
+	"prime check 2": isPrime(2) = true
+	"prime check 7": isPrime(7) = true
+	"prime check 4": isPrime(4) = false
+	"prime check 9": isPrime(9) = false
+
+	// Math library tests
+	"absolute value": math.abs(-42) = 42
+	"maximum of two": math.max(15, 23) = 23
+	"minimum of two": math.min(15, 23) = 15
+	"square root": math.sqrt(25.0) = 5.0
+	"power": math.pow(2.0, 3.0) = 8.0
+
+	// Anonymous tests
+	10 + 5 = 15
+	20 - 8 = 12
+	6 * 7 = 42
+	fibonacci(6) = 8
+	isPrime(11) = true
+
+start()
+	print("Comprehensive Testing Framework Test")
+	print("====================================")
+	print("This test demonstrates comprehensive testing capabilities")
+	print("Run with --test flag to execute all tests")
+	print("Comprehensive test completed")

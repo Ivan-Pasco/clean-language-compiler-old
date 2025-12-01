@@ -154,6 +154,8 @@ impl CodeGenerator {
         self.register_import_function("env", "string_trim", vec![ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_replace", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_split", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        // Register string.split to map directly to string_split runtime function
+        self.register_import_function("env", "string.split", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_starts_with", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_ends_with", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_contains", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;

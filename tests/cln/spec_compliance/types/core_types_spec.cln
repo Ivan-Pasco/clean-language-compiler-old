@@ -1,0 +1,27 @@
+// Spec Section: 2.1 - Core Types
+// Tests the five core types: boolean, integer, number, string, void
+
+start()
+	// Test 1: boolean type
+	boolean flag = true
+	boolean notFlag = false
+
+	// Test 2: integer type (32-bit)
+	integer count = 42
+	integer negative = -17
+
+	// Test 3: number type (64-bit)
+	number pi = 3.14159
+	number scientific = 6.02e23
+
+	// Test 4: string type
+	string greeting = "Hello, World!"
+	string empty = ""
+
+	// Test 5: Type assignments work correctly
+	integer x = 100
+	number y = 2.5
+	boolean active = true
+	string name = "Clean"
+
+	print("Core types test complete")

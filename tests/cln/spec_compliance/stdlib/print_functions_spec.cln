@@ -1,0 +1,45 @@
+// Spec Section: 14.5 - I/O Functions
+// Tests: print and println output functions
+
+start()
+	// Test 1: Basic print with string literal
+	print("Test 1: Basic print")
+
+	// Test 2: print with string variable
+	string message = "Test 2: Variable print"
+	print(message)
+
+	// Test 3: print with concatenation
+	string prefix = "Test 3:"
+	string suffix = "Concatenated"
+	print(prefix + " " + suffix)
+
+	// Test 4: print with integer conversion
+	integer count = 42
+	print("Test 4: Count = " + count.toString())
+
+	// Test 5: print with number conversion
+	number value = 3.14159
+	print("Test 5: Value = " + value.toString())
+
+	// Test 6: print with boolean conversion
+	boolean flag = true
+	print("Test 6: Flag = " + flag.toString())
+
+	// Test 7: Multiple prints in sequence
+	print("Test 7a: First line")
+	print("Test 7b: Second line")
+	print("Test 7c: Third line")
+
+	// Test 8: Empty string print
+	print("")
+
+	// Test 9: Print with special characters
+	print("Test 9: Quotes and special chars")
+
+	// Test 10: Print with computed expression
+	integer x = 10
+	integer y = 5
+	print("Test 10: Sum = " + (x + y).toString())
+
+	print("Print functions test completed")

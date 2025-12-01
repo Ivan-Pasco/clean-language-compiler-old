@@ -1,0 +1,67 @@
+// Spec Section: 4.2 - Variable Declaration Apply-Blocks
+// Tests: integer:, string:, number:, boolean: apply-blocks
+
+start()
+	// Test 1: Integer apply-block
+	integer:
+		count = 0
+		maxSize = 100
+		minSize = -50
+		defaultValue = 42
+
+	print("Integer apply-block values:")
+	print("count: " + count.toString())
+	print("maxSize: " + maxSize.toString())
+	print("minSize: " + minSize.toString())
+	print("defaultValue: " + defaultValue.toString())
+
+	// Test 2: String apply-block
+	string:
+		firstName = "John"
+		lastName = "Doe"
+		greeting = "Hello"
+		empty = ""
+
+	print("String apply-block values:")
+	print("firstName: " + firstName)
+	print("lastName: " + lastName)
+	print("greeting: " + greeting)
+	print("empty: " + empty)
+
+	// Test 3: Number apply-block
+	number:
+		pi = 3.14159
+		euler = 2.71828
+		zero = 0.0
+		negative = -1.5
+
+	print("Number apply-block values:")
+	print("pi: " + pi.toString())
+	print("euler: " + euler.toString())
+	print("zero: " + zero.toString())
+	print("negative: " + negative.toString())
+
+	// Test 4: Boolean apply-block
+	boolean:
+		isActive = true
+		isComplete = false
+		hasPermission = true
+
+	print("Boolean apply-block values:")
+	print("isActive: " + isActive.toString())
+	print("isComplete: " + isComplete.toString())
+	print("hasPermission: " + hasPermission.toString())
+
+	// Test 5: Using apply-block variables
+	integer total = count + maxSize
+	string fullName = firstName + " " + lastName
+	number sum = pi + euler
+	boolean allActive = isActive and hasPermission
+
+	print("Computed values:")
+	print("total: " + total.toString())
+	print("fullName: " + fullName)
+	print("sum: " + sum.toString())
+	print("allActive: " + allActive.toString())
+
+	print("Type apply-blocks test completed")

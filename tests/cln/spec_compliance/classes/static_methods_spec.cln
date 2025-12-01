@@ -1,0 +1,68 @@
+// Spec Section: 11.5 - Static Methods
+// Tests: Static class methods called via ClassName.method()
+
+class Calculator
+	functions:
+		integer square(integer n)
+			return n * n
+
+		integer cube(integer n)
+			return n * n * n
+
+		integer add(integer a, integer b)
+			return a + b
+
+		integer multiply(integer a, integer b)
+			return a * b
+
+		boolean isEven(integer n)
+			return n % 2 == 0
+
+		boolean isPositive(integer n)
+			return n > 0
+
+		integer absolute(integer n)
+			if n < 0
+				return 0 - n
+			return n
+
+start()
+	// Test 1: Static method call - square
+	integer sq = Calculator.square(5)
+	print("Square of 5: " + sq.toString())
+
+	// Test 2: Static method call - cube
+	integer cb = Calculator.cube(3)
+	print("Cube of 3: " + cb.toString())
+
+	// Test 3: Static method with two parameters - add
+	integer sum = Calculator.add(10, 20)
+	print("10 + 20 = " + sum.toString())
+
+	// Test 4: Static method with two parameters - multiply
+	integer product = Calculator.multiply(6, 7)
+	print("6 * 7 = " + product.toString())
+
+	// Test 5: Static method returning boolean - isEven
+	boolean even4 = Calculator.isEven(4)
+	boolean even5 = Calculator.isEven(5)
+	print("Is 4 even: " + even4.toString())
+	print("Is 5 even: " + even5.toString())
+
+	// Test 6: Another boolean static method - isPositive
+	boolean pos = Calculator.isPositive(10)
+	boolean neg = Calculator.isPositive(-5)
+	print("Is 10 positive: " + pos.toString())
+	print("Is -5 positive: " + neg.toString())
+
+	// Test 7: Static method with conditionals - absolute
+	integer abs1 = Calculator.absolute(-42)
+	integer abs2 = Calculator.absolute(42)
+	print("Absolute of -42: " + abs1.toString())
+	print("Absolute of 42: " + abs2.toString())
+
+	// Test 8: Chaining static method results
+	integer chainResult = Calculator.square(Calculator.add(2, 3))
+	print("Square of (2+3): " + chainResult.toString())
+
+	print("Static methods test completed")

@@ -2,16 +2,36 @@
  * Clean Language Server - Hover Provider
  *
  * Provides hover information and documentation for Clean Language elements
+ * including plugin-provided documentation for DSL blocks.
  */
 
+use clean_language_compiler::plugins::PluginRegistry;
 use ropey::Rope;
+use std::sync::Arc;
 use tower_lsp::lsp_types::*;
 
-pub struct HoverProvider;
+pub struct HoverProvider {
+    /// Plugin registry for dynamic hover information
+    plugin_registry: Option<Arc<PluginRegistry>>,
+}
 
 impl HoverProvider {
     pub fn new() -> Self {
-        Self
+        Self {
+            plugin_registry: None,
+        }
+    }
+
+    /// Create a hover provider with plugin support
+    pub fn with_plugins(registry: Arc<PluginRegistry>) -> Self {
+        Self {
+            plugin_registry: Some(registry),
+        }
+    }
+
+    /// Set the plugin registry (for dynamic updates)
+    pub fn set_plugin_registry(&mut self, registry: Arc<PluginRegistry>) {
+        self.plugin_registry = Some(registry);
     }
 
     pub async fn provide_hover(&self, text: &Rope, position: Position) -> Option<Hover> {
@@ -58,8 +78,13 @@ impl HoverProvider {
         }
     }
 
-    fn get_hover_info(&self, word: &str, line: &str, _text: &Rope) -> Option<Hover> {
+    fn get_hover_info(&self, word: &str, line: &str, text: &Rope) -> Option<Hover> {
         // Check different categories of language elements
+
+        // First check plugins - they may provide hover for their keywords
+        if let Some(plugin_info) = self.get_plugin_hover_info(word, text) {
+            return Some(self.create_hover(plugin_info));
+        }
 
         // Keywords
         if let Some(keyword_info) = self.get_keyword_info(word) {
@@ -86,6 +111,41 @@ impl HoverProvider {
         // Language constructs
         if let Some(construct_info) = self.get_construct_info(word, line) {
             return Some(self.create_hover(construct_info));
+        }
+
+        None
+    }
+
+    /// Get hover information from plugins
+    fn get_plugin_hover_info(&self, word: &str, text: &Rope) -> Option<String> {
+        let registry = self.plugin_registry.as_ref()?;
+
+        // Detect if we're inside a plugin block
+        let text_str = text.to_string();
+        let block_name = self.detect_plugin_block_context(&text_str);
+
+        // Get hover info from the registry
+        if let Some(info) = registry.get_hover_info(word, block_name.as_deref()) {
+            return Some(info.content);
+        }
+
+        None
+    }
+
+    /// Detect if we're inside a plugin block and return the block name
+    fn detect_plugin_block_context(&self, text: &str) -> Option<String> {
+        let registry = self.plugin_registry.as_ref()?;
+        let lines: Vec<&str> = text.lines().collect();
+
+        // Look for a plugin block in the document
+        for line in &lines {
+            let trimmed = line.trim();
+            if trimmed.ends_with(':') && !trimmed.starts_with('#') {
+                let block_name = trimmed.trim_end_matches(':');
+                if registry.handles(block_name) {
+                    return Some(block_name.to_string());
+                }
+            }
         }
 
         None

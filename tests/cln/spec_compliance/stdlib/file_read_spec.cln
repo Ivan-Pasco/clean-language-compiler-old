@@ -1,0 +1,20 @@
+// Spec Section: 7 - Standard Library
+// Tests: file.read() - read entire file content
+
+start()
+	// Test 1: Read existing file
+	if file.exists("test_data.txt")
+		string content = file.read("test_data.txt")
+		print("File content: " + content)
+	else
+		print("Test file not found, skipping read test")
+
+	// Test 2: Create and read file
+	file.write("temp_test.txt", "Hello from Clean Language")
+	string readBack = file.read("temp_test.txt")
+	print("Read back: " + readBack)
+
+	// Clean up
+	file.delete("temp_test.txt")
+
+	print("file.read test completed")

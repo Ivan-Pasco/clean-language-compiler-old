@@ -1,0 +1,41 @@
+// Spec Section: 6.1 - Variable Declaration
+// Tests: Type-first variable declarations
+
+start()
+	// Test 1: Integer declaration with initialization
+	integer x = 10
+	print("Integer x = " + x.toString())
+
+	// Test 2: Number declaration with initialization
+	number y = 3.14
+	print("Number y = " + y.toString())
+
+	// Test 3: String declaration with initialization
+	string name = "Alice"
+	print("String name = " + name)
+
+	// Test 4: Boolean declaration with initialization
+	boolean flag = true
+	print("Boolean flag = " + flag.toString())
+
+	// Test 5: Multiple integer declarations
+	integer a = 1
+	integer b = 2
+	integer c = 3
+	print("a=" + a.toString() + " b=" + b.toString() + " c=" + c.toString())
+
+	// Test 6: Multiple number declarations
+	number pi = 3.14159
+	number e = 2.71828
+	print("pi=" + pi.toString() + " e=" + e.toString())
+
+	// Test 7: Declarations with expressions
+	integer sum = 5 + 3
+	integer product = 4 * 2
+	print("sum=" + sum.toString() + " product=" + product.toString())
+
+	// Test 8: Declaration with function result
+	integer squared = 5 * 5
+	print("squared=" + squared.toString())
+
+	print("Variable declaration test completed")

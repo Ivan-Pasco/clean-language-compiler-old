@@ -1,0 +1,48 @@
+// Spec Section: 9.1 - Conditional Statements (if/else)
+// Tests: Basic if, if-else, and if-else if chains
+
+start()
+	// Test 1: Basic if statement
+	integer x = 10
+	if x > 5
+		print("x is greater than 5")
+
+	// Test 2: If-else statement
+	integer y = 3
+	if y > 5
+		print("y is greater than 5")
+	else
+		print("y is not greater than 5")
+
+	// Test 3: If-else if chain
+	integer score = 85
+	if score >= 90
+		print("Grade: A")
+	else if score >= 80
+		print("Grade: B")
+	else if score >= 70
+		print("Grade: C")
+	else
+		print("Grade: F")
+
+	// Test 4: Nested if statements
+	boolean isLoggedIn = true
+	boolean isAdmin = false
+	if isLoggedIn
+		if isAdmin
+			print("Welcome, Admin!")
+		else
+			print("Welcome, User!")
+	else
+		print("Please log in")
+
+	// Test 5: If with boolean expressions
+	integer a = 10
+	integer b = 20
+	if a < b and b > 15
+		print("Both conditions are true")
+
+	if a > 5 or b < 10
+		print("At least one condition is true")
+
+	print("If/else tests completed")

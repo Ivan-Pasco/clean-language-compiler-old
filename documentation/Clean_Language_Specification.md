@@ -19,6 +19,7 @@
 15. [Memory Management](#memory-management)
 16. [Advanced Types](#advanced-types)
 17. [Asynchronous Programming](#asynchronous-programming)
+18. [Plugin System](#plugin-system)
 
 ## Overview
 
@@ -2414,3 +2415,124 @@ syncCache()    # runs in background automatically
 ## Memory Management
 
 Clean uses Automatic Reference Counting (ARC) for memory management.
+
+## Plugin System
+
+The Clean Language Plugin System allows you to extend the language with custom Domain-Specific Language (DSL) blocks. Plugins transform DSL syntax into standard Clean Language code before compilation.
+
+### Overview
+
+Plugins operate during the compilation pipeline, transforming custom blocks (like `endpoints:`, `data:`, `component:`) into standard Clean Language AST. This enables powerful abstractions without modifying the core language.
+
+```
+Source → Lexer → Parser → [PLUGIN EXPANSION] → HIR → TypeChecker → MIR → WASM
+                              ↑
+                      Plugins transform here
+```
+
+### Framework Blocks
+
+Framework blocks are custom DSL blocks defined by plugins. They follow the apply-block syntax:
+
+```clean
+// Custom DSL block
+blockname:
+    DSL content here
+    Each plugin defines its own syntax
+```
+
+### Example: HTTP Endpoints Plugin
+
+The built-in `endpoints:` plugin allows declarative HTTP API definition:
+
+```clean
+endpoints:
+    GET "/users" -> listUsers
+    GET "/users/{id}" -> getUser
+    POST "/users" -> createUser
+    PUT "/users/{id}" -> updateUser
+    DELETE "/users/{id}" -> deleteUser
+
+functions:
+    list<User> listUsers()
+        return database.query("SELECT * FROM users")
+
+    User getUser(string id)
+        return database.findById("users", id)
+
+    User createUser()
+        // Handle POST body
+        return database.insert("users", request.body)
+```
+
+This expands to route registration code that integrates with your web framework.
+
+### Block Attributes
+
+Plugins can support attributes that modify behavior:
+
+```clean
+@version("v2")
+@auth
+@cache(ttl: 300)
+endpoints:
+    GET "/api/users" -> listUsers
+```
+
+Attributes are passed to the plugin and can affect code generation.
+
+### Plugin Categories
+
+| Category | Example Blocks | Purpose |
+|----------|---------------|---------|
+| **Web** | `endpoints:`, `routes:` | HTTP API definition |
+| **Data** | `schema:`, `model:` | Database models |
+| **UI** | `component:`, `view:` | UI components |
+| **Config** | `config:`, `settings:` | Configuration DSLs |
+
+### IDE Support
+
+Plugins provide IDE integration through the Language Server:
+
+- **Autocomplete**: Plugin keywords appear in completion lists
+- **Hover Documentation**: Hover over keywords for documentation
+- **Diagnostics**: Real-time error checking for DSL syntax
+- **Syntax Highlighting**: Plugin keywords are colorized
+
+### Creating Custom Plugins
+
+For detailed information on creating plugins, see the [Plugin Architecture Documentation](./Plugin-Architecture.md).
+
+Basic plugin structure:
+
+```rust
+impl FrameworkPlugin for MyPlugin {
+    fn name(&self) -> &'static str {
+        "my.plugin"
+    }
+
+    fn handles(&self) -> &'static [&'static str] {
+        &["myblock"]
+    }
+
+    fn expand(&self, block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
+        // Transform DSL block into Clean Language AST
+    }
+
+    // Optional: IDE support
+    fn get_keywords(&self) -> &'static [&'static str] {
+        &["KEYWORD1", "KEYWORD2"]
+    }
+
+    fn get_completions(&self, ctx: &PluginLspContext) -> Vec<PluginCompletionItem> {
+        // Return autocomplete suggestions
+    }
+}
+```
+
+### Key Benefits
+
+- **Non-invasive**: Core language stays minimal
+- **Type-safe**: Generated code is fully type-checked
+- **IDE Support**: Full autocomplete and diagnostics
+- **Composable**: Multiple plugins work together

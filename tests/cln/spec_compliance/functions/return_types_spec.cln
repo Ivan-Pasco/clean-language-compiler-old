@@ -1,0 +1,67 @@
+// Spec Section: 7.5 - Return Types
+// Tests: Functions returning different types
+
+functions:
+	integer returnInteger()
+		return 42
+
+	number returnNumber()
+		return 3.14159
+
+	string returnString()
+		return "Hello, World!"
+
+	boolean returnBoolean()
+		return true
+
+	void returnVoid()
+		print("This function returns void")
+
+	integer conditionalReturn(boolean condition)
+		if condition
+			return 100
+		else
+			return 0
+
+	string earlyReturn(integer value)
+		if value < 0
+			return "negative"
+		if value == 0
+			return "zero"
+		return "positive"
+
+start()
+	// Test 1: Integer return
+	integer intVal = returnInteger()
+	print("Integer return: " + intVal.toString())
+
+	// Test 2: Number return
+	number numVal = returnNumber()
+	print("Number return: " + numVal.toString())
+
+	// Test 3: String return
+	string strVal = returnString()
+	print("String return: " + strVal)
+
+	// Test 4: Boolean return
+	boolean boolVal = returnBoolean()
+	print("Boolean return: " + boolVal.toString())
+
+	// Test 5: Void return
+	returnVoid()
+
+	// Test 6: Conditional return
+	integer cond1 = conditionalReturn(true)
+	integer cond2 = conditionalReturn(false)
+	print("Conditional true: " + cond1.toString())
+	print("Conditional false: " + cond2.toString())
+
+	// Test 7: Early return
+	string neg = earlyReturn(-5)
+	string zero = earlyReturn(0)
+	string pos = earlyReturn(10)
+	print("Early return -5: " + neg)
+	print("Early return 0: " + zero)
+	print("Early return 10: " + pos)
+
+	print("Return types test completed")

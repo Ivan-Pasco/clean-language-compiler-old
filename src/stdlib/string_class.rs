@@ -248,14 +248,9 @@ impl StringClass {
             self.generate_replace_all(),
         )?;
 
-        // String.split(string text, string delimiter) -> array<string>
-        register_stdlib_function(
-            codegen,
-            "string.split",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_split(),
-        )?;
+        // String.split(string text, string delimiter) -> list<string>
+        // NOTE: string.split is registered as an import in builtin_generator.rs
+        // Do NOT register a stdlib function for it here - it would shadow the import
 
         // String.join(array<string> parts, string separator) -> string
         register_stdlib_function(

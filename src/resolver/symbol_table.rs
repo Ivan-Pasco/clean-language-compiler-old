@@ -980,7 +980,7 @@ impl GlobalSymbolTable {
             (
                 "list.add",
                 vec![HirType::List(Box::new(HirType::Number)), HirType::Number],
-                HirType::Void,
+                HirType::List(Box::new(HirType::Number)), // Returns modified list per spec
             ),
             (
                 "list.contains",

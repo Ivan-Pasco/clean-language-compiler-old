@@ -1,0 +1,54 @@
+// Spec Section: 3.10 - Type Conversions
+// Tests: Extended type conversion methods (.toInteger, .toNumber, .toBoolean)
+
+start()
+	// Test 1: string.toInteger - string to integer conversion
+	string numStr = "42"
+	integer numVal = numStr.toInteger()
+	print("String to integer: " + numVal.toString())
+
+	// Test 2: string.toNumber - string to number conversion
+	string floatStr = "3.14"
+	number floatVal = floatStr.toNumber()
+	print("String to number: " + floatVal.toString())
+
+	// Test 3: integer.toNumber - widening conversion
+	integer intVal = 100
+	number asNumber = intVal.toNumber()
+	print("Integer to number: " + asNumber.toString())
+
+	// Test 4: number.toInteger - narrowing conversion (truncation)
+	number decVal = 9.7
+	integer truncated = decVal.toInteger()
+	print("Number to integer (truncated): " + truncated.toString())
+
+	// Test 5: boolean.toString
+	boolean trueVal = true
+	boolean falseVal = false
+	string trueStr = trueVal.toString()
+	string falseStr = falseVal.toString()
+	print("True as string: " + trueStr)
+	print("False as string: " + falseStr)
+
+	// Test 6: integer.toString with different values
+	integer positive = 123
+	integer negative = -456
+	integer zero = 0
+	print("Positive: " + positive.toString())
+	print("Negative: " + negative.toString())
+	print("Zero: " + zero.toString())
+
+	// Test 7: number.toString with decimals
+	number pi = 3.14159
+	number whole = 5.0
+	print("Pi: " + pi.toString())
+	print("Whole number: " + whole.toString())
+
+	// Test 8: Chained conversions
+	integer original = 42
+	string asStr = original.toString()
+	integer backToInt = asStr.toInteger()
+	print("Original: " + original.toString())
+	print("After chain: " + backToInt.toString())
+
+	print("Type conversions test completed")

@@ -1,0 +1,78 @@
+// Spec Section: 11.2 - Constructor
+// Tests: Constructor with parameters and field initialization
+
+class Person
+	string name
+	integer age
+
+	constructor(string personName, integer personAge)
+		name = personName
+		age = personAge
+
+	functions:
+		string getName()
+			return name
+
+		integer getAge()
+			return age
+
+		string describe()
+			return name + " is " + age.toString() + " years old"
+
+class Counter
+	integer count
+
+	constructor(integer initialValue)
+		count = initialValue
+
+	functions:
+		integer getValue()
+			return count
+
+		void increment()
+			count = count + 1
+
+		void decrement()
+			count = count - 1
+
+class Config
+	string host
+	integer port
+	boolean debug
+
+	constructor(string hostName, integer portNum, boolean debugMode)
+		host = hostName
+		port = portNum
+		debug = debugMode
+
+	functions:
+		string getHost()
+			return host
+
+		integer getPort()
+			return port
+
+		boolean isDebug()
+			return debug
+
+start()
+	// Test 1: Person constructor
+	Person alice = Person("Alice", 30)
+	print("Person: " + alice.describe())
+
+	// Test 2: Counter constructor
+	Counter counter = Counter(10)
+	print("Initial count: " + counter.getValue().toString())
+	counter.increment()
+	print("After increment: " + counter.getValue().toString())
+	counter.decrement()
+	counter.decrement()
+	print("After 2 decrements: " + counter.getValue().toString())
+
+	// Test 3: Config constructor with multiple types
+	Config config = Config("localhost", 8080, true)
+	print("Host: " + config.getHost())
+	print("Port: " + config.getPort().toString())
+	print("Debug: " + config.isDebug().toString())
+
+	print("Constructor test completed")

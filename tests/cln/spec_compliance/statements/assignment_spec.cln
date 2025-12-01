@@ -1,0 +1,51 @@
+// Spec Section: 6.2 - Assignment
+// Tests: Assignment statements
+
+start()
+	// Test 1: Simple assignment
+	integer x = 0
+	x = 42
+	print("After assignment x = " + x.toString())
+
+	// Test 2: Reassignment
+	integer count = 10
+	count = 20
+	count = 30
+	print("After reassignments count = " + count.toString())
+
+	// Test 3: Assignment with expression
+	integer a = 5
+	integer b = 3
+	integer result = 0
+	result = a + b
+	print("result = a + b = " + result.toString())
+
+	// Test 4: Assignment from another variable
+	integer source = 100
+	integer target = 0
+	target = source
+	print("target = source = " + target.toString())
+
+	// Test 5: Chained computation through assignments
+	integer val = 2
+	val = val * 2
+	val = val * 2
+	val = val * 2
+	print("After multiplications val = " + val.toString())
+
+	// Test 6: String reassignment
+	string message = "Hello"
+	message = "World"
+	print("message = " + message)
+
+	// Test 7: Boolean reassignment
+	boolean active = true
+	active = false
+	print("active = " + active.toString())
+
+	// Test 8: Number reassignment
+	number price = 10.0
+	price = 19.99
+	print("price = " + price.toString())
+
+	print("Assignment test completed")

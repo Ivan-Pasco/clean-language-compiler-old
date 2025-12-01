@@ -1,5 +1,9 @@
-// Comprehensive QA Test for Lowercase Namespace Calls
-// Tests simplified lowercase namespace syntax: namespace.method()
+// Spec Section: 7.1 - Standard Library Organization (Namespaces)
+// Spec Section: 7.2 - math Namespace
+// Spec Section: 7.3 - string Namespace
+// Spec Section: 7.4 - list Namespace
+// Spec Section: 7.5 - file Namespace
+// Tests: Lowercase namespace static method calls
 
 functions:
 

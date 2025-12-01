@@ -9,10 +9,11 @@
 3. [How Plugins Work](#how-plugins-work)
 4. [Creating Your First Plugin](#creating-your-first-plugin)
 5. [Plugin API Reference](#plugin-api-reference)
-6. [Built-in Plugins](#built-in-plugins)
-7. [Advanced Topics](#advanced-topics)
-8. [Best Practices](#best-practices)
-9. [Troubleshooting](#troubleshooting)
+6. [Language Server Integration](#language-server-integration)
+7. [Built-in Plugins](#built-in-plugins)
+8. [Advanced Topics](#advanced-topics)
+9. [Best Practices](#best-practices)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -398,6 +399,295 @@ impl PluginRegistry {
     pub fn handled_block_types(&self) -> Vec<&str>;
 }
 ```
+
+---
+
+## Language Server Integration
+
+Plugins can provide IDE support by implementing optional Language Server Protocol (LSP) methods. This enables autocomplete, hover documentation, and real-time diagnostics for your custom DSL blocks.
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    PLUGIN-AWARE LANGUAGE SERVER                   │
+├──────────────────────────────────────────────────────────────────┤
+│   ┌──────────────┐         ┌──────────────────────┐              │
+│   │   Plugins    │────────▶│   PluginRegistry     │              │
+│   │              │         │   - handles: [...]    │              │
+│   │ - endpoints: │         │   - completions       │              │
+│   │ - data:      │         │   - hover docs        │              │
+│   │ - myblock:   │         │   - diagnostics       │              │
+│   └──────────────┘         └───────────┬──────────┘              │
+│                                        │                          │
+│                                        ▼                          │
+│   ┌────────────────────────────────────────────────────────┐     │
+│   │                  Language Server                        │     │
+│   │   CompletionProvider  ◀──── registry.get_completions() │     │
+│   │   HoverProvider       ◀──── registry.get_hover_info()  │     │
+│   │   DiagnosticsProvider ◀──── registry.get_diagnostics() │     │
+│   │   SemanticTokens      ◀──── registry.get_all_keywords()│     │
+│   └────────────────────────────────────────────────────────┘     │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### LSP Methods
+
+Implement these optional methods in your `FrameworkPlugin` to provide IDE support:
+
+```rust
+pub trait FrameworkPlugin: Send + Sync {
+    // ... core methods (name, handles, expand) ...
+
+    /// Keywords for syntax highlighting
+    fn get_keywords(&self) -> &'static [&'static str] {
+        &[]  // Default: no keywords
+    }
+
+    /// Autocomplete suggestions
+    fn get_completions(&self, ctx: &PluginLspContext) -> Vec<PluginCompletionItem> {
+        Vec::new()  // Default: no completions
+    }
+
+    /// Hover documentation
+    fn get_hover_info(&self, keyword: &str) -> Option<PluginHoverInfo> {
+        None  // Default: no hover info
+    }
+
+    /// Real-time diagnostics
+    fn get_diagnostics(&self, content: &str) -> Vec<PluginDiagnostic> {
+        Vec::new()  // Default: no diagnostics
+    }
+
+    /// Plugin description for documentation
+    fn description(&self) -> &'static str {
+        "A Clean Language plugin"
+    }
+}
+```
+
+### Example: Adding IDE Support
+
+Here's a complete example of a plugin with full IDE support:
+
+```rust
+use crate::plugins::*;
+
+pub struct HttpPlugin;
+
+impl FrameworkPlugin for HttpPlugin {
+    fn name(&self) -> &'static str {
+        "clean.http"
+    }
+
+    fn handles(&self) -> &'static [&'static str] {
+        &["endpoints"]
+    }
+
+    fn expand(&self, block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
+        // ... expansion logic ...
+    }
+
+    // =========================================================================
+    // Language Server Integration
+    // =========================================================================
+
+    /// Keywords for syntax highlighting
+    fn get_keywords(&self) -> &'static [&'static str] {
+        &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+    }
+
+    /// Autocomplete suggestions
+    fn get_completions(&self, ctx: &PluginLspContext) -> Vec<PluginCompletionItem> {
+        let prefix = ctx.prefix.to_uppercase();
+
+        // HTTP method completions
+        let methods = vec![
+            ("GET", "HTTP GET request", "GET \"${1:/path}\" -> ${2:handler}"),
+            ("POST", "HTTP POST request", "POST \"${1:/path}\" -> ${2:handler}"),
+            ("PUT", "HTTP PUT request", "PUT \"${1:/path}\" -> ${2:handler}"),
+            ("DELETE", "HTTP DELETE request", "DELETE \"${1:/path}\" -> ${2:handler}"),
+        ];
+
+        methods
+            .into_iter()
+            .filter(|(m, _, _)| m.starts_with(&prefix) || prefix.is_empty())
+            .map(|(label, detail, snippet)| PluginCompletionItem {
+                label: label.to_string(),
+                kind: PluginCompletionKind::Keyword,
+                detail: Some(detail.to_string()),
+                documentation: Some(format!(
+                    "**{}**\n\nDefine a {} endpoint.\n\n```clean\n{}\n```",
+                    label, label, snippet.replace("${1:", "").replace("${2:", "").replace("}", "")
+                )),
+                insert_text: Some(snippet.to_string()),
+                is_snippet: true,
+            })
+            .collect()
+    }
+
+    /// Hover documentation
+    fn get_hover_info(&self, keyword: &str) -> Option<PluginHoverInfo> {
+        match keyword.to_uppercase().as_str() {
+            "GET" => Some(PluginHoverInfo {
+                content: "**GET** - HTTP GET Request\n\n\
+                    Retrieves data from the server.\n\n\
+                    ```clean\nGET \"/users\" -> listUsers\n```\n\n\
+                    The handler function receives query parameters.".to_string(),
+            }),
+            "POST" => Some(PluginHoverInfo {
+                content: "**POST** - HTTP POST Request\n\n\
+                    Submits data to the server.\n\n\
+                    ```clean\nPOST \"/users\" -> createUser\n```\n\n\
+                    The handler function receives the request body.".to_string(),
+            }),
+            // ... other methods ...
+            _ => None,
+        }
+    }
+
+    /// Real-time diagnostics
+    fn get_diagnostics(&self, content: &str) -> Vec<PluginDiagnostic> {
+        let mut diagnostics = Vec::new();
+
+        for (line_num, line) in content.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with("//") {
+                continue;
+            }
+
+            // Check for valid HTTP method
+            let first_word = trimmed.split_whitespace().next().unwrap_or("");
+            let valid_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+
+            if !valid_methods.contains(&first_word.to_uppercase().as_str()) {
+                diagnostics.push(PluginDiagnostic {
+                    message: format!(
+                        "Unknown HTTP method '{}'. Expected one of: {}",
+                        first_word,
+                        valid_methods.join(", ")
+                    ),
+                    severity: PluginDiagnosticSeverity::Error,
+                    line: line_num + 1,
+                    column: 1,
+                    length: first_word.len(),
+                });
+            }
+
+            // Check for missing arrow
+            if !trimmed.contains("->") {
+                diagnostics.push(PluginDiagnostic {
+                    message: "Missing '->' between path and handler".to_string(),
+                    severity: PluginDiagnosticSeverity::Error,
+                    line: line_num + 1,
+                    column: trimmed.len(),
+                    length: 1,
+                });
+            }
+        }
+
+        diagnostics
+    }
+
+    fn description(&self) -> &'static str {
+        "Define HTTP API endpoints with a clean DSL syntax"
+    }
+}
+```
+
+### LSP Types Reference
+
+#### PluginCompletionItem
+
+```rust
+pub struct PluginCompletionItem {
+    /// Label shown in completion list
+    pub label: String,
+
+    /// Kind of completion
+    pub kind: PluginCompletionKind,
+
+    /// Short description
+    pub detail: Option<String>,
+
+    /// Full documentation (markdown)
+    pub documentation: Option<String>,
+
+    /// Text to insert (with snippet placeholders)
+    pub insert_text: Option<String>,
+
+    /// Whether insert_text contains snippet placeholders
+    pub is_snippet: bool,
+}
+
+pub enum PluginCompletionKind {
+    Keyword,    // GET, POST, etc.
+    Function,   // Handler functions
+    Snippet,    // Code templates
+    Type,       // Type annotations
+    Property,   // Configuration options
+    Variable,   // Variables
+    Operator,   // Operators
+}
+```
+
+#### PluginLspContext
+
+```rust
+pub struct PluginLspContext<'a> {
+    /// Block name (e.g., "endpoints")
+    pub block_name: &'a str,
+
+    /// Full content inside the block
+    pub block_content: &'a str,
+
+    /// Current line (0-based)
+    pub line: usize,
+
+    /// Current column (0-based)
+    pub column: usize,
+
+    /// Word being typed (for filtering)
+    pub prefix: &'a str,
+}
+```
+
+#### PluginDiagnostic
+
+```rust
+pub struct PluginDiagnostic {
+    /// Error/warning message
+    pub message: String,
+
+    /// Severity level
+    pub severity: PluginDiagnosticSeverity,
+
+    /// Line number (1-based)
+    pub line: usize,
+
+    /// Column number (1-based)
+    pub column: usize,
+
+    /// Length of problematic text
+    pub length: usize,
+}
+
+pub enum PluginDiagnosticSeverity {
+    Error,   // Compilation will fail
+    Warning, // Potential problem
+    Info,    // Informational
+    Hint,    // Suggestion
+}
+```
+
+### Benefits of IDE Integration
+
+| Feature | User Experience |
+|---------|-----------------|
+| **Autocomplete** | Type `GET` and see method suggestions with snippets |
+| **Hover Docs** | Hover over `POST` to see usage documentation |
+| **Diagnostics** | See red squiggles for invalid HTTP methods |
+| **Syntax Highlighting** | Keywords like `GET`, `POST` are colorized |
 
 ---
 
@@ -819,6 +1109,6 @@ Happy plugin development!
 
 ---
 
-*Document Version: 1.0.0*
-*Last Updated: 2025*
-*Clean Language Compiler Version: 0.13.1+*
+*Document Version: 2.0.0*
+*Last Updated: November 2025*
+*Clean Language Compiler Version: 0.14.0+*

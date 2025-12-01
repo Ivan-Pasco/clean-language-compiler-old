@@ -1,3 +1,6 @@
+// Spec Section: 2.1 - Core Types (integer)
+// Spec Section: 5.2 - Print Statements
+// Tests: Basic integer variables (placeholder for matrix tests)
 
 start()
 	integer x = 1

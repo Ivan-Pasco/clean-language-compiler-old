@@ -1,0 +1,43 @@
+// Spec Section: 2.3 - Identifiers
+// Tests: Valid identifier naming conventions
+
+start()
+	// Test 1: Simple single letter identifier
+	integer x = 1
+	print("Single letter x = " + x.toString())
+
+	// Test 2: CamelCase identifier
+	integer myVariable = 42
+	print("CamelCase myVariable = " + myVariable.toString())
+
+	// Test 3: Identifier with numbers
+	integer value1 = 100
+	integer value2 = 200
+	print("value1 = " + value1.toString())
+	print("value2 = " + value2.toString())
+
+	// Test 4: Identifier with underscore
+	integer my_value = 50
+	print("Underscore my_value = " + my_value.toString())
+
+	// Test 5: Long identifier
+	integer thisIsAVeryLongVariableName = 999
+	print("Long name = " + thisIsAVeryLongVariableName.toString())
+
+	// Test 6: Mixed case identifiers
+	integer ABC = 1
+	integer abc = 2
+	integer Abc = 3
+	print("ABC = " + ABC.toString())
+	print("abc = " + abc.toString())
+	print("Abc = " + Abc.toString())
+
+	// Test 7: Identifier starting with uppercase
+	integer Count = 10
+	print("Count = " + Count.toString())
+
+	// Test 8: Multiple underscores
+	integer my_long_name = 77
+	print("Multiple underscores = " + my_long_name.toString())
+
+	print("Identifiers test completed")

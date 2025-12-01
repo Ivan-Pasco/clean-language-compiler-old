@@ -1,0 +1,74 @@
+// Spec Section: 11.3 - Inheritance
+// Spec Section: 11.3.2 - base() Constructor Call
+// Tests: Class inheritance with is keyword and base() calls
+
+class Animal
+	string name
+	integer age
+
+	constructor(string animalName, integer animalAge)
+		name = animalName
+		age = animalAge
+
+	functions:
+		string getName()
+			return name
+
+		integer getAge()
+			return age
+
+		string speak()
+			return name + " makes a sound"
+
+class Dog is Animal
+	string breed
+
+	constructor(string dogName, integer dogAge, string dogBreed)
+		base(dogName, dogAge)
+		breed = dogBreed
+
+	functions:
+		string getBreed()
+			return breed
+
+		string speak()
+			return name + " barks"
+
+		string describe()
+			return name + " is a " + breed + ", " + age.toString() + " years old"
+
+class Cat is Animal
+	boolean indoor
+
+	constructor(string catName, integer catAge, boolean isIndoor)
+		base(catName, catAge)
+		indoor = isIndoor
+
+	functions:
+		boolean isIndoor()
+			return indoor
+
+		string speak()
+			return name + " meows"
+
+start()
+	// Test 1: Create Dog (inherits from Animal)
+	Dog buddy = Dog("Buddy", 3, "Golden Retriever")
+	print("Dog name: " + buddy.getName())
+	print("Dog age: " + buddy.getAge().toString())
+	print("Dog breed: " + buddy.getBreed())
+	print("Dog speaks: " + buddy.speak())
+	print("Dog description: " + buddy.describe())
+
+	// Test 2: Create Cat (inherits from Animal)
+	Cat whiskers = Cat("Whiskers", 5, true)
+	print("Cat name: " + whiskers.getName())
+	print("Cat age: " + whiskers.getAge().toString())
+	print("Cat indoor: " + whiskers.isIndoor().toString())
+	print("Cat speaks: " + whiskers.speak())
+
+	// Test 3: Multiple instances of same inherited class
+	Dog rex = Dog("Rex", 2, "German Shepherd")
+	print("Second dog: " + rex.describe())
+
+	print("Inheritance test completed")

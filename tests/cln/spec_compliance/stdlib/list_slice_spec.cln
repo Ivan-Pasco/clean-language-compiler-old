@@ -1,0 +1,26 @@
+// Spec Section: 7 - Standard Library
+// Tests: list.slice() - extract portion of list
+
+start()
+	// Test 1: Basic slice
+	list<integer> numbers = [10, 20, 30, 40, 50]
+	list<integer> middle = list.slice(numbers, 1, 4)
+	print("Middle slice: ")
+	iterate num in middle
+		print(num.toString() + " ")
+
+	// Test 2: First three elements
+	list<string> words = ["apple", "banana", "cherry", "date", "elderberry"]
+	list<string> first3 = list.slice(words, 0, 3)
+	print("First 3: ")
+	iterate word in first3
+		print(word + " ")
+
+	// Test 3: Last two elements
+	list<integer> vals = [1, 2, 3, 4, 5]
+	list<integer> last2 = list.slice(vals, 3, 5)
+	print("Last 2: ")
+	iterate val in last2
+		print(val.toString() + " ")
+
+	print("list.slice test completed")

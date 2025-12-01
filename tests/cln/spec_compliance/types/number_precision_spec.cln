@@ -1,0 +1,51 @@
+// Spec Section: 3.1 - Number Precision Modifiers
+// Tests: number:32 (single precision) and number:64 (double precision)
+
+start()
+	// Test 1: Standard 64-bit number
+	number standard = 3.141592653589793
+	print("Standard number: " + standard.toString())
+
+	// Test 2: 32-bit single precision
+	number:32 singlePrecision = 3.14
+	print("32-bit single: " + singlePrecision.toString())
+
+	// Test 3: 64-bit double precision (explicit)
+	number:64 doublePrecision = 3.141592653589793
+	print("64-bit double: " + doublePrecision.toString())
+
+	// Test 4: Scientific notation with precision
+	number:64 scientific = 6.02e23
+	print("Scientific: " + scientific.toString())
+
+	// Test 5: Small numbers
+	number:32 small = 0.001
+	print("Small 32-bit: " + small.toString())
+
+	// Test 6: Arithmetic with 32-bit
+	number:32 a = 10.5
+	number:32 b = 20.3
+	number:32 sum32 = a + b
+	print("32-bit sum: " + sum32.toString())
+
+	// Test 7: Arithmetic with 64-bit
+	number:64 c = 100.123456789
+	number:64 d = 200.987654321
+	number:64 sum64 = c + d
+	print("64-bit sum: " + sum64.toString())
+
+	// Test 8: Negative numbers
+	number:32 negSingle = -2.5
+	number:64 negDouble = -3.141592653589793
+	print("Negative 32-bit: " + negSingle.toString())
+	print("Negative 64-bit: " + negDouble.toString())
+
+	// Test 9: Very large numbers
+	number:64 veryLarge = 1.0e100
+	print("Very large: " + veryLarge.toString())
+
+	// Test 10: Very small numbers
+	number:64 verySmall = 1.0e-100
+	print("Very small: " + verySmall.toString())
+
+	print("Number precision test completed")

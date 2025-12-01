@@ -1,3 +1,6 @@
+// Spec Section: 6.3 - Function Declaration
+// Spec Section: 6.4 - Parameters (different parameter types)
+// Tests: Functions with same name but different parameter types (simulated overloading)
 
 functions:
 	string processInt(integer x)

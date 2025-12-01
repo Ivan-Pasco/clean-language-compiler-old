@@ -407,7 +407,7 @@ impl DeadCodeEliminationPass {
             MirOperation::Load { source } => {
                 self.mark_operand_live(source, function);
             }
-            MirOperation::GetElementPtr { base, indices } => {
+            MirOperation::GetElementPtr { base, indices, .. } => {
                 self.mark_operand_live(base, function);
                 for index in indices {
                     self.mark_operand_live(index, function);

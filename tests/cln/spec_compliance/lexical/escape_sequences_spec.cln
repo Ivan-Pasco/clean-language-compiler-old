@@ -1,0 +1,42 @@
+// Spec Section: 2.5 - Escape Sequences
+// Tests: String escape sequences (\n, \t, \\, \", etc.)
+
+start()
+	// Test 1: Newline escape sequence
+	string withNewline = "Line 1\nLine 2"
+	print("Newline test:")
+	print(withNewline)
+
+	// Test 2: Tab escape sequence
+	string withTab = "Column1\tColumn2\tColumn3"
+	print("Tab test: " + withTab)
+
+	// Test 3: Escaped backslash
+	string withBackslash = "Path: C:\\Users\\Documents"
+	print("Backslash: " + withBackslash)
+
+	// Test 4: Escaped quote
+	string withQuote = "He said \"Hello\""
+	print("Quote: " + withQuote)
+
+	// Test 5: Carriage return
+	string withCR = "Before\rAfter"
+	print("Carriage return: " + withCR)
+
+	// Test 6: Multiple escape sequences combined
+	string combined = "Name:\tAlice\nAge:\t25"
+	print("Combined escapes:")
+	print(combined)
+
+	// Test 7: Empty escapes at boundaries
+	string startEscape = "\tIndented"
+	string endEscape = "With newline\n"
+	print("Start with tab:" + startEscape)
+	print("End with newline:" + endEscape)
+
+	// Test 8: Multiple newlines
+	string multiLine = "First\n\nThird"
+	print("Multi-line:")
+	print(multiLine)
+
+	print("Escape sequences test completed")

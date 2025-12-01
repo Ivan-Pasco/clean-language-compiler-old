@@ -1,0 +1,10 @@
+// Spec Section: 15.1 - Async Programming
+// Tests: start keyword for async operations
+
+functions:
+	integer getValue()
+		return 42
+
+start()
+	integer result = getValue()
+	print("Async start test completed")

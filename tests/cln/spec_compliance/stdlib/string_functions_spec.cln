@@ -1,0 +1,54 @@
+// Spec Section: 14.2 - String Module
+// Tests: String manipulation operations
+
+start()
+	// Test 1: String concatenation with + operator
+	string first = "Hello"
+	string second = "World"
+	string combined = first + " " + second
+	print("Concatenation: " + combined)
+
+	// Test 2: string.length
+	string text = "Clean Language"
+	integer len = string.length(text)
+	print("Length of 'Clean Language': " + len.toString())
+
+	// Test 3: Multiple concatenations
+	string part1 = "One"
+	string part2 = "Two"
+	string part3 = "Three"
+	string all = part1 + " " + part2 + " " + part3
+	print("All parts: " + all)
+
+	// Test 4: Empty string operations
+	string empty = ""
+	integer emptyLen = string.length(empty)
+	print("Empty string length: " + emptyLen.toString())
+
+	// Test 5: Concatenation with empty string
+	string base = "Hello"
+	string withEmpty = base + ""
+	print("With empty: " + withEmpty)
+
+	// Test 6: toString method on integer
+	integer num = 42
+	string numStr = num.toString()
+	print("Integer toString: " + numStr)
+
+	// Test 7: toString method on number
+	number dec = 3.14
+	string decStr = dec.toString()
+	print("Number toString: " + decStr)
+
+	// Test 8: toString method on boolean
+	boolean flag = true
+	string flagStr = flag.toString()
+	print("Boolean toString: " + flagStr)
+
+	// Test 9: Building strings from expressions
+	integer x = 10
+	integer y = 20
+	string expr = "Sum of " + x.toString() + " and " + y.toString() + " computed"
+	print(expr)
+
+	print("String functions test completed")

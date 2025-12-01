@@ -1,0 +1,68 @@
+// Spec Section: 11.4 - Polymorphism
+// Tests: Method overriding and polymorphic behavior
+
+class Animal
+	string name
+
+	constructor(string n)
+		name = n
+
+	functions:
+		string speak()
+			return "Some sound"
+
+		string describe()
+			return "Animal: " + name
+
+class Dog is Animal
+	constructor(string n)
+		base(n)
+
+	functions:
+		string speak()
+			return "Woof!"
+
+		string describe()
+			return "Dog: " + name
+
+class Cat is Animal
+	constructor(string n)
+		base(n)
+
+	functions:
+		string speak()
+			return "Meow!"
+
+		string describe()
+			return "Cat: " + name
+
+start()
+	// Test 1: Base class instance
+	Animal animal = Animal("Generic")
+	string sound1 = animal.speak()
+	print("Animal speaks: " + sound1)
+
+	// Test 2: Derived class (Dog)
+	Dog dog = Dog("Buddy")
+	string sound2 = dog.speak()
+	print("Dog speaks: " + sound2)
+
+	// Test 3: Derived class (Cat)
+	Cat cat = Cat("Whiskers")
+	string sound3 = cat.speak()
+	print("Cat speaks: " + sound3)
+
+	// Test 4: Overridden describe method
+	string desc1 = animal.describe()
+	string desc2 = dog.describe()
+	string desc3 = cat.describe()
+	print(desc1)
+	print(desc2)
+	print(desc3)
+
+	// Test 5: Multiple instances of same type
+	Dog dog2 = Dog("Rex")
+	string sound4 = dog2.speak()
+	print("Dog2 speaks: " + sound4)
+
+	print("Polymorphism test completed")

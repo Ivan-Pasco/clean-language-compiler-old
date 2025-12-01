@@ -1,3 +1,7 @@
+// Spec Section: 2.1 - Core Types (integer, number, string, boolean)
+// Spec Section: 2.6 - Type Annotations
+// Spec Section: 4.3 - Arithmetic Operators
+// Tests: Type inference with mixed arithmetic
 
 start()
 	integer x = 42

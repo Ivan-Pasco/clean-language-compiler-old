@@ -1,0 +1,43 @@
+// Spec Section: 2.2 - Literals (Numeric Literals)
+// Tests: Floating-point number literal formats
+
+start()
+	// Test 1: Standard decimal numbers
+	number pi = 3.14159
+	number half = 0.5
+	number precise = 123.456789
+	print("Pi: " + pi.toString())
+	print("Half: " + half.toString())
+	print("Precise: " + precise.toString())
+
+	// Test 2: Numbers with leading zero optional
+	number leadingDot = 0.25
+	number regularDot = 0.75
+	print("0.25: " + leadingDot.toString())
+	print("0.75: " + regularDot.toString())
+
+	// Test 3: Negative numbers
+	number negPi = -3.14
+	number negSmall = -0.001
+	print("Negative pi: " + negPi.toString())
+	print("Negative small: " + negSmall.toString())
+
+	// Test 4: Whole numbers as floating point
+	number whole1 = 100.0
+	number whole2 = 1.0
+	number whole3 = 0.0
+	print("100.0: " + whole1.toString())
+	print("1.0: " + whole2.toString())
+	print("0.0: " + whole3.toString())
+
+	// Test 5: Floating-point arithmetic
+	number sum = 1.5 + 2.5
+	number diff = 10.0 - 3.5
+	number prod = 2.5 * 4.0
+	number quot = 15.0 / 3.0
+	print("1.5 + 2.5 = " + sum.toString())
+	print("10.0 - 3.5 = " + diff.toString())
+	print("2.5 * 4.0 = " + prod.toString())
+	print("15.0 / 3.0 = " + quot.toString())
+
+	print("Number literals test completed")

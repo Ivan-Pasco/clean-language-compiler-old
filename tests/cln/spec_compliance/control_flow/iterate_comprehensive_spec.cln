@@ -1,0 +1,19 @@
+// Spec Section: 9.2 - Iterate Loops
+// Tests: Basic iterate loop with ranges and collections
+
+start()
+	print("Iterate Loop Basic Test")
+	print("=======================")
+
+	// Range-based iteration
+	print("Range 1 to 10:")
+	iterate i in 1 to 10
+		print(i)
+
+	// List iteration
+	list<integer> numbers = [1, 2, 3, 4, 5]
+	print("Iterating over list:")
+	iterate num in numbers
+		print(num)
+
+	print("Iterate loop test completed")

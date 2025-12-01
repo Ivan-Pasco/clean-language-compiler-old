@@ -1,0 +1,58 @@
+// Spec Section: 10 - Error Handling
+// Tests: Error propagation through function calls
+
+start()
+	// Test 1: Error propagates from nested function
+	integer result1 = outerFunction() onError 0
+	print("Outer function result: " + result1.toString())
+
+	// Test 2: Error handled at each level
+	integer result2 = safeOuter()
+	print("Safe outer result: " + result2.toString())
+
+	// Test 3: Error propagates through multiple levels
+	integer result3 = level1() onError 999
+	print("Level 1 result: " + result3.toString())
+
+	// Test 4: Error caught early
+	integer result4 = earlyHandler()
+	print("Early handler result: " + result4.toString())
+
+	// Test 5: Error propagation with different types
+	string result5 = stringPropagation() onError "error caught"
+	print("String propagation: " + result5)
+
+	print("Error propagation test completed")
+
+functions:
+	integer outerFunction()
+		return innerFunction()
+
+	integer innerFunction()
+		error("Inner function failed")
+		return 42
+
+	integer safeOuter()
+		integer value = innerFunction() onError 100
+		return value
+
+	integer level1()
+		return level2()
+
+	integer level2()
+		return level3()
+
+	integer level3()
+		error("Deep error")
+		return 0
+
+	integer earlyHandler()
+		integer value = level3() onError 50
+		return value
+
+	string stringPropagation()
+		return stringError()
+
+	string stringError()
+		error("String error occurred")
+		return "success"

@@ -1,0 +1,63 @@
+// Spec Section: 14.1 - Math Module
+// Tests: Core mathematical operations and advanced functions
+
+start()
+	// Test 1: Basic arithmetic uses operators (not functions)
+	integer a = 10
+	integer b = 3
+	integer sum = a + b
+	integer diff = a - b
+	integer prod = a * b
+	print("Arithmetic operators:")
+	print("10 + 3 = " + sum.toString())
+	print("10 - 3 = " + diff.toString())
+	print("10 * 3 = " + prod.toString())
+
+	// Test 2: Number division
+	number x = 10.0
+	number y = 4.0
+	number quotient = x / y
+	print("10.0 / 4.0 = " + quotient.toString())
+
+	// Test 3: Exponentiation operator
+	number base = 2.0
+	number exp = 3.0
+	number power = base ^ exp
+	print("2.0 ^ 3.0 = " + power.toString())
+
+	// Test 4: math.abs for absolute value
+	integer negInt = -42
+	integer absInt = math.abs(negInt)
+	print("math.abs(-42) = " + absInt.toString())
+
+	number negNum = -3.5
+	number absNum = math.abs(negNum)
+	print("math.abs(-3.5) = " + absNum.toString())
+
+	// Test 5: math.max and math.min
+	number val1 = 5.5
+	number val2 = 8.3
+	number maxVal = math.max(val1, val2)
+	number minVal = math.min(val1, val2)
+	print("math.max(5.5, 8.3) = " + maxVal.toString())
+	print("math.min(5.5, 8.3) = " + minVal.toString())
+
+	// Test 6: math.sqrt for square root
+	number sqrtInput = 16.0
+	number sqrtResult = math.sqrt(sqrtInput)
+	print("math.sqrt(16.0) = " + sqrtResult.toString())
+
+	// Test 7: Rounding functions
+	number toRound = 3.7
+	number floorVal = math.floor(toRound)
+	number ceilVal = math.ceil(toRound)
+	number roundVal = math.round(toRound)
+	print("math.floor(3.7) = " + floorVal.toString())
+	print("math.ceil(3.7) = " + ceilVal.toString())
+	print("math.round(3.7) = " + roundVal.toString())
+
+	// Test 8: Mathematical constants
+	number piVal = math.pi()
+	print("math.pi() = " + piVal.toString())
+
+	print("Math functions test completed")

@@ -16,6 +16,7 @@ use crate::ast::{
 };
 use crate::error::CompilerError;
 use crate::lexer::specification_token::{Token, TokenKind, TokenStream};
+use tracing::{debug, trace, warn};
 
 /// Token-driven parser for Clean Language
 pub struct TokenParser {
@@ -57,16 +58,9 @@ impl TokenParser {
 
             // Skip any Dedent tokens at top level (they mark the end of blocks)
             if matches!(self.current_kind(), TokenKind::Dedent(_)) {
-                eprintln!(
-                    "DEBUG TOKEN PARSER: Skipping dedent at cursor {}",
-                    self.cursor
-                );
+                trace!(cursor = self.cursor, "Skipping dedent token at top level");
                 self.bump();
-                eprintln!(
-                    "DEBUG TOKEN PARSER: After bump, cursor {}, current token: {:?}",
-                    self.cursor,
-                    self.current_kind()
-                );
+                trace!(cursor = self.cursor, token = ?self.current_kind(), "After bump");
                 continue;
             }
 
@@ -81,22 +75,14 @@ impl TokenParser {
                     Err(e) => self.errors.push(e),
                 },
                 TokenKind::Tests => {
-                    eprintln!(
-                        "DEBUG TOKEN PARSER: Matched TokenKind::Tests, calling parse_tests_block"
-                    );
+                    debug!("Parsing tests: block");
                     match self.parse_tests_block() {
                         Ok(test_cases) => {
-                            eprintln!(
-                                "DEBUG TOKEN PARSER: parse_tests_block returned {} tests",
-                                test_cases.len()
-                            );
+                            debug!(test_count = test_cases.len(), "Parsed tests block");
                             tests.extend(test_cases)
                         }
                         Err(e) => {
-                            eprintln!(
-                                "DEBUG TOKEN PARSER: parse_tests_block returned error: {:?}",
-                                e
-                            );
+                            debug!(error = ?e, "Failed to parse tests block");
                             self.errors.push(e)
                         }
                     }
@@ -118,16 +104,13 @@ impl TokenParser {
                 }
                 TokenKind::Functions => {
                     // Parse functions: block
-                    eprintln!("DEBUG TOKEN PARSER: Parsing functions: block");
+                    debug!("Parsing functions: block");
                     match self.parse_functions_block() {
                         Ok(mut block_functions) => {
-                            eprintln!(
-                                "DEBUG TOKEN PARSER: Parsed {} functions from block",
-                                block_functions.len()
-                            );
-                            eprintln!(
-                                "DEBUG TOKEN PARSER: After functions block, current token: {:?}",
-                                self.current_kind()
+                            debug!(
+                                function_count = block_functions.len(),
+                                next_token = ?self.current_kind(),
+                                "Parsed functions block"
                             );
                             functions.append(&mut block_functions)
                         }
@@ -137,7 +120,7 @@ impl TokenParser {
                 TokenKind::Identifier(name) => {
                     // Check if this is a framework block (identifier followed by colon)
                     if self.peek_kind() == Some(&TokenKind::Colon) {
-                        eprintln!("DEBUG TOKEN PARSER: Found framework block: {}", name);
+                        debug!(block_name = %name, "Found framework block");
                         match self.parse_framework_block() {
                             Ok(stmt) => statements.push(stmt),
                             Err(e) => self.errors.push(e),
@@ -200,12 +183,13 @@ impl TokenParser {
 
         let start_function = functions.iter().find(|f| f.name == "start").cloned();
 
-        eprintln!(
-            "DEBUG TOKEN PARSER: Found {} functions, start_function: {:?}",
-            functions.len(),
-            start_function.as_ref().map(|f| &f.name)
+        debug!(
+            function_count = functions.len(),
+            has_start = start_function.is_some(),
+            test_count = tests.len(),
+            class_count = classes.len(),
+            "Program parsed successfully"
         );
-        eprintln!("DEBUG TOKEN PARSER: Found {} tests", tests.len());
 
         Ok(Program {
             imports,
@@ -1249,7 +1233,7 @@ impl TokenParser {
                                 Err(e) => {
                                     // Log the error but don't break - try to continue
                                     // This allows recovery from individual method parse errors
-                                    eprintln!("Warning: Failed to parse method: {}", e);
+                                    warn!(error = %e, "Failed to parse method");
                                     break;
                                 }
                             }
@@ -1474,11 +1458,8 @@ impl TokenParser {
                         // No space: Minus followed by Greater  (->)
                         (TokenKind::Greater, TokenKind::Minus) |
                         // No space: before/after Divide (for paths like /users/{id})
+                        // This covers all Divide cases including /{, }/, etc.
                         (TokenKind::Divide, _) | (_, TokenKind::Divide) |
-                        // No space: LeftBrace after Divide (/{)
-                        (TokenKind::LeftBrace, TokenKind::Divide) |
-                        // No space: Divide after RightBrace (}/)
-                        (TokenKind::Divide, TokenKind::RightBrace) |
                         // No space: after InterpolationStart (we add { manually)
                         (_, TokenKind::InterpolationStart) |
                         // No space: before/after InterpolationMid (we add }{  manually)
@@ -1520,7 +1501,7 @@ impl TokenParser {
             }
 
             if !line_text.is_empty() {
-                eprintln!("DEBUG: Collected line: '{}'", line_text);
+                trace!(line = %line_text, "Collected framework line");
                 content_lines.push(line_text);
             }
 
@@ -1532,12 +1513,12 @@ impl TokenParser {
 
         let content = content_lines.join("\n");
 
-        eprintln!(
-            "DEBUG TOKEN PARSER: Parsed framework block '{}' with {} lines",
-            block_name,
-            content_lines.len()
+        debug!(
+            block_name = %block_name,
+            line_count = content_lines.len(),
+            "Parsed framework block"
         );
-        eprintln!("DEBUG TOKEN PARSER: Block content:\n{}", content);
+        trace!(content = %content, "Framework block content");
 
         Ok(Statement::FrameworkBlock {
             name: block_name,
@@ -1548,26 +1529,18 @@ impl TokenParser {
     }
 
     fn parse_tests_block(&mut self) -> Result<Vec<TestCase>, CompilerError> {
-        eprintln!(
-            "DEBUG parse_tests_block: Starting, cursor {}, current token: {:?}",
-            self.cursor,
-            self.current_kind()
-        );
+        trace!(cursor = self.cursor, token = ?self.current_kind(), "Starting tests block parse");
 
         self.expect(&TokenKind::Tests)?;
         self.skip_whitespace();
 
-        eprintln!("DEBUG parse_tests_block: After Tests token and whitespace, cursor {}, current token: {:?}", self.cursor, self.current_kind());
+        trace!(cursor = self.cursor, token = ?self.current_kind(), "After Tests token");
 
         // Expect colon after tests keyword
         self.expect(&TokenKind::Colon)?;
         self.skip_whitespace();
 
-        eprintln!(
-            "DEBUG parse_tests_block: After colon and whitespace, cursor {}, current token: {:?}",
-            self.cursor,
-            self.current_kind()
-        );
+        trace!(cursor = self.cursor, token = ?self.current_kind(), "After colon");
 
         let mut tests = Vec::new();
 
@@ -1582,42 +1555,32 @@ impl TokenParser {
             1
         };
 
-        eprintln!(
-            "DEBUG parse_tests_block: tests_indent_level = {}",
-            tests_indent_level
+        trace!(
+            indent_level = tests_indent_level,
+            "Tests block indent level"
         );
 
         // Parse test cases until we hit a dedent or EOF
-        let mut iteration = 0;
         while !self.is_at_end() {
-            iteration += 1;
-            eprintln!(
-                "DEBUG parse_tests_block: Iteration {}, cursor {}, current token: {:?}",
-                iteration,
-                self.cursor,
-                self.current_kind()
-            );
+            trace!(cursor = self.cursor, token = ?self.current_kind(), "Tests block iteration");
 
             self.skip_whitespace();
 
             if self.is_at_end() {
-                eprintln!("DEBUG parse_tests_block: At end after whitespace, breaking");
+                trace!("At end after whitespace");
                 break;
             }
 
             // Check for Dedent that exits the tests block
             if let TokenKind::Dedent(dedent_level) = self.current_kind() {
-                eprintln!(
-                    "DEBUG parse_tests_block: Found Dedent({}), tests_indent_level = {}",
-                    dedent_level, tests_indent_level
-                );
+                trace!(dedent_level, tests_indent_level, "Found Dedent");
                 if *dedent_level < tests_indent_level {
                     // This Dedent exits the tests block - DON'T consume it
-                    eprintln!("DEBUG parse_tests_block: Dedent exits tests block, breaking");
+                    trace!("Dedent exits tests block");
                     break;
                 }
                 // Dedent at our level or higher - consume it and continue
-                eprintln!("DEBUG parse_tests_block: Consuming dedent and continuing");
+                trace!("Consuming dedent and continuing");
                 self.bump();
                 self.skip_whitespace();
             }
@@ -1625,13 +1588,13 @@ impl TokenParser {
             // Skip Indent tokens at our level
             if matches!(self.current_kind(), TokenKind::Indent(level) if *level == tests_indent_level)
             {
-                eprintln!("DEBUG parse_tests_block: Skipping Indent at our level");
+                trace!("Skipping Indent at tests level");
                 self.bump();
                 self.skip_whitespace();
             }
 
             if self.is_at_end() {
-                eprintln!("DEBUG parse_tests_block: At end after indent handling, breaking");
+                trace!("At end after indent handling");
                 break;
             }
 
@@ -1640,35 +1603,26 @@ impl TokenParser {
                 self.current_kind(),
                 TokenKind::Start | TokenKind::Functions | TokenKind::Class | TokenKind::Import
             ) {
-                eprintln!("DEBUG parse_tests_block: Found top-level keyword, breaking");
+                trace!(token = ?self.current_kind(), "Found top-level keyword, exiting tests block");
                 break;
             }
 
             // Check again for dedent that exits the block (can appear after consuming previous dedent)
             if let TokenKind::Dedent(dedent_level) = self.current_kind() {
                 if *dedent_level < tests_indent_level {
-                    eprintln!(
-                        "DEBUG parse_tests_block: Found Dedent({}) < {}, exiting block",
-                        dedent_level, tests_indent_level
-                    );
+                    trace!(dedent_level, tests_indent_level, "Dedent exits block");
                     break;
                 }
             }
 
-            eprintln!(
-                "DEBUG parse_tests_block: About to parse test, current token: {:?}",
-                self.current_kind()
-            );
+            trace!(token = ?self.current_kind(), "About to parse test");
 
             // Parse test case
             if let Ok(test) = self.parse_test() {
-                eprintln!(
-                    "DEBUG parse_tests_block: Successfully parsed test: {:?}",
-                    test.description
-                );
+                trace!(description = ?test.description, "Parsed test");
                 tests.push(test);
             } else {
-                eprintln!("DEBUG parse_tests_block: Failed to parse test, skipping line");
+                trace!("Failed to parse test, skipping line");
                 // Skip line on error
                 while !matches!(self.current_kind(), TokenKind::Newline | TokenKind::Eof) {
                     self.bump();
@@ -1676,19 +1630,12 @@ impl TokenParser {
             }
         }
 
-        eprintln!(
-            "DEBUG parse_tests_block: Finished, parsed {} tests",
-            tests.len()
-        );
+        debug!(test_count = tests.len(), "Finished parsing tests block");
         Ok(tests)
     }
 
     fn parse_test(&mut self) -> Result<TestCase, CompilerError> {
-        eprintln!(
-            "DEBUG parse_test: Starting, cursor {}, current token: {:?}",
-            self.cursor,
-            self.current_kind()
-        );
+        trace!(cursor = self.cursor, token = ?self.current_kind(), "Starting test parse");
 
         let start_location = self.current().location.clone();
 
@@ -1696,11 +1643,7 @@ impl TokenParser {
         self.expect(&TokenKind::Test)?;
         self.skip_whitespace();
 
-        eprintln!(
-            "DEBUG parse_test: After test keyword, cursor {}, current token: {:?}",
-            self.cursor,
-            self.current_kind()
-        );
+        trace!(cursor = self.cursor, token = ?self.current_kind(), "After test keyword");
 
         // Expect string literal description
         let description = if let TokenKind::StringLiteral(desc) = self.current_kind() {
@@ -1716,19 +1659,12 @@ impl TokenParser {
             ));
         };
 
-        eprintln!(
-            "DEBUG parse_test: After description, cursor {}, current token: {:?}",
-            self.cursor,
-            self.current_kind()
-        );
+        trace!(description = ?description, "Parsed test description");
 
         // Parse test body (block of statements)
         let body = self.parse_block()?;
 
-        eprintln!(
-            "DEBUG parse_test: After parsing block, parsed {} statements",
-            body.len()
-        );
+        trace!(statement_count = body.len(), "Parsed test body");
 
         // For now, create a test case with the body as the test expression
         // The last statement should be an assert

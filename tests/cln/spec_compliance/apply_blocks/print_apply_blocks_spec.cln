@@ -1,0 +1,35 @@
+// Spec Section: 4.4 - Print Apply-Blocks
+// Tests: print: apply-block for multiple print statements
+
+start()
+	// Test 1: Basic print apply-block
+	print:
+		"Line 1"
+		"Line 2"
+		"Line 3"
+
+	// Test 2: Print with variables
+	string name = "Alice"
+	integer age = 25
+	print:
+		"Name: " + name
+		"Age: " + age.toString()
+
+	// Test 3: Mixed expressions in print block
+	integer a = 10
+	integer b = 20
+	print:
+		"Value a: " + a.toString()
+		"Value b: " + b.toString()
+		"Sum: " + (a + b).toString()
+
+	// Test 4: Sequential print blocks
+	print:
+		"First block - line 1"
+		"First block - line 2"
+
+	print:
+		"Second block - line 1"
+		"Second block - line 2"
+
+	print("Print apply-blocks test completed")

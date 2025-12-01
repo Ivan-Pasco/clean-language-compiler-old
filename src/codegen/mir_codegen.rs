@@ -194,6 +194,15 @@ impl<'a> MirCodeGenerator<'a> {
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: File imports registered");
 
+            // CRITICAL: Register string.split as an import BEFORE any stdlib functions
+            // This must happen before math_operations which adds internal functions
+            // because imports must all be registered before internal functions start
+            debug_mir!("DEBUG MIR: Registering string.split import");
+            self.wasm_generator
+                .register_string_split_import()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: string.split import registered");
+
             // CRITICAL: Register math operations (abs, max, min, sqrt, pow, etc.)
             debug_mir!("DEBUG MIR: Registering math operation imports");
             self.wasm_generator
@@ -268,34 +277,33 @@ impl<'a> MirCodeGenerator<'a> {
         // This ensures that when function A calls function B, function B is already in the map
         // even if B hasn't been generated yet
         // IMPORTANT: Sort functions by SymbolId to ensure deterministic ordering
-        eprintln!("DEBUG: Starting function pre-registration");
-        eprintln!(
-            "DEBUG: function_count = {}",
-            self.wasm_generator.function_count
-        );
-        eprintln!(
-            "DEBUG: mir_program.functions.len() = {}",
-            mir_program.functions.len()
+        debug_mir!("Starting function pre-registration");
+        debug_mir!(
+            function_count = self.wasm_generator.function_count,
+            mir_functions = mir_program.functions.len(),
+            "Pre-registration state"
         );
 
         // CRITICAL FIX: Initialize function_symbol_map from MirProgram's symbol_name_map
         // This includes ALL functions: builtins (print, math.*, etc.) AND user-defined
-        eprintln!(
-            "DEBUG SYMBOL INIT: Initializing function_symbol_map from MirProgram with {} entries",
-            mir_program.symbol_name_map.len()
+        debug_mir!(
+            symbol_map_entries = mir_program.symbol_name_map.len(),
+            "Initializing function_symbol_map from MirProgram"
         );
         for (symbol_id, name) in &mir_program.symbol_name_map {
             self.function_symbol_map.insert(*symbol_id, name.clone());
-            eprintln!("DEBUG SYMBOL INIT: SymbolId({}) -> '{}'", symbol_id.0, name);
+            debug_mir!(symbol_id = symbol_id.0, name = %name, "Symbol init");
 
             // CRITICAL FIX: Also populate symbol_to_function_index for builtin functions
             // Builtin functions are already registered in wasm_generator.function_map (name -> index)
             // but their SymbolIds were never mapped to their WASM indices
             if let Some(&wasm_index) = self.wasm_generator.function_map.get(name) {
                 self.symbol_to_function_index.insert(*symbol_id, wasm_index);
-                eprintln!(
-                    "DEBUG BUILTIN MAP: SymbolId({}) -> '{}' at WASM index {}",
-                    symbol_id.0, name, wasm_index
+                debug_mir!(
+                    symbol_id = symbol_id.0,
+                    name = %name,
+                    wasm_index = wasm_index,
+                    "Builtin function mapped"
                 );
             }
         }
@@ -306,9 +314,12 @@ impl<'a> MirCodeGenerator<'a> {
 
         for (i, (symbol_id, function)) in sorted_functions.iter().enumerate() {
             let function_index = self.wasm_generator.function_count + i as u32;
-            eprintln!(
-                "DEBUG: Pre-registering function '{}' at index {} (i={}, function_count={})",
-                function.name, function_index, i, self.wasm_generator.function_count
+            debug_mir!(
+                function_name = %function.name,
+                function_index = function_index,
+                i = i,
+                function_count = self.wasm_generator.function_count,
+                "Pre-registering function"
             );
             self.wasm_generator
                 .function_map
@@ -324,42 +335,47 @@ impl<'a> MirCodeGenerator<'a> {
             self.symbol_to_function_index
                 .insert(*symbol_id, function_index);
 
-            eprintln!(
-                "DEBUG SYMBOL MAP: Inserted SymbolId({}) -> '{}' at WASM index {}",
-                symbol_id.0, function.name, function_index
+            debug_mir!(
+                symbol_id = symbol_id.0,
+                function_name = %function.name,
+                wasm_index = function_index,
+                "Symbol map entry inserted"
             );
         }
-        eprintln!(
-            "DEBUG: All {} functions pre-registered in function_map",
-            sorted_functions.len()
+        debug_mir!(
+            functions_registered = sorted_functions.len(),
+            "All functions pre-registered in function_map"
         );
-        eprintln!(
-            "DEBUG SYMBOL MAP: Total entries in function_symbol_map = {}",
-            self.function_symbol_map.len()
+        debug_mir!(
+            total_entries = self.function_symbol_map.len(),
+            "Function symbol map complete"
         );
 
         // Generate all functions in the same sorted order
         for (_symbol_id, function) in sorted_functions {
             let func_name = function.name.clone();
             let func_index = self.wasm_generator.function_count + stats.functions_generated as u32;
-            eprintln!(
-                "DEBUG: Generating function '{}' (func[{}])",
-                func_name, func_index
+            debug_mir!(
+                function_name = %func_name,
+                func_index = func_index,
+                "Generating function"
             );
             match self.generate_function(function) {
                 Ok(function_stats) => {
-                    eprintln!(
-                        "DEBUG: Successfully generated function '{}' (func[{}])",
-                        func_name, func_index
+                    debug_mir!(
+                        function_name = %func_name,
+                        func_index = func_index,
+                        "Successfully generated function"
                     );
                     stats.functions_generated += 1;
                     stats.blocks_generated += function_stats.blocks_generated;
                     stats.instructions_generated += function_stats.instructions_generated;
                 }
                 Err(error) => {
-                    eprintln!(
-                        "DEBUG: ERROR generating function '{}': {:?}",
-                        func_name, error
+                    tracing::error!(
+                        function_name = %func_name,
+                        error = ?error,
+                        "ERROR generating function"
                     );
                     // CRITICAL FIX: Function generation failures must be hard errors
                     // If we allow them as warnings, we get phantom function indices that don't exist in WASM
@@ -417,14 +433,15 @@ impl<'a> MirCodeGenerator<'a> {
         self.current_function = Some(function.clone());
 
         // Populate value_to_type from function parameters
-        eprintln!(
-            "DEBUG TYPE MAP: Populating value_to_type for function '{}'",
-            function.name
+        debug_mir!(
+            function_name = %function.name,
+            "Populating value_to_type for function"
         );
         for param in &function.parameters {
-            eprintln!(
-                "  ValueId({}) -> MirType::{:?} (parameter)",
-                param.value_id.0, param.param_type
+            debug_mir!(
+                value_id = param.value_id.0,
+                param_type = ?param.param_type,
+                "Parameter type mapping"
             );
             self.value_to_type
                 .insert(param.value_id, param.param_type.clone());
@@ -432,9 +449,10 @@ impl<'a> MirCodeGenerator<'a> {
 
         // Populate value_to_type from function locals
         for (value_id, local) in &function.locals {
-            eprintln!(
-                "  ValueId({}) -> MirType::{:?} (local)",
-                value_id.0, local.local_type
+            debug_mir!(
+                value_id = value_id.0,
+                local_type = ?local.local_type,
+                "Local type mapping"
             );
             self.value_to_type
                 .insert(*value_id, local.local_type.clone());
@@ -444,37 +462,33 @@ impl<'a> MirCodeGenerator<'a> {
         let wasm_signature = self.convert_function_signature(&function)?;
 
         // Allocate locals for function parameters
-        eprintln!(
-            "DEBUG CODEGEN PARAMS: Function '{}' has {} parameters",
-            function.name,
-            function.parameters.len()
+        debug_mir!(
+            function_name = %function.name,
+            parameters = function.parameters.len(),
+            "Allocating parameter locals"
         );
         for param in &function.parameters {
             let local_index = self.next_local_index;
-            eprintln!(
-                "DEBUG CODEGEN PARAMS:   Adding parameter '{}' with ValueId({}) to local {}",
-                param.name, param.value_id.0, local_index
+            debug_mir!(
+                param_name = %param.name,
+                value_id = param.value_id.0,
+                local_index = local_index,
+                "Adding parameter to local"
             );
             self.value_to_local.insert(param.value_id, local_index);
             self.next_local_index += 1;
         }
-        eprintln!(
-            "DEBUG CODEGEN PARAMS: value_to_local now has {} entries",
-            self.value_to_local.len()
+        debug_mir!(
+            entries = self.value_to_local.len(),
+            "value_to_local entries after parameters"
         );
 
         // CRITICAL FIX: Allocate locals for function local variables (excluding parameters)
         // Parameters are already in function.locals, so we must skip them to avoid duplication
         // IMPORTANT: Sort by ValueId to ensure consistent allocation order!
-        eprintln!("\n=== DEBUG CODEGEN LOCALS for '{}' ===", function.name);
-        eprintln!(
-            "DEBUG CODEGEN LOCALS: Function '{}' has {} locals in MIR",
-            function.name,
-            function.locals.len()
-        );
-        tracing::debug!(
-            name = %function.name,
-            locals = function.locals.len(),
+        debug_mir!(
+            function_name = %function.name,
+            locals_count = function.locals.len(),
             parameters = function.parameters.len(),
             "Function locals allocation"
         );
@@ -486,33 +500,25 @@ impl<'a> MirCodeGenerator<'a> {
         for (value_id, _local) in sorted_locals {
             // Skip if this ValueId was already allocated (i.e., it's a parameter)
             if self.value_to_local.contains_key(value_id) {
-                eprintln!(
-                    "DEBUG CODEGEN LOCALS:   Skipping ValueId({}) - already allocated as parameter",
-                    value_id.0
-                );
-                tracing::trace!(
-                    value_id = ?value_id,
+                debug_mir!(
+                    value_id = value_id.0,
                     "Skipping ValueId - already allocated as parameter"
                 );
                 continue;
             }
 
             let local_index = self.next_local_index;
-            eprintln!(
-                "DEBUG CODEGEN LOCALS:   Adding ValueId({}) to local {}",
-                value_id.0, local_index
+            debug_mir!(
+                value_id = value_id.0,
+                local_index = local_index,
+                "Adding ValueId to local"
             );
             self.value_to_local.insert(*value_id, local_index);
             self.next_local_index += 1;
-            tracing::trace!(
-                local_index = local_index,
-                value_id = ?value_id,
-                "Allocated local for ValueId"
-            );
         }
-        eprintln!(
-            "DEBUG CODEGEN LOCALS: After locals allocation, value_to_local has {} entries",
-            self.value_to_local.len()
+        debug_mir!(
+            entries = self.value_to_local.len(),
+            "After locals allocation, value_to_local entries"
         );
 
         // Pre-assign block labels
@@ -531,14 +537,10 @@ impl<'a> MirCodeGenerator<'a> {
         );
         let mut generated_blocks = std::collections::HashSet::new();
         self.generate_structured_blocks(&function, entry_block_id, &mut generated_blocks)?;
-        eprintln!(
-            "DEBUG AFTER GENERATE_STRUCTURED_BLOCKS: Function '{}' has {} instructions in current_instructions",
-            function.name,
-            self.current_instructions.len()
-        );
-        tracing::debug!(
-            name = %function.name,
-            "Finished generate_structured_blocks"
+        debug_mir!(
+            function_name = %function.name,
+            instructions = self.current_instructions.len(),
+            "After generate_structured_blocks"
         );
 
         stats.blocks_generated = generated_blocks.len();
@@ -563,45 +565,46 @@ impl<'a> MirCodeGenerator<'a> {
         // NOTE: Ptr(Void) represents the "any" type and DOES return a value (i32), so don't treat it as void
         let is_void_function = matches!(function.return_type, MirType::Void);
 
-        eprintln!(
-            "DEBUG VOID FUNCTION CHECK: Function '{}', is_void={}, has {} instructions",
-            function.name,
-            is_void_function,
-            self.current_instructions.len()
+        debug_mir!(
+            function_name = %function.name,
+            is_void = is_void_function,
+            instructions = self.current_instructions.len(),
+            "Void function check"
         );
         if is_void_function && self.current_instructions.len() >= 10 {
-            eprintln!("DEBUG LAST 10 INSTRUCTIONS:");
+            debug_mir!("Last 10 instructions:");
             for (i, inst) in self.current_instructions.iter().rev().take(10).enumerate() {
-                eprintln!("  [-{}]: {:?}", i + 1, inst);
+                debug_mir!(index = -(i as i32 + 1), instruction = ?inst, "Instruction");
             }
         }
 
-        eprintln!(
-            "DEBUG BEFORE COPY TO WASM_FUNCTION: Function '{}' has {} instructions, {} local_types",
-            function.name,
-            self.current_instructions.len(),
-            local_types.len()
+        debug_mir!(
+            function_name = %function.name,
+            instructions = self.current_instructions.len(),
+            local_types = local_types.len(),
+            "Before copy to WASM function"
         );
         let mut wasm_function = WasmFunction::new(local_types);
         let mut instruction_count = 0;
-        eprintln!(
-            "DEBUG COPY INSTRUCTIONS: Copying {} instructions for function '{}'",
-            self.current_instructions.len(),
-            function.name
+        debug_mir!(
+            instructions = self.current_instructions.len(),
+            function_name = %function.name,
+            "Copying instructions"
         );
         for (idx, instruction) in self.current_instructions.iter().enumerate() {
             if matches!(instruction, Instruction::Drop) {
-                eprintln!("DEBUG COPY: Instruction[{}] = DROP", idx);
+                debug_mir!(idx = idx, "Instruction: DROP");
             }
             if let Instruction::Call(func_idx) = instruction {
-                eprintln!("DEBUG COPY: Instruction[{}] = Call({})", idx, func_idx);
+                debug_mir!(idx = idx, func_idx = func_idx, "Instruction: Call");
             }
             wasm_function.instruction(instruction);
             instruction_count += 1;
         }
-        eprintln!(
-            "DEBUG AFTER COPY: Function '{}' wasm_function created with {} instructions copied",
-            function.name, instruction_count
+        debug_mir!(
+            function_name = %function.name,
+            instructions_copied = instruction_count,
+            "After copy to WASM function"
         );
 
         // NOTE: Void functions don't need a final DROP instruction.
@@ -615,9 +618,9 @@ impl<'a> MirCodeGenerator<'a> {
         let is_constructor =
             function.name == "constructor" || function.name.ends_with(".constructor");
         if is_constructor {
-            eprintln!(
-                "DEBUG CONSTRUCTOR: Adding implicit return of 'this' for constructor '{}'",
-                function.name
+            debug_mir!(
+                function_name = %function.name,
+                "Adding implicit return of 'this' for constructor"
             );
             wasm_function.instruction(&Instruction::LocalGet(0));
         }
@@ -632,9 +635,10 @@ impl<'a> MirCodeGenerator<'a> {
             .unwrap_or(false);
 
         if is_non_void && !last_instruction_is_return && !is_constructor {
-            eprintln!(
-                "DEBUG NON-VOID FUNCTION: Function '{}' returns {:?} but last instruction is not Return/Unreachable, adding Unreachable",
-                function.name, function.return_type
+            debug_mir!(
+                function_name = %function.name,
+                return_type = ?function.return_type,
+                "Non-void function missing Return/Unreachable, adding Unreachable"
             );
             wasm_function.instruction(&Instruction::Unreachable);
         }
@@ -902,15 +906,17 @@ impl<'a> MirCodeGenerator<'a> {
     ) -> Result<(), CompilerError> {
         // Skip if already generated
         if generated.contains(&block_id) {
-            eprintln!(
+            debug_mir!(
                 "DEBUG BRANCH_BLOCK: Skipping already-generated block {:?} in function '{}'",
-                block_id, function.name
+                block_id,
+                function.name
             );
             return Ok(());
         }
-        eprintln!(
+        debug_mir!(
             "DEBUG BRANCH_BLOCK: Inserting block {:?} into generated set for function '{}'",
-            block_id, function.name
+            block_id,
+            function.name
         );
         generated.insert(block_id);
 
@@ -949,7 +955,7 @@ impl<'a> MirCodeGenerator<'a> {
                 let has_else_clause =
                     !self.is_continuation_not_else(function, *true_block, *false_block);
 
-                eprintln!("DEBUG BRANCH_BLOCK: Processing nested Branch in function '{}', true_block={:?}, false_block={:?}, has_else_clause={}",
+                debug_mir!("DEBUG BRANCH_BLOCK: Processing nested Branch in function '{}', true_block={:?}, false_block={:?}, has_else_clause={}",
                     function.name, true_block, false_block, has_else_clause);
 
                 // Nested if-else: generate it fully (including its own continuation handling)
@@ -964,14 +970,14 @@ impl<'a> MirCodeGenerator<'a> {
                 // it will be generated by the loop structure itself. Don't generate it as an else clause.
                 let is_loop_exit = self.is_loop_exit_continuation(function, *false_block);
 
-                eprintln!("DEBUG BRANCH_BLOCK: function='{}', block={:?}, false_block={:?}, is_loop_exit={}",
+                debug_mir!("DEBUG BRANCH_BLOCK: function='{}', block={:?}, false_block={:?}, is_loop_exit={}",
                     function.name, block_id, false_block, is_loop_exit);
 
                 if has_else_clause && !is_loop_exit {
                     self.current_instructions.push(Instruction::Else);
                     self.generate_branch_block(function, *false_block, generated)?;
                 } else if is_loop_exit {
-                    eprintln!("DEBUG BRANCH_BLOCK: Skipping false_block {:?} - detected as loop exit continuation in function '{}'",
+                    debug_mir!("DEBUG BRANCH_BLOCK: Skipping false_block {:?} - detected as loop exit continuation in function '{}'",
                         false_block, function.name);
                 }
 
@@ -1023,7 +1029,7 @@ impl<'a> MirCodeGenerator<'a> {
 
                     // If no else clause, false branch goes to continuation directly
                     if !has_else_clause && continuation.is_none() {
-                        eprintln!("DEBUG BRANCH_BLOCK: No else clause in nested if, setting continuation to false_block {:?} in function '{}'",
+                        debug_mir!("DEBUG BRANCH_BLOCK: No else clause in nested if, setting continuation to false_block {:?} in function '{}'",
                             false_block, function.name);
                         continuation = Some(*false_block);
                     }
@@ -1034,11 +1040,11 @@ impl<'a> MirCodeGenerator<'a> {
                     // already in the generated set (if so, skip)
                     if let Some(cont) = continuation {
                         if !generated.contains(&cont) {
-                            eprintln!("DEBUG BRANCH_BLOCK: Inlining continuation block {:?} for nested if in function '{}'",
+                            debug_mir!("DEBUG BRANCH_BLOCK: Inlining continuation block {:?} for nested if in function '{}'",
                                 cont, function.name);
                             self.generate_branch_block(function, cont, generated)?;
                         } else {
-                            eprintln!("DEBUG BRANCH_BLOCK: Skipping continuation block {:?} - already marked for generation by outer structure in function '{}'",
+                            debug_mir!("DEBUG BRANCH_BLOCK: Skipping continuation block {:?} - already marked for generation by outer structure in function '{}'",
                                 cont, function.name);
                         }
                     }
@@ -1063,30 +1069,34 @@ impl<'a> MirCodeGenerator<'a> {
     ) -> Result<(), CompilerError> {
         // Skip if already generated
         if generated.contains(&block_id) {
-            eprintln!("DEBUG GENERATE_BLOCKS: Skipping already-generated block {:?} in function '{}', generated set contains {} blocks",
+            debug_mir!("DEBUG GENERATE_BLOCKS: Skipping already-generated block {:?} in function '{}', generated set contains {} blocks",
                 block_id, function.name, generated.len());
             return Ok(());
         }
-        eprintln!(
+        debug_mir!(
             "DEBUG GENERATE_BLOCKS: Inserting block {:?} into generated set for function '{}'",
-            block_id, function.name
+            block_id,
+            function.name
         );
         generated.insert(block_id);
 
         let block = match function.blocks.get(&block_id) {
             Some(b) => b,
             None => {
-                eprintln!(
+                debug_mir!(
                     "DEBUG GENERATE_BLOCKS: Block {:?} not found in function '{}'",
-                    block_id, function.name
+                    block_id,
+                    function.name
                 );
                 return Ok(());
             }
         };
 
-        eprintln!(
+        debug_mir!(
             "DEBUG GENERATE_BLOCKS: Generating block {:?} in function '{}', terminator={:?}",
-            block_id, function.name, block.terminator
+            block_id,
+            function.name,
+            block.terminator
         );
 
         // CRITICAL: Check if this block is a loop header BEFORE generating instructions
@@ -1124,11 +1134,11 @@ impl<'a> MirCodeGenerator<'a> {
                 // CRITICAL FIX: Check if this block is a loop header (has backedge)
                 let is_loop = self.is_loop_header(function, block_id);
 
-                eprintln!("DEBUG BRANCH: Block {:?} in function '{}', is_loop={}, true_block={:?}, false_block={:?}",
+                debug_mir!("DEBUG BRANCH: Block {:?} in function '{}', is_loop={}, true_block={:?}, false_block={:?}",
                     block_id, function.name, is_loop, true_block, false_block);
 
                 if is_loop {
-                    eprintln!("DEBUG LOOP: Block {:?} is a loop header in function '{}', generating loop structure with false_block={:?} as continuation",
+                    debug_mir!("DEBUG LOOP: Block {:?} is a loop header in function '{}', generating loop structure with false_block={:?} as continuation",
                         block_id, function.name, false_block);
 
                     // Generate loop structure:
@@ -1200,9 +1210,10 @@ impl<'a> MirCodeGenerator<'a> {
                     self.current_instructions.push(Instruction::End); // end block
 
                     // Generate continuation (false_block) - this is where we exit to
-                    eprintln!(
+                    debug_mir!(
                         "DEBUG LOOP: Generating continuation block {:?} for loop in function '{}'",
-                        false_block, function.name
+                        false_block,
+                        function.name
                     );
                     self.generate_structured_blocks(function, *false_block, generated)?;
                 } else {
@@ -1235,7 +1246,7 @@ impl<'a> MirCodeGenerator<'a> {
                         false // No else clause means false branch doesn't return
                     };
 
-                    eprintln!("DEBUG RETURN CHECK: Function '{}', Block {:?}, true_has_return={}, false_has_return={}, has_else_clause={}",
+                    debug_mir!("DEBUG RETURN CHECK: Function '{}', Block {:?}, true_has_return={}, false_has_return={}, has_else_clause={}",
                         function.name, block_id, true_has_return, false_has_return, has_else_clause);
 
                     if true_has_return && false_has_return {
@@ -1519,7 +1530,7 @@ impl<'a> MirCodeGenerator<'a> {
                 function,
                 arguments,
             } => {
-                eprintln!(
+                debug_mir!(
                     "DEBUG CALL START: function={:?}, arguments_len={}",
                     function,
                     arguments.len()
@@ -1534,16 +1545,17 @@ impl<'a> MirCodeGenerator<'a> {
                 // Get function signature to determine parameter types
                 let (mut function_name, function_signature, symbol_id_opt) = match function {
                     MirOperand::Function(symbol_id) => {
-                        eprintln!("DEBUG CALL SYMBOL: SymbolId({})", symbol_id.0);
+                        debug_mir!(" CALL SYMBOL: SymbolId({})", symbol_id.0);
                         let name = self.get_function_name_by_symbol(*symbol_id);
-                        eprintln!("DEBUG CALL NAME FROM SYMBOL: {:?}", name);
+                        debug_mir!(" CALL NAME FROM SYMBOL: {:?}", name);
                         let sig = self.function_signatures.get(symbol_id).cloned();
                         (name, sig, Some(*symbol_id))
                     }
                     MirOperand::NamedFunction { name, symbol_id } => {
-                        eprintln!(
+                        debug_mir!(
                             "DEBUG CALL NAMED FUNCTION: name='{}', SymbolId({})",
-                            name, symbol_id.0
+                            name,
+                            symbol_id.0
                         );
                         // CRITICAL FIX: For namespace functions (SymbolId(0)), don't use the signature
                         // because SymbolId(0) is shared by all namespace functions and maps to "print"
@@ -1574,8 +1586,8 @@ impl<'a> MirCodeGenerator<'a> {
                             // Reverse-lookup: find the function name that maps to this index
                             for (name, &index) in &self.wasm_generator.function_map {
                                 if index == function_index {
-                                    eprintln!(
-                                        "DEBUG REVERSE LOOKUP: SymbolId({}) -> index {} -> name '{}'",
+                                    debug_mir!(
+            "DEBUG REVERSE LOOKUP: SymbolId({}) -> index {} -> name '{}'",
                                         symbol_id.0, function_index, name
                                     );
                                     function_name = Some(name.clone());
@@ -1591,22 +1603,22 @@ impl<'a> MirCodeGenerator<'a> {
                 // CRITICAL FIX: String expansion should only happen for built-in functions
                 // User-defined functions receive string pointers (to [len|content] structure)
                 // Functions that need string arguments expanded to (content_ptr, len)
-                eprintln!(
+                debug_mir!(
                     "DEBUG FUNCTION MATCH: function_name={:?}, arguments={}",
                     function_name,
                     arguments.len()
                 );
                 match function_name.as_deref() {
                     Some("print") | Some("printl") | Some("println") => {
-                        eprintln!("DEBUG: Matched print function, loading {} arguments", arguments.len());
+                        debug_mir!(": Matched print function, loading {} arguments", arguments.len());
                         // Print functions need string arguments expanded to (content_ptr, length)
                         for (i, arg) in arguments.iter().enumerate() {
-                            eprintln!("DEBUG: Loading print arg[{}]: {:?}", i, arg);
+                            debug_mir!(": Loading print arg[{}]: {:?}", i, arg);
                             self.load_string_argument_for_print(arg)?;
                         }
                     }
                     Some("string_concat") => {
-                        eprintln!("DEBUG: Matched string_concat");
+                        debug_mir!(": Matched string_concat");
                         // CRITICAL FIX: string_concat expects 4 i32 arguments: (ptr1, len1, ptr2, len2) -> result_ptr
                         // This matches the runtime host function signature
                         // We need to expand StringTuple to (ptr, len) pairs
@@ -1622,7 +1634,7 @@ impl<'a> MirCodeGenerator<'a> {
                     | Some("input.integer")  // Dot notation variants
                     | Some("input.float")
                     | Some("input.yesNo") => {
-                        eprintln!("DEBUG: Matched input function - using load_string_pointer_only");
+                        debug_mir!(": Matched input function - using load_string_pointer_only");
                         // FIXED: Input functions now expect only (prompt_ptr) -> result
                         // They no longer take length parameter
                         for arg in arguments {
@@ -1644,7 +1656,7 @@ impl<'a> MirCodeGenerator<'a> {
                         // HTTP functions need string arguments expanded to (content_ptr, length)
                         // http.get(url) -> http_get(url_ptr, url_len)
                         // http.post(url, data) -> http_post(url_ptr, url_len, data_ptr, data_len)
-                        eprintln!("DEBUG: Matched HTTP function '{}', expanding string arguments", name);
+                        debug_mir!(": Matched HTTP function '{}', expanding string arguments", name);
                         for arg in arguments {
                             self.load_string_argument_for_print(arg)?;
                         }
@@ -1652,7 +1664,7 @@ impl<'a> MirCodeGenerator<'a> {
                     Some("conditional.number") => {
                         // conditional.number(bool, f64, f64) -> f64
                         // Need to convert integer arguments to f64
-                        eprintln!("DEBUG: Matched conditional.number, converting integer args to f64");
+                        debug_mir!(": Matched conditional.number, converting integer args to f64");
                         for (i, arg) in arguments.iter().enumerate() {
                             self.load_operand(arg)?;
                             // Convert second and third arguments (true/false values) from i32 to f64 if needed
@@ -1709,11 +1721,13 @@ impl<'a> MirCodeGenerator<'a> {
                     Some(name)
                         if name.starts_with("number")
                             || name == "float_to_string"
-                            || name.ends_with(".toNumber") =>
+                            || name == "integer.toNumber" =>
                     {
                         // CRITICAL FIX: number conversion functions expect f64 parameters
                         // number_to_string, float_to_string, etc. expect f64
                         // Convert i32 (integer) arguments to f64 (number) automatically
+                        // NOTE: string.toNumber and boolean.toNumber take i32 inputs (pointer/boolean)
+                        // and should NOT be converted - only integer.toNumber needs conversion
                         for arg in arguments {
                             self.load_operand(arg)?;
                             if matches!(arg, MirOperand::Constant(MirConstant::Integer(_))) {
@@ -1735,11 +1749,19 @@ impl<'a> MirCodeGenerator<'a> {
                             }
                         }
                     }
+                    Some("string.toNumber") | Some("boolean.toNumber") => {
+                        // string.toNumber takes i32 (string pointer) -> f64
+                        // boolean.toNumber takes i32 (boolean value) -> f64
+                        // Do NOT convert the i32 argument to f64
+                        for arg in arguments {
+                            self.load_operand(arg)?;
+                        }
+                    }
                     _ => {
                         // For user-defined functions and other built-ins, load arguments with automatic type conversion
                         // String parameters are passed as pointers to [len|content] structure
-                        eprintln!(
-                            "DEBUG CALL ARGS: Loading {} arguments for function {:?}",
+                        debug_mir!(
+            "DEBUG CALL ARGS: Loading {} arguments for function {:?}",
                             arguments.len(),
                             function_name
                         );
@@ -1748,7 +1770,7 @@ impl<'a> MirCodeGenerator<'a> {
                         let param_types = function_signature.as_ref().map(|sig| &sig.parameters);
 
                         for (i, arg) in arguments.iter().enumerate() {
-                            eprintln!("DEBUG CALL ARGS:   Arg[{}]: {:?}", i, arg);
+                            debug_mir!(" CALL ARGS:   Arg[{}]: {:?}", i, arg);
                             self.load_operand(arg)?;
 
                             // Automatic type conversion: if parameter expects f64 but we have i32, convert
@@ -1780,8 +1802,8 @@ impl<'a> MirCodeGenerator<'a> {
                                         };
 
                                         if arg_is_int {
-                                            eprintln!(
-                                                "DEBUG CALL ARGS:   Converting i32 arg[{}] to f64",
+                                            debug_mir!(
+            "DEBUG CALL ARGS:   Converting i32 arg[{}] to f64",
                                                 i
                                             );
                                             self.current_instructions
@@ -1791,10 +1813,10 @@ impl<'a> MirCodeGenerator<'a> {
                                 }
                             }
 
-                            eprintln!("DEBUG CALL ARGS:   Arg[{}] loaded successfully", i);
+                            debug_mir!(" CALL ARGS:   Arg[{}] loaded successfully", i);
                         }
-                        eprintln!(
-                            "DEBUG CALL ARGS: Finished loading all {} arguments",
+                        debug_mir!(
+            "DEBUG CALL ARGS: Finished loading all {} arguments",
                             arguments.len()
                         );
                     }
@@ -1807,9 +1829,10 @@ impl<'a> MirCodeGenerator<'a> {
                         // This avoids name collisions for constructors/methods with same names
                         if let Some(&function_index) = self.symbol_to_function_index.get(symbol_id)
                         {
-                            eprintln!(
+                            debug_mir!(
                                 "DEBUG DIRECT LOOKUP: SymbolId({}) -> WASM index {} (DIRECT)",
-                                symbol_id.0, function_index
+                                symbol_id.0,
+                                function_index
                             );
                             tracing::trace!(
                                 symbol_id = symbol_id.0,
@@ -1822,7 +1845,7 @@ impl<'a> MirCodeGenerator<'a> {
                             self.get_function_name_by_symbol(*symbol_id)
                         {
                             // Fallback to name-based lookup for built-in functions
-                            eprintln!(
+                            debug_mir!(
                                 "DEBUG LOOKUP: Looking up function '{}' in function_map",
                                 function_name
                             );
@@ -1847,9 +1870,10 @@ impl<'a> MirCodeGenerator<'a> {
                                     if let Some(&idx) =
                                         self.wasm_generator.function_map.get(&alt_name)
                                     {
-                                        eprintln!(
+                                        debug_mir!(
                                             "DEBUG LOOKUP FALLBACK: Found '{}' as '{}'",
-                                            function_name, alt_name
+                                            function_name,
+                                            alt_name
                                         );
                                         Some(idx)
                                     } else {
@@ -1867,7 +1891,7 @@ impl<'a> MirCodeGenerator<'a> {
                                         namespaces.iter().find_map(|ns| {
                                             let qualified_name =
                                                 format!("{}.{}", ns, function_name);
-                                            eprintln!(
+                                            debug_mir!(
                                                 "DEBUG LOOKUP FALLBACK: Trying '{}'",
                                                 qualified_name
                                             );
@@ -1890,7 +1914,7 @@ impl<'a> MirCodeGenerator<'a> {
                                     ];
                                     namespaces.iter().find_map(|ns| {
                                         let qualified_name = format!("{}.{}", ns, function_name);
-                                        eprintln!(
+                                        debug_mir!(
                                             "DEBUG LOOKUP FALLBACK: Trying '{}'",
                                             qualified_name
                                         );
@@ -1913,11 +1937,11 @@ impl<'a> MirCodeGenerator<'a> {
                             } else {
                                 // CRITICAL FIX: No more silent fallbacks to index 0
                                 // Return a proper error when function is not found in function_map
-                                eprintln!(
+                                debug_mir!(
                                     "DEBUG LOOKUP: Function '{}' not found in function_map!",
                                     function_name
                                 );
-                                eprintln!(
+                                debug_mir!(
                                     "DEBUG LOOKUP: function_map keys: {:?}",
                                     self.wasm_generator.function_map.keys().collect::<Vec<_>>()
                                 );
@@ -1951,7 +1975,7 @@ impl<'a> MirCodeGenerator<'a> {
                     }
                     MirOperand::NamedFunction { name, symbol_id: _ } => {
                         // CRITICAL FIX: Handle namespace functions (math.*, string.*) by looking up by name
-                        eprintln!(
+                        debug_mir!(
                             "DEBUG NAMED FUNCTION: Looking up function '{}' in function_map",
                             name
                         );
@@ -1972,7 +1996,7 @@ impl<'a> MirCodeGenerator<'a> {
                                 };
 
                                 if !alt_name.is_empty() {
-                                    eprintln!(
+                                    debug_mir!(
                                         "DEBUG NAMED FUNCTION FALLBACK: Trying alternate name '{}'",
                                         alt_name
                                     );
@@ -1983,9 +2007,10 @@ impl<'a> MirCodeGenerator<'a> {
                             };
 
                         if let Some(idx) = function_index {
-                            eprintln!(
+                            debug_mir!(
                                 "DEBUG NAMED FUNCTION CALL: Calling '{}' at WASM index {}",
-                                name, idx
+                                name,
+                                idx
                             );
                             tracing::trace!(
                                 name = %name,
@@ -1995,11 +2020,11 @@ impl<'a> MirCodeGenerator<'a> {
                             self.current_instructions.push(Instruction::Call(idx));
                         } else {
                             // CRITICAL FIX: Return a proper error when named function is not found
-                            eprintln!(
+                            debug_mir!(
                                 "DEBUG NAMED FUNCTION: Function '{}' not found in function_map!",
                                 name
                             );
-                            eprintln!(
+                            debug_mir!(
                                 "DEBUG NAMED FUNCTION: Available functions: {:?}",
                                 self.wasm_generator.function_map.keys().collect::<Vec<_>>()
                             );
@@ -2026,29 +2051,31 @@ impl<'a> MirCodeGenerator<'a> {
                 }
 
                 // CRITICAL FIX: Handle return values based on function signature
-                eprintln!("DEBUG CALL: Call operation completed");
-                eprintln!(
+                debug_mir!(" CALL: Call operation completed");
+                debug_mir!(
                     "DEBUG CALL: function_name={:?}, has_dest={}",
                     function_name,
                     instruction.dest.is_some()
                 );
 
                 if let Some(dest) = instruction.dest {
-                    eprintln!("DEBUG CALL DEST: Processing call with dest={:?}", dest);
-                    eprintln!("DEBUG CALL DEST: function_name={:?}", function_name);
+                    debug_mir!(" CALL DEST: Processing call with dest={:?}", dest);
+                    debug_mir!(" CALL DEST: function_name={:?}", function_name);
 
                     // CRITICAL FIX: Convert function results from F64 to I32 when destination is I32
                     // Use the function signature's return type to determine if conversion is needed
                     if let Some(dest_type) = self.value_to_type.get(&dest) {
-                        eprintln!("DEBUG CALL DEST: dest_type={:?}", dest_type);
+                        debug_mir!(" CALL DEST: dest_type={:?}", dest_type);
                         if matches!(dest_type, MirType::I32) {
-                            eprintln!("DEBUG CALL DEST: Destination is I32, checking function return type...");
+                            debug_mir!(
+                                " CALL DEST: Destination is I32, checking function return type..."
+                            );
 
                             // Check if the function returns F64 by checking the signature
                             // For SymbolId(0) stdlib functions, the MIR signature may be Void (incorrect)
                             // In that case, fall back to function name checking
                             let needs_conversion = if let Some(sig) = &function_signature {
-                                eprintln!("DEBUG CALL DEST: Checking signature return_type={:?} for SymbolId={:?}", sig.return_type, symbol_id_opt);
+                                debug_mir!(" CALL DEST: Checking signature return_type={:?} for SymbolId={:?}", sig.return_type, symbol_id_opt);
 
                                 // If signature has a proper return type, use it
                                 if matches!(sig.return_type, MirType::F64) {
@@ -2056,10 +2083,10 @@ impl<'a> MirCodeGenerator<'a> {
                                 } else if matches!(sig.return_type, MirType::Void) {
                                     // Void signature is incorrect for stdlib functions, check function name instead
                                     if let Some(fname) = &function_name {
-                                        eprintln!("DEBUG CALL DEST: Void signature detected, checking function name={}", fname);
+                                        debug_mir!(" CALL DEST: Void signature detected, checking function name={}", fname);
                                         fname.starts_with("math.")
                                     } else {
-                                        eprintln!(
+                                        debug_mir!(
                                             "DEBUG CALL DEST: Void signature but no function name"
                                         );
                                         false
@@ -2070,19 +2097,19 @@ impl<'a> MirCodeGenerator<'a> {
                                 }
                             } else if let Some(fname) = &function_name {
                                 // Fallback to function name check if no signature
-                                eprintln!(
+                                debug_mir!(
                                     "DEBUG CALL DEST: No signature, checking function name={}",
                                     fname
                                 );
                                 fname.starts_with("math.")
                             } else {
-                                eprintln!("DEBUG CALL DEST: No signature or function name");
+                                debug_mir!(" CALL DEST: No signature or function name");
                                 false
                             };
 
                             if needs_conversion {
-                                eprintln!(
-                                    "DEBUG TYPE CONVERSION (CALL): Adding f64→i32 conversion for {:?} result",
+                                debug_mir!(
+            "DEBUG TYPE CONVERSION (CALL): Adding f64→i32 conversion for {:?} result",
                                     function_name
                                 );
                                 self.current_instructions.push(Instruction::I32TruncF64S);
@@ -2091,14 +2118,14 @@ impl<'a> MirCodeGenerator<'a> {
                                     function_name
                                 );
                             } else {
-                                eprintln!(
+                                debug_mir!(
                                     "DEBUG CALL DEST: Function {:?} does not need conversion",
                                     function_name
                                 );
                             }
                         }
                     } else {
-                        eprintln!("DEBUG CALL DEST: No dest_type found for {:?}", dest);
+                        debug_mir!(" CALL DEST: No dest_type found for {:?}", dest);
                     }
 
                     if let Some(signature) = &function_signature {
@@ -2110,29 +2137,35 @@ impl<'a> MirCodeGenerator<'a> {
                         if is_ptr_void {
                             // Ptr(Void) dest_type means Unknown type - drop the actual return values
                             // Use the ACTUAL signature return type to determine how many values to drop
-                            eprintln!("DEBUG SIG VOID: Unknown type dest {:?}, signature return type: {:?}", dest, signature.return_type);
+                            debug_mir!(
+                                " SIG VOID: Unknown type dest {:?}, signature return type: {:?}",
+                                dest,
+                                signature.return_type
+                            );
 
                             // CRITICAL FIX: Check if this is a known void function by name first
-                            // Some functions like list.add have incorrect I32 signatures but actually return void
+                            // list.set and list.clear are void functions (they modify in-place)
+                            // NOTE: list.add is NOT void - it returns the modified list per specification
                             let is_known_void_by_name = function_name.as_deref()
-                                == Some("list.add")
+                                == Some("list.set")
+                                || function_name.as_deref() == Some("list.clear")
                                 || function_name.as_deref() == Some("list.push");
 
                             if is_known_void_by_name {
-                                eprintln!(
+                                debug_mir!(
                                     "DEBUG SIG VOID: Known void function by name - no DROP needed"
                                 );
                             } else {
                                 match &signature.return_type {
                                     MirType::Void => {
                                         // Function truly returns nothing - no DROP needed
-                                        eprintln!(
-                                            "DEBUG SIG VOID: Function returns Void - no drop needed"
+                                        debug_mir!(
+            "DEBUG SIG VOID: Function returns Void - no drop needed"
                                         );
                                     }
                                     _ => {
                                         // Function returns a value - drop it since we can't use it (Unknown type)
-                                        eprintln!(
+                                        debug_mir!(
                                             "DEBUG SIG VOID: Dropping 1 value (return type: {:?})",
                                             signature.return_type
                                         );
@@ -2175,9 +2208,11 @@ impl<'a> MirCodeGenerator<'a> {
                         // Fallback: no signature available
                         // Check if the destination value was registered as Void type
                         if let Some(dest_type) = self.value_to_type.get(&dest) {
-                            eprintln!(
+                            debug_mir!(
                                 "DEBUG VOID CHECK: dest={:?}, dest_type={:?}, function={:?}",
-                                dest, dest_type, function_name
+                                dest,
+                                dest_type,
+                                function_name
                             );
                             let is_ptr_void = matches!(dest_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
 
@@ -2186,7 +2221,7 @@ impl<'a> MirCodeGenerator<'a> {
                             if is_ptr_void {
                                 // Ptr(Void) means Unknown type that actually returns a value
                                 // Without signature, we assume single return value (most common case)
-                                eprintln!(
+                                debug_mir!(
                                     "DEBUG VOID DEST: Dropping 1 value for Unknown type dest {:?}",
                                     dest
                                 );
@@ -2196,7 +2231,7 @@ impl<'a> MirCodeGenerator<'a> {
                                 self.store_to_local(dest)?;
                             }
                         } else {
-                            eprintln!(
+                            debug_mir!(
                                 "DEBUG VOID CHECK: dest={:?} not found in value_to_type",
                                 dest
                             );
@@ -2206,6 +2241,8 @@ impl<'a> MirCodeGenerator<'a> {
                                     || function_name == "print"
                                     || function_name == "printl"
                                     || function_name == "println"
+                                    || function_name == "list.set"
+                                    || function_name == "list.clear"
                                 {
                                     tracing::trace!(
                                         name = %function_name,
@@ -2222,11 +2259,11 @@ impl<'a> MirCodeGenerator<'a> {
                 } else {
                     // CRITICAL FIX: Handle calls with no destination (expression statements)
                     // For non-void functions, we need to DROP the return value to clean up the stack
-                    eprintln!("DEBUG CALL NO DEST: Call has no destination, checking if return value needs to be dropped");
+                    debug_mir!(" CALL NO DEST: Call has no destination, checking if return value needs to be dropped");
 
                     // Check if this function returns void (no cleanup needed)
                     let is_void_return = if let Some(signature) = &function_signature {
-                        eprintln!(
+                        debug_mir!(
                             "DEBUG CALL NO DEST: Found signature, return_type={:?}",
                             signature.return_type
                         );
@@ -2235,16 +2272,24 @@ impl<'a> MirCodeGenerator<'a> {
                         matches!(signature.return_type, MirType::Void)
                             || matches!(&signature.return_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void))
                     } else {
-                        eprintln!(
+                        debug_mir!(
                             "DEBUG CALL NO DEST: No signature found, checking fallback logic"
                         );
                         // Fallback: check known void functions by name
-                        let is_known_void_builtin = function_name.as_deref() == Some("print")
-                            || function_name.as_deref() == Some("printl")
-                            || function_name.as_deref() == Some("println");
+                        // These are builtin/stdlib functions that return nothing (modify in-place or have side effects only)
+                        // NOTE: list.push is NOT void - it returns the list for chaining
+                        let is_known_void_builtin = match function_name.as_deref() {
+                            Some("print") | Some("printl") | Some("println") => true,
+                            Some("list.set") | Some("list.clear") => true,
+                            Some("mem_release") | Some("mem_retain") => true,
+                            _ => false,
+                        };
 
                         if is_known_void_builtin {
-                            eprintln!("DEBUG CALL NO DEST: Known void built-in function");
+                            debug_mir!(
+                                " CALL NO DEST: Known void built-in function: {:?}",
+                                function_name
+                            );
                             true
                         } else {
                             // CRITICAL FIX: For functions without signatures called as expression statements,
@@ -2253,13 +2298,13 @@ impl<'a> MirCodeGenerator<'a> {
                             // 1. Leaving values on stack causes WASM validation errors
                             // 2. Adding DROP for void function would cause immediate error (helps catch bugs)
                             // 3. Most builtins (like list.add) don't have registered signatures
-                            eprintln!("DEBUG CALL NO DEST: Unknown function without signature, defaulting to non-void (adding DROP for safety)");
+                            debug_mir!(" CALL NO DEST: Unknown function without signature, defaulting to non-void (adding DROP for safety)");
                             false
                         }
                     };
 
                     if !is_void_return {
-                        eprintln!("DEBUG CALL NO DEST: Non-void function, adding DROP instruction");
+                        debug_mir!(" CALL NO DEST: Non-void function, adding DROP instruction");
                         // Function returns a value but we're not using it (expression statement)
                         // Drop the return value from the stack
                         self.current_instructions.push(Instruction::Drop);
@@ -2268,7 +2313,7 @@ impl<'a> MirCodeGenerator<'a> {
                             "Dropped unused return value for call with no destination"
                         );
                     } else {
-                        eprintln!("DEBUG CALL NO DEST: Void function, no DROP needed");
+                        debug_mir!(" CALL NO DEST: Void function, no DROP needed");
                         tracing::trace!(
                             function_name = ?function_name,
                             "No DROP needed for void function call"
@@ -2279,24 +2324,33 @@ impl<'a> MirCodeGenerator<'a> {
                 debug_mir!("DEBUG MIR: Call operation processing completed");
             }
 
-            MirOperation::GetElementPtr { base, indices } => {
-                eprintln!("DEBUG CODEGEN GEP: base={:?}, indices={:?}", base, indices);
-                eprintln!(
+            MirOperation::GetElementPtr {
+                base,
+                indices,
+                is_array,
+            } => {
+                debug_mir!(
+                    " CODEGEN GEP: base={:?}, indices={:?}, is_array={}",
+                    base,
+                    indices,
+                    is_array
+                );
+                debug_mir!(
                     "DEBUG CODEGEN GEP: value_to_local map has {} entries",
                     self.value_to_local.len()
                 );
                 if let MirOperand::Value(vid) = base {
-                    eprintln!(
+                    debug_mir!(
                         "DEBUG CODEGEN GEP: Looking for base ValueId({}) in value_to_local",
                         vid.0
                     );
                     if self.value_to_local.contains_key(vid) {
-                        eprintln!(
+                        debug_mir!(
                             "DEBUG CODEGEN GEP: Base ValueId({}) FOUND in value_to_local",
                             vid.0
                         );
                     } else {
-                        eprintln!(
+                        debug_mir!(
                             "DEBUG CODEGEN GEP: Base ValueId({}) NOT FOUND in value_to_local!",
                             vid.0
                         );
@@ -2306,6 +2360,7 @@ impl<'a> MirCodeGenerator<'a> {
                 tracing::trace!(
                     base = ?base,
                     indices = ?indices,
+                    is_array = is_array,
                     "Processing GetElementPtr"
                 );
 
@@ -2324,21 +2379,26 @@ impl<'a> MirCodeGenerator<'a> {
                     match self.load_operand(index) {
                         Ok(_) => {
                             debug_mir!(index_num = i, "Index loaded successfully");
-                            // Calculate element address: base + 16 + (index * element_size)
-                            // CRITICAL FIX: Clean Language array layout has 16-byte header
-                            // Clean Language array layout:
-                            //   Offset 0-3: Type marker (0)
-                            //   Offset 4-7: Array length (i32)
-                            //   Offset 8-11: Element size (4)
-                            //   Offset 12-15: Unused
-                            //   Offset 16+: Elements start here
-                            // For simplicity, assume 4-byte elements (i32/f32)
-                            self.current_instructions.push(Instruction::I32Const(4));
-                            self.current_instructions.push(Instruction::I32Mul);
-                            self.current_instructions.push(Instruction::I32Add);
-                            // Add array header offset (16 bytes for header)
-                            self.current_instructions.push(Instruction::I32Const(16));
-                            self.current_instructions.push(Instruction::I32Add);
+                            // Calculate element address
+                            if *is_array {
+                                // For arrays: multiply index by 4 (element size) and add header
+                                // Array elements are at array_ptr + 16 + (index * 4)
+                                self.current_instructions.push(Instruction::I32Const(4));
+                                self.current_instructions.push(Instruction::I32Mul);
+                                self.current_instructions.push(Instruction::I32Add);
+                                // Clean Language array layout:
+                                //   Offset 0-3: Type marker (0)
+                                //   Offset 4-7: Array length (i32)
+                                //   Offset 8-11: Element size (4)
+                                //   Offset 12-15: Unused
+                                //   Offset 16+: Elements start here
+                                self.current_instructions.push(Instruction::I32Const(16));
+                                self.current_instructions.push(Instruction::I32Add);
+                            } else {
+                                // For class fields: the index IS the byte offset (already calculated)
+                                // Just add it directly to the base pointer
+                                self.current_instructions.push(Instruction::I32Add);
+                            }
                         }
                         Err(e) => {
                             debug_mir!(index_num = i, error = ?e, "Failed to load index");
@@ -2772,7 +2832,7 @@ impl<'a> MirCodeGenerator<'a> {
         &mut self,
         operand: &MirOperand,
     ) -> Result<(), CompilerError> {
-        eprintln!("DEBUG LOAD_STRING: Called with operand: {:?}", operand);
+        debug_mir!(" LOAD_STRING: Called with operand: {:?}", operand);
         tracing::trace!(
             operand = ?operand,
             "load_string_argument_for_print called"
@@ -2827,18 +2887,18 @@ impl<'a> MirCodeGenerator<'a> {
                 }
             }
             MirOperand::Value(value_id) => {
-                eprintln!("DEBUG LOAD_STRING: Processing Value({:?})", value_id);
+                debug_mir!(" LOAD_STRING: Processing Value({:?})", value_id);
                 // Check if this value represents a string constant
                 tracing::trace!(
                     value_id = ?value_id.0,
                     "Checking ValueId for string mapping"
                 );
-                eprintln!(
+                debug_mir!(
                     "DEBUG LOAD_STRING: Checking value_to_string_index for ValueId({:?})",
                     value_id.0
                 );
                 if let Some(&string_index) = self.value_to_string_index.get(value_id) {
-                    eprintln!("DEBUG LOAD_STRING: Found string_index={}", string_index);
+                    debug_mir!(" LOAD_STRING: Found string_index={}", string_index);
                     tracing::trace!(
                         value_id = ?value_id.0,
                         string_index = string_index,
@@ -2885,7 +2945,7 @@ impl<'a> MirCodeGenerator<'a> {
                         });
                     }
                 } else {
-                    eprintln!(
+                    debug_mir!(
                         "DEBUG LOAD_STRING: No string_index found, expanding as string pointer"
                     );
                     // This is a string VALUE (from function return like .toString())
@@ -2896,30 +2956,30 @@ impl<'a> MirCodeGenerator<'a> {
                     );
 
                     // Load the string pointer into a local variable
-                    eprintln!("DEBUG LOAD_STRING: Loading operand to stack");
+                    debug_mir!(" LOAD_STRING: Loading operand to stack");
                     self.load_operand(operand)?;
 
                     // Allocate a temporary local to hold the pointer
                     let temp_local = self.next_local_index;
-                    eprintln!("DEBUG LOAD_STRING: Allocated temp_local={}", temp_local);
+                    debug_mir!(" LOAD_STRING: Allocated temp_local={}", temp_local);
                     self.next_local_index += 1;
                     // Track type: string pointers are i32
                     self.temp_local_types.insert(temp_local, ValType::I32);
 
                     // Store pointer to temp local
-                    eprintln!("DEBUG LOAD_STRING: Storing pointer to temp_local");
+                    debug_mir!(" LOAD_STRING: Storing pointer to temp_local");
                     self.current_instructions
                         .push(Instruction::LocalSet(temp_local));
 
                     // Calculate content pointer (ptr + 4, skipping length field)
-                    eprintln!("DEBUG LOAD_STRING: Calculating content_ptr = base_ptr + 4");
+                    debug_mir!(" LOAD_STRING: Calculating content_ptr = base_ptr + 4");
                     self.current_instructions
                         .push(Instruction::LocalGet(temp_local));
                     self.current_instructions.push(Instruction::I32Const(4));
                     self.current_instructions.push(Instruction::I32Add);
 
                     // Load length from memory at pointer location
-                    eprintln!("DEBUG LOAD_STRING: Loading length from base_ptr");
+                    debug_mir!(" LOAD_STRING: Loading length from base_ptr");
                     self.current_instructions
                         .push(Instruction::LocalGet(temp_local));
                     self.current_instructions
@@ -2929,7 +2989,7 @@ impl<'a> MirCodeGenerator<'a> {
                             memory_index: 0,
                         }));
 
-                    eprintln!("DEBUG LOAD_STRING: String pointer expansion completed - stack should have [content_ptr, length]");
+                    debug_mir!(" LOAD_STRING: String pointer expansion completed - stack should have [content_ptr, length]");
                     debug_mir!("DEBUG MIR: String pointer expansion completed");
                 }
             }
@@ -3018,16 +3078,16 @@ impl<'a> MirCodeGenerator<'a> {
                     match (&src_type, &dest_type) {
                         // f64 → i32: Truncate float to integer
                         (MirType::F64, MirType::I32) => {
-                            eprintln!(
-                                "DEBUG TYPE CONVERSION: Adding f64→i32 conversion for ValueId({:?})",
+                            debug_mir!(
+            "DEBUG TYPE CONVERSION: Adding f64→i32 conversion for ValueId({:?})",
                                 value_id.0
                             );
                             self.current_instructions.push(Instruction::I32TruncF64S);
                         }
                         // i32 → f64: Convert integer to float
                         (MirType::I32, MirType::F64) => {
-                            eprintln!(
-                                "DEBUG TYPE CONVERSION: Adding i32→f64 conversion for ValueId({:?})",
+                            debug_mir!(
+            "DEBUG TYPE CONVERSION: Adding i32→f64 conversion for ValueId({:?})",
                                 value_id.0
                             );
                             self.current_instructions.push(Instruction::F64ConvertI32S);
@@ -3229,7 +3289,7 @@ impl<'a> MirCodeGenerator<'a> {
 
             // DEBUG: Log each iteration for specific functions
             if function.name == "logMessage" || function.name == "buildUrl" {
-                eprintln!("DEBUG PARAM CONVERSION ITERATION[{}]: function='{}' param='{}' mir_type={:?} val_type={:?} param_types_len_before={}",
+                debug_mir!("DEBUG PARAM CONVERSION ITERATION[{}]: function='{}' param='{}' mir_type={:?} val_type={:?} param_types_len_before={}",
                     i, function.name, param.name, param.param_type, val_type, param_types.len());
             }
 
@@ -3237,7 +3297,7 @@ impl<'a> MirCodeGenerator<'a> {
 
             // DEBUG: Log after push
             if function.name == "logMessage" || function.name == "buildUrl" {
-                eprintln!(
+                debug_mir!(
                     "DEBUG AFTER PUSH[{}]: function='{}' param_types_len_after={} param_types={:?}",
                     i,
                     function.name,
@@ -3356,39 +3416,42 @@ impl<'a> MirCodeGenerator<'a> {
         let mut local_types_map = std::collections::HashMap::new();
 
         // First, add explicitly declared locals from MIR function
-        eprintln!("\n=== DEBUG COMPUTE_TYPES for '{}' ===", function.name);
-        eprintln!(
-            "DEBUG COMPUTE_TYPES: Processing {} locals from function.locals",
-            function.locals.len()
-        );
-        eprintln!(
-            "DEBUG COMPUTE_TYPES: Current value_to_local has {} entries",
-            self.value_to_local.len()
+        debug_mir!(
+            function_name = %function.name,
+            locals_count = function.locals.len(),
+            value_to_local_entries = self.value_to_local.len(),
+            "COMPUTE_TYPES: Processing function locals"
         );
         for (vid, &local_idx) in &self.value_to_local {
-            eprintln!(
-                "  value_to_local: ValueId({}) -> local {}",
-                vid.0, local_idx
+            debug_mir!(
+                value_id = vid.0,
+                local_idx = local_idx,
+                "value_to_local mapping"
             );
         }
 
         for (value_id, local) in &function.locals {
-            eprintln!(
-                "  ValueId({}) has MIR type {:?}",
-                value_id.0, local.local_type
+            debug_mir!(
+                value_id = value_id.0,
+                mir_type = ?local.local_type,
+                "Processing local type"
             );
             if let Ok(wasm_type) = self.mir_type_to_wasm_type(&local.local_type) {
                 if let Some(&local_index) = self.value_to_local.get(value_id) {
-                    eprintln!(
-                        "    -> maps to local {} with WASM type {:?}",
-                        local_index, wasm_type
+                    debug_mir!(
+                        local_index = local_index,
+                        wasm_type = ?wasm_type,
+                        "Local maps to WASM type"
                     );
                     local_types_map.insert(local_index, wasm_type);
                 } else {
-                    eprintln!("    -> NOT in value_to_local map!");
+                    debug_mir!(value_id = value_id.0, "NOT in value_to_local map");
                 }
             } else {
-                eprintln!("    -> Failed to convert MIR type to WASM type");
+                debug_mir!(
+                    value_id = value_id.0,
+                    "Failed to convert MIR type to WASM type"
+                );
             }
         }
 
@@ -3434,21 +3497,22 @@ impl<'a> MirCodeGenerator<'a> {
         // expects only the additional locals, not the parameters (which are in the signature)
         let num_params = function.parameters.len() as u32;
         let mut locals = Vec::new();
-        eprintln!(
+        debug_mir!(
             "DEBUG LOCAL TYPES: Computing final local types (next_local_index={}, num_params={})",
-            self.next_local_index, num_params
+            self.next_local_index,
+            num_params
         );
-        eprintln!(
+        debug_mir!(
             "DEBUG LOCAL TYPES: Only returning locals starting from index {}",
             num_params
         );
         for i in num_params..self.next_local_index {
             if let Some(&wasm_type) = local_types_map.get(&i) {
-                eprintln!("DEBUG LOCAL TYPES:   Local {} -> {:?}", i, wasm_type);
+                debug_mir!(" LOCAL TYPES:   Local {} -> {:?}", i, wasm_type);
                 locals.push((1, wasm_type));
             }
         }
-        eprintln!(
+        debug_mir!(
             "DEBUG LOCAL TYPES: Final locals vec has {} entries (excluding {} parameters)",
             locals.len(),
             num_params
@@ -3541,19 +3605,20 @@ impl<'a> MirCodeGenerator<'a> {
     /// CRITICAL FIX: Completely eliminated hardcoded SymbolId mappings
     /// All symbols (builtins + user-defined) are resolved from the symbol table
     fn get_function_name_by_symbol(&self, symbol_id: SymbolId) -> Option<String> {
-        eprintln!(
+        debug_mir!(
             "DEBUG SYMBOL MAP LOOKUP: Looking up SymbolId({}) in function_symbol_map",
             symbol_id.0
         );
-        eprintln!(
+        debug_mir!(
             "DEBUG SYMBOL MAP LOOKUP: Map has {} entries",
             self.function_symbol_map.len()
         );
 
         if let Some(function_name) = self.function_symbol_map.get(&symbol_id) {
-            eprintln!(
+            debug_mir!(
                 "DEBUG SYMBOL MAP LOOKUP: Found SymbolId({}) -> '{}'",
-                symbol_id.0, function_name
+                symbol_id.0,
+                function_name
             );
             tracing::debug!(
                 symbol_id = symbol_id.0,
@@ -3562,11 +3627,11 @@ impl<'a> MirCodeGenerator<'a> {
             );
             Some(function_name.clone())
         } else {
-            eprintln!(
+            debug_mir!(
                 "DEBUG SYMBOL MAP LOOKUP: SymbolId({}) NOT FOUND in map!",
                 symbol_id.0
             );
-            eprintln!(
+            debug_mir!(
                 "DEBUG SYMBOL MAP LOOKUP: Map contents (first 10): {:?}",
                 self.function_symbol_map.iter().take(10).collect::<Vec<_>>()
             );

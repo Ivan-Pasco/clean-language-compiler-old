@@ -212,6 +212,8 @@ pub enum MirOperation {
     GetElementPtr {
         base: MirOperand,
         indices: Vec<MirOperand>,
+        /// True for array access (needs 16-byte header offset), false for struct field access
+        is_array: bool,
     },
 
     /// Allocate local memory

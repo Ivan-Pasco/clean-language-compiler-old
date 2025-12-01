@@ -1,0 +1,49 @@
+// Spec Section: 7.4 - Parameters
+// Tests: Functions with various parameter types and counts
+
+functions:
+	void printSingle(string message)
+		print(message)
+
+	void printTwo(string first, string second)
+		print(first)
+		print(second)
+
+	integer sumThree(integer a, integer b, integer c)
+		return a + b + c
+
+	string formatPerson(string name, integer age)
+		return name + " is " + age.toString() + " years old"
+
+	boolean inRange(integer value, integer min, integer max)
+		return value >= min and value <= max
+
+	number average(number a, number b, number c)
+		return (a + b + c) / 3.0
+
+start()
+	// Test 1: Single parameter
+	printSingle("Hello from single param")
+
+	// Test 2: Two parameters
+	printTwo("First line", "Second line")
+
+	// Test 3: Three integer parameters
+	integer total = sumThree(10, 20, 30)
+	print("Sum of 10, 20, 30: " + total.toString())
+
+	// Test 4: Mixed parameter types
+	string personInfo = formatPerson("Alice", 25)
+	print(personInfo)
+
+	// Test 5: Three parameters with boolean return
+	boolean inRange1 = inRange(50, 0, 100)
+	boolean inRange2 = inRange(150, 0, 100)
+	print("50 in range 0-100: " + inRange1.toString())
+	print("150 in range 0-100: " + inRange2.toString())
+
+	// Test 6: Three number parameters
+	number avg = average(10.0, 20.0, 30.0)
+	print("Average of 10, 20, 30: " + avg.toString())
+
+	print("Function parameters test completed")

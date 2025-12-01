@@ -14,6 +14,31 @@
  *                      Plugins transform here
  * ```
  *
+ * ## Language Server Integration
+ *
+ * Plugins can provide IDE support by implementing the optional LSP methods:
+ *
+ * ```text
+ * ┌──────────────────────────────────────────────────────────────────┐
+ * │                    PLUGIN-AWARE LANGUAGE SERVER                   │
+ * ├──────────────────────────────────────────────────────────────────┤
+ * │   ┌──────────────┐         ┌──────────────────────┐              │
+ * │   │   Plugins    │────────▶│   PluginRegistry     │              │
+ * │   │              │         │   - handles: [...]    │              │
+ * │   │ - endpoints: │         │   - completions       │              │
+ * │   │ - data:      │         │   - hover docs        │              │
+ * │   └──────────────┘         └───────────┬──────────┘              │
+ * │                                        │                          │
+ * │                                        ▼                          │
+ * │   ┌────────────────────────────────────────────────────────┐     │
+ * │   │                  Language Server                        │     │
+ * │   │   CompletionProvider  ◀──── registry.get_completions() │     │
+ * │   │   HoverProvider       ◀──── registry.get_hover_info()  │     │
+ * │   │   SemanticTokens      ◀──── registry.get_keywords()    │     │
+ * │   └────────────────────────────────────────────────────────┘     │
+ * └──────────────────────────────────────────────────────────────────┘
+ * ```
+ *
  * ## Usage
  *
  * Framework implementations should create their own plugin crates and register them:
@@ -43,10 +68,115 @@ use crate::ast::{SourceLocation, Statement};
 /// Result type for plugin operations
 pub type PluginResult<T> = Result<T, PluginError>;
 
+// ============================================================================
+// Language Server Protocol (LSP) Integration Types
+// ============================================================================
+
+/// Completion item provided by a plugin for IDE autocomplete
+#[derive(Debug, Clone)]
+pub struct PluginCompletionItem {
+    /// The label shown in the completion list
+    pub label: String,
+    /// The kind of completion (keyword, function, snippet, etc.)
+    pub kind: PluginCompletionKind,
+    /// Short description shown alongside the label
+    pub detail: Option<String>,
+    /// Full documentation (supports markdown)
+    pub documentation: Option<String>,
+    /// Text to insert when completion is accepted (supports snippets with ${1:placeholder})
+    pub insert_text: Option<String>,
+    /// Whether insert_text is a snippet with placeholders
+    pub is_snippet: bool,
+}
+
+/// The kind of completion item
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginCompletionKind {
+    /// A keyword (e.g., `endpoints`, `GET`, `POST`)
+    Keyword,
+    /// A function or method
+    Function,
+    /// A code snippet template
+    Snippet,
+    /// A type or class
+    Type,
+    /// A property or field
+    Property,
+    /// A variable
+    Variable,
+    /// An operator
+    Operator,
+}
+
+/// Hover information provided by a plugin
+#[derive(Debug, Clone)]
+pub struct PluginHoverInfo {
+    /// The content to display (supports markdown)
+    pub content: String,
+}
+
+/// Diagnostic/error information provided by a plugin
+#[derive(Debug, Clone)]
+pub struct PluginDiagnostic {
+    /// Error message
+    pub message: String,
+    /// Severity level
+    pub severity: PluginDiagnosticSeverity,
+    /// Line number (1-based)
+    pub line: usize,
+    /// Column number (1-based)
+    pub column: usize,
+    /// Length of the problematic text
+    pub length: usize,
+}
+
+/// Severity of a diagnostic
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginDiagnosticSeverity {
+    /// Error - prevents compilation
+    Error,
+    /// Warning - may indicate a problem
+    Warning,
+    /// Information - general message
+    Info,
+    /// Hint - suggestion for improvement
+    Hint,
+}
+
+/// Context information passed to plugins for LSP operations
+#[derive(Debug, Clone)]
+pub struct PluginLspContext<'a> {
+    /// The block name being edited (e.g., "endpoints")
+    pub block_name: &'a str,
+    /// Content inside the block
+    pub block_content: &'a str,
+    /// Current line within the block (0-based)
+    pub line: usize,
+    /// Current column within the line (0-based)
+    pub column: usize,
+    /// The word being typed (for completion filtering)
+    pub prefix: &'a str,
+}
+
 /// Trait for framework plugins that expand DSL blocks into Clean AST
 ///
 /// Plugins register themselves with the compiler and are invoked when
 /// their handled block types are encountered during parsing.
+///
+/// ## Core Methods (Required)
+///
+/// - `name()` - Plugin identifier
+/// - `handles()` - Block types this plugin handles
+/// - `expand()` - Transform DSL block to Clean AST
+///
+/// ## Language Server Methods (Optional)
+///
+/// Plugins can provide IDE support by implementing these methods:
+///
+/// - `get_keywords()` - Keywords for syntax highlighting
+/// - `get_completions()` - Autocomplete suggestions
+/// - `get_hover_info()` - Hover documentation
+/// - `get_diagnostics()` - Real-time error checking
 ///
 /// ## Example Implementation
 ///
@@ -66,9 +196,31 @@ pub type PluginResult<T> = Result<T, PluginError>;
 ///         // Parse DSL block content and generate Clean AST
 ///         // ...
 ///     }
+///
+///     // Optional: Provide IDE support
+///     fn get_keywords(&self) -> &'static [&'static str] {
+///         &["myblock", "option1", "option2"]
+///     }
+///
+///     fn get_completions(&self, ctx: &PluginLspContext) -> Vec<PluginCompletionItem> {
+///         vec![
+///             PluginCompletionItem {
+///                 label: "option1".to_string(),
+///                 kind: PluginCompletionKind::Keyword,
+///                 detail: Some("First option".to_string()),
+///                 documentation: Some("Detailed description...".to_string()),
+///                 insert_text: Some("option1 ${1:value}".to_string()),
+///                 is_snippet: true,
+///             }
+///         ]
+///     }
 /// }
 /// ```
 pub trait FrameworkPlugin: Send + Sync {
+    // ========================================================================
+    // Core Methods (Required)
+    // ========================================================================
+
     /// Returns the plugin name (e.g., "frame.web", "frame.data")
     fn name(&self) -> &'static str;
 
@@ -85,6 +237,10 @@ pub trait FrameworkPlugin: Send + Sync {
     /// * `Err(PluginError)` - If expansion fails
     fn expand(&self, block: &FrameworkBlock) -> PluginResult<Vec<Statement>>;
 
+    // ========================================================================
+    // Validation Methods (Optional)
+    // ========================================================================
+
     /// Optional: Validate block content before expansion
     fn validate(&self, block: &FrameworkBlock) -> PluginResult<()> {
         let _ = block;
@@ -94,6 +250,77 @@ pub trait FrameworkPlugin: Send + Sync {
     /// Optional: Plugin version for compatibility checks
     fn version(&self) -> &'static str {
         "1.0.0"
+    }
+
+    // ========================================================================
+    // Language Server Protocol (LSP) Methods (Optional)
+    // ========================================================================
+
+    /// Returns keywords for syntax highlighting
+    ///
+    /// These keywords will be highlighted in the IDE when used inside
+    /// blocks handled by this plugin.
+    ///
+    /// # Example
+    /// ```ignore
+    /// fn get_keywords(&self) -> &'static [&'static str] {
+    ///     &["GET", "POST", "PUT", "DELETE", "PATCH"]
+    /// }
+    /// ```
+    fn get_keywords(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Returns completion items for autocomplete
+    ///
+    /// Called when the user triggers autocomplete inside a block
+    /// handled by this plugin.
+    ///
+    /// # Arguments
+    /// * `ctx` - Context about the current editing position
+    ///
+    /// # Returns
+    /// List of completion suggestions
+    fn get_completions(&self, ctx: &PluginLspContext) -> Vec<PluginCompletionItem> {
+        let _ = ctx;
+        Vec::new()
+    }
+
+    /// Returns hover information for a keyword
+    ///
+    /// Called when the user hovers over text inside a block
+    /// handled by this plugin.
+    ///
+    /// # Arguments
+    /// * `keyword` - The word being hovered over
+    ///
+    /// # Returns
+    /// Optional hover information with markdown content
+    fn get_hover_info(&self, keyword: &str) -> Option<PluginHoverInfo> {
+        let _ = keyword;
+        None
+    }
+
+    /// Returns diagnostics for real-time error checking
+    ///
+    /// Called to validate block content and provide error/warning markers
+    /// in the IDE without running full compilation.
+    ///
+    /// # Arguments
+    /// * `content` - The content inside the block
+    ///
+    /// # Returns
+    /// List of diagnostics (errors, warnings, info, hints)
+    fn get_diagnostics(&self, content: &str) -> Vec<PluginDiagnostic> {
+        let _ = content;
+        Vec::new()
+    }
+
+    /// Returns a description of this plugin for documentation
+    ///
+    /// Used to generate help text and documentation.
+    fn description(&self) -> &'static str {
+        "A Clean Language plugin"
     }
 }
 
@@ -168,12 +395,111 @@ mod tests {
         }
     }
 
+    /// Mock plugin that provides full LSP support for testing
+    struct MockLspPlugin;
+
+    impl FrameworkPlugin for MockLspPlugin {
+        fn name(&self) -> &'static str {
+            "test.lsp"
+        }
+
+        fn handles(&self) -> &'static [&'static str] {
+            &["testblock"]
+        }
+
+        fn expand(&self, _block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
+            Ok(vec![])
+        }
+
+        fn get_keywords(&self) -> &'static [&'static str] {
+            &["KEYWORD1", "KEYWORD2", "KEYWORD3"]
+        }
+
+        fn get_completions(&self, ctx: &PluginLspContext) -> Vec<PluginCompletionItem> {
+            vec![PluginCompletionItem {
+                label: "KEYWORD1".to_string(),
+                kind: PluginCompletionKind::Keyword,
+                detail: Some("First keyword".to_string()),
+                documentation: Some("Documentation for KEYWORD1".to_string()),
+                insert_text: Some(format!("KEYWORD1 {}", ctx.prefix)),
+                is_snippet: false,
+            }]
+        }
+
+        fn get_hover_info(&self, keyword: &str) -> Option<PluginHoverInfo> {
+            match keyword {
+                "KEYWORD1" => Some(PluginHoverInfo {
+                    content: "**KEYWORD1**\n\nThis is the first keyword.".to_string(),
+                }),
+                _ => None,
+            }
+        }
+
+        fn get_diagnostics(&self, content: &str) -> Vec<PluginDiagnostic> {
+            if content.contains("ERROR") {
+                vec![PluginDiagnostic {
+                    message: "Found ERROR in content".to_string(),
+                    severity: PluginDiagnosticSeverity::Error,
+                    line: 1,
+                    column: 1,
+                    length: 5,
+                }]
+            } else {
+                vec![]
+            }
+        }
+
+        fn description(&self) -> &'static str {
+            "A test plugin with full LSP support"
+        }
+    }
+
     #[test]
     fn test_plugin_trait() {
         let plugin = MockPlugin;
         assert_eq!(plugin.name(), "test.mock");
         assert_eq!(plugin.handles(), &["mock"]);
         assert_eq!(plugin.version(), "1.0.0");
+        // Default LSP methods should return empty
+        assert!(plugin.get_keywords().is_empty());
+        assert!(plugin.get_hover_info("test").is_none());
+    }
+
+    #[test]
+    fn test_plugin_lsp_methods() {
+        let plugin = MockLspPlugin;
+
+        // Test keywords
+        assert_eq!(plugin.get_keywords(), &["KEYWORD1", "KEYWORD2", "KEYWORD3"]);
+
+        // Test completions
+        let ctx = PluginLspContext {
+            block_name: "testblock",
+            block_content: "",
+            line: 0,
+            column: 0,
+            prefix: "test",
+        };
+        let completions = plugin.get_completions(&ctx);
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].label, "KEYWORD1");
+        assert_eq!(completions[0].kind, PluginCompletionKind::Keyword);
+
+        // Test hover
+        let hover = plugin.get_hover_info("KEYWORD1");
+        assert!(hover.is_some());
+        assert!(hover.unwrap().content.contains("KEYWORD1"));
+
+        // Test diagnostics
+        let diags = plugin.get_diagnostics("This has ERROR in it");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, PluginDiagnosticSeverity::Error);
+
+        let no_diags = plugin.get_diagnostics("This is fine");
+        assert!(no_diags.is_empty());
+
+        // Test description
+        assert!(plugin.description().contains("LSP"));
     }
 
     #[test]

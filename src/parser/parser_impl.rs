@@ -10,6 +10,7 @@ use crate::ast::{
 };
 use crate::error::{CompilerError, EnhancedErrorCollector, ErrorUtils};
 use pest::{iterators::Pair, Parser};
+use tracing::{debug, trace};
 
 /// Parse context to track file information and improve error reporting
 #[derive(Clone)]
@@ -702,18 +703,18 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
     // Check if this is a functions block and use preprocessing for consistency
     // Look for functions: anywhere in the source, potentially after comments
     if source.contains("functions:") {
-        eprintln!("DEBUG PARSER: Using preprocessing path because functions: found");
+        debug!("Using preprocessing path because functions: found");
         // Use direct preprocessing for all functions blocks to avoid grammar parsing issues
         let preprocessor = super::preprocessor::FunctionPreprocessor::new(source);
         match preprocessor.process_functions_block(source) {
             Ok(functions) => {
-                eprintln!(
-                    "DEBUG PARSER: Successfully preprocessed {} functions",
-                    functions.len()
+                debug!(
+                    function_count = functions.len(),
+                    "Successfully preprocessed functions"
                 );
                 // Also look for start function in the source
                 let start_function = if let Some(start_match) = source.find("start()") {
-                    eprintln!("DEBUG PARSER: Found start() at position {}", start_match);
+                    trace!(position = start_match, "Found start()");
                     // Extract the start function text
                     let start_source = &source[start_match..];
                     // Find the end of the start function (next top-level item or end of file)

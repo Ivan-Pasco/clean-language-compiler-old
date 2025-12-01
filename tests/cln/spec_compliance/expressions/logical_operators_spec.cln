@@ -1,0 +1,51 @@
+// Spec Section: 5.5 - Logical Operators
+// Tests: and, or operators
+
+start()
+	boolean t = true
+	boolean f = false
+
+	// Test 1: Logical AND
+	boolean andTT = t and t
+	boolean andTF = t and f
+	boolean andFT = f and t
+	boolean andFF = f and f
+	print("true and true: " + andTT.toString())
+	print("true and false: " + andTF.toString())
+	print("false and true: " + andFT.toString())
+	print("false and false: " + andFF.toString())
+
+	// Test 2: Logical OR
+	boolean orTT = t or t
+	boolean orTF = t or f
+	boolean orFT = f or t
+	boolean orFF = f or f
+	print("true or true: " + orTT.toString())
+	print("true or false: " + orTF.toString())
+	print("false or true: " + orFT.toString())
+	print("false or false: " + orFF.toString())
+
+	// Test 3: Combined logical operations
+	boolean combined1 = t and t or f
+	boolean combined2 = f or t and t
+	print("true and true or false: " + combined1.toString())
+	print("false or true and true: " + combined2.toString())
+
+	// Test 4: Logical with comparisons
+	integer x = 10
+	integer y = 5
+	boolean compAnd = x > y and y > 0
+	boolean compOr = x < y or y > 0
+	print("(10 > 5) and (5 > 0): " + compAnd.toString())
+	print("(10 < 5) or (5 > 0): " + compOr.toString())
+
+	// Test 5: Multiple conditions
+	integer score = 85
+	boolean passing = score >= 60 and score <= 100
+	print("Score 85 is passing (60-100): " + passing.toString())
+
+	integer age = 25
+	boolean eligible = age >= 18 and age <= 65
+	print("Age 25 is eligible (18-65): " + eligible.toString())
+
+	print("Logical operators test completed")

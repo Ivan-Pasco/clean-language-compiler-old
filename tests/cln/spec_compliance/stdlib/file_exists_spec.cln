@@ -1,0 +1,22 @@
+// Spec Section: 7 - Standard Library
+// Tests: file.exists() - check if file exists
+
+start()
+	// Test 1: Check non-existent file
+	boolean exists1 = file.exists("nonexistent_file.txt")
+	if not exists1
+		print("Correctly detected non-existent file")
+
+	// Test 2: Check existing file
+	file.write("test_exists.txt", "content")
+	boolean exists2 = file.exists("test_exists.txt")
+	if exists2
+		print("Correctly detected existing file")
+
+	// Test 3: Check after deletion
+	file.delete("test_exists.txt")
+	boolean exists3 = file.exists("test_exists.txt")
+	if not exists3
+		print("Correctly detected deleted file")
+
+	print("file.exists test completed")

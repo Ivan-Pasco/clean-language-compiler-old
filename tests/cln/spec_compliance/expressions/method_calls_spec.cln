@@ -1,0 +1,45 @@
+// Spec Section: 5.1 - Method Calls
+// Tests: Method call syntax with parentheses
+
+start()
+	// Test 1: toString() on integer
+	integer num = 42
+	string numStr = num.toString()
+	print("Integer toString: " + numStr)
+
+	// Test 2: toString() on number
+	number dec = 3.14159
+	string decStr = dec.toString()
+	print("Number toString: " + decStr)
+
+	// Test 3: toString() on boolean true
+	boolean flagTrue = true
+	string trueStr = flagTrue.toString()
+	print("Boolean true toString: " + trueStr)
+
+	// Test 4: toString() on boolean false
+	boolean flagFalse = false
+	string falseStr = flagFalse.toString()
+	print("Boolean false toString: " + falseStr)
+
+	// Test 5: Method call on expression result
+	integer a = 5
+	integer b = 3
+	string sumStr = (a + b).toString()
+	print("(5 + 3).toString(): " + sumStr)
+
+	// Test 6: Method call in concatenation
+	integer value = 100
+	print("Value is: " + value.toString())
+
+	// Test 7: Multiple method calls in same statement
+	integer x = 10
+	integer y = 20
+	print("x=" + x.toString() + " y=" + y.toString())
+
+	// Test 8: Method call on negative value
+	integer neg = -25
+	string negStr = neg.toString()
+	print("Negative toString: " + negStr)
+
+	print("Method calls test completed")

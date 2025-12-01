@@ -1,0 +1,63 @@
+// Spec Section: 7.7 - Recursive Functions
+// Tests: Functions that call themselves
+
+functions:
+	integer factorial(integer n)
+		if n <= 1
+			return 1
+		return n * factorial(n - 1)
+
+	integer fibonacci(integer n)
+		if n <= 1
+			return n
+		return fibonacci(n - 1) + fibonacci(n - 2)
+
+	integer sumToN(integer n)
+		if n <= 0
+			return 0
+		return n + sumToN(n - 1)
+
+	integer countDigits(integer n)
+		if n < 10
+			return 1
+		return 1 + countDigits(n / 10)
+
+	integer power(integer base, integer exp)
+		if exp == 0
+			return 1
+		return base * power(base, exp - 1)
+
+start()
+	// Test 1: Factorial
+	integer fact5 = factorial(5)
+	print("5! = " + fact5.toString())
+
+	integer fact0 = factorial(0)
+	print("0! = " + fact0.toString())
+
+	// Test 2: Fibonacci
+	integer fib6 = fibonacci(6)
+	print("fib(6) = " + fib6.toString())
+
+	integer fib10 = fibonacci(10)
+	print("fib(10) = " + fib10.toString())
+
+	// Test 3: Sum to N
+	integer sum10 = sumToN(10)
+	print("Sum 1-10 = " + sum10.toString())
+
+	// Test 4: Count digits
+	integer digits1 = countDigits(12345)
+	print("Digits in 12345: " + digits1.toString())
+
+	integer digits2 = countDigits(7)
+	print("Digits in 7: " + digits2.toString())
+
+	// Test 5: Power function
+	integer pow1 = power(2, 10)
+	print("2^10 = " + pow1.toString())
+
+	integer pow2 = power(3, 4)
+	print("3^4 = " + pow2.toString())
+
+	print("Recursive functions test completed")

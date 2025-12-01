@@ -1,0 +1,19 @@
+// Spec Section: 7 - Standard Library
+// Tests: list.reverse() - reverse list order
+
+start()
+	// Test 1: Reverse numbers
+	list<integer> numbers = [1, 2, 3, 4, 5]
+	list<integer> reversed = list.reverse(numbers)
+	print("Reversed numbers: ")
+	iterate num in reversed
+		print(num.toString() + " ")
+
+	// Test 2: Reverse strings
+	list<string> words = ["first", "second", "third"]
+	list<string> revWords = list.reverse(words)
+	print("Reversed words: ")
+	iterate word in revWords
+		print(word + " ")
+
+	print("list.reverse test completed")

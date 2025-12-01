@@ -933,9 +933,11 @@ impl<'a> TypeInference<'a> {
                     tast_functions.push(tast_function);
                 }
                 Err(error) => {
-                    eprintln!(
+                    tracing::trace!(
                         "ERROR: Failed to infer function '{}' (SymbolId {:?}): {:?}",
-                        function.name, function.symbol_id, error
+                        function.name,
+                        function.symbol_id,
+                        error
                     );
                     self.errors.push(error);
                 }
@@ -949,9 +951,11 @@ impl<'a> TypeInference<'a> {
                     tast_classes.push(tast_class);
                 }
                 Err(error) => {
-                    eprintln!(
+                    tracing::trace!(
                         "ERROR: Failed to infer class '{}' (SymbolId {:?}): {:?}",
-                        class.name, class.symbol_id, error
+                        class.name,
+                        class.symbol_id,
+                        error
                     );
                     self.errors.push(error);
                 }
@@ -1153,11 +1157,11 @@ impl<'a> TypeInference<'a> {
         // DEBUG: Log final return type stored in TAST for Pairs/Matrix functions
         let return_debug = format!("{:?}", declared_return_type);
         if return_debug.contains("Pairs") || return_debug.contains("Matrix") {
-            eprintln!(
+            tracing::trace!(
                 "[DEBUG infer_function END] Function '{}' final TastFunction.return_type:",
                 function.name
             );
-            eprintln!("  {:?}", declared_return_type);
+            tracing::trace!("  {:?}", declared_return_type);
         }
 
         Ok(TastFunction {
@@ -2043,7 +2047,7 @@ impl<'a> TypeInference<'a> {
                         || function.starts_with("http."));
 
                 let resolved_symbol_id = if is_namespace_function {
-                    eprintln!(
+                    tracing::trace!(
                         "DEBUG CALL: Using SymbolId(0) for namespace function '{}'",
                         function
                     );
@@ -2234,7 +2238,7 @@ impl<'a> TypeInference<'a> {
                 arguments,
                 location,
             } => {
-                eprintln!("DEBUG STATIC METHOD CALL: class_name='{}', method='{}', method_symbol_id=SymbolId({})",
+                tracing::debug!("DEBUG STATIC METHOD CALL: class_name='{}', method='{}', method_symbol_id=SymbolId({})",
                           class_name, method, method_symbol_id.0);
 
                 let mut tast_arguments = Vec::new();
@@ -2250,7 +2254,7 @@ impl<'a> TypeInference<'a> {
                 };
 
                 // For now, use simple static method resolution based on class and method name
-                eprintln!("DEBUG TypeChecker: Calling infer_static_method_return_type for {}.{} with {} args",
+                tracing::debug!("DEBUG TypeChecker: Calling infer_static_method_return_type for {}.{} with {} args",
                           full_class_name, method, tast_arguments.len());
                 let return_type = self.infer_static_method_return_type(
                     &full_class_name,
@@ -2269,17 +2273,18 @@ impl<'a> TypeInference<'a> {
                                 || full_class_name.starts_with(&format!("{}.", ns))
                         });
 
-                eprintln!("DEBUG TYPE INF STATIC: full_class_name='{}', method='{}', is_builtin={}, method_symbol_id=SymbolId({})",
+                tracing::debug!("DEBUG TYPE INF STATIC: full_class_name='{}', method='{}', is_builtin={}, method_symbol_id=SymbolId({})",
                           full_class_name, method, is_builtin_namespace, method_symbol_id.0);
 
                 let resolved_method_symbol = if is_builtin_namespace {
-                    eprintln!(
+                    tracing::trace!(
                         "DEBUG TYPE INF STATIC: Setting SymbolId(0) for namespace method {}.{}",
-                        full_class_name, method
+                        full_class_name,
+                        method
                     );
                     crate::resolver::symbol_table::SymbolId(0) // Force NamedFunction in MIR
                 } else {
-                    eprintln!("DEBUG TYPE INF STATIC: Keeping SymbolId({}) for user-defined static method", method_symbol_id.0);
+                    tracing::debug!("DEBUG TYPE INF STATIC: Keeping SymbolId({}) for user-defined static method", method_symbol_id.0);
                     *method_symbol_id // Use actual symbol for user-defined static methods
                 };
 
@@ -3097,7 +3102,7 @@ impl<'a> TypeInference<'a> {
         }
     }
 
-    /// Get the builtin type name for method lookups (e.g., "string", "integer", "array")
+    /// Get the builtin type name for method lookups (e.g., "string", "integer", "list")
     /// Returns None for complex types that don't have built-in methods
     fn get_builtin_type_name(concrete_type: &ConcreteType) -> Option<String> {
         match concrete_type {
@@ -3105,7 +3110,7 @@ impl<'a> TypeInference<'a> {
             ConcreteType::Number => Some("number".to_string()),
             ConcreteType::String => Some("string".to_string()),
             ConcreteType::Boolean => Some("boolean".to_string()),
-            ConcreteType::Array(_) => Some("array".to_string()),
+            ConcreteType::Array(_) => Some("list".to_string()), // Fixed: list is the correct type name in Clean Language
             ConcreteType::Matrix(_) => Some("matrix".to_string()),
             ConcreteType::Pairs(_, _) => Some("pairs".to_string()),
             // Class, Interface, Function, Tuple, Union, etc. are not primitive types
@@ -3205,12 +3210,14 @@ impl<'a> TypeInference<'a> {
         // Helper to validate argument count
         let validate_arg_count =
             |expected: usize, actual: usize, method_full_name: &str| -> Result<(), CompilerError> {
-                eprintln!(
+                tracing::trace!(
                     "DEBUG validate_arg_count: {} expects {}, got {}",
-                    method_full_name, expected, actual
+                    method_full_name,
+                    expected,
+                    actual
                 );
                 if actual != expected {
-                    eprintln!("DEBUG: ARGUMENT COUNT MISMATCH - RETURNING ERROR!");
+                    tracing::debug!("DEBUG: ARGUMENT COUNT MISMATCH - RETURNING ERROR!");
                     let error = CompilerError::type_error(
                         format!(
                             "{}() expects {} argument(s), but {} were provided",
@@ -3219,7 +3226,7 @@ impl<'a> TypeInference<'a> {
                         Some(format!("Provide exactly {} argument(s)", expected)),
                         None,
                     );
-                    eprintln!("DEBUG: Created error: {:?}", error);
+                    tracing::debug!("DEBUG: Created error: {:?}", error);
                     return Err(error);
                 }
                 Ok(())
@@ -3228,9 +3235,11 @@ impl<'a> TypeInference<'a> {
         // Implement basic built-in static method type inference with argument validation
         let arg_count = arguments.len();
         let full_method_name = format!("{}.{}", class_name, method_name);
-        eprintln!(
+        tracing::trace!(
             "DEBUG infer_static_method_return_type: class_name={}, method_name={}, arg_count={}",
-            class_name, method_name, arg_count
+            class_name,
+            method_name,
+            arg_count
         );
 
         match (class_name, method_name) {
@@ -3343,23 +3352,23 @@ impl<'a> TypeInference<'a> {
             // compare.integer static methods (all require 2 arguments)
             ("compare.integer", "equal") => {
                 validate_arg_count(2, arg_count, &full_method_name)?;
-                eprintln!("DEBUG: Validation passed for equal");
+                tracing::debug!("DEBUG: Validation passed for equal");
                 Ok(ConcreteType::Boolean)
             }
             ("compare.integer", "notEqual") => {
                 validate_arg_count(2, arg_count, &full_method_name)?;
-                eprintln!("DEBUG: Validation passed for notEqual");
+                tracing::debug!("DEBUG: Validation passed for notEqual");
                 Ok(ConcreteType::Boolean)
             }
             ("compare.integer", "lessThan") => {
                 validate_arg_count(2, arg_count, &full_method_name)?;
-                eprintln!("DEBUG: Validation passed for lessThan");
+                tracing::debug!("DEBUG: Validation passed for lessThan");
                 Ok(ConcreteType::Boolean)
             }
             ("compare.integer", "greaterThan") => {
-                eprintln!("DEBUG: About to validate greaterThan");
+                tracing::debug!("DEBUG: About to validate greaterThan");
                 validate_arg_count(2, arg_count, &full_method_name)?;
-                eprintln!(
+                tracing::trace!(
                     "DEBUG: Validation passed for greaterThan - THIS SHOULD NOT PRINT IF ERROR"
                 );
                 Ok(ConcreteType::Boolean)

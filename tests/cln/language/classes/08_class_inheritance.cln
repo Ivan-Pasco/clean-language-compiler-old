@@ -1,4 +1,7 @@
-// Test Description: Class inheritance with base constructor calls
+// Spec Section: 10.1 - Class Definition
+// Spec Section: 10.3 - Inheritance
+// Spec Section: 10.3.2 - base() Constructor Call
+// Tests: Class inheritance with base constructor calls
 // Category: oop
 // Dependencies: none
 // Expected: PASS

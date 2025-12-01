@@ -1,3 +1,5 @@
+// Spec Section: 4.4 - Comparison Operators
+// Tests: Equality comparison operator (==)
 
 start()
 	integer x = 5

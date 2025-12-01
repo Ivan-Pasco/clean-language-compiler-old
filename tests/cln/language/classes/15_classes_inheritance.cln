@@ -1,3 +1,8 @@
+// Spec Section: 10.1 - Class Definition
+// Spec Section: 10.3 - Inheritance
+// Spec Section: 10.3.2 - base() Constructor Call
+// Spec Section: 10.6 - Method Override
+// Tests: Class inheritance with base() calls and method overriding
 
 class Animal
 	string name

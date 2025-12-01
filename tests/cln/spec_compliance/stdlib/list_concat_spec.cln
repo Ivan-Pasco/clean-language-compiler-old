@@ -1,0 +1,21 @@
+// Spec Section: 7 - Standard Library
+// Tests: list.concat() - combine two lists
+
+start()
+	// Test 1: Concat integers
+	list<integer> list1 = [1, 2, 3]
+	list<integer> list2 = [4, 5, 6]
+	list<integer> combined = list.concat(list1, list2)
+	print("Combined: ")
+	iterate num in combined
+		print(num.toString() + " ")
+
+	// Test 2: Concat strings
+	list<string> names1 = ["Alice", "Bob"]
+	list<string> names2 = ["Charlie", "Diana"]
+	list<string> allNames = list.concat(names1, names2)
+	print("All names: ")
+	iterate name in allNames
+		print(name + " ")
+
+	print("list.concat test completed")

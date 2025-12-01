@@ -1633,7 +1633,7 @@ pub fn parse_conditional_expression(pair: Pair<Rule>) -> Result<Expression, Comp
 }
 
 pub fn parse_base_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
-    eprintln!("DEBUG: parse_base_call called");
+    tracing::trace!("DEBUG: parse_base_call called");
     let location = get_location(&pair);
     let mut arguments = Vec::new();
 

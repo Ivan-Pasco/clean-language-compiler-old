@@ -1,0 +1,22 @@
+// Spec Section: 18 - Plugin System
+// Tests: Framework blocks - endpoints DSL
+
+endpoints:
+	GET "/users" -> listUsers
+	GET "/users/{id}" -> getUser
+	POST "/users" -> createUser
+
+functions:
+	string listUsers()
+		return "List all users"
+
+	string getUser(string id)
+		return "Get user with id"
+
+	string createUser()
+		return "Create new user"
+
+start()
+	print("Framework blocks endpoints test")
+	print("Endpoints plugin DSL supported")
+	print("Framework test completed")

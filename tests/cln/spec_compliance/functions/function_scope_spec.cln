@@ -1,0 +1,54 @@
+// Spec Section: 7.6 - Function Scope
+// Tests: Variable scope within and between functions
+
+functions:
+	integer getLocalValue()
+		integer localVar = 100
+		return localVar
+
+	integer useParameter(integer param)
+		return param * 2
+
+	integer shadowTest(integer value)
+		integer result = value + 10
+		return result
+
+	void modifyLocal()
+		integer x = 5
+		x = x + 1
+		print("Local x after modification: " + x.toString())
+
+	integer nestedScope()
+		integer outer = 10
+		if outer > 5
+			integer inner = 20
+			return outer + inner
+		return outer
+
+start()
+	// Test 1: Local variable in function
+	integer result1 = getLocalValue()
+	print("Local value: " + result1.toString())
+
+	// Test 2: Parameter usage
+	integer result2 = useParameter(25)
+	print("Parameter * 2: " + result2.toString())
+
+	// Test 3: Shadow test - parameter with same name
+	integer value = 50
+	integer result3 = shadowTest(value)
+	print("Shadow test result: " + result3.toString())
+
+	// Test 4: Local modification
+	modifyLocal()
+
+	// Test 5: Nested scope in if block
+	integer result5 = nestedScope()
+	print("Nested scope result: " + result5.toString())
+
+	// Test 6: Multiple function calls with same parameter name
+	integer a = useParameter(10)
+	integer b = useParameter(20)
+	print("Multiple calls: a=" + a.toString() + " b=" + b.toString())
+
+	print("Function scope test completed")

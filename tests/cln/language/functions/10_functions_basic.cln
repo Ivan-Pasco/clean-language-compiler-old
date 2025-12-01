@@ -1,3 +1,7 @@
+// Spec Section: 6.2 - Functions Block
+// Spec Section: 6.3 - Function Declaration
+// Spec Section: 6.5 - Return Types
+// Tests: Basic function declarations with different return types
 
 functions:
 	integer add(integer a, integer b)

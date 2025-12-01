@@ -1,0 +1,59 @@
+// Spec Section: 14.2.2 - String Concatenation
+// Tests: String concatenation using + operator
+
+start()
+	// Test 1: Basic string concatenation
+	string a = "Hello"
+	string b = "World"
+	string result1 = a + b
+	print("Basic concat: " + result1)
+
+	// Test 2: Concatenation with space
+	string first = "Hello"
+	string second = "World"
+	string result2 = first + " " + second
+	print("With space: " + result2)
+
+	// Test 3: Multiple concatenations
+	string p1 = "A"
+	string p2 = "B"
+	string p3 = "C"
+	string p4 = "D"
+	string result3 = p1 + p2 + p3 + p4
+	print("Multiple: " + result3)
+
+	// Test 4: Concatenation with literals
+	string name = "Alice"
+	string greeting = "Hello, " + name + "!"
+	print(greeting)
+
+	// Test 5: Building message with multiple variables
+	string verb = "is"
+	string adjective = "great"
+	string message = "Clean Language " + verb + " " + adjective
+	print(message)
+
+	// Test 6: Concatenation with toString results
+	integer num = 42
+	string numMsg = "The number is: " + num.toString()
+	print(numMsg)
+
+	// Test 7: Concatenation with boolean toString
+	boolean flag = true
+	string flagMsg = "Flag value: " + flag.toString()
+	print(flagMsg)
+
+	// Test 8: Empty string concatenation
+	string empty = ""
+	string nonEmpty = "Text"
+	string combined = empty + nonEmpty + empty
+	print("With empty: " + combined)
+
+	// Test 9: Building path-like string
+	string dir = "/home"
+	string user = "alice"
+	string file = "document.txt"
+	string path = dir + "/" + user + "/" + file
+	print("Path: " + path)
+
+	print("String concatenation test completed")

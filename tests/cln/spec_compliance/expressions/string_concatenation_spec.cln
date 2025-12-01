@@ -1,0 +1,45 @@
+// Spec Section: 5 - String Concatenation Expressions
+// Tests: String concatenation using + operator and string.concat
+
+start()
+	// Test 1: Basic string concatenation
+	string hello = "Hello"
+	string world = "World"
+	string greeting = hello + " " + world
+	print("Greeting: " + greeting)
+
+	// Test 2: String concatenation with literals
+	string combined = "Clean" + " " + "Language"
+	print("Combined: " + combined)
+
+	// Test 3: Multiple concatenations
+	string part1 = "The"
+	string part2 = "Quick"
+	string part3 = "Fox"
+	string sentence = part1 + " " + part2 + " " + part3
+	print("Sentence: " + sentence)
+
+	// Test 4: Concatenation with numbers converted to strings
+	integer num = 42
+	string withNum = "Answer: " + num.toString()
+	print(withNum)
+
+	// Test 5: Concatenation with boolean converted to strings
+	boolean flag = true
+	string withBool = "Flag is " + flag.toString()
+	print(withBool)
+
+	// Test 6: Empty string concatenation
+	string empty = ""
+	string withEmpty = "Start" + empty + "End"
+	print("With empty: " + withEmpty)
+
+	// Test 7: using string.concat function
+	string concat1 = string.concat("Hello", "World")
+	print("Concat function: " + concat1)
+
+	// Test 8: Concatenation in expressions
+	string result = ("A" + "B") + ("C" + "D")
+	print("Expression concat: " + result)
+
+	print("String concatenation test completed")

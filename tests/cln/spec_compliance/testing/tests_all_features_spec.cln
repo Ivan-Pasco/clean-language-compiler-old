@@ -1,0 +1,74 @@
+// Spec Section: Multiple - Comprehensive Feature Test
+// Tests: All working features in a single integration test
+
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+	integer factorial(integer n)
+		if n <= 1
+			return 1
+		return n * factorial(n - 1)
+
+	boolean isPositive(integer n)
+		return n > 0
+
+tests:
+	// Arithmetic operations
+	"addition": add(5, 3) = 8
+	"factorial 5": factorial(5) = 120
+	"positive check": isPositive(10) = true
+	"negative check": isPositive(-5) = false
+
+	// Math library
+	"absolute value": math.abs(-42) = 42
+	"maximum": math.max(10, 20) = 20
+	"minimum": math.min(10, 20) = 10
+
+	// Boolean logic
+	"and operation": (true and true) = true
+	"or operation": (false or true) = true
+	"not operation": not false = true
+
+	// Comparisons
+	"equality": 5 == 5 = true
+	"inequality": 5 != 3 = true
+	"greater than": 10 > 5 = true
+	"less than": 3 < 7 = true
+
+start()
+	print("Comprehensive Feature Integration Test")
+	print("======================================")
+
+	// Pairs type
+	pairs<string, integer> ages = {"alice": 25, "bob": 30}
+	print("Pairs type created successfully")
+
+	// Iterate over range
+	print("Iterating 1 to 5:")
+	iterate i in 1 to 5
+		print(i)
+
+	// Iterate over list
+	list<integer> numbers = [10, 20, 30, 40, 50]
+	print("Iterating over list:")
+	iterate num in numbers
+		print(num)
+
+	// Conditional logic
+	integer value = 42
+	if value > 0
+		print("Value is positive")
+	else
+		print("Value is not positive")
+
+	// Function calls
+	integer sum = add(15, 25)
+	print("Sum: ")
+	print(sum)
+
+	integer fact = factorial(6)
+	print("Factorial of 6: ")
+	print(fact)
+
+	print("All features test completed successfully")

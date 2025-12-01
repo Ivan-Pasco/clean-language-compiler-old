@@ -1,0 +1,26 @@
+// Spec Section: 7 - Standard Library
+// Tests: string.split() - split string into array
+
+start()
+	// Test 1: Split by comma
+	string csv = "apple,banana,cherry"
+	list<string> fruits = string.split(csv, ",")
+	print("Split by comma: ")
+	iterate fruit in fruits
+		print(fruit + " ")
+
+	// Test 2: Split by space
+	string sentence = "Hello World from Clean"
+	list<string> words = string.split(sentence, " ")
+	print("Split by space: ")
+	iterate word in words
+		print(word + " ")
+
+	// Test 3: Split by dash
+	string date = "2025-11-27"
+	list<string> parts = string.split(date, "-")
+	print("Date parts: ")
+	iterate part in parts
+		print(part + " ")
+
+	print("string.split test completed")

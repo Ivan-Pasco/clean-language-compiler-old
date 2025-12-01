@@ -1,0 +1,27 @@
+// Spec Section: 10.2 - Error Handling with onError
+// Tests: onError keyword for error recovery
+
+functions:
+	integer riskyOperation(integer value)
+		if value < 0
+			error("Negative value not allowed")
+		return value * 2
+
+	integer alwaysFails()
+		error("This always fails")
+		return 0
+
+start()
+	// Test 1: Successful operation (no error)
+	integer success = riskyOperation(5)
+	print("Successful: " + success.toString())
+
+	// Test 2: onError with default value
+	integer safe = riskyOperation(-1) onError 0
+	print("With onError default: " + safe.toString())
+
+	// Test 3: onError with computation
+	integer computed = alwaysFails() onError 42
+	print("Computed fallback: " + computed.toString())
+
+	print("onError test completed")

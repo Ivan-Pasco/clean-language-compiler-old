@@ -598,8 +598,8 @@ impl CodeGenerator {
     pub fn generate_start_function(&mut self) -> Result<(), CompilerError> {
         // Look for Clean Language entry point "start" function
         if let Some(&start_index) = self.function_map.get("start") {
-            eprintln!("DEBUG _start: Will call start() function at index {}", start_index);
-            eprintln!("DEBUG _start: Total imports = {}, Total functions = {}",
+            tracing::trace!("DEBUG _start: Will call start() function at index {}", start_index);
+            tracing::trace!("DEBUG _start: Total imports = {}, Total functions = {}",
                 self.imported_functions.len(), self.function_names.len());
             // CRITICAL FIX: Declare the _start function in the function section FIRST
             // The _start function has no parameters and no return value

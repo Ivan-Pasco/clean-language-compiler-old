@@ -1,0 +1,58 @@
+// Spec Section: 3.1 - Core Types (number)
+// Tests: number type - 64-bit floating-point decimals
+
+start()
+	// Test 1: Number declaration and initialization
+	number zero = 0.0
+	number pi = 3.14159
+	number negative = -2.5
+	print("Zero: " + zero.toString())
+	print("Pi: " + pi.toString())
+	print("Negative: " + negative.toString())
+
+	// Test 2: Number arithmetic - addition
+	number a = 10.5
+	number b = 5.25
+	number sum = a + b
+	print("10.5 + 5.25 = " + sum.toString())
+
+	// Test 3: Number arithmetic - subtraction
+	number diff = a - b
+	print("10.5 - 5.25 = " + diff.toString())
+
+	// Test 4: Number arithmetic - multiplication
+	number prod = a * b
+	print("10.5 * 5.25 = " + prod.toString())
+
+	// Test 5: Number arithmetic - division
+	number quot = a / b
+	print("10.5 / 5.25 = " + quot.toString())
+
+	// Test 6: Number comparisons
+	number x = 3.14
+	number y = 2.71
+	boolean lt = x < y
+	boolean gt = x > y
+	boolean eq = x == y
+	print("3.14 < 2.71: " + lt.toString())
+	print("3.14 > 2.71: " + gt.toString())
+	print("3.14 == 2.71: " + eq.toString())
+
+	// Test 7: Mixed integer and number
+	integer intVal = 10
+	number numVal = 2.5
+	number mixed = intVal + numVal
+	print("10 + 2.5 = " + mixed.toString())
+
+	// Test 8: Small numbers
+	number small = 0.001
+	number tiny = 0.0001
+	number smallSum = small + tiny
+	print("0.001 + 0.0001 = " + smallSum.toString())
+
+	// Test 9: Number in expressions
+	number radius = 5.0
+	number area = 3.14159 * radius * radius
+	print("Circle area (r=5): " + area.toString())
+
+	print("Number type test completed")

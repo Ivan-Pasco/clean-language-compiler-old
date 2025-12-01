@@ -1403,6 +1403,186 @@ pub mod error_testing {
 }
 ```
 
+## CLI Error Handling Features
+
+The Clean Language compiler provides comprehensive CLI options for error handling, debugging, and developer experience.
+
+### Verbosity Flags
+
+Control the amount of output from the compiler:
+
+```bash
+# Default: Only warnings and errors (no debug spam)
+cln compile file.cln -o output.wasm
+
+# Verbose: Show info-level messages
+cln -v compile file.cln -o output.wasm
+
+# Debug: Show debug-level messages
+cln -vv compile file.cln -o output.wasm
+
+# Trace: Show all messages including internal traces
+cln -vvv compile file.cln -o output.wasm
+
+# Quiet: Suppress all output except errors
+cln -q compile file.cln -o output.wasm
+cln --quiet compile file.cln -o output.wasm
+```
+
+### Output Format Options
+
+```bash
+# Machine-readable JSON diagnostics (for IDE integration)
+cln --json compile file.cln -o output.wasm
+
+# Disable colored output (for CI/CD or piping)
+cln --no-color compile file.cln -o output.wasm
+
+# Combine options
+cln --json --quiet compile file.cln -o output.wasm
+```
+
+### Error Code Explanations
+
+Get detailed explanations for any error code:
+
+```bash
+# Explain a type error
+cln explain TYP001
+
+# Output:
+# error[TYP001]: Type mismatch
+#
+# Description:
+#   The type of an expression doesn't match what was expected.
+#   Clean Language is strongly typed - you cannot implicitly convert
+#   between incompatible types.
+#
+# Example of problematic code:
+#   start()
+#       integer x = "hello"  // Cannot assign string to integer
+#
+# How to fix:
+#   Ensure types match or use explicit conversion:
+#   - Use type conversion: x.toInteger(), x.toString()
+#   - Declare with correct type: string x = "hello"
+#   - Use appropriate literal: integer x = 42
+
+# Case-insensitive - both work
+cln explain syn003
+cln explain SYN003
+
+# JSON output for IDE plugins
+cln --json explain TYP002
+
+# List all available error codes
+cln explain UNKNOWN
+```
+
+### Available Error Codes
+
+| Category | Codes | Description |
+|----------|-------|-------------|
+| Syntax | SYN001-SYN010 | Parser and syntax errors |
+| Type | TYP001-TYP010 | Type checking errors |
+| Memory | MEM001-MEM005 | Memory management errors |
+| Runtime | RUN001-RUN005 | Runtime execution errors |
+
+### Error Output Format
+
+The compiler provides Rust/Elm-style error output with source context and underlines:
+
+```
+error[TYP002]: Undefined variable
+  --> /path/to/file.cln:3:2
+   |
+ 1 | start()
+ 2 |     // This should cause an error
+ 3 |     undefinedVariable = 42
+   |  ^^^^^^^^^^^^^^^^^
+   |  Variable 'undefinedVariable' not found
+ 4 |     print "Hello"
+   |
+
+Summary: 1 error found
+  validation: 1
+```
+
+### Debug Command
+
+Enhanced debugging with error analysis:
+
+```bash
+# Debug with AST display
+cln debug file.cln --show-ast
+
+# Debug with style checking
+cln debug file.cln --check-style
+
+# Debug with error analysis
+cln debug file.cln --analyze-errors
+
+# Combine all debugging options
+cln debug file.cln --show-ast --check-style --analyze-errors
+```
+
+### Lint Command
+
+Code style and convention validation:
+
+```bash
+# Lint a single file
+cln lint file.cln
+
+# Lint a directory
+cln lint src/
+
+# Show only errors (suppress warnings)
+cln lint file.cln --errors-only
+
+# Auto-fix issues (when available)
+cln lint file.cln --fix
+```
+
+### Parse Command
+
+Detailed parsing information:
+
+```bash
+# Parse and show detailed tree
+cln parse file.cln --show-tree
+
+# Parse with error recovery mode
+cln parse file.cln --recover-errors
+```
+
+### Run Command
+
+Execute Clean Language files directly:
+
+```bash
+# Run a .cln source file (compiles and executes)
+cln run program.cln
+
+# Run with debug output
+cln run program.cln --debug
+
+# Run a pre-compiled .wasm file
+cln run program.wasm
+```
+
+### Environment Variables
+
+You can also control logging via environment variables:
+
+```bash
+# Set log level via RUST_LOG
+RUST_LOG=debug cln compile file.cln -o output.wasm
+
+# More specific filtering
+RUST_LOG=clean_language_compiler::codegen=trace cln compile file.cln -o output.wasm
+```
+
 ## Best Practices for Claude
 
 When working with Clean Language error handling and debugging:

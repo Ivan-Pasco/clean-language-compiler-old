@@ -1,0 +1,43 @@
+// Spec Section: 2.2 - Literals (String Literals)
+// Tests: Basic strings and string interpolation
+
+start()
+	// Test 1: Basic string literals
+	string hello = "Hello, World!"
+	string empty = ""
+	string spaces = "   spaces   "
+	print(hello)
+	print("Empty string length check")
+	print(spaces)
+
+	// Test 2: Strings with special characters in content
+	string withQuote = "She said Hello"
+	string withNumbers = "Test123"
+	string mixed = "abc123XYZ"
+	print(withQuote)
+	print(withNumbers)
+	print(mixed)
+
+	// Test 3: String concatenation
+	string first = "Hello"
+	string second = "World"
+	string combined = first + ", " + second + "!"
+	print(combined)
+
+	// Test 4: String with various characters
+	string punctuation = "Hello! How are you?"
+	string question = "What is your name?"
+	print(punctuation)
+	print(question)
+
+	// Test 5: Multiword strings
+	string sentence = "The quick brown fox jumps over the lazy dog"
+	print(sentence)
+
+	// Test 6: String in expressions
+	string prefix = "Value: "
+	integer num = 42
+	string message = prefix + num.toString()
+	print(message)
+
+	print("String literals test completed")

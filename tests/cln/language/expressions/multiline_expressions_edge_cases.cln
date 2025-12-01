@@ -1,5 +1,7 @@
-// Multiline Expressions Edge Cases Test
-// Tests parentheses requirements and complex expression handling
+// Spec Section: 4.1 - Operators and Expressions
+// Spec Section: 4.2 - Multiline Expressions
+// Spec Section: 4.3 - Arithmetic Operators
+// Tests: Multiline expressions with parentheses and complex expressions
 
 functions:
 	integer complexCalculation(integer a, integer b, integer c)

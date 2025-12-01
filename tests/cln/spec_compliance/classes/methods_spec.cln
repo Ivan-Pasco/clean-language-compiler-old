@@ -1,0 +1,94 @@
+// Spec Section: 11.4 - Class Methods
+// Spec Section: 11.5 - Implicit Context (this)
+// Tests: Methods with different return types and parameters
+
+class Calculator
+	integer value
+
+	constructor(integer initialValue)
+		value = initialValue
+
+	functions:
+		integer getValue()
+			return value
+
+		void setValue(integer newValue)
+			value = newValue
+
+		integer add(integer n)
+			value = value + n
+			return value
+
+		integer subtract(integer n)
+			value = value - n
+			return value
+
+		integer multiply(integer n)
+			value = value * n
+			return value
+
+		boolean isPositive()
+			return value > 0
+
+		boolean isZero()
+			return value == 0
+
+		string toString()
+			return "Value: " + value.toString()
+
+class StringBuffer
+	string content
+
+	constructor(string initial)
+		content = initial
+
+	functions:
+		string get()
+			return content
+
+		void set(string newContent)
+			content = newContent
+
+		void append(string text)
+			content = content + text
+
+		void clear()
+			content = ""
+
+		boolean isEmpty()
+			return content == ""
+
+start()
+	// Test 1: Calculator methods
+	Calculator calc = Calculator(10)
+	print("Initial: " + calc.toString())
+
+	integer result1 = calc.add(5)
+	print("After add 5: " + result1.toString())
+
+	integer result2 = calc.multiply(2)
+	print("After multiply 2: " + result2.toString())
+
+	integer result3 = calc.subtract(10)
+	print("After subtract 10: " + result3.toString())
+
+	print("Is positive: " + calc.isPositive().toString())
+	print("Is zero: " + calc.isZero().toString())
+
+	// Test 2: StringBuffer methods
+	StringBuffer buffer = StringBuffer("Hello")
+	print("Initial: " + buffer.get())
+
+	buffer.append(", World!")
+	print("After append: " + buffer.get())
+
+	print("Is empty: " + buffer.isEmpty().toString())
+
+	buffer.clear()
+	print("After clear, is empty: " + buffer.isEmpty().toString())
+
+	// Test 3: Void methods
+	calc.setValue(100)
+	print("After setValue: " + calc.getValue().toString())
+
+	print("Methods test completed")

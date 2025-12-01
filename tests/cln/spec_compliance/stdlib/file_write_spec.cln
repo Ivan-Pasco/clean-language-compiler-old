@@ -1,0 +1,25 @@
+// Spec Section: 7 - Standard Library
+// Tests: file.write() - write content to file
+
+start()
+	// Test 1: Write simple text
+	file.write("output1.txt", "Test content")
+	print("Wrote to output1.txt")
+
+	// Test 2: Overwrite file
+	file.write("output2.txt", "First write")
+	file.write("output2.txt", "Second write")
+	string content = file.read("output2.txt")
+	print("Overwritten content: " + content)
+
+	// Test 3: Write multiline
+	string multiline = "Line 1\nLine 2\nLine 3"
+	file.write("output3.txt", multiline)
+	print("Wrote multiline content")
+
+	// Clean up
+	file.delete("output1.txt")
+	file.delete("output2.txt")
+	file.delete("output3.txt")
+
+	print("file.write test completed")

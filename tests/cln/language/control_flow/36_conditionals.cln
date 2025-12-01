@@ -1,4 +1,10 @@
-// Test conditional expressions and comparisons
+// Spec Section: 4.4 - Comparison Operators
+// Spec Section: 4.5 - Logical Operators
+// Spec Section: 5.1 - If/Else Statements
+// Spec Section: 7.6 - compare Namespace
+// Spec Section: 7.7 - conditional Namespace
+// Spec Section: 7.8 - logical Namespace
+// Tests: Conditional expressions and comparisons using stdlib functions
 
 functions:
 

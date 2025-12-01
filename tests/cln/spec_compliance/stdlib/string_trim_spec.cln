@@ -1,0 +1,20 @@
+// Spec Section: 7 - Standard Library
+// Tests: string.trim() - remove leading and trailing whitespace
+
+start()
+	// Test 1: Trim spaces
+	string spaced = "   Hello World   "
+	string trimmed = string.trim(spaced)
+	print("Trimmed: '" + trimmed + "'")
+
+	// Test 2: Trim tabs
+	string tabbed = "		Text		"
+	string cleaned = string.trim(tabbed)
+	print("Cleaned: '" + cleaned + "'")
+
+	// Test 3: Already trimmed
+	string clean = "NoSpaces"
+	string result = string.trim(clean)
+	print("Already clean: '" + result + "'")
+
+	print("string.trim test completed")

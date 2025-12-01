@@ -1,0 +1,57 @@
+// Spec Section: 3.1 - Core Types (boolean)
+// Tests: boolean type - logical values true/false
+
+start()
+	// Test 1: Boolean declaration and initialization
+	boolean flag = true
+	boolean active = false
+	print("Flag: " + flag.toString())
+	print("Active: " + active.toString())
+
+	// Test 2: Boolean from comparison
+	integer x = 10
+	integer y = 5
+	boolean isGreater = x > y
+	boolean isLess = x < y
+	boolean isEqual = x == y
+	print("10 > 5: " + isGreater.toString())
+	print("10 < 5: " + isLess.toString())
+	print("10 == 5: " + isEqual.toString())
+
+	// Test 3: Boolean logical AND
+	boolean a = true
+	boolean b = false
+	boolean c = true
+	boolean andTT = a and c
+	boolean andTF = a and b
+	boolean andFF = b and b
+	print("true and true: " + andTT.toString())
+	print("true and false: " + andTF.toString())
+	print("false and false: " + andFF.toString())
+
+	// Test 4: Boolean logical OR
+	boolean orTT = a or c
+	boolean orTF = a or b
+	boolean orFF = b or b
+	print("true or true: " + orTT.toString())
+	print("true or false: " + orTF.toString())
+	print("false or false: " + orFF.toString())
+
+	// Test 5: Boolean in conditionals
+	boolean condition = true
+	if condition
+		print("Condition is true")
+
+	boolean other = false
+	if other
+		print("This should not print")
+	else
+		print("Condition is false")
+
+	// Test 6: Boolean assignment and copy
+	boolean original = true
+	boolean copy = original
+	print("Original: " + original.toString())
+	print("Copy: " + copy.toString())
+
+	print("Boolean type test completed")

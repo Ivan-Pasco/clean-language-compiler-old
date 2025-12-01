@@ -1482,9 +1482,11 @@ impl InstructionGenerator {
 
         // DEBUG: Track function registrations above index 41
         if function_index >= 42 {
-            eprintln!(
-                "DEBUG: Registering function '{}' at index {} (signature: {})",
-                name, function_index, signature
+            tracing::trace!(
+                name = %name,
+                function_index = function_index,
+                signature = %signature,
+                "Registering function"
             );
         }
 

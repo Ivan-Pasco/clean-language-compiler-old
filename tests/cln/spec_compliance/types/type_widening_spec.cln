@@ -1,0 +1,53 @@
+// Spec Section: 3.1 - Type Widening and Implicit Conversions
+// Tests: Automatic type promotion in mixed operations
+
+start()
+	// Test 1: integer to number widening in arithmetic
+	integer intVal = 10
+	number numVal = 3.14
+	number result1 = intVal + numVal
+	print("int + number: " + result1.toString())
+
+	// Test 2: Different integer sizes mixed
+	integer:8 small = 5
+	integer:16 medium = 100
+	integer:16 result2 = small + medium
+	print("int:8 + int:16: " + result2.toString())
+
+	// Test 3: integer:32 and integer:64
+	integer:32 i32 = 1000
+	integer:64 i64 = 2000
+	integer:64 result3 = i32 + i64
+	print("int:32 + int:64: " + result3.toString())
+
+	// Test 4: number:32 and number:64
+	number:32 f32 = 1.5
+	number:64 f64 = 2.5
+	number:64 result4 = f32 + f64
+	print("num:32 + num:64: " + result4.toString())
+
+	// Test 5: Unsigned to signed promotion
+	integer:8u unsigned8 = 200
+	integer:16 signed16 = 100
+	integer:16 result5 = unsigned8 + signed16
+	print("uint:8 + int:16: " + result5.toString())
+
+	// Test 6: Multiple type widening in expression
+	integer:8 a = 10
+	integer:16 b = 20
+	integer:32 c = 30
+	integer:32 result6 = a + b + c
+	print("int:8 + int:16 + int:32: " + result6.toString())
+
+	// Test 7: Comparison with type widening
+	integer:8 x = 50
+	integer:16 y = 50
+	boolean equal = x == y
+	print("int:8 == int:16: " + equal.toString())
+
+	// Test 8: Assignment with widening
+	integer:8 source = 42
+	integer:32 dest = source
+	print("Widened assignment: " + dest.toString())
+
+	print("Type widening test completed")

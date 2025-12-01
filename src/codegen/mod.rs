@@ -1,5 +1,6 @@
 //! Module for WebAssembly code generation.
 
+use tracing::{debug, trace};
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportSection, Function, FunctionSection, ImportSection,
     Instruction, MemArg, MemorySection, ValType,
@@ -865,9 +866,9 @@ impl CodeGenerator {
                 expressions,
                 ..
             } => {
-                eprintln!("DEBUG: Statement::FunctionApplyBlock matched");
-                eprintln!("  function_name: {}", function_name);
-                eprintln!("  expressions: {:?}", expressions);
+                debug!("DEBUG: Statement::FunctionApplyBlock matched");
+                trace!("  function_name: {}", function_name);
+                trace!("  expressions: {:?}", expressions);
                 self.generate_function_apply_block_statement(
                     function_name,
                     expressions,
@@ -3498,9 +3499,11 @@ impl CodeGenerator {
 
         // DEBUG: Log types for comparison operations
         if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual) {
-            eprintln!(
-                "DEBUG: Binary operation {:?} with types: left={:?}, right={:?}",
-                op, left_type, right_type
+            debug!(
+                op = ?op,
+                left_type = ?left_type,
+                right_type = ?right_type,
+                "Binary operation types"
             );
         }
 
@@ -4328,35 +4331,35 @@ impl CodeGenerator {
         // self.register_math_operations()?;
 
         // 12. Register string class operations
-        eprintln!(
-            "DEBUG: About to register string class operations (function_count={})",
-            self.function_count
+        debug!(
+            function_count = self.function_count,
+            "About to register string class operations"
         );
         self.register_string_class_operations()?;
-        eprintln!(
-            "DEBUG: String class operations registered successfully (function_count={})",
-            self.function_count
+        debug!(
+            function_count = self.function_count,
+            "String class operations registered successfully"
         );
 
         // 13. Register method-style and list behavior operations
-        // eprintln!("DEBUG: About to register method-style operations");
+        // debug!("DEBUG: About to register method-style operations");
         self.register_method_style_operations()?;
-        // eprintln!("DEBUG: Method-style operations registered successfully");
+        // debug!("DEBUG: Method-style operations registered successfully");
 
         // 13. Register list class operations
         // self.register_list_class_operations()?;
 
         // 14. Register conditional operations (compare.*, conditional.*, logical.*)
         // CRITICAL FIX: Don't silently ignore errors - these functions MUST be registered!
-        eprintln!("DEBUG MOD: About to register conditional operations");
+        debug!("DEBUG MOD: About to register conditional operations");
         self.register_conditional_operations()?;
-        eprintln!("DEBUG MOD: Conditional operations registered successfully");
+        debug!("DEBUG MOD: Conditional operations registered successfully");
 
         // 15. Register HTTP operations
-        eprintln!("DEBUG: About to register HTTP operations");
+        debug!("DEBUG: About to register HTTP operations");
         match self.register_http_operations() {
-            Ok(()) => eprintln!("DEBUG: HTTP operations registered successfully"),
-            Err(e) => eprintln!("DEBUG: HTTP operations registration failed: {:?}", e),
+            Ok(()) => debug!("DEBUG: HTTP operations registered successfully"),
+            Err(e) => debug!("DEBUG: HTTP operations registration failed: {:?}", e),
         }
 
         // 11. Register math operations - TEST THIS ONE
@@ -4849,22 +4852,44 @@ impl CodeGenerator {
         Ok(())
     }
 
+    /// Register string.split as an import
+    /// This must be called BEFORE any stdlib functions are registered
+    /// because WASM requires all imports to come before internal functions
+    pub fn register_string_split_import(&mut self) -> Result<(), CompilerError> {
+        use crate::types::WasmType;
+
+        // Register string.split as an import that routes to the runtime function
+        // This takes (string_ptr, delimiter_ptr) and returns a list pointer
+        self.register_import_function(
+            "env",
+            "string.split",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+
+        Ok(())
+    }
+
     /// Register string class operation functions using StringClass
     #[allow(dead_code)]
     fn register_string_class_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::string_class::StringClass;
 
+        // NOTE: string.split import is registered separately via register_string_split_import()
+        // which is called earlier in the initialization sequence to ensure correct WASM indexing
+        // Do NOT register it here to avoid duplicate registration issues
+
         // Create a StringClass instance and register its functions
-        eprintln!("DEBUG: Creating StringClass instance");
+        debug!("Creating StringClass instance");
         let string_class = StringClass::new();
-        eprintln!(
-            "DEBUG: Calling string_class.register_functions() - before: function_count={}",
-            self.function_count
+        debug!(
+            function_count = self.function_count,
+            "Calling string_class.register_functions()"
         );
         string_class.register_functions(self)?;
-        eprintln!(
-            "DEBUG: StringClass registration completed - after: function_count={}",
-            self.function_count
+        debug!(
+            function_count = self.function_count,
+            "StringClass registration completed"
         );
 
         Ok(())
@@ -4890,13 +4915,13 @@ impl CodeGenerator {
         use std::cell::RefCell;
         use std::rc::Rc;
 
-        eprintln!("DEBUG CONDITIONAL OPS: Creating ConditionalManager");
+        debug!("DEBUG CONDITIONAL OPS: Creating ConditionalManager");
         // Create a MemoryManager and ConditionalManager instance
         let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(16))));
         let conditional_manager = ConditionalManager::new(memory_manager.clone());
-        eprintln!("DEBUG CONDITIONAL OPS: Calling register_functions");
+        debug!("DEBUG CONDITIONAL OPS: Calling register_functions");
         conditional_manager.register_functions(self)?;
-        eprintln!("DEBUG CONDITIONAL OPS: register_functions completed");
+        debug!("DEBUG CONDITIONAL OPS: register_functions completed");
 
         // Register MethodStyleManager for isEmpty, isDefined, etc.
         use crate::stdlib::method_style::MethodStyleManager;
@@ -5275,9 +5300,10 @@ impl CodeGenerator {
         } else {
             // Create a placeholder function index for async runtime functions
             let index = self.function_count;
-            eprintln!(
-                "DEBUG get_or_create_function_index: Creating placeholder for '{}' at index {}",
-                name, index
+            debug!(
+                function_name = name,
+                index = index,
+                "get_or_create_function_index: Creating placeholder"
             );
             self.function_count += 1;
             self.function_map.insert(name.to_string(), index);
@@ -8816,20 +8842,20 @@ impl CodeGenerator {
         expressions: &[Expression],
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
-        eprintln!("DEBUG: generate_function_apply_block_statement called");
-        eprintln!("  function_name: {}", function_name);
-        eprintln!("  expressions count: {}", expressions.len());
-        eprintln!("  instructions before: {}", instructions.len());
+        debug!("DEBUG: generate_function_apply_block_statement called");
+        trace!("  function_name: {}", function_name);
+        trace!("  expressions count: {}", expressions.len());
+        trace!("  instructions before: {}", instructions.len());
 
         for (i, expression) in expressions.iter().enumerate() {
-            eprintln!("  Processing expression {}: {:?}", i, expression);
+            trace!("  Processing expression {}: {:?}", i, expression);
 
             // Special case for print functions - treat them as print statements
             if function_name == "print" || function_name == "println" || function_name == "printl" {
-                eprintln!("    -> Calling generate_print_statement");
+                trace!("    -> Calling generate_print_statement");
                 self.generate_print_statement(expression, false, instructions)?;
             } else {
-                eprintln!("    -> Generating function call");
+                trace!("    -> Generating function call");
                 // Generate a function call for each expression
                 let call_expr =
                     Expression::Call(function_name.to_string(), vec![expression.clone()]);
@@ -8843,7 +8869,7 @@ impl CodeGenerator {
             }
         }
 
-        eprintln!("  instructions after: {}", instructions.len());
+        trace!("  instructions after: {}", instructions.len());
         Ok(())
     }
 

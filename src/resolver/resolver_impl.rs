@@ -880,7 +880,32 @@ impl NameResolver {
             }),
 
             HirExpression::Variable { name, location } => {
-                // If we're in a class method, check for class fields first (implicit field access)
+                // IMPORTANT: Check for local variables/parameters FIRST before class fields
+                // This follows standard variable shadowing rules:
+                // - A local parameter shadows a field with the same name
+                // - Use explicit `this.field` to access the field when shadowed
+                // This enables patterns like: constructor(string name) { this.name = name }
+                // where right-hand side `name` refers to the parameter
+                if let Some(symbol_id) = self.symbol_table.lookup_symbol(name) {
+                    // Check if this is a parameter or local variable (not a field)
+                    if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
+                        match &symbol.kind {
+                            SymbolKind::Parameter { .. } | SymbolKind::Variable { .. } => {
+                                // Found a local variable/parameter - use it (shadows any field)
+                                return Ok(ResolvedHirExpression::Variable {
+                                    name: name.clone(),
+                                    symbol_id,
+                                    location: location.clone(),
+                                });
+                            }
+                            _ => {
+                                // Not a local variable/parameter, continue to check fields
+                            }
+                        }
+                    }
+                }
+
+                // If no local variable/parameter found, check for class fields (implicit field access)
                 if let Some(current_class_id) = self.current_class {
                     if let Some(class_symbol) = self.symbol_table.get_symbol(current_class_id) {
                         if let SymbolKind::Class { fields, parent, .. } = &class_symbol.kind {
@@ -942,7 +967,7 @@ impl NameResolver {
                     }
                 }
 
-                // If not a field, try to find the variable in normal scope
+                // Try to find the variable in normal scope (for non-shadowed cases)
                 if let Some(symbol_id) = self.symbol_table.lookup_symbol(name) {
                     return Ok(ResolvedHirExpression::Variable {
                         name: name.clone(),
@@ -1790,10 +1815,21 @@ impl NameResolver {
                 if let Some(current_class_id) = self.current_class {
                     if let Some(class_symbol) = self.symbol_table.get_symbol(current_class_id) {
                         if let SymbolKind::Class { fields, parent, .. } = &class_symbol.kind {
+                            tracing::debug!(
+                                "resolve_lvalue: Looking for field '{}' in class {} ({:?}), fields: {:?}",
+                                name, class_symbol.name, current_class_id, fields
+                            );
                             // Check current class fields
                             for &field_id in fields {
                                 if let Some(field_symbol) = self.symbol_table.get_symbol(field_id) {
+                                    tracing::debug!(
+                                        "  Checking field {:?}: name='{}' vs target='{}'",
+                                        field_id,
+                                        field_symbol.name,
+                                        name
+                                    );
                                     if field_symbol.name == *name {
+                                        tracing::debug!("  MATCH FOUND - returning FieldAccess");
                                         // Convert variable assignment to field assignment
                                         return Ok(ResolvedHirLValue::FieldAccess {
                                             object: Box::new(ResolvedHirExpression::This {

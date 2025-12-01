@@ -6,7 +6,10 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use super::{FrameworkBlock, FrameworkPlugin};
+use super::{
+    FrameworkBlock, FrameworkPlugin, PluginCompletionItem, PluginDiagnostic, PluginHoverInfo,
+    PluginLspContext,
+};
 use crate::ast::{SourceLocation, Statement};
 
 /// Error type for plugin operations
@@ -283,6 +286,174 @@ impl PluginRegistry {
     /// Get the number of registered handlers
     pub fn handler_count(&self) -> usize {
         self.handlers.len()
+    }
+
+    // ========================================================================
+    // Language Server Protocol (LSP) Aggregation Methods
+    // ========================================================================
+
+    /// Get all keywords from all registered plugins
+    ///
+    /// Returns a combined list of keywords from all plugins for syntax highlighting.
+    /// Also includes the block names themselves (e.g., "endpoints", "data").
+    ///
+    /// # Example
+    /// ```ignore
+    /// let registry = PluginRegistry::builder()
+    ///     .add(WebPlugin::new())
+    ///     .build()?;
+    ///
+    /// let keywords = registry.get_all_keywords();
+    /// // Returns: ["endpoints", "GET", "POST", "PUT", "DELETE", ...]
+    /// ```
+    pub fn get_all_keywords(&self) -> Vec<&str> {
+        let mut keywords: Vec<&str> = Vec::new();
+
+        // Add block names as keywords
+        for block_name in self.handlers.keys() {
+            keywords.push(block_name.as_str());
+        }
+
+        // Add keywords from each unique plugin
+        let mut seen_plugins = std::collections::HashSet::new();
+        for plugin in self.handlers.values() {
+            if seen_plugins.insert(plugin.name()) {
+                keywords.extend(plugin.get_keywords());
+            }
+        }
+
+        keywords
+    }
+
+    /// Get completions for a specific block type
+    ///
+    /// Delegates to the plugin that handles the given block type.
+    ///
+    /// # Arguments
+    /// * `block_name` - The block type (e.g., "endpoints")
+    /// * `ctx` - Context about the current editing position
+    ///
+    /// # Returns
+    /// List of completion items, or empty if no plugin handles the block
+    pub fn get_completions(
+        &self,
+        block_name: &str,
+        ctx: &PluginLspContext,
+    ) -> Vec<PluginCompletionItem> {
+        if let Some(plugin) = self.handlers.get(block_name) {
+            plugin.get_completions(ctx)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get completions for all plugins (for top-level completion)
+    ///
+    /// Returns block-level completions (the block names themselves).
+    ///
+    /// # Returns
+    /// Completion items for all registered block types
+    pub fn get_block_completions(&self) -> Vec<PluginCompletionItem> {
+        let mut completions = Vec::new();
+        let mut seen_plugins = std::collections::HashSet::new();
+
+        for (block_name, plugin) in &self.handlers {
+            if seen_plugins.insert(plugin.name()) {
+                completions.push(PluginCompletionItem {
+                    label: format!("{}:", block_name),
+                    kind: super::PluginCompletionKind::Keyword,
+                    detail: Some(format!("Plugin: {}", plugin.name())),
+                    documentation: Some(plugin.description().to_string()),
+                    insert_text: Some(format!("{}:\n\t${{1:content}}", block_name)),
+                    is_snippet: true,
+                });
+            }
+        }
+
+        completions
+    }
+
+    /// Get hover information for a keyword
+    ///
+    /// First checks if the keyword is a block name, then delegates to plugins.
+    ///
+    /// # Arguments
+    /// * `keyword` - The word being hovered over
+    /// * `block_name` - Optional: the block type context
+    ///
+    /// # Returns
+    /// Hover information if found
+    pub fn get_hover_info(
+        &self,
+        keyword: &str,
+        block_name: Option<&str>,
+    ) -> Option<PluginHoverInfo> {
+        // Check if hovering over a block name
+        if let Some(plugin) = self.handlers.get(keyword) {
+            return Some(PluginHoverInfo {
+                content: format!(
+                    "**{}:** Block\n\n{}\n\n*Plugin: {} v{}*",
+                    keyword,
+                    plugin.description(),
+                    plugin.name(),
+                    plugin.version()
+                ),
+            });
+        }
+
+        // If we're inside a block, delegate to that plugin
+        if let Some(block) = block_name {
+            if let Some(plugin) = self.handlers.get(block) {
+                return plugin.get_hover_info(keyword);
+            }
+        }
+
+        // Try all plugins (for keywords that might appear outside their blocks)
+        for plugin in self.handlers.values() {
+            if let Some(info) = plugin.get_hover_info(keyword) {
+                return Some(info);
+            }
+        }
+
+        None
+    }
+
+    /// Get diagnostics for a block's content
+    ///
+    /// Delegates to the plugin that handles the given block type.
+    ///
+    /// # Arguments
+    /// * `block_name` - The block type (e.g., "endpoints")
+    /// * `content` - The content inside the block
+    ///
+    /// # Returns
+    /// List of diagnostics (errors, warnings, etc.)
+    pub fn get_diagnostics(&self, block_name: &str, content: &str) -> Vec<PluginDiagnostic> {
+        if let Some(plugin) = self.handlers.get(block_name) {
+            plugin.get_diagnostics(content)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get all plugin descriptions for documentation
+    ///
+    /// Returns a list of (name, block_types, description) for all registered plugins.
+    pub fn get_plugin_info(&self) -> Vec<(&str, Vec<&str>, &str)> {
+        let mut info = Vec::new();
+        let mut seen_plugins = std::collections::HashSet::new();
+
+        for plugin in self.handlers.values() {
+            if seen_plugins.insert(plugin.name()) {
+                info.push((
+                    plugin.name(),
+                    plugin.handles().to_vec(),
+                    plugin.description(),
+                ));
+            }
+        }
+
+        info
     }
 }
 

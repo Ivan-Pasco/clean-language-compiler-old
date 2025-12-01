@@ -1,0 +1,35 @@
+// Spec Section: 9.3 - Nested Loops
+// Tests: Nested iterate loops
+
+start()
+	// Test 1: Simple nested loop
+	print("Nested loop test:")
+	iterate i in 1 to 3
+		iterate j in 1 to 3
+			print("i=" + i.toString() + " j=" + j.toString())
+
+	// Test 2: Outer loop with computation
+	print("Outer loop with sum:")
+	iterate row in 1 to 3
+		integer sum = 0
+		iterate col in 1 to 3
+			sum = sum + col
+		print("Row " + row.toString() + " sum: " + sum.toString())
+
+	// Test 3: Nested loop over lists
+	list<integer> outer = [1, 2]
+	list<integer> inner = [10, 20]
+	print("Nested list iteration:")
+	iterate a in outer
+		iterate b in inner
+			integer product = a * b
+			print(a.toString() + " * " + b.toString() + " = " + product.toString())
+
+	// Test 4: Three level nesting
+	print("Three level nesting:")
+	iterate x in 1 to 2
+		iterate y in 1 to 2
+			iterate z in 1 to 2
+				print("(" + x.toString() + "," + y.toString() + "," + z.toString() + ")")
+
+	print("Nested loops test completed")

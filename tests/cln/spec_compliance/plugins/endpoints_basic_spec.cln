@@ -1,0 +1,20 @@
+// Spec Section: 18 - Plugin System
+// Tests: endpoints: DSL block
+
+endpoints:
+	GET "/users" -> listUsers
+	GET "/users/{id}" -> getUser
+	POST "/users" -> createUser
+
+functions:
+	list<string> listUsers()
+		return ["Alice", "Bob", "Charlie"]
+
+	string getUser(string id)
+		return "User " + id
+
+	string createUser()
+		return "User created"
+
+start()
+	print("Endpoints DSL test completed")

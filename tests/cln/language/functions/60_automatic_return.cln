@@ -1,5 +1,6 @@
-// Automatic return comprehensive test
-// According to Clean Language Specification, functions automatically return the last expression
+// Spec Section: 6.5 - Return Types
+// Spec Section: 6.5.1 - Implicit Return
+// Tests: Automatic return of last expression in function body
 
 functions:
 	integer addOne(integer x)

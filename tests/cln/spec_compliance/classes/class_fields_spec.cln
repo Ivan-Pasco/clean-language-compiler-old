@@ -1,0 +1,78 @@
+// Spec Section: 11.1 - Class Fields
+// Tests: Class field declarations and access
+
+class SimpleClass
+	integer value
+	string name
+	boolean active
+
+	constructor(integer v, string n, boolean a)
+		value = v
+		name = n
+		active = a
+
+	functions:
+		integer getValue()
+			return value
+
+		string getName()
+			return name
+
+		boolean isActive()
+			return active
+
+		void setValue(integer newValue)
+			value = newValue
+
+		void setName(string newName)
+			name = newName
+
+		void setActive(boolean newActive)
+			active = newActive
+
+class Counter
+	integer count
+
+	constructor()
+		count = 0
+
+	functions:
+		void increment()
+			count = count + 1
+
+		void decrement()
+			count = count - 1
+
+		integer getCount()
+			return count
+
+start()
+	// Test 1: Create class with multiple fields
+	SimpleClass obj = SimpleClass(42, "Test", true)
+	print("Initial value: " + obj.getValue().toString())
+	print("Initial name: " + obj.getName())
+	print("Initial active: " + obj.isActive().toString())
+
+	// Test 2: Modify fields through methods
+	obj.setValue(100)
+	obj.setName("Updated")
+	obj.setActive(false)
+	print("Updated value: " + obj.getValue().toString())
+	print("Updated name: " + obj.getName())
+	print("Updated active: " + obj.isActive().toString())
+
+	// Test 3: Counter class with default field value
+	Counter counter = Counter()
+	print("Initial count: " + counter.getCount().toString())
+
+	// Test 4: Increment counter
+	counter.increment()
+	counter.increment()
+	counter.increment()
+	print("After 3 increments: " + counter.getCount().toString())
+
+	// Test 5: Decrement counter
+	counter.decrement()
+	print("After decrement: " + counter.getCount().toString())
+
+	print("Class fields test completed")

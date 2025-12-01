@@ -1,0 +1,32 @@
+// Spec Section: 2 - Type System
+// Tests: List behavior modifiers (line, pile, unique)
+
+start()
+	// Test 1: Line behavior (FIFO queue)
+	list<integer> queue = []
+	queue.type = "line"
+	queue.add(1)
+	queue.add(2)
+	queue.add(3)
+	integer first = queue.remove()
+	print("FIFO queue first element: " + first.toString())
+
+	// Test 2: Pile behavior (LIFO stack)
+	list<integer> stack = []
+	stack.type = "pile"
+	stack.add(10)
+	stack.add(20)
+	stack.add(30)
+	integer top = stack.remove()
+	print("LIFO stack top element: " + top.toString())
+
+	// Test 3: Unique behavior (set)
+	list<integer> uniqueSet = []
+	uniqueSet.type = "unique"
+	uniqueSet.add(5)
+	uniqueSet.add(10)
+	uniqueSet.add(5)
+	integer size = uniqueSet.size()
+	print("Unique set size (should be 2): " + size.toString())
+
+	print("List behaviors test completed")

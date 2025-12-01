@@ -1,0 +1,44 @@
+// Spec Section: 14.3 - List Module
+// Tests: List operations and methods
+
+start()
+	// Test 1: List literal creation
+	list<integer> numbers = [1, 2, 3, 4, 5]
+	print("Test 1: List created")
+
+	// Test 2: list.length
+	integer len = list.length(numbers)
+	print("List length: " + len.toString())
+
+	// Test 3: list.get to access elements
+	integer first = list.get(numbers, 0)
+	integer third = list.get(numbers, 2)
+	print("First element: " + first.toString())
+	print("Third element: " + third.toString())
+
+	// Test 4: String list
+	list<string> names = ["Alice", "Bob", "Charlie"]
+	integer nameCount = list.length(names)
+	print("Names count: " + nameCount.toString())
+
+	// Test 5: Boolean list
+	list<boolean> flags = [true, false, true]
+	integer flagCount = list.length(flags)
+	print("Flags count: " + flagCount.toString())
+
+	// Test 6: Number list
+	list<number> decimals = [1.1, 2.2, 3.3]
+	integer decCount = list.length(decimals)
+	print("Decimals count: " + decCount.toString())
+
+	// Test 7: Empty list
+	list<integer> empty = []
+	integer emptyLen = list.length(empty)
+	print("Empty list length: " + emptyLen.toString())
+
+	// Test 8: Single element list
+	list<integer> single = [42]
+	integer singleLen = list.length(single)
+	print("Single element length: " + singleLen.toString())
+
+	print("List functions test completed")

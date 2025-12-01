@@ -363,11 +363,18 @@ impl ListClass {
         )?;
 
         // List.concat(list lst1, list lst2) -> list
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "list.concat",
-            &[WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32], // list1_ptr (0), list2_ptr (1)
             Some(WasmType::I32),
+            &[
+                WasmType::I32, // local 2: size1
+                WasmType::I32, // local 3: size2
+                WasmType::I32, // local 4: total_size
+                WasmType::I32, // local 5: new_list_ptr
+                WasmType::I32, // local 6: loop counter
+            ],
             self.generate_concat(),
         )?;
 
@@ -780,20 +787,169 @@ impl ListClass {
     }
 
     fn generate_concat(&self) -> Vec<Instruction> {
-        // Simplified concat implementation to avoid control flow issues
-        // Parameters: list1, list2
-        // Returns: first list (no actual concatenation performed)
+        // List concat - creates a new list containing elements from both lists
+        // Parameters: list1_ptr (0), list2_ptr (1)
+        // Locals: size1 (2), size2 (3), total_size (4), new_list_ptr (5), loop_counter (6)
+        // Returns: new list pointer
+        //
+        // List memory layout: [size:i32|capacity:i32|type_id:i32|padding:i32|elements...]
+        // Elements start at offset 16
+        //
+        // Uses mem_alloc import (index 7) for memory allocation
+        // mem_alloc signature: (type_id: i32, size: i32) -> i32
         vec![
-            // Consume the parameters to avoid stack mismatch
+            // Get size of list1
             Instruction::LocalGet(0), // list1_ptr
-            Instruction::Drop,        // drop it
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(2), // size1
+            // Get size of list2
             Instruction::LocalGet(1), // list2_ptr
-            Instruction::Drop,        // drop it
-            // Allocate new list for concatenated result
-            // mem_alloc signature: (type_id: i32, size: i32) -> i32
-            Instruction::I32Const(0),  // type_id = 0 for generic allocation
-            Instruction::I32Const(24), // Estimated size for concatenated list
-            Instruction::Call(7),      // memory_runtime.mem_alloc (import index 7)
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(3), // size2
+            // Calculate total_size = size1 + size2
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::LocalSet(4), // total_size
+            // Allocate new list using mem_alloc(type_id=4, size=16 + total_size*4)
+            Instruction::I32Const(4),  // type_id = 4 (list type)
+            Instruction::I32Const(16), // header size
+            Instruction::LocalGet(4),  // total_size
+            Instruction::I32Const(4),  // element size
+            Instruction::I32Mul,
+            Instruction::I32Add,      // total bytes = 16 + total_size * 4
+            Instruction::Call(7),     // mem_alloc - returns new list pointer
+            Instruction::LocalSet(5), // new_list_ptr
+            // Initialize new list header
+            // Store size = total_size
+            Instruction::LocalGet(5), // new_list_ptr
+            Instruction::LocalGet(4), // total_size
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store capacity = total_size
+            Instruction::LocalGet(5),
+            Instruction::LocalGet(4),
+            Instruction::I32Store(MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store type_id = 4 (list type)
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Store(MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Copy elements from list1 (loop i = 0 to size1-1)
+            Instruction::I32Const(0),
+            Instruction::LocalSet(6),             // i = 0
+            Instruction::Block(BlockType::Empty), // outer block for break
+            Instruction::Loop(BlockType::Empty),  // loop start
+            // if i >= size1, break
+            Instruction::LocalGet(6),
+            Instruction::LocalGet(2), // size1
+            Instruction::I32GeS,
+            Instruction::BrIf(1), // break to outer block
+            // Copy element: new_list[i] = list1[i]
+            // dst address: new_list_ptr + 16 + i*4
+            Instruction::LocalGet(5), // new_list_ptr
+            Instruction::I32Const(16),
+            Instruction::I32Add,
+            Instruction::LocalGet(6), // i
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            // src value: list1_ptr + 16 + i*4
+            Instruction::LocalGet(0), // list1_ptr
+            Instruction::I32Const(16),
+            Instruction::I32Add,
+            Instruction::LocalGet(6), // i
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store to dst
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // i++
+            Instruction::LocalGet(6),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(6),
+            Instruction::Br(0), // continue loop
+            Instruction::End,   // end loop
+            Instruction::End,   // end block
+            // Copy elements from list2 (loop i = 0 to size2-1)
+            // dst index = size1 + i
+            Instruction::I32Const(0),
+            Instruction::LocalSet(6),             // i = 0
+            Instruction::Block(BlockType::Empty), // outer block for break
+            Instruction::Loop(BlockType::Empty),  // loop start
+            // if i >= size2, break
+            Instruction::LocalGet(6),
+            Instruction::LocalGet(3), // size2
+            Instruction::I32GeS,
+            Instruction::BrIf(1), // break to outer block
+            // Copy element: new_list[size1 + i] = list2[i]
+            // dst address: new_list_ptr + 16 + (size1+i)*4
+            Instruction::LocalGet(5), // new_list_ptr
+            Instruction::I32Const(16),
+            Instruction::I32Add,
+            Instruction::LocalGet(2), // size1
+            Instruction::LocalGet(6), // i
+            Instruction::I32Add,      // size1 + i
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            // src value: list2_ptr + 16 + i*4
+            Instruction::LocalGet(1), // list2_ptr
+            Instruction::I32Const(16),
+            Instruction::I32Add,
+            Instruction::LocalGet(6), // i
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store to dst
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // i++
+            Instruction::LocalGet(6),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(6),
+            Instruction::Br(0), // continue loop
+            Instruction::End,   // end loop
+            Instruction::End,   // end block
+            // Return new list pointer
+            Instruction::LocalGet(5),
         ]
     }
 

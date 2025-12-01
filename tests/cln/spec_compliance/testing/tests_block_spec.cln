@@ -1,0 +1,12 @@
+// Spec Section: 12.1 - Testing Framework
+// Tests: tests: block with named and anonymous tests
+
+tests:
+	"addition works": 2 + 2 = 4
+	"subtraction works": 10 - 3 = 7
+	"multiplication": 5 * 4 = 20
+	3 + 3 = 6
+	10 / 2 = 5
+
+start()
+	print("Tests block spec completed")

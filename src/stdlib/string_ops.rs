@@ -313,13 +313,15 @@ impl StringOperations {
             self.generate_string_replace_all(),
         )?;
 
-        register_stdlib_function(
-            codegen,
-            "string.split",
-            &[WasmType::I32, WasmType::I32], // string, delimiter
-            Some(WasmType::I32),             // list pointer
-            self.generate_string_split(),
-        )?;
+        // String.split is now handled by builtin_generator.rs calling the runtime string_split import
+        // Do NOT register it as a stdlib function to avoid conflict
+        // register_stdlib_function(
+        //     codegen,
+        //     "string.split",
+        //     &[WasmType::I32, WasmType::I32], // string, delimiter
+        //     Some(WasmType::I32),             // list pointer
+        //     self.generate_string_split(),
+        // )?;
 
         // Register new string functions
         register_stdlib_function(

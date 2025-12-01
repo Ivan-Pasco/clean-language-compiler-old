@@ -15,12 +15,79 @@
 
 use clap::{Parser, Subcommand};
 use clean_language_compiler::debug::DebugUtils;
+use clean_language_compiler::error::{CompilerError, ErrorReporter};
 use clean_language_compiler::{compile_with_file, runtime::wasmtime_config::CleanWasmtimeConfig};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 mod cli;
 use cli::options_export;
+
+/// Configuration for output formatting
+#[derive(Clone)]
+struct OutputConfig {
+    use_colors: bool,
+    json_mode: bool,
+    quiet: bool,
+}
+
+impl OutputConfig {
+    /// Report compilation errors using the appropriate format
+    fn report_errors(&self, errors: &[CompilerError], source: Option<&str>) {
+        if self.json_mode {
+            // Output JSON diagnostics for IDE integration
+            let diagnostics: Vec<serde_json::Value> =
+                errors.iter().map(|e| self.error_to_json(e)).collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&diagnostics).unwrap_or_default()
+            );
+        } else if !self.quiet {
+            // Use the ErrorReporter for beautiful terminal output
+            let reporter = ErrorReporter::new(self.use_colors);
+            let _ = reporter.report_errors(errors, source);
+        }
+    }
+
+    fn error_to_json(&self, error: &CompilerError) -> serde_json::Value {
+        let (severity, message, file, line, column, code) = match error {
+            CompilerError::Syntax { context } => (
+                "error",
+                context.message.clone(),
+                context
+                    .location
+                    .as_ref()
+                    .map(|l| l.file.clone())
+                    .unwrap_or_default(),
+                context.location.as_ref().map(|l| l.line).unwrap_or(0),
+                context.location.as_ref().map(|l| l.column).unwrap_or(0),
+                context.error_code.clone(),
+            ),
+            CompilerError::Type { context } => (
+                "error",
+                context.message.clone(),
+                context
+                    .location
+                    .as_ref()
+                    .map(|l| l.file.clone())
+                    .unwrap_or_default(),
+                context.location.as_ref().map(|l| l.line).unwrap_or(0),
+                context.location.as_ref().map(|l| l.column).unwrap_or(0),
+                context.error_code.clone(),
+            ),
+            _ => ("error", error.to_string(), String::new(), 0, 0, None),
+        };
+
+        serde_json::json!({
+            "severity": severity,
+            "message": message,
+            "file": file,
+            "line": line,
+            "column": column,
+            "code": code
+        })
+    }
+}
 
 /// 🧹 Clean Language Compiler - Modern, type-safe language that compiles to WebAssembly
 #[derive(Parser, Debug)]
@@ -31,6 +98,22 @@ use cli::options_export;
     long_about = "Clean Language Compiler (cln)\n\nA modern, type-safe programming language that compiles to WebAssembly.\nWebsite: https://www.cleanlanguage.dev"
 )]
 struct Args {
+    /// Increase verbosity (-v, -vv, -vvv for trace level)
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
+
+    /// Suppress all output except errors
+    #[arg(short, long, global = true)]
+    quiet: bool,
+
+    /// Output machine-readable JSON diagnostics
+    #[arg(long, global = true)]
+    json: bool,
+
+    /// Disable colored output
+    #[arg(long, global = true)]
+    no_color: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -63,20 +146,12 @@ enum Commands {
     Package(PackageCommands),
     /// Run the Clean Language test suite
     Test {
-        /// Enable verbose output
-        #[arg(short, long)]
-        verbose: bool,
-
         /// Additional test directories to include
         #[arg(short, long)]
         dirs: Vec<String>,
     },
     /// Run simple compilation tests
-    SimpleTest {
-        /// Enable verbose output
-        #[arg(short, long)]
-        verbose: bool,
-    },
+    SimpleTest {},
     /// Debug a Clean Language file with enhanced error reporting
     Debug {
         /// Input file to debug
@@ -138,6 +213,11 @@ enum Commands {
         /// Output path for the JSON file (optional)
         #[arg(short, long)]
         output: Option<String>,
+    },
+    /// Explain an error code in detail
+    Explain {
+        /// Error code to explain (e.g., SYN001, TYP001)
+        code: String,
     },
 }
 
@@ -230,6 +310,34 @@ enum PackageCommands {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
+    // Initialize logging based on verbosity level
+    let log_level = match (args.quiet, args.verbose) {
+        (true, _) => "error", // --quiet: only errors
+        (_, 0) => "warn",     // default: warnings and errors (no debug spam)
+        (_, 1) => "info",     // -v: info level
+        (_, 2) => "debug",    // -vv: debug level
+        (_, _) => "trace",    // -vvv: trace level (everything)
+    };
+
+    // Set RUST_LOG environment variable if not already set
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", log_level);
+    }
+
+    // Initialize tracing subscriber
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_target(false)
+        .with_ansi(!args.no_color)
+        .init();
+
+    // Store global output options for error reporting
+    let output_config = OutputConfig {
+        use_colors: !args.no_color,
+        json_mode: args.json,
+        quiet: args.quiet,
+    };
+
     match args.command {
         Commands::Compile {
             input,
@@ -237,27 +345,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             opt_level,
             test,
             include_tests,
-        } => handle_compile(input, output, opt_level, test, include_tests).await?,
+        } => {
+            handle_compile(
+                input,
+                output,
+                opt_level,
+                test,
+                include_tests,
+                &output_config,
+            )
+            .await?
+        }
         Commands::Package(package_cmd) => handle_package(package_cmd).await?,
-        Commands::Test { verbose, dirs } => handle_test(verbose, dirs).await?,
-        Commands::SimpleTest { verbose } => handle_simple_test(verbose).await?,
+        Commands::Test { dirs } => handle_test(args.verbose > 0, dirs).await?,
+        Commands::SimpleTest {} => handle_simple_test(args.verbose > 0).await?,
         Commands::Debug {
             input,
             show_ast,
             check_style,
             analyze_errors,
-        } => handle_debug(input, show_ast, check_style, analyze_errors).await?,
+        } => handle_debug(input, show_ast, check_style, analyze_errors, &output_config).await?,
         Commands::Lint {
             input,
             fix,
             errors_only,
-        } => handle_lint(input, fix, errors_only).await?,
+        } => handle_lint(input, fix, errors_only, &output_config).await?,
         Commands::Parse {
             input,
             show_tree,
             recover_errors,
         } => handle_parse(input, show_tree, recover_errors).await?,
-        Commands::Run { input, debug } => handle_run(input, debug).await?,
+        Commands::Run { input, debug } => handle_run(input, debug, &output_config).await?,
         Commands::Options {
             export_json,
             output,
@@ -270,6 +388,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         }
+        Commands::Explain { code } => handle_explain(&code, &output_config)?,
     }
 
     Ok(())
@@ -281,8 +400,11 @@ async fn handle_compile(
     _opt_level: u8,
     test: bool,
     _include_tests: bool,
+    output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Compiling {input} to {output}");
+    if !output_config.quiet {
+        println!("Compiling {input} to {output}");
+    }
 
     let source = fs::read_to_string(&input)?;
 
@@ -293,11 +415,8 @@ async fn handle_compile(
     let wasm_binary = match compile_with_file(&source, &input) {
         Ok(binary) => binary,
         Err(errors) => {
-            eprintln!("❌ Compilation failed with {} errors:", errors.len());
-            for (i, error) in errors.iter().enumerate() {
-                eprintln!("Error {}: {}", i + 1, error);
-            }
-            return Err("Compilation failed".into());
+            output_config.report_errors(&errors, Some(&source));
+            return Err(format!("Compilation failed with {} errors", errors.len()).into());
         }
     };
 
@@ -552,7 +671,8 @@ async fn handle_debug(
     input: String,
     show_ast: bool,
     check_style: bool,
-    analyze_errors: bool,
+    _analyze_errors: bool,
+    output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("🔍 Debugging Clean Language file: {input}\n");
 
@@ -576,16 +696,7 @@ async fn handle_debug(
             }
         }
         Err(errors) => {
-            println!("❌ Compilation failed with {} errors:", errors.len());
-            for (i, error) in errors.iter().enumerate() {
-                println!("Error {}: {}", i + 1, error);
-            }
-            if analyze_errors {
-                println!("\n=== Error Analysis ===");
-                for error in &errors {
-                    println!("• {}", error);
-                }
-            }
+            output_config.report_errors(&errors, Some(&source));
         }
     }
 
@@ -608,6 +719,7 @@ async fn handle_lint(
     input: String,
     fix: bool,
     errors_only: bool,
+    output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("🧹 Linting: {input}");
 
@@ -659,10 +771,7 @@ async fn handle_lint(
             Err(errors) => {
                 total_errors += errors.len();
                 if !errors_only {
-                    println!("  ❌ Compilation Errors:");
-                    for error in &errors {
-                        println!("     {error}");
-                    }
+                    output_config.report_errors(&errors, Some(&source));
                 }
             }
         }
@@ -735,7 +844,11 @@ async fn handle_parse(
     Ok(())
 }
 
-async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error::Error>> {
+async fn handle_run(
+    input: String,
+    debug: bool,
+    output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
     if !Path::new(&input).exists() {
         eprintln!("❌ Error: File '{input}' not found");
         return Ok(());
@@ -745,7 +858,9 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
     let wasm_bytes = match input_path.extension().and_then(|s| s.to_str()) {
         Some("cln") => {
             // Handle Clean Language source file - compile to WASM first
-            println!("🔧 Compiling Clean Language file: {input}");
+            if !output_config.quiet {
+                println!("🔧 Compiling Clean Language file: {input}");
+            }
 
             let source = fs::read_to_string(&input)?;
             if debug {
@@ -763,18 +878,17 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
                     }
                     binary
                 }
-                Err(compile_error) => {
-                    eprintln!("❌ Compilation failed: {} errors", compile_error.len());
-                    for error in &compile_error {
-                        eprintln!("  - {}", error);
-                    }
+                Err(compile_errors) => {
+                    output_config.report_errors(&compile_errors, Some(&source));
                     return Err(
-                        format!("Compilation failed with {} errors", compile_error.len()).into(),
+                        format!("Compilation failed with {} errors", compile_errors.len()).into(),
                     );
                 }
             };
 
-            println!("🚀 Running compiled WebAssembly...");
+            if !output_config.quiet {
+                println!("🚀 Running compiled WebAssembly...");
+            }
             wasm_binary
         }
         Some("wasm") => {
@@ -1451,3 +1565,482 @@ async fn handle_run(input: String, debug: bool) -> Result<(), Box<dyn std::error
 
 // Test runner removed - not compatible with 7-stage pipeline
 // Tests should be implemented as separate .cln files and compiled individually
+
+fn handle_explain(
+    code: &str,
+    output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let code_upper = code.to_uppercase();
+
+    // Get error explanation
+    let explanation = get_error_explanation(&code_upper);
+
+    if output_config.json_mode {
+        let json = serde_json::json!({
+            "code": code_upper,
+            "category": get_error_category(&code_upper),
+            "title": explanation.title,
+            "description": explanation.description,
+            "example": explanation.example,
+            "fix": explanation.fix,
+        });
+        println!("{}", serde_json::to_string_pretty(&json)?);
+    } else {
+        // Terminal output with colors
+        let colors = if output_config.use_colors {
+            (
+                "\x1b[1m", "\x1b[0m", "\x1b[36m", "\x1b[33m", "\x1b[32m", "\x1b[2m",
+            )
+        } else {
+            ("", "", "", "", "", "")
+        };
+        let (bold, reset, cyan, yellow, green, dim) = colors;
+
+        if explanation.title == "Unknown Error Code" {
+            eprintln!(
+                "{}error{}: Unknown error code '{}'",
+                bold, reset, code_upper
+            );
+            eprintln!();
+            eprintln!("Available error codes:");
+            eprintln!("  {}Syntax errors:{} SYN001-SYN010", cyan, reset);
+            eprintln!("  {}Type errors:{}   TYP001-TYP010", cyan, reset);
+            eprintln!("  {}Memory errors:{} MEM001-MEM005", cyan, reset);
+            eprintln!("  {}Runtime errors:{} RUN001-RUN005", cyan, reset);
+            eprintln!();
+            eprintln!("Use 'cln explain <code>' to learn more about a specific error.");
+            return Ok(());
+        }
+
+        println!();
+        println!(
+            "{}error[{}]{}: {}",
+            bold, code_upper, reset, explanation.title
+        );
+        println!();
+        println!("{}Description:{}", cyan, reset);
+        for line in explanation.description.lines() {
+            println!("  {}", line);
+        }
+
+        if !explanation.example.is_empty() {
+            println!();
+            println!("{}Example of problematic code:{}", yellow, reset);
+            println!();
+            for line in explanation.example.lines() {
+                println!("  {}{}{}", dim, line, reset);
+            }
+        }
+
+        if !explanation.fix.is_empty() {
+            println!();
+            println!("{}How to fix:{}", green, reset);
+            for line in explanation.fix.lines() {
+                println!("  {}", line);
+            }
+        }
+
+        println!();
+    }
+
+    Ok(())
+}
+
+struct ErrorExplanation {
+    title: &'static str,
+    description: &'static str,
+    example: &'static str,
+    fix: &'static str,
+}
+
+fn get_error_category(code: &str) -> &'static str {
+    if code.len() < 3 {
+        return "Unknown";
+    }
+    match &code[..3] {
+        "SYN" => "Syntax",
+        "TYP" => "Type",
+        "MEM" => "Memory",
+        "RUN" => "Runtime",
+        "COD" => "Codegen",
+        "VAL" => "Validation",
+        "MOD" => "Module",
+        _ => "Unknown",
+    }
+}
+
+fn get_error_explanation(code: &str) -> ErrorExplanation {
+    match code {
+        // Syntax Errors (SYN001-SYN010)
+        "SYN001" => ErrorExplanation {
+            title: "Unexpected token",
+            description: "The parser encountered a token that doesn't fit the expected syntax.\n\
+                         This usually happens when there's a typo, missing punctuation, or incorrect\n\
+                         language construct usage.",
+            example: "start()\n\
+                      \tinteger x = // missing value here\n\
+                      \tprint x",
+            fix: "Check the line indicated for:\n\
+                  - Missing values or expressions\n\
+                  - Typos in keywords (integer, string, boolean, etc.)\n\
+                  - Missing operators or punctuation",
+        },
+        "SYN002" => ErrorExplanation {
+            title: "Missing closing delimiter",
+            description: "A parenthesis, bracket, or brace was opened but never closed.\n\
+                         All delimiters must be properly balanced in Clean Language.",
+            example: "start()\n\
+                      \tprint(\"Hello world\"",
+            fix: "Find the opening delimiter and add its matching close:\n\
+                  - ( must be closed with )\n\
+                  - [ must be closed with ]\n\
+                  - { must be closed with }",
+        },
+        "SYN003" => ErrorExplanation {
+            title: "Invalid indentation",
+            description: "Clean Language uses tabs for indentation. Spaces or mixed indentation\n\
+                         will cause this error. Each nested block requires one additional tab.",
+            example: "start()\n\
+                        integer x = 5  // Using spaces instead of tab",
+            fix: "Use tabs for indentation, not spaces.\n\
+                  Configure your editor to insert tabs when pressing Tab.\n\
+                  Each block level should be indented by exactly one tab.",
+        },
+        "SYN004" => ErrorExplanation {
+            title: "Invalid string literal",
+            description: "A string literal is malformed. This could be due to:\n\
+                         - Unclosed quotes\n\
+                         - Invalid escape sequences\n\
+                         - Line breaks within single-line strings",
+            example: "start()\n\
+                      \tstring s = \"Hello  // missing closing quote",
+            fix: "Ensure strings are properly quoted:\n\
+                  - Single-line strings: use matching \" quotes\n\
+                  - Escape special characters: \\n, \\t, \\\", \\\\",
+        },
+        "SYN005" => ErrorExplanation {
+            title: "Invalid number literal",
+            description: "A number literal is malformed. Clean Language supports:\n\
+                         - Integers: 42, -17, 0\n\
+                         - Floats: 3.14, -2.5, 1.0e10",
+            example: "start()\n\
+                      \tnumber x = 3.14.5  // Invalid: multiple decimal points",
+            fix: "Check the number format:\n\
+                  - Only one decimal point allowed\n\
+                  - Scientific notation: 1e10, 2.5e-3\n\
+                  - No spaces within numbers",
+        },
+        "SYN006" => ErrorExplanation {
+            title: "Expected expression",
+            description: "An expression was expected but not found. This occurs when:\n\
+                         - An operator is missing its operand\n\
+                         - A function call has empty arguments where one is required\n\
+                         - An assignment is missing its right-hand side",
+            example: "start()\n\
+                      \tinteger x =   // missing expression after =",
+            fix: "Provide a valid expression:\n\
+                  - Literals: 42, \"text\", true\n\
+                  - Variables: myVar\n\
+                  - Operations: a + b\n\
+                  - Function calls: getValue()",
+        },
+        "SYN007" => ErrorExplanation {
+            title: "Invalid identifier",
+            description: "The identifier name is not valid. Identifiers must:\n\
+                         - Start with a letter or underscore\n\
+                         - Contain only letters, numbers, and underscores\n\
+                         - Not be a reserved keyword",
+            example: "start()\n\
+                      \tinteger 123abc = 5  // Cannot start with number",
+            fix: "Use valid identifier names:\n\
+                  - Good: myVar, _private, count123\n\
+                  - Bad: 123var, my-var, class (reserved)",
+        },
+        "SYN008" => ErrorExplanation {
+            title: "Missing function body",
+            description: "A function was declared but has no body. All functions must have\n\
+                         at least one statement in their body.",
+            example: "myFunc()\n\
+                      // No body - next line is a different function\n\
+                      start()",
+            fix: "Add at least one statement to the function body:\n\
+                  myFunc()\n\
+                  \treturn 0\n\n\
+                  Or use 'pass' for empty functions that will be implemented later.",
+        },
+        "SYN009" => ErrorExplanation {
+            title: "Unexpected end of file",
+            description: "The file ended unexpectedly while the parser was expecting more content.\n\
+                         This usually means an unclosed block or incomplete statement.",
+            example: "start()\n\
+                      \tif x > 0\n\
+                      \t\t// File ends here without closing the if block",
+            fix: "Ensure all blocks and statements are complete:\n\
+                  - Close all if/else/while/for blocks\n\
+                  - Complete all function bodies\n\
+                  - End strings and comments properly",
+        },
+        "SYN010" => ErrorExplanation {
+            title: "Reserved keyword used as identifier",
+            description: "A reserved keyword is being used where an identifier is expected.\n\
+                         Keywords like 'if', 'while', 'class', etc. cannot be used as variable\n\
+                         or function names.",
+            example: "start()\n\
+                      \tinteger class = 5  // 'class' is a reserved keyword",
+            fix: "Choose a different name that is not a keyword.\n\
+                  Reserved keywords include: if, else, while, for, class, function,\n\
+                  return, true, false, null, integer, string, boolean, number, etc.",
+        },
+
+        // Type Errors (TYP001-TYP010)
+        "TYP001" => ErrorExplanation {
+            title: "Type mismatch",
+            description: "The type of an expression doesn't match what was expected.\n\
+                         Clean Language is strongly typed - you cannot implicitly convert\n\
+                         between incompatible types.",
+            example: "start()\n\
+                      \tinteger x = \"hello\"  // Cannot assign string to integer",
+            fix: "Ensure types match or use explicit conversion:\n\
+                  - Use type conversion: x.toInteger(), x.toString()\n\
+                  - Declare with correct type: string x = \"hello\"\n\
+                  - Use appropriate literal: integer x = 42",
+        },
+        "TYP002" => ErrorExplanation {
+            title: "Undefined variable",
+            description: "A variable is being used that hasn't been declared.\n\
+                         Variables must be declared with their type before use.",
+            example: "start()\n\
+                      \tprint undeclaredVar  // Variable not declared",
+            fix: "Declare the variable before using it:\n\
+                  integer myVar = 0\n\
+                  print myVar\n\n\
+                  Or check for typos in the variable name.",
+        },
+        "TYP003" => ErrorExplanation {
+            title: "Undefined function",
+            description: "A function is being called that hasn't been defined.\n\
+                         Functions must be defined before they are called.",
+            example: "start()\n\
+                      \tresult = unknownFunc()  // Function not defined",
+            fix: "Define the function before calling it:\n\
+                  unknownFunc() -> integer\n\
+                  \treturn 42\n\n\
+                  Or check for typos in the function name.",
+        },
+        "TYP004" => ErrorExplanation {
+            title: "Invalid operation for type",
+            description: "An operation was attempted that is not valid for the given type.\n\
+                         For example, arithmetic on strings or string concatenation on booleans.",
+            example: "start()\n\
+                      \tstring s = \"hello\"\n\
+                      \tinteger x = s + 5  // Cannot add integer to string",
+            fix: "Use operations appropriate for the type:\n\
+                  - Arithmetic (+, -, *, /): numbers only\n\
+                  - Comparison (==, !=): same types\n\
+                  - String concat: strings only\n\
+                  - Use type conversion if needed",
+        },
+        "TYP005" => ErrorExplanation {
+            title: "Wrong number of arguments",
+            description: "A function was called with the wrong number of arguments.\n\
+                         The number of arguments must match the function signature.",
+            example: "add(a: integer, b: integer) -> integer\n\
+                      \treturn a + b\n\n\
+                      start()\n\
+                      \tresult = add(5)  // Missing second argument",
+            fix: "Provide the correct number of arguments.\n\
+                  Check the function signature for required parameters.\n\
+                  Optional parameters with defaults don't need to be provided.",
+        },
+        "TYP006" => ErrorExplanation {
+            title: "Return type mismatch",
+            description: "A function returns a value that doesn't match its declared return type.\n\
+                         The return statement must provide a value of the correct type.",
+            example: "getValue() -> integer\n\
+                      \treturn \"hello\"  // Returns string, expected integer",
+            fix: "Return a value matching the declared type:\n\
+                  - Change the return statement value\n\
+                  - Change the function's return type\n\
+                  - Add type conversion if appropriate",
+        },
+        "TYP007" => ErrorExplanation {
+            title: "Cannot infer type",
+            description: "The compiler cannot determine the type of an expression.\n\
+                         This may happen with complex expressions or missing type annotations.",
+            example: "start()\n\
+                      \tx = someComplexExpression  // Type unclear",
+            fix: "Provide an explicit type annotation:\n\
+                  integer x = someComplexExpression\n\n\
+                  Or simplify the expression so the type is clear.",
+        },
+        "TYP008" => ErrorExplanation {
+            title: "Undefined method",
+            description: "A method was called on a type that doesn't have that method.\n\
+                         Check the available methods for the type you're using.",
+            example: "start()\n\
+                      \tinteger x = 42\n\
+                      \tx.unknownMethod()  // Method doesn't exist on integer",
+            fix: "Use a method that exists for the type:\n\
+                  - integer: toString(), toNumber(), toBoolean()\n\
+                  - string: length(), toUpperCase(), toLowerCase()\n\
+                  - array: length(), push(), pop(), get(), set()",
+        },
+        "TYP009" => ErrorExplanation {
+            title: "Undefined class",
+            description: "A class is being used that hasn't been defined.\n\
+                         Classes must be defined before they can be instantiated.",
+            example: "start()\n\
+                      \tp = UndefinedClass.new()  // Class not defined",
+            fix: "Define the class before using it:\n\
+                  class MyClass\n\
+                  \tinteger value\n\
+                  \tnew(v: integer)\n\
+                  \t\tvalue = v\n\n\
+                  Or import it if defined in another module.",
+        },
+        "TYP010" => ErrorExplanation {
+            title: "Incompatible types in comparison",
+            description: "Two values of incompatible types are being compared.\n\
+                         Comparisons require operands of the same type.",
+            example: "start()\n\
+                      \tif 5 == \"five\"  // Cannot compare integer and string\n\
+                      \t\tprint \"equal\"",
+            fix: "Convert values to the same type before comparing:\n\
+                  if 5 == \"five\".toInteger()\n\n\
+                  Or compare values of the same type.",
+        },
+
+        // Memory Errors (MEM001-MEM005)
+        "MEM001" => ErrorExplanation {
+            title: "Stack overflow",
+            description: "The program's call stack has exceeded its maximum size.\n\
+                         This is usually caused by infinite or very deep recursion.",
+            example: "infiniteRecursion()\n\
+                      \tinfiniteRecursion()  // No base case!\n\n\
+                      start()\n\
+                      \tinfiniteRecursion()",
+            fix: "Add a base case to recursive functions:\n\
+                  factorial(n: integer) -> integer\n\
+                  \tif n <= 1\n\
+                  \t\treturn 1\n\
+                  \treturn n * factorial(n - 1)",
+        },
+        "MEM002" => ErrorExplanation {
+            title: "Out of memory",
+            description: "The program has exhausted available memory.\n\
+                         This can happen with very large data structures or memory leaks.",
+            example: "start()\n\
+                      \tlist = []\n\
+                      \twhile true\n\
+                      \t\tlist.push(\"data\")  // Infinite list growth",
+            fix: "Limit data structure sizes:\n\
+                  - Set maximum sizes for collections\n\
+                  - Process data in chunks\n\
+                  - Release unused data",
+        },
+        "MEM003" => ErrorExplanation {
+            title: "Null pointer access",
+            description: "Attempted to access a null or undefined reference.\n\
+                         This occurs when using an uninitialized or cleared variable.",
+            example: "start()\n\
+                      \tp = null\n\
+                      \tprint p.value  // Accessing property of null",
+            fix: "Check for null before accessing:\n\
+                  if p != null\n\
+                  \tprint p.value\n\n\
+                  Or ensure the variable is properly initialized.",
+        },
+        "MEM004" => ErrorExplanation {
+            title: "Index out of bounds",
+            description: "An array or list was accessed with an invalid index.\n\
+                         Indices must be >= 0 and < length.",
+            example: "start()\n\
+                      \tarr = [1, 2, 3]\n\
+                      \tprint arr[5]  // Only indices 0, 1, 2 are valid",
+            fix: "Ensure index is within bounds:\n\
+                  if index >= 0 && index < arr.length()\n\
+                  \tprint arr[index]\n\n\
+                  Or use safe access methods with default values.",
+        },
+        "MEM005" => ErrorExplanation {
+            title: "Memory allocation failed",
+            description: "The system could not allocate requested memory.\n\
+                         This is typically a system-level resource issue.",
+            example: "// Attempting to allocate very large array\n\
+                      data = Array<integer>.new(999999999999)",
+            fix: "Request smaller allocations:\n\
+                  - Use reasonable data structure sizes\n\
+                  - Process data in smaller batches\n\
+                  - Check system available memory",
+        },
+
+        // Runtime Errors (RUN001-RUN005)
+        "RUN001" => ErrorExplanation {
+            title: "Division by zero",
+            description: "Attempted to divide a number by zero.\n\
+                         Division by zero is undefined in mathematics and programming.",
+            example: "start()\n\
+                      \tresult = 10 / 0  // Division by zero",
+            fix: "Check the divisor before dividing:\n\
+                  if divisor != 0\n\
+                  \tresult = value / divisor\n\
+                  else\n\
+                  \tprint \"Cannot divide by zero\"",
+        },
+        "RUN002" => ErrorExplanation {
+            title: "Integer overflow",
+            description: "An integer operation resulted in a value too large to represent.\n\
+                         Clean Language integers have a maximum value.",
+            example: "start()\n\
+                      \tx = 2147483647\n\
+                      \tx = x + 1  // Overflows 32-bit integer",
+            fix: "Use appropriate numeric types:\n\
+                  - Use 'number' (float) for very large values\n\
+                  - Check bounds before arithmetic\n\
+                  - Consider BigInteger for arbitrary precision",
+        },
+        "RUN003" => ErrorExplanation {
+            title: "Invalid cast",
+            description: "A type conversion failed because the value cannot be converted.\n\
+                         Not all values can be converted between types.",
+            example: "start()\n\
+                      \ts = \"hello\"\n\
+                      \tn = s.toInteger()  // \"hello\" cannot become integer",
+            fix: "Validate values before conversion:\n\
+                  - Check string format before parsing\n\
+                  - Handle conversion failures gracefully\n\
+                  - Use try/onError for safe conversion",
+        },
+        "RUN004" => ErrorExplanation {
+            title: "Assertion failed",
+            description: "An assertion check failed during program execution.\n\
+                         Assertions verify expected conditions in the code.",
+            example: "validateAge(age: integer)\n\
+                      \tassert age >= 0  // Fails if age is negative",
+            fix: "Fix the condition that caused the assertion to fail:\n\
+                  - Ensure input data is valid\n\
+                  - Check for edge cases in your logic\n\
+                  - Validate data at system boundaries",
+        },
+        "RUN005" => ErrorExplanation {
+            title: "Timeout exceeded",
+            description: "An operation took longer than the allowed time limit.\n\
+                         This prevents infinite loops from hanging the program.",
+            example: "start()\n\
+                      \twhile true\n\
+                      \t\t// Infinite loop",
+            fix: "Ensure operations complete in reasonable time:\n\
+                  - Add proper termination conditions to loops\n\
+                  - Break large operations into smaller chunks\n\
+                  - Add progress checks in long-running code",
+        },
+
+        // Default for unknown codes
+        _ => ErrorExplanation {
+            title: "Unknown Error Code",
+            description: "This error code is not recognized.",
+            example: "",
+            fix: "",
+        },
+    }
+}

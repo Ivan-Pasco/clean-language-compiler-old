@@ -1,3 +1,7 @@
+// Spec Section: 5.2 - Iteration (iterate)
+// Spec Section: 5.2.1 - Range Iteration
+// Spec Section: 5.2.2 - Collection Iteration
+// Tests: iterate loops with ranges and list collections
 
 start()
 	list<integer> numbers = [1, 2, 3, 4, 5]

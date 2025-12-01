@@ -1,0 +1,43 @@
+// Spec Section: 3.4 - Type Conversions
+// Tests: Type conversion methods (.toString)
+
+start()
+	// Test 1: Integer to String conversion
+	integer num = 123
+	string strFromInt = num.toString()
+	print("Integer 123 to string: " + strFromInt)
+
+	// Test 2: Number to String conversion
+	number pi = 3.14159
+	string strFromNum = pi.toString()
+	print("Number 3.14159 to string: " + strFromNum)
+
+	// Test 3: Boolean to String conversion
+	boolean t = true
+	boolean f = false
+	string strFromTrue = t.toString()
+	string strFromFalse = f.toString()
+	print("Boolean true to string: " + strFromTrue)
+	print("Boolean false to string: " + strFromFalse)
+
+	// Test 4: Conversion in concatenation
+	integer x = 42
+	number y = 2.5
+	boolean flag = true
+	print("Values: " + x.toString() + ", " + y.toString() + ", " + flag.toString())
+
+	// Test 5: Conversion with arithmetic results
+	integer sum = 10 + 20
+	number product = 3.5 * 2.0
+	print("Sum: " + sum.toString())
+	print("Product: " + product.toString())
+
+	// Test 6: Comparison result to string
+	integer a = 10
+	integer b = 5
+	boolean gt = a > b
+	boolean lt = a < b
+	print("10 > 5: " + gt.toString())
+	print("10 < 5: " + lt.toString())
+
+	print("Type conversions test completed")

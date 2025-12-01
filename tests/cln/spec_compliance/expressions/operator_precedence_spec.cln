@@ -1,0 +1,46 @@
+// Spec Section: 5.1 - Operator Precedence
+// Tests: Operator precedence from highest to lowest
+
+start()
+	// Test 1: Multiplication before addition
+	integer result1 = 2 + 3 * 4
+	print("2 + 3 * 4 = " + result1.toString())
+
+	// Test 2: Division before subtraction
+	integer result2 = 20 - 12 / 4
+	print("20 - 12 / 4 = " + result2.toString())
+
+	// Test 3: Parentheses override precedence
+	integer result3 = (2 + 3) * 4
+	print("(2 + 3) * 4 = " + result3.toString())
+
+	// Test 4: Multiple operators same precedence (left to right)
+	integer result4 = 20 / 4 * 2
+	print("20 / 4 * 2 = " + result4.toString())
+
+	integer result5 = 10 - 5 + 3
+	print("10 - 5 + 3 = " + result5.toString())
+
+	// Test 5: Comparison after arithmetic
+	boolean result6 = 5 + 3 > 6
+	print("5 + 3 > 6: " + result6.toString())
+
+	boolean result7 = 10 - 2 == 8
+	print("10 - 2 == 8: " + result7.toString())
+
+	// Test 6: Logical after comparison
+	boolean result8 = 5 > 3 and 10 > 8
+	print("5 > 3 and 10 > 8: " + result8.toString())
+
+	boolean result9 = 5 < 3 or 10 > 8
+	print("5 < 3 or 10 > 8: " + result9.toString())
+
+	// Test 7: Complex expression
+	integer complex = (10 + 5) * 2 - 8 / 4
+	print("(10 + 5) * 2 - 8 / 4 = " + complex.toString())
+
+	// Test 8: Nested parentheses
+	integer nested = ((2 + 3) * (4 - 1)) + 5
+	print("((2 + 3) * (4 - 1)) + 5 = " + nested.toString())
+
+	print("Operator precedence test completed")

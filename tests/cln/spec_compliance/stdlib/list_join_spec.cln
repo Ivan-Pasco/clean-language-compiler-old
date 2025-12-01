@@ -1,0 +1,20 @@
+// Spec Section: 7 - Standard Library
+// Tests: list.join() - combine array elements into string
+
+start()
+	// Test 1: Join with comma
+	list<string> fruits = ["apple", "banana", "cherry"]
+	string result = list.join(fruits, ", ")
+	print("Fruits: " + result)
+
+	// Test 2: Join with dash
+	list<string> words = ["Clean", "Language", "Compiler"]
+	string dashed = list.join(words, "-")
+	print("Dashed: " + dashed)
+
+	// Test 3: Join with space
+	list<string> sentence = ["Hello", "World", "from", "Clean"]
+	string text = list.join(sentence, " ")
+	print("Sentence: " + text)
+
+	print("list.join test completed")

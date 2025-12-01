@@ -1,0 +1,42 @@
+// Spec Section: 14.3 - List Advanced Search Operations
+// Tests: list.indexOf with various scenarios
+
+start()
+	// Test 1: indexOf - find first occurrence
+	list<integer> numbers = [10, 20, 30, 20, 40]
+	integer index1 = list.indexOf(numbers, 20)
+	print("First index of 20: " + index1.toString())
+
+	// Test 2: indexOf - element not found returns -1
+	integer notFound = list.indexOf(numbers, 99)
+	print("Index of 99: " + notFound.toString())
+
+	// Test 3: indexOf with strings
+	list<string> names = ["Alice", "Bob", "Charlie", "Bob"]
+	integer bobIndex = list.indexOf(names, "Bob")
+	print("First Bob index: " + bobIndex.toString())
+
+	// Test 4: indexOf at beginning
+	list<integer> data = [5, 10, 15, 20]
+	integer firstPos = list.indexOf(data, 5)
+	print("Index of first element: " + firstPos.toString())
+
+	// Test 5: indexOf at end
+	integer lastPos = list.indexOf(data, 20)
+	print("Index of last element: " + lastPos.toString())
+
+	// Test 6: contains - check existence
+	list<string> fruits = ["apple", "banana", "orange"]
+	boolean hasApple = list.contains(fruits, "apple")
+	boolean hasGrape = list.contains(fruits, "grape")
+	print("Has apple: " + hasApple.toString())
+	print("Has grape: " + hasGrape.toString())
+
+	// Test 7: contains with integers
+	list<integer> scores = [85, 92, 78, 96]
+	boolean has92 = list.contains(scores, 92)
+	boolean has100 = list.contains(scores, 100)
+	print("Has 92: " + has92.toString())
+	print("Has 100: " + has100.toString())
+
+	print("List advanced search test completed")

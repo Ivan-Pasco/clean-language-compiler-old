@@ -1,0 +1,23 @@
+// Spec Section: 7 - Standard Library
+// Tests: string.toUpperCase() and string.toLowerCase()
+
+start()
+	// Test 1: toUpperCase
+	string lower = "hello world"
+	string upper = string.toUpperCase(lower)
+	print("Uppercase: " + upper)
+
+	// Test 2: toLowerCase
+	string mixed = "Hello WORLD"
+	string lowered = string.toLowerCase(mixed)
+	print("Lowercase: " + lowered)
+
+	// Test 3: Case normalization
+	string email1 = "USER@EXAMPLE.COM"
+	string email2 = "user@example.com"
+	string norm1 = string.toLowerCase(email1)
+	string norm2 = string.toLowerCase(email2)
+	if norm1 == norm2
+		print("Emails match after normalization")
+
+	print("string case conversion test completed")

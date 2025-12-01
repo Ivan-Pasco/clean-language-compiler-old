@@ -3330,7 +3330,7 @@ impl SemanticAnalyzer {
                             "DEBUG: Nested namespace method call detected: {}",
                             qualified_name
                         );
-                        eprintln!("DEBUG: Arguments provided: {}", arguments.len());
+                        tracing::trace!("DEBUG: Arguments provided: {}", arguments.len());
 
                         // Check if this is a known builtin function
                         if self.function_table.contains_key(&qualified_name) {
@@ -3343,7 +3343,7 @@ impl SemanticAnalyzer {
                                 Some(location.clone()),
                             );
                         } else {
-                            eprintln!("DEBUG: NOT found in function table");
+                            tracing::trace!("DEBUG: NOT found in function table");
                         }
                     }
                 }
@@ -5183,15 +5183,15 @@ impl SemanticAnalyzer {
             // Before giving up, check if this could be an implicit method call
             // If we're in a class context and the function name matches a method in the hierarchy,
             // treat it as an implicit method call (this.methodName())
-            eprintln!("DEBUG: Function '{}' not found in function table, checking for implicit method call", name);
-            eprintln!("DEBUG: Current class context: {:?}", self.current_class);
+            tracing::trace!("DEBUG: Function '{}' not found in function table, checking for implicit method call", name);
+            tracing::trace!("DEBUG: Current class context: {:?}", self.current_class);
             if let Some(ref current_class_name) = self.current_class {
                 eprintln!(
                     "DEBUG: Searching hierarchy for class '{}'",
                     current_class_name
                 );
                 let hierarchy = self.get_class_hierarchy(current_class_name);
-                eprintln!("DEBUG: Class hierarchy: {:?}", hierarchy);
+                tracing::trace!("DEBUG: Class hierarchy: {:?}", hierarchy);
                 for class_in_hierarchy in &hierarchy {
                     eprintln!(
                         "DEBUG: Checking class '{}' for method '{}'",
@@ -5204,7 +5204,7 @@ impl SemanticAnalyzer {
                             class_def.methods.len()
                         );
                         for method_def in &class_def.methods {
-                            eprintln!("DEBUG: Checking method '{}'", method_def.name);
+                            tracing::trace!("DEBUG: Checking method '{}'", method_def.name);
                             if method_def.name == name {
                                 eprintln!(
                                     "DEBUG: FOUND matching method '{}' in class '{}'!",
@@ -5238,7 +5238,7 @@ impl SemanticAnalyzer {
                                 for (i, (arg, param)) in
                                     args.iter().zip(method_params.iter()).enumerate()
                                 {
-                                    eprintln!("DEBUG: Checking argument {} type", i + 1);
+                                    tracing::trace!("DEBUG: Checking argument {} type", i + 1);
                                     let arg_type = self.check_expression(arg)?;
                                     eprintln!(
                                         "DEBUG: Argument {} type: {:?}, expected: {:?}",
@@ -5247,7 +5247,10 @@ impl SemanticAnalyzer {
                                         param.type_
                                     );
                                     if !self.types_compatible(&arg_type, &param.type_) {
-                                        eprintln!("DEBUG: Type mismatch for argument {}", i + 1);
+                                        tracing::trace!(
+                                            "DEBUG: Type mismatch for argument {}",
+                                            i + 1
+                                        );
                                         return Err(CompilerError::type_error(
                                             &format!("Argument {} has incorrect type. Expected {:?}, got {:?}",
                                                 i + 1, param.type_, arg_type),
@@ -5257,7 +5260,7 @@ impl SemanticAnalyzer {
                                     }
                                 }
 
-                                eprintln!("DEBUG: All argument types validated successfully! Returning method type: {:?}", method_return_type);
+                                tracing::trace!("DEBUG: All argument types validated successfully! Returning method type: {:?}", method_return_type);
 
                                 // CRITICAL FIX: Register the implicit method call mapping for codegen
                                 // When getInfo() is resolved as an implicit method call to Vehicle.getInfo,

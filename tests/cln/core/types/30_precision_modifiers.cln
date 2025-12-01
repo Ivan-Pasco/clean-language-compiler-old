@@ -1,4 +1,8 @@
-// Test file for integer and number types (Clean Language doesn't support precision modifiers)
+// Spec Section: 2.1 - Core Types (integer, number)
+// Spec Section: 2.6 - Type Annotations
+// Spec Section: 2.7 - Type Conversions (.toString)
+// Tests: Integer and number types with arithmetic operations
+// Note: Clean Language doesn't support precision modifiers
 
 start()
 	// Test basic integer types

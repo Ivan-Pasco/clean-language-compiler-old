@@ -1,0 +1,7 @@
+// Spec Section: 3.7 - Pairs Type
+// Tests: Basic pairs<K,V> type operations
+
+start()
+	pairs<string, integer> ages = {"alice": 25, "bob": 30}
+	print("Pairs created")
+	print("Pairs basic test completed")

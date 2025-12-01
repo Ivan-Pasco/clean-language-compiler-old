@@ -1,0 +1,48 @@
+// Spec Section: 2.4 - String Interpolation
+// Tests: String interpolation with ${} syntax
+
+start()
+	// Test 1: Basic variable interpolation
+	string name = "Alice"
+	string greeting = "Hello, ${name}!"
+	print(greeting)
+
+	// Test 2: Integer interpolation
+	integer age = 25
+	string ageMsg = "Age: ${age}"
+	print(ageMsg)
+
+	// Test 3: Multiple interpolations
+	string first = "John"
+	string last = "Doe"
+	string fullName = "${first} ${last}"
+	print("Full name: " + fullName)
+
+	// Test 4: Interpolation with expressions
+	integer x = 10
+	integer y = 20
+	string sumMsg = "Sum of ${x} and ${y} is ${x + y}"
+	print(sumMsg)
+
+	// Test 5: Nested string content
+	string item = "book"
+	integer count = 3
+	string inventory = "We have ${count} ${item}s in stock"
+	print(inventory)
+
+	// Test 6: Boolean interpolation
+	boolean isActive = true
+	string statusMsg = "Status: ${isActive}"
+	print(statusMsg)
+
+	// Test 7: Number interpolation
+	number price = 19.99
+	string priceMsg = "Price: $${price}"
+	print(priceMsg)
+
+	// Test 8: Empty interpolation context
+	string empty = ""
+	string withEmpty = "Before${empty}After"
+	print("With empty: " + withEmpty)
+
+	print("String interpolation test completed")

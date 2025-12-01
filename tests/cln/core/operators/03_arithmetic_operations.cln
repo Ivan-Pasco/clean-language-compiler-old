@@ -1,3 +1,5 @@
+// Spec Section: 4.3 - Arithmetic Operators
+// Tests: Addition, subtraction, multiplication, division, modulo, exponentiation
 
 start()
 	integer a = 10

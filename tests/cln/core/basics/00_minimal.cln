@@ -1,3 +1,7 @@
+// Spec Section: 2.1 - Core Types (integer)
+// Spec Section: 5.1 - Variable Declaration
+// Spec Section: 6.1 - Start Function
+// Tests: Minimal program with integer variable declaration
 
 start()
 	integer x = 42

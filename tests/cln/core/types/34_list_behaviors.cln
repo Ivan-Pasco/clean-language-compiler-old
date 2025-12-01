@@ -1,4 +1,6 @@
-// Test list behavior modifiers - FIFO, LIFO, and unique elements
+// Spec Section: 2.4 - Composite Types (list<any>)
+// Spec Section: 2.5 - List Properties (Behavior Modifiers)
+// Tests: List behavior modifiers - "line" (FIFO), "pile" (LIFO), "unique", "line-unique"
 
 functions:
 	void testQueueBehavior()

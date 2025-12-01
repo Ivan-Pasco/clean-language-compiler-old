@@ -1,0 +1,20 @@
+// Spec Section: 7 - Standard Library
+// Tests: string.substring() - extract portion of string
+
+start()
+	// Test 1: Basic substring
+	string text = "Hello World"
+	string sub1 = string.substring(text, 0, 5)
+	print("Substring 0-5: " + sub1)
+
+	// Test 2: Middle portion
+	string message = "Clean Language"
+	string sub2 = string.substring(message, 6, 14)
+	print("Substring 6-14: " + sub2)
+
+	// Test 3: Extract word
+	string sentence = "The quick brown fox"
+	string word = string.substring(sentence, 4, 9)
+	print("Extracted word: " + word)
+
+	print("string.substring test completed")

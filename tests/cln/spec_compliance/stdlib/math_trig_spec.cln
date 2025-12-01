@@ -1,0 +1,41 @@
+// Spec Section: 14.1.2 - Math Trigonometric Functions
+// Tests: Trigonometric functions from math module
+
+start()
+	// Test 1: math.sin
+	number angle1 = 0.0
+	number sin0 = math.sin(angle1)
+	print("math.sin(0.0) = " + sin0.toString())
+
+	// Test 2: math.cos
+	number cos0 = math.cos(angle1)
+	print("math.cos(0.0) = " + cos0.toString())
+
+	// Test 3: math.tan
+	number tan0 = math.tan(angle1)
+	print("math.tan(0.0) = " + tan0.toString())
+
+	// Test 4: sin and cos with pi/2
+	number halfPi = math.pi() / 2.0
+	number sinHalfPi = math.sin(halfPi)
+	number cosHalfPi = math.cos(halfPi)
+	print("math.sin(pi/2) = " + sinHalfPi.toString())
+	print("math.cos(pi/2) = " + cosHalfPi.toString())
+
+	// Test 5: sin and cos with pi
+	number piVal = math.pi()
+	number sinPi = math.sin(piVal)
+	number cosPi = math.cos(piVal)
+	print("math.sin(pi) = " + sinPi.toString())
+	print("math.cos(pi) = " + cosPi.toString())
+
+	// Test 6: Pythagorean identity: sin^2 + cos^2 = 1
+	number testAngle = 1.0
+	number sinVal = math.sin(testAngle)
+	number cosVal = math.cos(testAngle)
+	number sinSquared = sinVal * sinVal
+	number cosSquared = cosVal * cosVal
+	number sum = sinSquared + cosSquared
+	print("sin^2(1) + cos^2(1) = " + sum.toString())
+
+	print("Math trig functions test completed")

@@ -1,0 +1,51 @@
+// Spec Section: 5.3 - Unary Operators
+// Tests: Unary minus and logical not operators
+
+start()
+	// Test 1: Unary minus on integer literal
+	integer negInt = -42
+	print("Unary minus integer: " + negInt.toString())
+
+	// Test 2: Unary minus on variable
+	integer positive = 100
+	integer negated = -positive
+	print("Negated positive: " + negated.toString())
+
+	// Test 3: Double negation
+	integer original = 50
+	integer doubleNeg = -(-original)
+	print("Double negation: " + doubleNeg.toString())
+
+	// Test 4: Unary minus on number literal
+	number negNum = -3.14
+	print("Unary minus number: " + negNum.toString())
+
+	// Test 5: Unary minus on number variable
+	number posNum = 2.5
+	number negatedNum = -posNum
+	print("Negated number: " + negatedNum.toString())
+
+	// Test 6: Logical not on true
+	boolean notTrue = not true
+	print("not true: " + notTrue.toString())
+
+	// Test 7: Logical not on false
+	boolean notFalse = not false
+	print("not false: " + notFalse.toString())
+
+	// Test 8: Logical not on variable
+	boolean flag = true
+	boolean negFlag = not flag
+	print("not flag: " + negFlag.toString())
+
+	// Test 9: Double logical not
+	boolean original2 = true
+	boolean doubleNot = not (not original2)
+	print("not (not true): " + doubleNot.toString())
+
+	// Test 10: not in condition
+	boolean active = false
+	if not active
+		print("Active is false (not active is true)")
+
+	print("Unary operators test completed")

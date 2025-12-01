@@ -1,0 +1,47 @@
+// Spec Section: 3.6 - List Type
+// Tests: List type declarations and operations
+
+start()
+	// Test 1: Empty integer list
+	list<integer> emptyInts = []
+	print("Empty list created")
+
+	// Test 2: Integer list with values
+	list<integer> numbers = [1, 2, 3, 4, 5]
+	integer len = list.length(numbers)
+	print("Integer list length: " + len.toString())
+
+	// Test 3: String list
+	list<string> names = ["Alice", "Bob", "Charlie"]
+	integer nameCount = list.length(names)
+	print("String list length: " + nameCount.toString())
+
+	// Test 4: Boolean list
+	list<boolean> flags = [true, false, true, true]
+	integer flagCount = list.length(flags)
+	print("Boolean list length: " + flagCount.toString())
+
+	// Test 5: Number list
+	list<number> decimals = [1.1, 2.2, 3.3]
+	integer decCount = list.length(decimals)
+	print("Number list length: " + decCount.toString())
+
+	// Test 6: Single element list
+	list<integer> single = [42]
+	integer singleLen = list.length(single)
+	print("Single element length: " + singleLen.toString())
+
+	// Test 7: Access list elements
+	list<integer> vals = [10, 20, 30]
+	integer first = list.get(vals, 0)
+	integer second = list.get(vals, 1)
+	integer third = list.get(vals, 2)
+	print("Elements: " + first.toString() + ", " + second.toString() + ", " + third.toString())
+
+	// Test 8: Iterate over list
+	list<integer> items = [5, 10, 15]
+	print("Iterating:")
+	iterate item in items
+		print("  Item: " + item.toString())
+
+	print("List type test completed")

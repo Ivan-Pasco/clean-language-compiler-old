@@ -1,3 +1,7 @@
+// Spec Section: 10.1 - Class Definition
+// Spec Section: 10.4 - Implicit Context
+// Spec Section: 10.5 - Object Usage
+// Tests: Basic class with fields, constructor, and methods
 
 class Person
 	string name

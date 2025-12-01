@@ -1,0 +1,48 @@
+// Spec Section: 2.3 - Keywords
+// Tests: Reserved keywords in Clean Language
+
+start()
+	// Test 1: Boolean keywords
+	boolean trueVal = true
+	boolean falseVal = false
+	print("True: " + trueVal.toString())
+	print("False: " + falseVal.toString())
+
+	// Test 2: Conditional keywords (if, else)
+	integer x = 10
+	if x > 5
+		print("x is greater than 5")
+	else
+		print("x is 5 or less")
+
+	// Test 3: Loop keywords (iterate, in, to)
+	integer sum = 0
+	iterate i in 1 to 3
+		sum = sum + i
+	print("Sum from 1 to 3: " + sum.toString())
+
+	// Test 4: Loop keyword (iterate)
+	integer count = 0
+	iterate j in 1 to 5
+		count = count + 1
+	print("Iterate count: " + count.toString())
+
+	// Test 5: Logical keywords (and, or, not)
+	boolean a = true
+	boolean b = false
+	boolean andResult = a and b
+	boolean orResult = a or b
+	boolean notResult = not b
+	print("true and false: " + andResult.toString())
+	print("true or false: " + orResult.toString())
+	print("not false: " + notResult.toString())
+
+	// Test 6: Return keyword tested via function call
+	integer result = getValue()
+	print("Function returned: " + result.toString())
+
+	print("Keywords test completed")
+
+functions:
+	integer getValue()
+		return 42

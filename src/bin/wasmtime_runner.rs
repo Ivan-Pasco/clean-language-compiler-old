@@ -402,8 +402,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "memory_runtime",
         "mem_alloc",
         |_type_id: i32, size: i32| -> i32 {
-            // Return a mock pointer for allocation
-            1024 + size // Simple mock allocation
+            // Use the global allocator for proper memory allocation
+            let mut next_offset = NEXT_ALLOCATION_OFFSET.lock().unwrap();
+            let offset = *next_offset;
+            // Align size to 8-byte boundary and advance
+            *next_offset += ((size as usize) + 7) & !7;
+            offset as i32
         },
     )?;
 
@@ -501,6 +505,283 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "string.toUpperCase", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "string.toLowerCase", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "string.concat", |_: i32, _: i32| -> i32 { 0 })?;
+
+    // Add string_split function: splits a string by delimiter and returns a list of strings
+    linker.func_wrap(
+        "env",
+        "string_split",
+        |mut caller: Caller<'_, ()>, string_ptr: i32, delimiter_ptr: i32| -> i32 {
+            eprintln!(
+                "🔍 string_split called: string_ptr={}, delimiter_ptr={}",
+                string_ptr, delimiter_ptr
+            );
+
+            let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+                mem
+            } else {
+                eprintln!("❌ string_split: no memory");
+                return 0; // Return null on error
+            };
+
+            // Read the string and delimiter from memory
+            let data = memory.data(&caller);
+
+            // Read string: first 4 bytes are length, then content
+            let str_ptr = string_ptr as usize;
+            if str_ptr + 4 > data.len() {
+                return 0;
+            }
+            let str_len = u32::from_le_bytes([
+                data[str_ptr],
+                data[str_ptr + 1],
+                data[str_ptr + 2],
+                data[str_ptr + 3],
+            ]) as usize;
+
+            if str_ptr + 4 + str_len > data.len() {
+                return 0;
+            }
+            let string_content =
+                match std::str::from_utf8(&data[str_ptr + 4..str_ptr + 4 + str_len]) {
+                    Ok(s) => s.to_string(),
+                    Err(_) => return 0,
+                };
+
+            // Read delimiter
+            let delim_ptr = delimiter_ptr as usize;
+            if delim_ptr + 4 > data.len() {
+                return 0;
+            }
+            let delim_len = u32::from_le_bytes([
+                data[delim_ptr],
+                data[delim_ptr + 1],
+                data[delim_ptr + 2],
+                data[delim_ptr + 3],
+            ]) as usize;
+
+            if delim_ptr + 4 + delim_len > data.len() {
+                return 0;
+            }
+            let delimiter =
+                match std::str::from_utf8(&data[delim_ptr + 4..delim_ptr + 4 + delim_len]) {
+                    Ok(s) => s.to_string(),
+                    Err(_) => return 0,
+                };
+
+            // Split the string
+            let parts: Vec<&str> = string_content.split(&delimiter).collect();
+            let num_parts = parts.len();
+            eprintln!(
+                "🔍 string_split: string='{}', delimiter='{}', parts={:?}",
+                string_content, delimiter, parts
+            );
+
+            // Allocate list structure:
+            // List header: size(4) + capacity(4) + type_id(4) + padding(4) = 16 bytes
+            // Then: num_parts * 4 bytes for string pointers
+            let list_size = 16 + num_parts * 4;
+
+            // Get allocation offset
+            let mut next_offset = NEXT_ALLOCATION_OFFSET.lock().unwrap();
+            let list_ptr = *next_offset;
+            *next_offset += (list_size + 7) & !7;
+            drop(next_offset);
+
+            // Now allocate all the string parts
+            let mut string_ptrs = Vec::new();
+            for part in &parts {
+                let part_bytes = part.as_bytes();
+                let part_total_size = 4 + part_bytes.len();
+
+                let mut next_offset = NEXT_ALLOCATION_OFFSET.lock().unwrap();
+                let part_ptr = *next_offset;
+                *next_offset += (part_total_size + 7) & !7;
+                drop(next_offset);
+
+                string_ptrs.push(part_ptr as i32);
+            }
+
+            // Now write everything to memory
+            let data_mut = memory.data_mut(&mut caller);
+
+            // Check we have enough memory
+            let last_needed = if string_ptrs.is_empty() {
+                list_ptr + list_size
+            } else {
+                let last_ptr = *string_ptrs.last().unwrap() as usize;
+                let last_str = parts.last().unwrap();
+                last_ptr + 4 + last_str.len()
+            };
+
+            if last_needed > data_mut.len() {
+                return 0; // Not enough memory
+            }
+
+            // Write list header
+            // size (number of elements)
+            data_mut[list_ptr..list_ptr + 4].copy_from_slice(&(num_parts as u32).to_le_bytes());
+            // capacity
+            data_mut[list_ptr + 4..list_ptr + 8].copy_from_slice(&(num_parts as u32).to_le_bytes());
+            // type_id (3 = i32 list of string pointers)
+            data_mut[list_ptr + 8..list_ptr + 12].copy_from_slice(&4u32.to_le_bytes());
+            // padding
+            data_mut[list_ptr + 12..list_ptr + 16].copy_from_slice(&0u32.to_le_bytes());
+
+            // Write element pointers
+            for (i, ptr) in string_ptrs.iter().enumerate() {
+                let offset = list_ptr + 16 + i * 4;
+                data_mut[offset..offset + 4].copy_from_slice(&ptr.to_le_bytes());
+            }
+
+            // Write string contents
+            for (i, part) in parts.iter().enumerate() {
+                let ptr = string_ptrs[i] as usize;
+                let part_bytes = part.as_bytes();
+
+                // Write length
+                data_mut[ptr..ptr + 4].copy_from_slice(&(part_bytes.len() as u32).to_le_bytes());
+                // Write content
+                data_mut[ptr + 4..ptr + 4 + part_bytes.len()].copy_from_slice(part_bytes);
+            }
+
+            eprintln!("🔍 string_split: returning list at ptr={}", list_ptr);
+            list_ptr as i32
+        },
+    )?;
+
+    // Add string.split function (alias for string_split with dot notation for Clean Language)
+    linker.func_wrap(
+        "env",
+        "string.split",
+        |mut caller: Caller<'_, ()>, string_ptr: i32, delimiter_ptr: i32| -> i32 {
+            eprintln!(
+                "🔍 string.split called: string_ptr={}, delimiter_ptr={}",
+                string_ptr, delimiter_ptr
+            );
+
+            let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+                mem
+            } else {
+                eprintln!("❌ string.split: no memory");
+                return 0;
+            };
+
+            let data = memory.data(&caller);
+
+            // Read original string
+            let str_ptr = string_ptr as usize;
+            if str_ptr + 4 > data.len() {
+                eprintln!("❌ string.split: invalid string ptr");
+                return 0;
+            }
+            let str_len = u32::from_le_bytes([
+                data[str_ptr],
+                data[str_ptr + 1],
+                data[str_ptr + 2],
+                data[str_ptr + 3],
+            ]) as usize;
+            let original_str = if str_ptr + 4 + str_len <= data.len() {
+                String::from_utf8_lossy(&data[str_ptr + 4..str_ptr + 4 + str_len]).to_string()
+            } else {
+                String::new()
+            };
+
+            // Read delimiter
+            let delim_ptr = delimiter_ptr as usize;
+            if delim_ptr + 4 > data.len() {
+                eprintln!("❌ string.split: invalid delimiter ptr");
+                return 0;
+            }
+            let delim_len = u32::from_le_bytes([
+                data[delim_ptr],
+                data[delim_ptr + 1],
+                data[delim_ptr + 2],
+                data[delim_ptr + 3],
+            ]) as usize;
+            let delimiter = if delim_ptr + 4 + delim_len <= data.len() {
+                String::from_utf8_lossy(&data[delim_ptr + 4..delim_ptr + 4 + delim_len]).to_string()
+            } else {
+                String::new()
+            };
+
+            eprintln!(
+                "🔍 string.split: splitting '{}' by '{}'",
+                original_str, delimiter
+            );
+
+            // Split the string
+            let parts: Vec<&str> = original_str.split(&delimiter).collect();
+            let num_parts = parts.len();
+            eprintln!("🔍 string.split: found {} parts", num_parts);
+
+            // Calculate total memory needed
+            // List header: 16 bytes (size, capacity, type_id, padding)
+            // List data: num_parts * 4 bytes (string pointers)
+            let list_size = 16 + (num_parts * 4);
+
+            // Use a proper heap allocation strategy
+            // Memory layout: static data up to ~4400, then heap starts
+            // Read current heap pointer from global at offset 0 (initialized to 4 means empty)
+            let global_heap_ptr_offset = 0usize;
+            let current_heap = u32::from_le_bytes([
+                data[global_heap_ptr_offset],
+                data[global_heap_ptr_offset + 1],
+                data[global_heap_ptr_offset + 2],
+                data[global_heap_ptr_offset + 3],
+            ]) as usize;
+
+            // If heap pointer is at initial value (0-4 or any small value), start after static data
+            // Static data typically ends around 4500 based on string pool usage
+            let list_ptr = if current_heap < 5000 {
+                5000
+            } else {
+                current_heap
+            };
+            let mut next_ptr = list_ptr + list_size;
+
+            // Allocate string pointers
+            let mut string_ptrs = Vec::with_capacity(num_parts);
+            for part in &parts {
+                let part_len = part.len();
+                let str_allocation = 4 + part_len; // 4 bytes for length + content
+                string_ptrs.push(next_ptr as u32);
+                next_ptr += str_allocation;
+            }
+
+            // Update heap pointer for future allocations
+            let new_heap_ptr = next_ptr as u32;
+
+            let data_mut = memory.data_mut(&mut caller);
+            data_mut[global_heap_ptr_offset..global_heap_ptr_offset + 4]
+                .copy_from_slice(&new_heap_ptr.to_le_bytes());
+
+            // Write list header
+            data_mut[list_ptr..list_ptr + 4].copy_from_slice(&(num_parts as u32).to_le_bytes()); // size
+            data_mut[list_ptr + 4..list_ptr + 8].copy_from_slice(&(num_parts as u32).to_le_bytes()); // capacity
+            data_mut[list_ptr + 8..list_ptr + 12].copy_from_slice(&3u32.to_le_bytes()); // type_id (3 = string)
+            data_mut[list_ptr + 12..list_ptr + 16].copy_from_slice(&0u32.to_le_bytes()); // padding
+
+            // Write string pointers to list
+            for (i, &ptr) in string_ptrs.iter().enumerate() {
+                let offset = list_ptr + 16 + (i * 4);
+                data_mut[offset..offset + 4].copy_from_slice(&ptr.to_le_bytes());
+            }
+
+            // Write string contents
+            for (i, part) in parts.iter().enumerate() {
+                let ptr = string_ptrs[i] as usize;
+                let part_bytes = part.as_bytes();
+
+                // Write length
+                data_mut[ptr..ptr + 4].copy_from_slice(&(part_bytes.len() as u32).to_le_bytes());
+                // Write content
+                data_mut[ptr + 4..ptr + 4 + part_bytes.len()].copy_from_slice(part_bytes);
+            }
+
+            eprintln!("🔍 string.split: returning list at ptr={}", list_ptr);
+            list_ptr as i32
+        },
+    )?;
 
     // Add array access function
     linker.func_wrap(

@@ -1,3 +1,6 @@
+// Spec Section: 2.1 - Core Types (integer, number, string)
+// Spec Section: 5.2 - Print Statements
+// Tests: Basic type declarations and print output
 
 start()
 	integer x = 42

@@ -1,0 +1,64 @@
+// Spec Section: 3.1 - Core Types (integer)
+// Tests: integer type - 32-bit signed whole numbers
+
+start()
+	// Test 1: Integer declaration and initialization
+	integer zero = 0
+	integer positive = 42
+	integer negative = -17
+	print("Zero: " + zero.toString())
+	print("Positive: " + positive.toString())
+	print("Negative: " + negative.toString())
+
+	// Test 2: Integer arithmetic - addition
+	integer a = 10
+	integer b = 5
+	integer sum = a + b
+	print("10 + 5 = " + sum.toString())
+
+	// Test 3: Integer arithmetic - subtraction
+	integer diff = a - b
+	integer diffNeg = b - a
+	print("10 - 5 = " + diff.toString())
+	print("5 - 10 = " + diffNeg.toString())
+
+	// Test 4: Integer arithmetic - multiplication
+	integer prod = a * b
+	print("10 * 5 = " + prod.toString())
+
+	// Test 5: Integer arithmetic - division
+	integer quot = a / b
+	print("10 / 5 = " + quot.toString())
+
+	// Test 6: Integer arithmetic - modulo
+	integer mod = 17 % 5
+	print("17 % 5 = " + mod.toString())
+
+	// Test 7: Integer comparisons
+	boolean eq = a == b
+	boolean neq = a != b
+	boolean lt = a < b
+	boolean gt = a > b
+	boolean lte = a <= b
+	boolean gte = a >= b
+	print("10 == 5: " + eq.toString())
+	print("10 != 5: " + neq.toString())
+	print("10 < 5: " + lt.toString())
+	print("10 > 5: " + gt.toString())
+	print("10 <= 5: " + lte.toString())
+	print("10 >= 5: " + gte.toString())
+
+	// Test 8: Large integers (within 32-bit range)
+	integer large = 2147483647
+	integer largeMinus = large - 1
+	print("Max int: " + large.toString())
+	print("Max - 1: " + largeMinus.toString())
+
+	// Test 9: Integer in expressions
+	integer x = 3
+	integer y = 4
+	integer z = 5
+	integer complex = x * y + z
+	print("3 * 4 + 5 = " + complex.toString())
+
+	print("Integer type test completed")

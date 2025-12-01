@@ -7,16 +7,38 @@
  * - Type annotations
  * - Apply-block completions
  * - Language constructs
+ * - Plugin-provided completions (dynamic)
  */
 
+use clean_language_compiler::plugins::{
+    PluginCompletionItem, PluginCompletionKind, PluginLspContext, PluginRegistry,
+};
 use ropey::Rope;
+use std::sync::Arc;
 use tower_lsp::lsp_types::*;
 
-pub struct CompletionProvider;
+pub struct CompletionProvider {
+    /// Plugin registry for dynamic completions
+    plugin_registry: Option<Arc<PluginRegistry>>,
+}
 
 impl CompletionProvider {
     pub fn new() -> Self {
-        Self
+        Self {
+            plugin_registry: None,
+        }
+    }
+
+    /// Create a completion provider with plugin support
+    pub fn with_plugins(registry: Arc<PluginRegistry>) -> Self {
+        Self {
+            plugin_registry: Some(registry),
+        }
+    }
+
+    /// Set the plugin registry (for dynamic updates)
+    pub fn set_plugin_registry(&mut self, registry: Arc<PluginRegistry>) {
+        self.plugin_registry = Some(registry);
     }
 
     pub async fn provide_completions(
@@ -42,6 +64,13 @@ impl CompletionProvider {
             &line_str
         };
 
+        // Check if we're inside a plugin block
+        let text_str = text.to_string();
+        if let Some(block_name) = self.detect_plugin_block_context(&text_str, line_idx) {
+            // Get plugin-specific completions
+            completions.extend(self.get_plugin_completions(&block_name, &text_str, line_idx, char_idx, prefix));
+        }
+
         // Check for different completion contexts
         if self.is_after_dot(prefix) {
             // Method completion after dot (e.g., "string.len")
@@ -49,6 +78,8 @@ impl CompletionProvider {
         } else if self.is_apply_block_context(prefix) {
             // Apply-block completions (e.g., after "identifier:")
             completions.extend(self.get_apply_block_completions());
+            // Also add plugin block completions
+            completions.extend(self.get_plugin_block_completions());
         } else if self.is_type_context(prefix) {
             // Type completions (e.g., function parameters, variable declarations)
             completions.extend(self.get_type_completions());
@@ -59,9 +90,111 @@ impl CompletionProvider {
             // General keyword and language construct completions
             completions.extend(self.get_keyword_completions(prefix));
             completions.extend(self.get_builtin_function_completions());
+            // Add plugin block completions at top level too
+            completions.extend(self.get_plugin_block_completions());
         }
 
         completions
+    }
+
+    /// Detect if we're inside a plugin block and return the block name
+    fn detect_plugin_block_context(&self, text: &str, current_line: usize) -> Option<String> {
+        let registry = self.plugin_registry.as_ref()?;
+        let lines: Vec<&str> = text.lines().collect();
+
+        // Search backwards from current line to find a block declaration
+        for i in (0..=current_line).rev() {
+            if i >= lines.len() {
+                continue;
+            }
+            let line = lines[i].trim();
+
+            // Check if this line starts a block
+            if line.ends_with(':') && !line.starts_with('#') {
+                let block_name = line.trim_end_matches(':');
+                if registry.handles(block_name) {
+                    return Some(block_name.to_string());
+                }
+            }
+
+            // If we hit an unindented non-empty line that isn't a block, we're not in a block
+            if !lines[i].starts_with('\t') && !lines[i].starts_with("    ") && !line.is_empty() {
+                // Unless this is the block declaration itself
+                if !line.ends_with(':') {
+                    return None;
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Get completions from plugins for the current block context
+    fn get_plugin_completions(
+        &self,
+        block_name: &str,
+        text: &str,
+        line: usize,
+        column: usize,
+        prefix: &str,
+    ) -> Vec<CompletionItem> {
+        let registry = match &self.plugin_registry {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+
+        let ctx = PluginLspContext {
+            block_name,
+            block_content: text,
+            line,
+            column,
+            prefix,
+        };
+
+        let plugin_completions = registry.get_completions(block_name, &ctx);
+        plugin_completions
+            .into_iter()
+            .map(|item| self.convert_plugin_completion(item))
+            .collect()
+    }
+
+    /// Get block-level completions from all plugins
+    fn get_plugin_block_completions(&self) -> Vec<CompletionItem> {
+        let registry = match &self.plugin_registry {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+
+        registry
+            .get_block_completions()
+            .into_iter()
+            .map(|item| self.convert_plugin_completion(item))
+            .collect()
+    }
+
+    /// Convert a plugin completion item to an LSP completion item
+    fn convert_plugin_completion(&self, item: PluginCompletionItem) -> CompletionItem {
+        CompletionItem {
+            label: item.label,
+            kind: Some(match item.kind {
+                PluginCompletionKind::Keyword => CompletionItemKind::KEYWORD,
+                PluginCompletionKind::Function => CompletionItemKind::FUNCTION,
+                PluginCompletionKind::Snippet => CompletionItemKind::SNIPPET,
+                PluginCompletionKind::Type => CompletionItemKind::TYPE_PARAMETER,
+                PluginCompletionKind::Property => CompletionItemKind::PROPERTY,
+                PluginCompletionKind::Variable => CompletionItemKind::VARIABLE,
+                PluginCompletionKind::Operator => CompletionItemKind::OPERATOR,
+            }),
+            detail: item.detail,
+            documentation: item.documentation.map(Documentation::String),
+            insert_text: item.insert_text,
+            insert_text_format: if item.is_snippet {
+                Some(InsertTextFormat::SNIPPET)
+            } else {
+                Some(InsertTextFormat::PLAIN_TEXT)
+            },
+            ..Default::default()
+        }
     }
 
     fn is_after_dot(&self, prefix: &str) -> bool {

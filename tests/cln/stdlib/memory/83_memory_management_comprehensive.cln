@@ -1,0 +1,46 @@
+// Test 83: Memory Management Test (Simplified)
+// Tests object creation and basic memory management
+// Note: ARC/GC not yet implemented - simplified to avoid memory exhaustion
+
+class SimpleObject
+	string name
+	integer value
+
+	constructor(string objectName, integer val)
+		name = objectName
+		value = val
+		print("Created " + name + " with value " + value.toString())
+
+	functions:
+		string getName()
+			return name
+
+		integer getValue()
+			return value
+
+start()
+	print("Starting memory management test")
+
+	// Test object creation
+	SimpleObject obj1 = SimpleObject("Object1", 42)
+	print("Object1 name: " + obj1.getName())
+	print("Object1 value: " + obj1.getValue().toString())
+
+	SimpleObject obj2 = SimpleObject("Object2", 100)
+	print("Object2 name: " + obj2.getName())
+	print("Object2 value: " + obj2.getValue().toString())
+
+	// Test list with a few objects
+	list<SimpleObject> objects = []
+	objects.add(obj1)
+	objects.add(obj2)
+	print("Created list with " + objects.size().toString() + " objects")
+
+	// Test string memory management with small strings
+	string result = ""
+	iterate i in 0 to 5
+		result = result + "Line " + i.toString() + "; "
+
+	print("String result: " + result)
+
+	print("Memory management test complete")

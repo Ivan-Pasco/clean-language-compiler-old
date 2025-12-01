@@ -1,0 +1,37 @@
+// Spec Section: 2.2 - Literals (Numeric Literals)
+// Tests: Integer literal formats - decimal, hexadecimal, binary, octal
+
+start()
+	// Test 1: Decimal integers
+	integer decimal1 = 42
+	integer decimal2 = 0
+	integer decimal3 = 1000000
+	print("Decimal 42: " + decimal1.toString())
+	print("Decimal 0: " + decimal2.toString())
+	print("Decimal 1000000: " + decimal3.toString())
+
+	// Test 2: Negative integers
+	integer negative1 = -17
+	integer negative2 = -1
+	integer negative3 = -999999
+	print("Negative -17: " + negative1.toString())
+	print("Negative -1: " + negative2.toString())
+	print("Negative -999999: " + negative3.toString())
+
+	// Test 3: Large integers (within 32-bit range)
+	integer large1 = 2147483647
+	integer large2 = 1000000000
+	print("Large 2147483647: " + large1.toString())
+	print("Large 1000000000: " + large2.toString())
+
+	// Test 4: Integer arithmetic verification
+	integer sum = 100 + 200
+	integer diff = 500 - 150
+	integer prod = 12 * 8
+	integer quot = 100 / 4
+	print("100 + 200 = " + sum.toString())
+	print("500 - 150 = " + diff.toString())
+	print("12 * 8 = " + prod.toString())
+	print("100 / 4 = " + quot.toString())
+
+	print("Integer literals test completed")

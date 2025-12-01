@@ -1,4 +1,6 @@
-// Test string interpolation
+// Spec Section: 2.1.4 - String Type
+// Spec Section: 4.1 - String Concatenation
+// Tests: String interpolation with {expression} syntax
 functions:
 	void start()
 		// Simple interpolation

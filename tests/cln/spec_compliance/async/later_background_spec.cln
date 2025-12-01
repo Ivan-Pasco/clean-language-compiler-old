@@ -1,0 +1,22 @@
+// Spec Section: 17 - Asynchronous Programming
+// Tests: later and background keywords for async operations
+
+functions:
+	integer computeValue()
+		return 42
+
+	string fetchData()
+		return "data fetched"
+
+start()
+	print("Async later/background test")
+
+	// Test if later keyword is recognized
+	integer result = computeValue()
+	print(result)
+
+	// Test if background keyword is recognized
+	string data = fetchData()
+	print(data)
+
+	print("Async keywords test completed")

@@ -424,7 +424,7 @@ impl Default for PluginRegistry {
 macro_rules! register_plugin {
     ($registry:expr, $plugin:expr) => {
         $registry.register_plugin($plugin).map_err(|e| {
-            eprintln!("Failed to register plugin '{}': {}", $plugin.name(), e);
+            tracing::error!("Failed to register plugin '{}': {}", $plugin.name(), e);
             e
         })?;
     };

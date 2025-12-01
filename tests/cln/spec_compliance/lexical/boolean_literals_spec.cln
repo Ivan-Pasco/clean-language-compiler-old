@@ -1,0 +1,52 @@
+// Spec Section: 2.2 - Literals (Boolean Literals)
+// Tests: true and false boolean literals
+
+start()
+	// Test 1: Basic boolean literals
+	boolean yes = true
+	boolean no = false
+	print("True value: " + yes.toString())
+	print("False value: " + no.toString())
+
+	// Test 2: Boolean in conditions
+	boolean isActive = true
+	if isActive
+		print("System is active")
+	else
+		print("System is inactive")
+
+	boolean isDisabled = false
+	if isDisabled
+		print("Feature disabled")
+	else
+		print("Feature enabled")
+
+	// Test 3: Boolean from comparisons
+	integer a = 10
+	integer b = 5
+	boolean greater = a > b
+	boolean less = a < b
+	boolean equal = a == 10
+	print("10 > 5: " + greater.toString())
+	print("10 < 5: " + less.toString())
+	print("10 == 10: " + equal.toString())
+
+	// Test 4: Boolean operators
+	boolean t = true
+	boolean f = false
+	boolean andResult = t and f
+	boolean orResult = t or f
+	print("true and false: " + andResult.toString())
+	print("true or false: " + orResult.toString())
+
+	// Test 5: Boolean in variable assignment
+	boolean flag1 = true
+	boolean flag2 = flag1
+	print("Copied boolean: " + flag2.toString())
+
+	// Test 6: Boolean from complex expression
+	integer x = 15
+	boolean inRange = x > 10 and x < 20
+	print("15 is between 10 and 20: " + inRange.toString())
+
+	print("Boolean literals test completed")

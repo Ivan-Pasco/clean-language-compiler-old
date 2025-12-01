@@ -1,3 +1,8 @@
+// Spec Section: 3 - Apply-Blocks
+// Spec Section: 3.2 - Variable Declaration Apply-Blocks
+// Spec Section: 3.3 - Constant Apply-Blocks
+// Tests: Type apply-blocks (integer:, string:, boolean:, constant:)
+
 functions:
 	void processItem(string item)
 		print("Processing: " + item)

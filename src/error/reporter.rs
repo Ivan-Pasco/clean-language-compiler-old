@@ -167,8 +167,14 @@ impl ErrorReporter {
         context: &ErrorContext,
         source_code: Option<&str>,
     ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Syntax Error", self.colors.bright_red)?;
-        self.write_error_message(writer, &context.message)?;
+        // Use error code if available, otherwise use type-based code
+        let error_code = context.error_code.as_deref().unwrap_or("SYN001");
+        self.write_error_header_with_code(
+            writer,
+            &context.message,
+            error_code,
+            self.colors.bright_red,
+        )?;
         self.write_error_location(writer, context)?;
 
         if self.show_source {
@@ -192,8 +198,8 @@ impl ErrorReporter {
         context: &ErrorContext,
         source_code: Option<&str>,
     ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Type Error", self.colors.red)?;
-        self.write_error_message(writer, &context.message)?;
+        let error_code = context.error_code.as_deref().unwrap_or("TYP001");
+        self.write_error_header_with_code(writer, &context.message, error_code, self.colors.red)?;
         self.write_error_location(writer, context)?;
 
         if self.show_source {
@@ -340,6 +346,21 @@ impl ErrorReporter {
         Ok(())
     }
 
+    fn write_error_header_with_code(
+        &self,
+        writer: &mut dyn Write,
+        error_type: &str,
+        error_code: &str,
+        color: &str,
+    ) -> Result<(), io::Error> {
+        writeln!(
+            writer,
+            "{}{}error[{}]{}: {}",
+            self.colors.bold, color, error_code, self.colors.reset, error_type
+        )?;
+        Ok(())
+    }
+
     fn write_error_message(&self, writer: &mut dyn Write, message: &str) -> Result<(), io::Error> {
         writeln!(
             writer,
@@ -384,6 +405,11 @@ impl ErrorReporter {
                 let start = line_idx.saturating_sub(2);
                 let end = std::cmp::min(line_idx + 3, lines.len());
 
+                // Calculate line number width for consistent alignment
+                let line_num_width = format!("{}", end).len().max(4);
+
+                writeln!(writer, "{}   |{}", self.colors.blue, self.colors.reset)?;
+
                 for (i, line) in lines[start..end].iter().enumerate() {
                     let line_num = start + i + 1;
                     let is_error_line = line_num == location.line;
@@ -391,37 +417,162 @@ impl ErrorReporter {
                     if is_error_line {
                         writeln!(
                             writer,
-                            "{}{:4} |{} {}{}{}",
+                            "{}{:>width$} |{} {}",
                             self.colors.blue,
                             line_num,
                             self.colors.reset,
-                            self.colors.bright_red,
                             line,
-                            self.colors.reset
+                            width = line_num_width
                         )?;
 
-                        // Show error indicator
-                        let spaces = " ".repeat(location.column.saturating_sub(1));
+                        // Calculate underline length
+                        // If we have span info, use it; otherwise estimate from message or use default
+                        let col = location.column.saturating_sub(1);
+                        let underline_len = self.calculate_underline_length(line, col, context);
+
+                        // Show error indicator with ^^^^ underline
+                        let spaces = " ".repeat(col);
+                        let underline = "^".repeat(underline_len);
                         writeln!(
                             writer,
-                            "{}     |{} {}{}^{}",
+                            "{}{:>width$} |{} {}{}{}{}",
                             self.colors.blue,
+                            "",
                             self.colors.reset,
                             spaces,
                             self.colors.bright_red,
-                            self.colors.reset
+                            underline,
+                            self.colors.reset,
+                            width = line_num_width
                         )?;
+
+                        // Show inline error message
+                        if !context.message.is_empty() {
+                            // Truncate message if too long
+                            let inline_msg = if context.message.len() > 50 {
+                                format!("{}...", &context.message[..47])
+                            } else {
+                                context.message.clone()
+                            };
+                            writeln!(
+                                writer,
+                                "{}{:>width$} |{} {}{}{}{}",
+                                self.colors.blue,
+                                "",
+                                self.colors.reset,
+                                spaces,
+                                self.colors.bright_red,
+                                inline_msg,
+                                self.colors.reset,
+                                width = line_num_width
+                            )?;
+                        }
                     } else {
                         writeln!(
                             writer,
-                            "{}{:4} |{} {}",
-                            self.colors.blue, line_num, self.colors.reset, line
+                            "{}{:>width$} |{} {}",
+                            self.colors.blue,
+                            line_num,
+                            self.colors.reset,
+                            line,
+                            width = line_num_width
                         )?;
+                    }
+                }
+
+                writeln!(writer, "{}   |{}", self.colors.blue, self.colors.reset)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Calculate the length of the underline based on context
+    fn calculate_underline_length(&self, line: &str, col: usize, context: &ErrorContext) -> usize {
+        // Try to extract a reasonable span from the error context
+        // Look for identifiers, keywords, or tokens at the error position
+
+        // If message mentions a specific identifier, try to find it
+        if let Some(identifier) = self.extract_identifier_from_message(&context.message) {
+            if col < line.len() {
+                // Check if the identifier is at the column position
+                let remaining = &line[col..];
+                if remaining.starts_with(&identifier) {
+                    return identifier.len().max(1);
+                }
+            }
+        }
+
+        // Try to find the extent of the current token at column position
+        if col < line.len() {
+            let chars: Vec<char> = line.chars().collect();
+            let mut len = 0;
+
+            // Skip to the character at col
+            let mut char_idx = 0;
+            let mut byte_idx = 0;
+            for (i, c) in chars.iter().enumerate() {
+                if byte_idx >= col {
+                    char_idx = i;
+                    break;
+                }
+                byte_idx += c.len_utf8();
+            }
+
+            // Extend to the end of the current token (identifier, keyword, or symbol)
+            let first_char = chars.get(char_idx).copied().unwrap_or(' ');
+            if first_char.is_alphanumeric() || first_char == '_' {
+                // Identifier or keyword
+                for c in chars[char_idx..].iter() {
+                    if c.is_alphanumeric() || *c == '_' {
+                        len += 1;
+                    } else {
+                        break;
+                    }
+                }
+            } else if !first_char.is_whitespace() {
+                // Operator or symbol - take 1-2 characters
+                len = 1;
+                if char_idx + 1 < chars.len()
+                    && !chars[char_idx + 1].is_alphanumeric()
+                    && !chars[char_idx + 1].is_whitespace()
+                {
+                    len = 2;
+                }
+            }
+
+            if len > 0 {
+                return len;
+            }
+        }
+
+        // Default: single caret
+        1
+    }
+
+    /// Extract identifier from error message if present
+    fn extract_identifier_from_message(&self, message: &str) -> Option<String> {
+        // Look for patterns like "identifier 'foo'" or "'foo'" or "\"foo\""
+        let patterns = [
+            (": \"", "\""),        // : "foo"
+            (": '", "'"),          // : 'foo'
+            ("identifier '", "'"), // identifier 'foo'
+            ("'", "'"),            // 'foo'
+            ("\"", "\""),          // "foo"
+        ];
+
+        for (start, end) in patterns {
+            if let Some(start_idx) = message.find(start) {
+                let after_start = &message[start_idx + start.len()..];
+                if let Some(end_idx) = after_start.find(end) {
+                    let identifier = &after_start[..end_idx];
+                    if !identifier.is_empty() && identifier.len() < 50 {
+                        return Some(identifier.to_string());
                     }
                 }
             }
         }
-        Ok(())
+
+        None
     }
 
     fn write_help_message(&self, writer: &mut dyn Write, help: &str) -> Result<(), io::Error> {

@@ -21,14 +21,14 @@ impl ConditionalManager {
 
     /// Register all conditional expression functions as stdlib functions
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        eprintln!("DEBUG CONDITIONAL: Starting register_functions");
-        eprintln!("DEBUG CONDITIONAL: Calling register_conditional_functions");
+        tracing::debug!("DEBUG CONDITIONAL: Starting register_functions");
+        tracing::debug!("DEBUG CONDITIONAL: Calling register_conditional_functions");
         self.register_conditional_functions(codegen)?;
-        eprintln!("DEBUG CONDITIONAL: Calling register_comparison_functions");
+        tracing::debug!("DEBUG CONDITIONAL: Calling register_comparison_functions");
         self.register_comparison_functions(codegen)?;
-        eprintln!("DEBUG CONDITIONAL: Calling register_logical_functions");
+        tracing::debug!("DEBUG CONDITIONAL: Calling register_logical_functions");
         self.register_logical_functions(codegen)?;
-        eprintln!("DEBUG CONDITIONAL: All functions registered");
+        tracing::debug!("DEBUG CONDITIONAL: All functions registered");
         Ok(())
     }
 
@@ -81,10 +81,10 @@ impl ConditionalManager {
         &self,
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
-        eprintln!("DEBUG CONDITIONAL: Registering comparison functions");
+        tracing::debug!("DEBUG CONDITIONAL: Registering comparison functions");
 
         // Integer comparisons
-        eprintln!("DEBUG CONDITIONAL: Registering compare.integer.equal");
+        tracing::debug!("DEBUG CONDITIONAL: Registering compare.integer.equal");
         register_stdlib_function(
             codegen,
             "compare.integer.equal",
@@ -92,7 +92,7 @@ impl ConditionalManager {
             Some(WasmType::I32),             // boolean result
             self.generate_integer_equal(),
         )?;
-        eprintln!("DEBUG CONDITIONAL: Successfully registered compare.integer.equal");
+        tracing::debug!("DEBUG CONDITIONAL: Successfully registered compare.integer.equal");
 
         register_stdlib_function(
             codegen,

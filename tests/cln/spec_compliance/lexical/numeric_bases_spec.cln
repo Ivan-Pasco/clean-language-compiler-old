@@ -1,0 +1,47 @@
+// Spec Section: 2.4 - Numeric Literals
+// Tests: Hexadecimal, binary, and octal integer literals
+
+start()
+	// Test 1: Hexadecimal literals
+	integer hex1 = 0xff
+	print("Hex 0xff: " + hex1.toString())
+
+	// Test 2: Hexadecimal with lowercase
+	integer hex2 = 0x10
+	print("Hex 0x10: " + hex2.toString())
+
+	// Test 3: Hexadecimal uppercase
+	integer hex3 = 0xFF
+	print("Hex 0xFF: " + hex3.toString())
+
+	// Test 4: Binary literals
+	integer bin1 = 0b1010
+	print("Binary 0b1010: " + bin1.toString())
+
+	// Test 5: Binary with all ones
+	integer bin2 = 0b1111
+	print("Binary 0b1111: " + bin2.toString())
+
+	// Test 6: Binary with single bit
+	integer bin3 = 0b1
+	print("Binary 0b1: " + bin3.toString())
+
+	// Test 7: Octal literals
+	integer oct1 = 0o777
+	print("Octal 0o777: " + oct1.toString())
+
+	// Test 8: Octal smaller value
+	integer oct2 = 0o10
+	print("Octal 0o10: " + oct2.toString())
+
+	// Test 9: Compare all bases representing same value
+	integer dec8 = 8
+	integer hex8 = 0x8
+	integer bin8 = 0b1000
+	integer oct8 = 0o10
+	print("Decimal 8: " + dec8.toString())
+	print("Hex 0x8: " + hex8.toString())
+	print("Binary 0b1000: " + bin8.toString())
+	print("Octal 0o10: " + oct8.toString())
+
+	print("Numeric bases test completed")

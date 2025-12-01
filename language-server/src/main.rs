@@ -8,11 +8,13 @@
  * - Type checking and validation
  * - Hover information and documentation
  * - Real-time diagnostics
+ * - Plugin-aware completions and hover (dynamic DSL support)
  */
 
 use std::sync::Arc;
 
 use clean_language_compiler::compile_with_file;
+use clean_language_compiler::plugins::PluginRegistry;
 use dashmap::DashMap;
 use ropey::Rope;
 use tower_lsp::jsonrpc::Result;
@@ -45,6 +47,9 @@ struct Backend {
     diagnostics_provider: Arc<DiagnosticsProvider>,
     hover_provider: Arc<HoverProvider>,
     formatting_provider: Arc<FormattingProvider>,
+    /// Plugin registry for dynamic DSL support
+    #[allow(dead_code)]
+    plugin_registry: Arc<PluginRegistry>,
 }
 
 #[tower_lsp::async_trait]
@@ -336,13 +341,44 @@ impl LanguageServer for Backend {
 
 impl Backend {
     fn new(client: Client) -> Self {
+        // Create the plugin registry (can be extended with plugins at runtime)
+        let plugin_registry = Arc::new(
+            PluginRegistry::builder()
+                .build()
+                .expect("Failed to build plugin registry"),
+        );
+
+        // Create providers with plugin support
+        let completion_provider =
+            Arc::new(CompletionProvider::with_plugins(Arc::clone(&plugin_registry)));
+        let hover_provider = Arc::new(HoverProvider::with_plugins(Arc::clone(&plugin_registry)));
+
         Self {
             client,
             documents: Arc::new(DashMap::new()),
-            completion_provider: Arc::new(CompletionProvider::new()),
+            completion_provider,
             diagnostics_provider: Arc::new(DiagnosticsProvider::new()),
-            hover_provider: Arc::new(HoverProvider::new()),
+            hover_provider,
             formatting_provider: Arc::new(FormattingProvider::new()),
+            plugin_registry,
+        }
+    }
+
+    /// Create a backend with a specific plugin registry
+    #[allow(dead_code)]
+    fn with_plugins(client: Client, registry: Arc<PluginRegistry>) -> Self {
+        let completion_provider =
+            Arc::new(CompletionProvider::with_plugins(Arc::clone(&registry)));
+        let hover_provider = Arc::new(HoverProvider::with_plugins(Arc::clone(&registry)));
+
+        Self {
+            client,
+            documents: Arc::new(DashMap::new()),
+            completion_provider,
+            diagnostics_provider: Arc::new(DiagnosticsProvider::new()),
+            hover_provider,
+            formatting_provider: Arc::new(FormattingProvider::new()),
+            plugin_registry: registry,
         }
     }
 

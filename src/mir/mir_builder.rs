@@ -19,6 +19,7 @@ use crate::typechecker::tast::{
     TastFunction, TastLiteral, TastProgram, TastStatement, UnaryOperator,
 };
 use std::collections::{HashMap, HashSet};
+use tracing::{debug, trace, warn};
 
 /// Result of MIR building process
 #[derive(Debug)]
@@ -188,9 +189,9 @@ impl MirBuilder {
 
         // CRITICAL FIX: Populate symbol_name_map from SymbolTable for dynamic resolution
         // This captures ALL symbols: builtins (print, math.*, string.*, etc.) AND user-defined
-        eprintln!(
-            "DEBUG MIR SYMBOLS: Populating symbol_name_map from SymbolTable with {} symbols",
-            tast.symbol_table.all_symbols().len()
+        debug!(
+            symbol_count = tast.symbol_table.all_symbols().len(),
+            "Populating symbol_name_map from SymbolTable"
         );
         for (symbol_id, symbol) in tast.symbol_table.all_symbols() {
             // CRITICAL FIX: For Method symbols, construct fully qualified name (e.g., "math.min")
@@ -209,14 +210,11 @@ impl MirBuilder {
             mir_program
                 .symbol_name_map
                 .insert(*symbol_id, full_name.clone());
-            eprintln!(
-                "DEBUG MIR SYMBOLS: SymbolId({}) -> '{}'",
-                symbol_id.0, full_name
-            );
+            trace!(symbol_id = symbol_id.0, name = %full_name, "Registered symbol");
         }
-        eprintln!(
-            "DEBUG MIR SYMBOLS: symbol_name_map populated with {} entries",
-            mir_program.symbol_name_map.len()
+        debug!(
+            entry_count = mir_program.symbol_name_map.len(),
+            "symbol_name_map populated"
         );
 
         // CRITICAL FIX: Add synthetic SymbolIds for MIR-generated built-in functions
@@ -236,12 +234,18 @@ impl MirBuilder {
         mir_program
             .symbol_name_map
             .insert(SymbolId(1003), "list.allocate".to_string());
+        // CRITICAL FIX: Use names matching stdlib function registration
+        // list_push uses underscore (from list_ops.rs line 112)
+        // list.size uses dot (from list_behavior.rs line 96)
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1004), "list.push".to_string());
+            .insert(SymbolId(1004), "list_push".to_string());
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1005), "list.push_f64".to_string());
+            .insert(SymbolId(1005), "list_push_f64".to_string());
+        mir_program
+            .symbol_name_map
+            .insert(SymbolId(1006), "list.size".to_string());
 
         // CRITICAL FIX: Add common name variations for builtin functions
         // Check symbol_name_map for variations and add correct WASM names
@@ -249,27 +253,27 @@ impl MirBuilder {
         for (symbol_id, name) in mir_program.symbol_name_map.iter() {
             match name.as_str() {
                 "println" => fixes_needed.push((*symbol_id, "printl".to_string())),
+                // Map underscore naming to dot naming for list operations
+                "list_push_f64" => fixes_needed.push((*symbol_id, "list.push_f64".to_string())),
+                "list_push" => fixes_needed.push((*symbol_id, "list.push".to_string())),
                 _ => {}
             }
         }
         for (symbol_id, corrected_name) in fixes_needed {
-            eprintln!(
-                "DEBUG MIR SYMBOLS: Correcting SymbolId({}) from '{}' to '{}'",
-                symbol_id.0,
-                mir_program.symbol_name_map.get(&symbol_id).unwrap(),
-                corrected_name
+            trace!(
+                symbol_id = symbol_id.0,
+                from = %mir_program.symbol_name_map.get(&symbol_id).unwrap(),
+                to = %corrected_name,
+                "Correcting symbol name"
             );
             mir_program
                 .symbol_name_map
                 .insert(symbol_id, corrected_name);
         }
 
-        eprintln!(
-            "DEBUG MIR SYMBOLS: Added 5 synthetic SymbolIds (1000-1004) for MIR-generated builtins"
-        );
-        eprintln!(
-            "DEBUG MIR SYMBOLS: Final symbol_name_map has {} entries",
-            mir_program.symbol_name_map.len()
+        debug!(
+            final_count = mir_program.symbol_name_map.len(),
+            "MIR symbol_name_map ready (includes 5 synthetic SymbolIds)"
         );
 
         // Lower all functions
@@ -381,18 +385,18 @@ impl MirBuilder {
         class_context: Option<&TastClass>,
     ) -> Result<MirFunction, Vec<CompilerError>> {
         // DEBUG: Show parameter count for functions with default parameters
-        eprintln!(
-            "DEBUG MIR PARAMS: Function '{}' has {} TAST parameters",
-            tast_function.name,
-            tast_function.parameters.len()
+        debug!(
+            function = %tast_function.name,
+            param_count = tast_function.parameters.len(),
+            "Building MIR for function"
         );
         for (i, param) in tast_function.parameters.iter().enumerate() {
-            eprintln!(
-                "  TAST Param[{}]: name='{}' type={:?} has_default={}",
-                i,
-                param.name,
-                param.param_type,
-                param.default_value.is_some()
+            trace!(
+                index = i,
+                name = %param.name,
+                param_type = ?param.param_type,
+                has_default = param.default_value.is_some(),
+                "TAST parameter"
             );
         }
 
@@ -429,11 +433,11 @@ impl MirBuilder {
 
         // For class methods and constructors, add implicit 'this' parameter as the first parameter
         // EXCEPT for static methods which don't need 'this'
-        eprintln!(
-            "DEBUG THIS PARAM: Function '{}' has_class_context={} is_static={}",
-            tast_function.name,
-            class_context.is_some(),
-            tast_function.is_static
+        trace!(
+            function = %tast_function.name,
+            has_class_context = class_context.is_some(),
+            is_static = tast_function.is_static,
+            "Checking this parameter requirement"
         );
         if let Some(_class_ctx) = class_context {
             if !tast_function.is_static {
@@ -478,15 +482,17 @@ impl MirBuilder {
         }
 
         // DEBUG: Show final MIR parameter count
-        eprintln!(
-            "DEBUG MIR PARAMS: Function '{}' created {} MIR parameters",
-            context.function.name,
-            context.function.parameters.len()
+        trace!(
+            function_name = %context.function.name,
+            param_count = context.function.parameters.len(),
+            "MIR parameters created for function"
         );
         for (i, mir_param) in context.function.parameters.iter().enumerate() {
-            eprintln!(
-                "  MIR Param[{}]: name='{}' type={:?}",
-                i, mir_param.name, mir_param.param_type
+            trace!(
+                index = i,
+                param_name = %mir_param.name,
+                param_type = ?mir_param.param_type,
+                "MIR parameter"
             );
         }
 
@@ -505,17 +511,14 @@ impl MirBuilder {
         self.current_block = Some(BasicBlockId(0));
 
         // Lower function body
-        eprintln!(
-            "DEBUG MIR FUNC: Building function '{}' with {} statements",
-            tast_function.name,
-            tast_function.body.statements.len()
-        );
-        eprintln!(
-            "DEBUG MIR FUNC:   Has class_context: {}",
-            context.class_context.is_some()
+        debug!(
+            function_name = %tast_function.name,
+            statement_count = tast_function.body.statements.len(),
+            has_class_context = context.class_context.is_some(),
+            "Building function body"
         );
         if let Some(ref class) = context.class_context {
-            eprintln!("DEBUG MIR FUNC:   Class has {} fields", class.fields.len());
+            trace!(field_count = class.fields.len(), "Class context fields");
         }
 
         // Handle automatic return for last expression in non-void functions
@@ -534,13 +537,13 @@ impl MirBuilder {
 
         // DEBUG: Check all blocks for proper terminators
         if context.function.name == "test" {
-            eprintln!(
-                "DEBUG FINAL MIR: Function '{}' has {} blocks",
-                context.function.name,
-                context.function.blocks.len()
+            trace!(
+                function_name = %context.function.name,
+                block_count = context.function.blocks.len(),
+                "Final MIR function blocks"
             );
             for (block_id, block) in &context.function.blocks {
-                eprintln!("  Block {:?}: terminator={:?}", block_id, block.terminator);
+                trace!(block_id = ?block_id, terminator = ?block.terminator, "Block terminator");
             }
         }
 
@@ -616,16 +619,17 @@ impl MirBuilder {
             .take(statements_to_process)
             .enumerate()
         {
-            eprintln!(
-                "DEBUG MIR BLOCK:   Statement {}: {:?}, current_block = {:?}",
-                i,
-                std::mem::discriminant(statement),
-                self.current_block
+            trace!(
+                statement_index = i,
+                statement_type = ?std::mem::discriminant(statement),
+                current_block = ?self.current_block,
+                "Processing statement"
             );
             self.build_statement(context, statement)?;
-            eprintln!(
-                "DEBUG MIR BLOCK:   After statement {}: current_block = {:?}",
-                i, self.current_block
+            trace!(
+                statement_index = i,
+                current_block = ?self.current_block,
+                "After statement"
             );
         }
 
@@ -636,7 +640,7 @@ impl MirBuilder {
                 location: _,
             }) = block.statements.last()
             {
-                eprintln!("DEBUG MIR FUNC:   Auto-returning last expression");
+                trace!("Auto-returning last expression");
                 // Build expression and convert to return
                 let value_id = self.build_expression(context, expression)?;
 
@@ -666,23 +670,21 @@ impl MirBuilder {
         // Enter new scope
         context.scope_stack.push(HashMap::new());
 
-        eprintln!(
-            "DEBUG MIR BLOCK: Processing block with {} statements",
-            block.statements.len()
-        );
+        trace!(statement_count = block.statements.len(), "Processing block");
 
         // Lower all statements
         for (i, statement) in block.statements.iter().enumerate() {
-            eprintln!(
-                "DEBUG MIR BLOCK:   Statement {}: {:?}, current_block = {:?}",
-                i,
-                std::mem::discriminant(statement),
-                self.current_block
+            trace!(
+                statement_index = i,
+                statement_type = ?std::mem::discriminant(statement),
+                current_block = ?self.current_block,
+                "Processing block statement"
             );
             self.build_statement(context, statement)?;
-            eprintln!(
-                "DEBUG MIR BLOCK:   After statement {}: current_block = {:?}",
-                i, self.current_block
+            trace!(
+                statement_index = i,
+                current_block = ?self.current_block,
+                "After block statement"
             );
         }
 
@@ -753,21 +755,78 @@ impl MirBuilder {
                     // Build initializer expression
                     self.build_expression(context, init_expr)?
                 } else {
-                    // Create uninitialized value
-                    let value_id = ValueId(context.function.next_value_id);
-                    context.function.next_value_id += 1;
+                    // Check if this is an Array type (list) - if so, allocate an empty list
+                    match var_type {
+                        ConcreteType::Array(_) => {
+                            // Allocate an empty list using list.allocate
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
 
-                    // Add undefined constant instruction
-                    let instruction = MirInstruction {
-                        dest: Some(value_id),
-                        operation: MirOperation::Copy {
-                            source: MirOperand::Constant(MirConstant::Undefined),
-                        },
-                        location: location.clone(),
-                    };
+                            // Create local for the list pointer
+                            let local = MirLocal {
+                                name: Some(name.clone()),
+                                local_type: MirType::I32, // Lists are pointers
+                                is_mutable: true,
+                                location: location.clone(),
+                            };
+                            context.function.locals.insert(result_id, local);
 
-                    self.add_instruction(context, instruction);
-                    value_id
+                            // Create size argument (0 for empty list)
+                            let size_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            let size_local = MirLocal {
+                                name: None,
+                                local_type: MirType::I32,
+                                is_mutable: false,
+                                location: location.clone(),
+                            };
+                            context.function.locals.insert(size_id, size_local);
+
+                            // Create size constant with default capacity of 8
+                            // CRITICAL FIX: Allocating with capacity 0 causes memory corruption
+                            // because list.push writes beyond allocated space, and subsequent
+                            // allocations overwrite the list elements.
+                            let size_instruction = MirInstruction {
+                                dest: Some(size_id),
+                                operation: MirOperation::Copy {
+                                    source: MirOperand::Constant(MirConstant::Integer(8)),
+                                },
+                                location: location.clone(),
+                            };
+                            self.add_instruction(context, size_instruction);
+
+                            // Call list.allocate(8) with synthetic SymbolId(1003)
+                            let call_instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::Function(SymbolId(1003)), // list.allocate
+                                    arguments: vec![MirOperand::Value(size_id)],
+                                },
+                                location: location.clone(),
+                            };
+                            self.add_instruction(context, call_instruction);
+
+                            result_id
+                        }
+                        _ => {
+                            // Create uninitialized value for non-list types
+                            let value_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            // Add undefined constant instruction
+                            let instruction = MirInstruction {
+                                dest: Some(value_id),
+                                operation: MirOperation::Copy {
+                                    source: MirOperand::Constant(MirConstant::Undefined),
+                                },
+                                location: location.clone(),
+                            };
+
+                            self.add_instruction(context, instruction);
+                            value_id
+                        }
+                    }
                 };
 
                 // Add to current scope
@@ -775,15 +834,19 @@ impl MirBuilder {
                     current_scope.insert(name.clone(), value_id);
                 }
 
-                // Create local variable entry
-                let local = MirLocal {
-                    name: Some(name.clone()),
-                    local_type: self.convert_concrete_type(var_type),
-                    is_mutable: true, // TODO: Track mutability from TAST
-                    location: location.clone(),
-                };
+                // Create local variable entry (skip for Array without initializer - already created)
+                let should_create_local =
+                    !(initializer.is_none() && matches!(var_type, ConcreteType::Array(_)));
+                if should_create_local {
+                    let local = MirLocal {
+                        name: Some(name.clone()),
+                        local_type: self.convert_concrete_type(var_type),
+                        is_mutable: true, // TODO: Track mutability from TAST
+                        location: location.clone(),
+                    };
 
-                context.function.locals.insert(value_id, local);
+                    context.function.locals.insert(value_id, local);
+                }
             }
 
             TastStatement::Assignment {
@@ -817,10 +880,10 @@ impl MirBuilder {
                             _ => None,
                         };
 
-                        // Find the actual field index in the class hierarchy (including inherited fields)
-                        let field_index_value = if let Some(class_symbol) = object_class_symbol {
-                            // Search for the field in the object's class and all parent classes
-                            self.find_field_index_for_class(context, class_symbol, property_symbol)
+                        // Find the byte offset of the field in the class hierarchy
+                        let field_byte_offset = if let Some(class_symbol) = object_class_symbol {
+                            // Calculate byte offset accounting for different field sizes
+                            self.calculate_field_byte_offset(context, class_symbol, property_symbol)
                                 .ok_or_else(|| {
                                     vec![CompilerError::validation_error(
                                         &format!(
@@ -854,13 +917,14 @@ impl MirBuilder {
                         };
                         context.function.locals.insert(field_ptr_id, gep_local);
 
-                        let field_index =
-                            MirOperand::Constant(MirConstant::Integer(field_index_value));
+                        let field_offset =
+                            MirOperand::Constant(MirConstant::Integer(field_byte_offset));
                         let gep_instruction = MirInstruction {
                             dest: Some(field_ptr_id),
                             operation: MirOperation::GetElementPtr {
                                 base: MirOperand::Value(object_id),
-                                indices: vec![field_index],
+                                indices: vec![field_offset],
+                                is_array: false, // Class field access - byte offset, no header
                             },
                             location: target.location.clone(),
                         };
@@ -919,22 +983,19 @@ impl MirBuilder {
                 return_type: _,
                 location: _,
             } => {
-                // CRITICAL FIX: Debug logging for return statement processing
-                eprintln!(
-                    "DEBUG RETURN STATEMENT: function='{}', current_block={:?}",
-                    context.function.name, self.current_block
+                trace!(
+                    function_name = %context.function.name,
+                    current_block = ?self.current_block,
+                    "Processing return statement"
                 );
 
                 // Return type validation already done in type checking phase
                 let return_value = if let Some(expr) = value {
                     let value_id = self.build_expression(context, expr)?;
-                    eprintln!(
-                        "DEBUG RETURN: Built return expression, value_id={:?}",
-                        value_id
-                    );
+                    trace!(value_id = ?value_id, "Built return expression");
                     Some(MirOperand::Value(value_id))
                 } else {
-                    eprintln!("DEBUG RETURN: No return value (void return)");
+                    trace!("Void return (no value)");
                     None
                 };
 
@@ -942,15 +1003,9 @@ impl MirBuilder {
                 let terminator = MirTerminator::Return {
                     value: return_value.clone(),
                 };
-                eprintln!(
-                    "DEBUG RETURN: Created terminator={:?}, calling set_block_terminator",
-                    terminator
-                );
+                trace!(terminator = ?terminator, "Setting return terminator");
                 self.set_block_terminator(context, terminator);
-                eprintln!(
-                    "DEBUG RETURN: After set_block_terminator, current_block={:?}",
-                    self.current_block
-                );
+                trace!(current_block = ?self.current_block, "After return terminator");
             }
 
             TastStatement::Print {
@@ -983,9 +1038,13 @@ impl MirBuilder {
                             location.clone(),
                         );
 
-                        let symbol_id = self.symbol_table.lookup_symbol("int_to_string")
+                        let symbol_id = self
+                            .symbol_table
+                            .lookup_symbol("int_to_string")
                             .unwrap_or_else(|| {
-                                eprintln!("WARNING: int_to_string not found in symbol table, using SymbolId(166)");
+                                warn!(
+                                    "int_to_string not found in symbol table, using SymbolId(166)"
+                                );
                                 SymbolId(166)
                             });
 
@@ -1017,7 +1076,7 @@ impl MirBuilder {
 
                         let symbol_id = self.symbol_table.lookup_symbol("float_to_string")
                             .unwrap_or_else(|| {
-                                eprintln!("WARNING: float_to_string not found in symbol table, using SymbolId(167)");
+                                warn!("float_to_string not found in symbol table, using SymbolId(167)");
                                 SymbolId(167)
                             });
 
@@ -1047,9 +1106,13 @@ impl MirBuilder {
                             location.clone(),
                         );
 
-                        let symbol_id = self.symbol_table.lookup_symbol("bool_to_string")
+                        let symbol_id = self
+                            .symbol_table
+                            .lookup_symbol("bool_to_string")
                             .unwrap_or_else(|| {
-                                eprintln!("WARNING: bool_to_string not found in symbol table, using SymbolId(165)");
+                                warn!(
+                                    "bool_to_string not found in symbol table, using SymbolId(165)"
+                                );
                                 SymbolId(165)
                             });
 
@@ -1172,21 +1235,23 @@ impl MirBuilder {
                     .get(&then_block_id)
                     .map(|b| &b.terminator);
 
-                eprintln!(
-                    "DEBUG THEN CHECK: then_block={:?}, terminator={:?}",
-                    then_block_id, then_terminator
+                trace!(
+                    then_block_id = ?then_block_id,
+                    terminator = ?then_terminator,
+                    "Then block check"
                 );
 
                 // FIX: Check if block effectively returns (direct Return OR Branch where both branches return)
                 // Unreachable here is just a placeholder that should be replaced with Jump
                 let has_return = self.block_effectively_returns(context, then_block_id);
-                eprintln!(
-                    "DEBUG THEN EFFECTIVE RETURN: then_block={:?}, has_return={}",
-                    then_block_id, has_return
+                trace!(
+                    then_block_id = ?then_block_id,
+                    has_return = has_return,
+                    "Then block effective return check"
                 );
 
                 if !has_return {
-                    eprintln!("DEBUG THEN: Adding Jump to continue block");
+                    trace!("Adding Jump to continue block from then branch");
                     // Set the then block's terminator to jump to continuation
                     // This replaces the placeholder Unreachable or sets terminator if not set
                     let saved_current = self.current_block;
@@ -1199,7 +1264,7 @@ impl MirBuilder {
                     );
                     self.current_block = saved_current;
                 } else {
-                    eprintln!("DEBUG THEN: Already has return, skipping Jump");
+                    trace!("Then branch already has return, skipping Jump");
                 }
 
                 // Track whether the else branch returns (all paths)
@@ -1249,7 +1314,12 @@ impl MirBuilder {
                         false
                     };
 
-                    eprintln!("DEBUG ELSE RETURN CHECK: before_else={:?}, after_else={:?}, else_returns={}", before_else, after_else, else_returns);
+                    trace!(
+                        before_else = ?before_else,
+                        after_else = ?after_else,
+                        else_returns = else_returns,
+                        "Else return check"
+                    );
 
                     if !else_returns {
                         // At least one path doesn't return - add jump to continuation
@@ -1265,7 +1335,7 @@ impl MirBuilder {
                         }
                         self.current_block = saved_current;
                     } else {
-                        eprintln!("DEBUG ELSE: All paths return");
+                        trace!("Else branch: all paths return");
                     }
 
                     else_returns
@@ -1284,19 +1354,24 @@ impl MirBuilder {
                     .map(|b| matches!(b.terminator, MirTerminator::Return { .. }))
                     .unwrap_or(false);
 
-                eprintln!("DEBUG IF FINAL: then_has_return={}, else_returns_all_paths={}, current_block before={:?}", then_has_return, else_returns_all_paths, self.current_block);
+                trace!(
+                    then_has_return = then_has_return,
+                    else_returns_all_paths = else_returns_all_paths,
+                    current_block = ?self.current_block,
+                    "If statement final check"
+                );
 
                 // CRITICAL FIX: Handle continue block based on whether branches return
                 // Use else_returns_all_paths instead of checking the else block's entry terminator
                 if then_has_return && else_returns_all_paths && else_block.is_some() {
                     // Both branches return - continue block is truly unreachable
                     // Set current_block to None to prevent ensure_function_termination from adding a return
-                    eprintln!("DEBUG IF FINAL: Both branches return, setting current_block to None (unreachable)");
+                    trace!("Both branches return, setting current_block to None (unreachable)");
                     self.current_block = None;
                 } else {
                     // At least one branch doesn't return - continue block is reachable
                     // Set current_block to continue block so execution can proceed
-                    eprintln!("DEBUG IF FINAL: At least one branch continues, setting current_block to continue_block={:?}", continue_block_id);
+                    trace!(continue_block_id = ?continue_block_id, "At least one branch continues");
                     self.current_block = Some(continue_block_id);
                 }
             }
@@ -1316,7 +1391,7 @@ impl MirBuilder {
                     inclusive,
                 } = &iterable.kind
                 {
-                    eprintln!("DEBUG FOR RANGE: Detected Range expression in For loop, generating optimized code");
+                    trace!("Detected Range expression in For loop, generating optimized code");
 
                     // Generate optimized range loop directly
                     return self.build_range_for_loop(
@@ -1520,27 +1595,25 @@ impl MirBuilder {
                     location.clone(),
                 );
 
-                eprintln!(
-                    "DEBUG ITERATE: current_block before GetElementPtr = {:?}",
-                    self.current_block
-                );
+                trace!(current_block = ?self.current_block, "Before GetElementPtr");
                 let get_ptr_instruction = MirInstruction {
                     dest: Some(element_ptr_value_id),
                     operation: MirOperation::GetElementPtr {
                         base: MirOperand::Value(iterable_value),
                         indices: vec![MirOperand::Value(current_index_value_id)],
+                        is_array: true, // Array iteration - needs header offset
                     },
                     location: location.clone(),
                 };
                 self.add_instruction(context, get_ptr_instruction);
-                eprintln!(
-                    "DEBUG ITERATE: after adding GetElementPtr, block has {} instructions",
-                    context
+                trace!(
+                    instruction_count = context
                         .function
                         .blocks
                         .get(&body_block_id)
                         .map(|b| b.instructions.len())
-                        .unwrap_or(0)
+                        .unwrap_or(0),
+                    "After GetElementPtr"
                 );
 
                 // Step 2: Load the actual value from that pointer
@@ -1553,25 +1626,25 @@ impl MirBuilder {
                 };
                 self.add_instruction(context, load_element_instruction);
 
-                // DEBUG: Check instructions before processing statements
-                eprintln!("DEBUG ITERATE (function={}): Before processing statements, body block has {} instructions",
-                    context.function.name,
-                    context.function.blocks.get(&body_block_id).map(|b| b.instructions.len()).unwrap_or(0));
+                trace!(
+                    function_name = %context.function.name,
+                    instruction_count = context.function.blocks.get(&body_block_id).map(|b| b.instructions.len()).unwrap_or(0),
+                    "Before processing iterate body statements"
+                );
 
                 // Process loop body statements
                 for stmt in &body.statements {
                     self.build_statement(context, stmt)?;
                 }
 
-                // DEBUG: Check instructions after processing statements
-                eprintln!(
-                    "DEBUG ITERATE: After processing statements, body block has {} instructions",
-                    context
+                trace!(
+                    instruction_count = context
                         .function
                         .blocks
                         .get(&body_block_id)
                         .map(|b| b.instructions.len())
-                        .unwrap_or(0)
+                        .unwrap_or(0),
+                    "After processing iterate body statements"
                 );
 
                 // CRITICAL FIX: Check if body block already has a terminator
@@ -1597,10 +1670,7 @@ impl MirBuilder {
                     // Need to redirect it to increment block instead of header
                     // For now, we'll handle this in the increment block by having
                     // continuation blocks jump to increment instead
-                    eprintln!(
-                        "DEBUG ITERATE: Body block already has terminator, current_block={:?}",
-                        self.current_block
-                    );
+                    trace!(current_block = ?self.current_block, "Body block already has terminator");
 
                     // Set current block to wherever we ended up after processing statements
                     // and make it jump to increment block
@@ -1754,10 +1824,7 @@ impl MirBuilder {
         context: &mut FunctionBuildContext,
         expression: &TastExpression,
     ) -> Result<ValueId, Vec<CompilerError>> {
-        eprintln!(
-            "DEBUG MIR EXPR: Processing expression: {:?}",
-            std::mem::discriminant(&expression.kind)
-        );
+        trace!(expression_kind = ?std::mem::discriminant(&expression.kind), "Processing expression");
         match &expression.kind {
             TastExpressionKind::Literal { value } => {
                 let constant = self.convert_literal(value);
@@ -1781,14 +1848,11 @@ impl MirBuilder {
             }
 
             TastExpressionKind::Variable { symbol_id: _, name } => {
-                eprintln!("DEBUG MIR VAR: Processing variable '{}'", name);
-                eprintln!(
-                    "DEBUG MIR VAR:   Has class_context: {}",
-                    context.class_context.is_some()
-                );
-                eprintln!(
-                    "DEBUG MIR VAR:   Scope stack depth: {}",
-                    context.scope_stack.len()
+                trace!(
+                    variable_name = %name,
+                    has_class_context = context.class_context.is_some(),
+                    scope_stack_depth = context.scope_stack.len(),
+                    "Processing variable"
                 );
 
                 // Special case for 'this' - in class methods, 'this' refers to the first parameter
@@ -1816,10 +1880,10 @@ impl MirBuilder {
                 // If not found in scope and we're in a class method, check class fields
                 // Extract field index before any mutable borrows to avoid borrow checker issues
                 let field_index_opt = if let Some(ref class) = context.class_context {
-                    eprintln!(
-                        "DEBUG MIR: Looking for field '{}' in class with {} fields",
-                        name,
-                        class.fields.len()
+                    trace!(
+                        field_name = %name,
+                        field_count = class.fields.len(),
+                        "Looking for field in class"
                     );
                     let result = class
                         .fields
@@ -1827,17 +1891,18 @@ impl MirBuilder {
                         .enumerate()
                         .find(|(_, f)| f.name == *name)
                         .map(|(idx, _)| idx);
-                    eprintln!("DEBUG MIR: Field search result: {:?}", result);
+                    trace!(result = ?result, "Field search result");
                     result
                 } else {
-                    eprintln!("DEBUG MIR: No class context for variable '{}'", name);
+                    trace!(variable_name = %name, "No class context for variable");
                     None
                 };
 
                 if let Some(field_index) = field_index_opt {
-                    eprintln!(
-                        "DEBUG MIR: Found field '{}' at index {}, generating load instructions",
-                        name, field_index
+                    trace!(
+                        field_name = %name,
+                        field_index = field_index,
+                        "Found field, generating load instructions"
                     );
                     // This is an implicit field access - treat as this.field
                     // Need to load 'this', get field pointer, and load field value
@@ -1864,6 +1929,7 @@ impl MirBuilder {
                             indices: vec![MirOperand::Constant(MirConstant::Integer(
                                 field_index as i64,
                             ))],
+                            is_array: false, // Class field access - no header offset
                         },
                         location: expression.location.clone(),
                     };
@@ -2122,9 +2188,11 @@ impl MirBuilder {
                 arguments,
                 type_args: _,
             } => {
-                // Extract function symbol ID from the function expression
-                let function_symbol_id = match &function.kind {
-                    TastExpressionKind::Variable { symbol_id, .. } => *symbol_id,
+                // Extract function symbol ID and name from the function expression
+                let (function_symbol_id, function_name_opt) = match &function.kind {
+                    TastExpressionKind::Variable {
+                        symbol_id, name, ..
+                    } => (*symbol_id, Some(name.clone())),
                     _ => {
                         return Err(vec![CompilerError::validation_error(
                             "Function calls to non-simple function names not yet supported",
@@ -2161,8 +2229,18 @@ impl MirBuilder {
                             )]
                         })?;
 
-                    // Calculate instance size: 4 bytes per field (all i32/pointer for now)
-                    let instance_size = class_def.fields.len() * 4;
+                    // Calculate TOTAL instance size including all inherited fields
+                    // with proper byte sizes for each field type (i32=4, f64=8, etc.)
+                    let instance_size =
+                        self.calculate_instance_byte_size(context, *class_symbol_id);
+                    let total_field_count =
+                        self.count_all_fields_in_hierarchy(context, *class_symbol_id);
+                    tracing::debug!(
+                        "Allocating class {} with {} total fields ({} bytes)",
+                        class_def.name,
+                        total_field_count,
+                        instance_size
+                    );
 
                     // Generate Alloca instruction to allocate instance memory
                     // Note: For heap allocation, this should be converted to mem_alloc during codegen
@@ -2272,14 +2350,41 @@ impl MirBuilder {
 
                 // CRITICAL FIX: Check if this is a void function
                 // Void functions have Null or Undefined types, which convert to void-related MIR types
-                eprintln!("DEBUG IS_VOID CHECK: function_symbol_id={:?}, expression.expr_type={:?}, result_type={:?}",
-                          function_symbol_id, expression.expr_type, result_type);
-                let is_void = matches!(
-                    expression.expr_type,
-                    ConcreteType::Null | ConcreteType::Undefined
-                ) || matches!(result_type, MirType::Void)
-                    || matches!(&result_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
-                eprintln!("DEBUG IS_VOID RESULT: is_void={}", is_void);
+                // Also check for known void functions by name (builtin functions that return nothing)
+                trace!(
+                    function_symbol_id = ?function_symbol_id,
+                    function_name = ?function_name_opt,
+                    expr_type = ?expression.expr_type,
+                    result_type = ?result_type,
+                    "Checking if void function"
+                );
+
+                // Check for known void functions by name
+                // These are builtin/stdlib functions that return nothing (modify in-place or have side effects only)
+                // NOTE: list.push is NOT void - it returns the list for chaining
+                let is_known_void_function = match function_name_opt.as_deref() {
+                    Some("list.set") | Some("list.clear") => true,
+                    Some("print") | Some("printl") | Some("println") => true,
+                    Some("mem_release") | Some("mem_retain") => true,
+                    _ => false,
+                };
+
+                // CRITICAL FIX: Do NOT treat Ptr(Void) as void!
+                // Ptr(Void) means "unknown pointer type" which happens when type inference
+                // doesn't know the return type (e.g., namespace functions like string.split).
+                // These functions DO return values (pointers), they just have unknown types.
+                // Only treat actual MirType::Void (not Ptr(Void)) as void.
+                let is_void = is_known_void_function
+                    || matches!(
+                        expression.expr_type,
+                        ConcreteType::Null | ConcreteType::Undefined
+                    )
+                    || matches!(result_type, MirType::Void);
+                trace!(
+                    is_void = is_void,
+                    is_known_void_function = is_known_void_function,
+                    "Is void result"
+                );
 
                 // ALWAYS register the local to maintain SSA invariant (learned from Context7)
                 // This ensures every ValueId has a corresponding entry in the locals map
@@ -2301,8 +2406,7 @@ impl MirBuilder {
                         TastExpressionKind::Variable { name, .. } => name.clone(),
                         _ => String::from("unknown"),
                     };
-                    eprintln!("DEBUG MIR FUNCTIONCALL: Creating NamedFunction for function_name='{}' with SymbolId(0)",
-                              function_name);
+                    trace!(function_name = %function_name, "Creating NamedFunction for SymbolId(0)");
                     MirOperand::NamedFunction {
                         name: function_name,
                         symbol_id: function_symbol_id,
@@ -2349,8 +2453,13 @@ impl MirBuilder {
                         .unwrap_or(ConcreteType::Unknown)
                 };
 
-                eprintln!("DEBUG MIR METHODCALL RECEIVER: method='{}', receiver_id={:?}, tast_type={:?}, actual_type={:?}",
-                    method_name, receiver_id, receiver.expr_type, receiver_actual_type);
+                trace!(
+                    method_name = %method_name,
+                    receiver_id = ?receiver_id,
+                    tast_type = ?receiver.expr_type,
+                    actual_type = ?receiver_actual_type,
+                    "Method call receiver"
+                );
 
                 // SPECIAL CASE: String.toString() is identity operation - just return the receiver
                 if method_symbol.0 == 0
@@ -2358,6 +2467,71 @@ impl MirBuilder {
                     && method_name == "toString"
                 {
                     return Ok(receiver_id);
+                }
+
+                // CRITICAL FIX: Handle Array/List methods FIRST, regardless of method_symbol
+                // These methods have non-zero method_symbol (e.g., 103) but need special handling
+                // to use the correct stdlib function indices
+                if let ConcreteType::Array(element_type) = &receiver.expr_type {
+                    match method_name.as_str() {
+                        "add" | "push" => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32, // List pointer
+                                expression.location.clone(),
+                            );
+
+                            // Use synthetic SymbolId for list push
+                            let push_symbol = match element_type.as_ref() {
+                                ConcreteType::Number => SymbolId(1005), // list.push_f64
+                                _ => SymbolId(1004),                    // list_push
+                            };
+
+                            let mut args = vec![MirOperand::Value(receiver_id)];
+                            for arg in arguments {
+                                let arg_id = self.build_expression(context, arg)?;
+                                args.push(MirOperand::Value(arg_id));
+                            }
+
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::Function(push_symbol),
+                                    arguments: args,
+                                },
+                                location: expression.location.clone(),
+                            };
+                            self.add_instruction(context, instruction);
+                            return Ok(result_id);
+                        }
+                        "size" | "length" => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32, // Size as integer
+                                expression.location.clone(),
+                            );
+
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::Function(SymbolId(1006)), // list.size
+                                    arguments: vec![MirOperand::Value(receiver_id)],
+                                },
+                                location: expression.location.clone(),
+                            };
+                            self.add_instruction(context, instruction);
+                            return Ok(result_id);
+                        }
+                        _ => {} // Fall through for other methods
+                    }
                 }
 
                 // SPECIAL CASE: Type conversion methods - emit Cast instructions or builtin calls
@@ -2381,7 +2555,7 @@ impl MirBuilder {
                                 .symbol_table
                                 .lookup_symbol("int_to_string")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: int_to_string not found in symbol table, using SymbolId(166)");
+                                    warn!("int_to_string not found in symbol table, using SymbolId(166)");
                                     SymbolId(166)
                                 });
 
@@ -2415,7 +2589,7 @@ impl MirBuilder {
                                 .symbol_table
                                 .lookup_symbol("float_to_string")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: float_to_string not found in symbol table, using SymbolId(167)");
+                                    warn!("float_to_string not found in symbol table, using SymbolId(167)");
                                     SymbolId(167)
                                 });
 
@@ -2449,7 +2623,7 @@ impl MirBuilder {
                                 .symbol_table
                                 .lookup_symbol("bool_to_string")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: bool_to_string not found in symbol table, using SymbolId(165)");
+                                    warn!("bool_to_string not found in symbol table, using SymbolId(165)");
                                     SymbolId(165)
                                 });
 
@@ -2567,7 +2741,7 @@ impl MirBuilder {
                             // Call int_to_string with the integer value
                             let symbol_id = self.symbol_table.lookup_symbol("int_to_string")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: int_to_string not found in symbol table, using SymbolId(166)");
+                                    warn!("int_to_string not found in symbol table, using SymbolId(166)");
                                     SymbolId(166)
                                 });
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
@@ -2576,7 +2750,7 @@ impl MirBuilder {
                             // Call float_to_string with the float value
                             let symbol_id = self.symbol_table.lookup_symbol("float_to_string")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: float_to_string not found in symbol table, using SymbolId(167)");
+                                    warn!("float_to_string not found in symbol table, using SymbolId(167)");
                                     SymbolId(167)
                                 });
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
@@ -2585,7 +2759,7 @@ impl MirBuilder {
                             // Call bool_to_string with the boolean value
                             let symbol_id = self.symbol_table.lookup_symbol("bool_to_string")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: bool_to_string not found in symbol table, using SymbolId(165)");
+                                    warn!("bool_to_string not found in symbol table, using SymbolId(165)");
                                     SymbolId(165)
                                 });
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
@@ -2600,9 +2774,10 @@ impl MirBuilder {
                                 .map(|l| l.local_type.clone())
                                 .unwrap_or(MirType::I32);
 
-                            eprintln!(
-                                "DEBUG GENERIC toString: receiver_id={:?}, mir_type={:?}",
-                                receiver_id, mir_type
+                            trace!(
+                                receiver_id = ?receiver_id,
+                                mir_type = ?mir_type,
+                                "Generic toString"
                             );
 
                             match mir_type {
@@ -2610,7 +2785,7 @@ impl MirBuilder {
                                     // Call int_to_string
                                     let symbol_id = self.symbol_table.lookup_symbol("int_to_string")
                                         .unwrap_or_else(|| {
-                                            eprintln!("WARNING: int_to_string not found in symbol table, using SymbolId(166)");
+                                            warn!("int_to_string not found in symbol table, using SymbolId(166)");
                                             SymbolId(166)
                                         });
                                     (symbol_id, vec![MirOperand::Value(receiver_id)])
@@ -2619,14 +2794,14 @@ impl MirBuilder {
                                     // Call float_to_string
                                     let symbol_id = self.symbol_table.lookup_symbol("float_to_string")
                                         .unwrap_or_else(|| {
-                                            eprintln!("WARNING: float_to_string not found in symbol table, using SymbolId(167)");
+                                            warn!("float_to_string not found in symbol table, using SymbolId(167)");
                                             SymbolId(167)
                                         });
                                     (symbol_id, vec![MirOperand::Value(receiver_id)])
                                 }
                                 _ => {
                                     // Assume it's already a string or object with built-in toString
-                                    eprintln!("WARNING: Unknown MIR type {:?} for Generic.toString(), treating as string", mir_type);
+                                    warn!(mir_type = ?mir_type, "Unknown MIR type for Generic.toString(), treating as string");
                                     (*method_symbol, vec![MirOperand::Value(receiver_id)])
                                 }
                             }
@@ -2636,7 +2811,7 @@ impl MirBuilder {
                             // Call string.length with the string value
                             let symbol_id = self.symbol_table.lookup_symbol("string.length")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: string.length not found in symbol table, using SymbolId(67)");
+                                    warn!("string.length not found in symbol table, using SymbolId(67)");
                                     SymbolId(67)
                                 });
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
@@ -2645,7 +2820,7 @@ impl MirBuilder {
                             // Call string.toUpperCase
                             let symbol_id = self.symbol_table.lookup_symbol("string.toUpperCase")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: string.toUpperCase not found in symbol table, using SymbolId(74)");
+                                    warn!("string.toUpperCase not found in symbol table, using SymbolId(74)");
                                     SymbolId(74)
                                 });
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
@@ -2654,7 +2829,7 @@ impl MirBuilder {
                             // Call string.toLowerCase
                             let symbol_id = self.symbol_table.lookup_symbol("string.toLowerCase")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: string.toLowerCase not found in symbol table, using SymbolId(75)");
+                                    warn!("string.toLowerCase not found in symbol table, using SymbolId(75)");
                                     SymbolId(75)
                                 });
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
@@ -2679,21 +2854,18 @@ impl MirBuilder {
                         }
                         // Array/List methods
                         (ConcreteType::Array(_), "size" | "length") => {
-                            // Call list.size - look up from symbol table
-                            let list_size_symbol = self.symbol_table.lookup_symbol("list.size")
-                                .unwrap_or_else(|| {
-                                    eprintln!("WARNING: list.size not found in symbol table, using fallback");
-                                    *method_symbol
-                                });
-                            (list_size_symbol, vec![MirOperand::Value(receiver_id)])
+                            // CRITICAL FIX: Use synthetic SymbolId(1006) for list.size
+                            // Symbol table lookup returns wrong function index
+                            (SymbolId(1006), vec![MirOperand::Value(receiver_id)])
                         }
-                        (ConcreteType::Array(_), "add" | "push") => {
-                            // Call list.push - look up from symbol table
-                            let list_push_symbol = self.symbol_table.lookup_symbol("list.push")
-                                .unwrap_or_else(|| {
-                                    eprintln!("WARNING: list.push not found in symbol table, using fallback");
-                                    *method_symbol
-                                });
+                        (ConcreteType::Array(element_type), "add" | "push") => {
+                            // CRITICAL FIX: Use synthetic SymbolId for list.push
+                            // The symbol table lookup returns wrong function index
+                            // Instead, use SymbolId(1004) for i32 or SymbolId(1005) for f64
+                            let list_push_symbol = match element_type.as_ref() {
+                                ConcreteType::Number => SymbolId(1005), // list.push_f64
+                                _ => SymbolId(1004), // list.push (for integers, booleans, strings, objects)
+                            };
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
@@ -2703,18 +2875,22 @@ impl MirBuilder {
                         }
                         (ConcreteType::Array(_), "remove" | "pop") => {
                             // Call list_pop - look up from symbol table
-                            let list_pop_symbol = self.symbol_table.lookup_symbol("list_pop")
+                            let list_pop_symbol = self
+                                .symbol_table
+                                .lookup_symbol("list_pop")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: list_pop not found in symbol table, using fallback");
+                                    warn!("list_pop not found in symbol table, using fallback");
                                     *method_symbol
                                 });
                             (list_pop_symbol, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::Array(_), "get") => {
                             // Call list_get - look up from symbol table
-                            let list_get_symbol = self.symbol_table.lookup_symbol("list_get")
+                            let list_get_symbol = self
+                                .symbol_table
+                                .lookup_symbol("list_get")
                                 .unwrap_or_else(|| {
-                                    eprintln!("WARNING: list_get not found in symbol table, using fallback");
+                                    warn!("list_get not found in symbol table, using fallback");
                                     *method_symbol
                                 });
                             let mut args = vec![MirOperand::Value(receiver_id)];
@@ -2748,9 +2924,10 @@ impl MirBuilder {
                 let result_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
-                eprintln!(
-                    "DEBUG MIR METHODCALL: Allocated {:?} for method '{}'",
-                    result_id, method_name
+                trace!(
+                    result_id = ?result_id,
+                    method_name = %method_name,
+                    "Method call allocated"
                 );
 
                 // CRITICAL FIX: For list.get and toString, infer return type from receiver instead of using Unknown
@@ -2780,9 +2957,12 @@ impl MirBuilder {
                         || matches!(result_type, MirType::Void)
                         || matches!(&result_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void)));
 
-                eprintln!(
-                    "DEBUG MIR METHODCALL: {:?} is_void={} inferred_type={:?} mir_type={:?}",
-                    result_id, is_void, inferred_type, result_type
+                trace!(
+                    result_id = ?result_id,
+                    is_void = is_void,
+                    inferred_type = ?inferred_type,
+                    mir_type = ?result_type,
+                    "Method call type check"
                 );
 
                 // ALWAYS register the local to maintain SSA invariant (learned from Context7)
@@ -2794,9 +2974,10 @@ impl MirBuilder {
                     expression.location.clone(),
                 );
 
-                eprintln!(
-                    "DEBUG MIR METHODCALL: Registered {:?} in locals (void={})",
-                    result_id, is_void
+                trace!(
+                    result_id = ?result_id,
+                    is_void = is_void,
+                    "Method call registered in locals"
                 );
 
                 // For void methods, set dest = None so codegen knows not to store the result
@@ -2817,9 +2998,9 @@ impl MirBuilder {
                     if let Some(type_name) = receiver_type_name {
                         // This is a method call on a known type - convert to namespace function
                         let namespace_function_name = format!("{}.{}", type_name, method_name);
-                        eprintln!(
-                            "DEBUG MIR METHODCALL: Creating NamedFunction '{}' for method call",
-                            namespace_function_name
+                        trace!(
+                            namespace_function_name = %namespace_function_name,
+                            "Creating NamedFunction for method call"
                         );
                         MirOperand::NamedFunction {
                             name: namespace_function_name,
@@ -2875,24 +3056,25 @@ impl MirBuilder {
 
                 // Check if this is a namespace function (like math.pow, string.length)
                 // These use SymbolId(0) and need to be looked up by name
-                eprintln!("DEBUG MIR STATIC CALL: class_name='{}', method_name='{}', method_symbol=SymbolId({})",
-                          class_name, method_name, method_symbol.0);
+                trace!(
+                    class_name = %class_name,
+                    method_name = %method_name,
+                    method_symbol = method_symbol.0,
+                    "Static method call"
+                );
                 let function_operand = if method_symbol.0 == 0 {
                     // Namespace function - use NamedFunction pattern
                     let full_name = format!("{}.{}", class_name, method_name);
-                    eprintln!(
-                        "DEBUG MIR STATIC CALL: Creating NamedFunction with name='{}'",
-                        full_name
-                    );
+                    trace!(full_name = %full_name, "Creating NamedFunction for static call");
                     MirOperand::NamedFunction {
                         name: full_name,
                         symbol_id: *method_symbol,
                     }
                 } else {
                     // Regular static method - use symbol ID directly
-                    eprintln!(
-                        "DEBUG MIR STATIC CALL: Creating Function(SymbolId({}))",
-                        method_symbol.0
+                    trace!(
+                        method_symbol = method_symbol.0,
+                        "Creating Function for static call"
                     );
                     MirOperand::Function(*method_symbol)
                 };
@@ -2939,10 +3121,11 @@ impl MirBuilder {
                     _ => None,
                 };
 
-                // Find the actual field index in the class hierarchy (including inherited fields)
-                let field_index_value = if let Some(class_symbol) = object_class_symbol {
-                    // Search for the field in the object's class and all parent classes
-                    self.find_field_index_for_class(context, class_symbol, property_symbol)
+                // Find the BYTE OFFSET of the field in the class hierarchy
+                // This is critical for correct memory layout with mixed-size fields (i32=4, f64=8)
+                let field_byte_offset = if let Some(class_symbol) = object_class_symbol {
+                    // Calculate the byte offset from the start of the object
+                    self.calculate_field_byte_offset(context, class_symbol, property_symbol)
                         .ok_or_else(|| {
                             vec![CompilerError::validation_error(
                                 &format!(
@@ -2963,12 +3146,13 @@ impl MirBuilder {
                     )]);
                 };
 
-                let field_index = MirOperand::Constant(MirConstant::Integer(field_index_value));
+                let field_offset = MirOperand::Constant(MirConstant::Integer(field_byte_offset));
                 let instruction = MirInstruction {
                     dest: Some(result_id),
                     operation: MirOperation::GetElementPtr {
                         base: MirOperand::Value(object_id),
-                        indices: vec![field_index],
+                        indices: vec![field_offset],
+                        is_array: false, // Class field access - byte offset, no header
                     },
                     location: expression.location.clone(),
                 };
@@ -3025,6 +3209,7 @@ impl MirBuilder {
                     operation: MirOperation::GetElementPtr {
                         base: MirOperand::Value(array_id),
                         indices: vec![MirOperand::Value(index_id)],
+                        is_array: true, // Array access, needs 16-byte header offset
                     },
                     location: expression.location.clone(),
                 };
@@ -3095,9 +3280,9 @@ impl MirBuilder {
                 // The derived class constructor has already allocated the instance, so we pass
                 // the 'this' pointer as the first argument to the base constructor
 
-                eprintln!(
-                    "DEBUG MIR BASECALL: Processing base() call to parent class {:?}",
-                    parent_class_symbol_id
+                trace!(
+                    parent_class_symbol_id = ?parent_class_symbol_id,
+                    "Processing base() call to parent class"
                 );
 
                 // Build argument operands
@@ -3114,28 +3299,25 @@ impl MirBuilder {
                     )]);
                 };
 
-                eprintln!(
-                    "DEBUG MIR BASECALL: Got 'this' ValueId = {:?}",
-                    this_value_id
-                );
+                trace!(this_value_id = ?this_value_id, "Got 'this' for base call");
 
                 // Prepend 'this' as first argument to base constructor
                 mir_arguments.push(MirOperand::Value(this_value_id));
 
                 // Add user-provided arguments
                 for (i, arg) in arguments.iter().enumerate() {
-                    eprintln!(
-                        "DEBUG MIR BASECALL: Processing argument {} of {}",
-                        i + 1,
-                        arguments.len()
+                    trace!(
+                        arg_index = i + 1,
+                        total_args = arguments.len(),
+                        "Processing base call argument"
                     );
                     let arg_id = self.build_expression(context, arg)?;
                     mir_arguments.push(MirOperand::Value(arg_id));
                 }
 
-                eprintln!(
-                    "DEBUG MIR BASECALL: Total arguments (including this): {}",
-                    mir_arguments.len()
+                trace!(
+                    total_arguments = mir_arguments.len(),
+                    "Base call arguments (including this)"
                 );
 
                 // Allocate a result ValueId even though base constructors return void
@@ -3167,22 +3349,24 @@ impl MirBuilder {
                         .map(|(id, _)| *id);
 
                     if let Some(constructor_id) = constructor_id {
-                        eprintln!(
-                            "DEBUG MIR BASECALL: Found parent constructor SymbolId({}) for class '{}'",
-                            constructor_id.0, parent_symbol.name
+                        trace!(
+                            constructor_id = constructor_id.0,
+                            class_name = %parent_symbol.name,
+                            "Found parent constructor"
                         );
                         constructor_id
                     } else {
-                        eprintln!(
-                            "DEBUG MIR BASECALL: WARNING - No constructor found for parent class '{}' (SymbolId({})), using class SymbolId",
-                            parent_symbol.name, parent_class_symbol_id.0
+                        warn!(
+                            class_name = %parent_symbol.name,
+                            class_symbol_id = parent_class_symbol_id.0,
+                            "No constructor found for parent class, using class SymbolId"
                         );
                         *parent_class_symbol_id
                     }
                 } else {
-                    eprintln!(
-                        "DEBUG MIR BASECALL: WARNING - Parent class SymbolId({}) not found in symbol table",
-                        parent_class_symbol_id.0
+                    warn!(
+                        parent_class_symbol_id = parent_class_symbol_id.0,
+                        "Parent class not found in symbol table"
                     );
                     *parent_class_symbol_id
                 };
@@ -3198,10 +3382,7 @@ impl MirBuilder {
                     location: expression.location.clone(),
                 };
 
-                eprintln!(
-                    "DEBUG MIR BASECALL: Generated call instruction: {:?}",
-                    call_instruction
-                );
+                trace!(call_instruction = ?call_instruction, "Generated base call instruction");
 
                 self.add_instruction(context, call_instruction);
 
@@ -3215,10 +3396,7 @@ impl MirBuilder {
             } => {
                 // CRITICAL FIX: Handle array literal creation properly
                 // Array literals like [1, 2, 3] need to be materialized into actual memory
-                eprintln!(
-                    "DEBUG MIR ARRAYLITERAL: Creating list with {} elements",
-                    elements.len()
-                );
+                trace!(element_count = elements.len(), "Creating array literal");
 
                 // Strategy:
                 // 1. Allocate empty list using list.allocate (synthetic SymbolId(1003))
@@ -3272,7 +3450,7 @@ impl MirBuilder {
 
                 // Now add each element using list.push (synthetic SymbolId(1004))
                 for (idx, element) in elements.iter().enumerate() {
-                    eprintln!("DEBUG MIR ARRAYLITERAL: Adding element {}", idx);
+                    trace!(element_index = idx, "Adding array literal element");
 
                     // Build the element expression
                     let element_value_id = self.build_expression(context, element)?;
@@ -3289,17 +3467,11 @@ impl MirBuilder {
 
                     let push_symbol = match element_type {
                         MirType::F64 => {
-                            eprintln!(
-                                "DEBUG MIR ARRAYLITERAL: Element {} is F64, using list.push_f64",
-                                idx
-                            );
+                            trace!(element_index = idx, "Element is F64, using list.push_f64");
                             SymbolId(1005) // list.push_f64
                         }
                         _ => {
-                            eprintln!(
-                                "DEBUG MIR ARRAYLITERAL: Element {} is {:?}, using list.push",
-                                idx, element_type
-                            );
+                            trace!(element_index = idx, element_type = ?element_type, "Element using list.push");
                             SymbolId(1004) // list.push
                         }
                     };
@@ -3342,10 +3514,7 @@ impl MirBuilder {
                     self.add_instruction(context, copy_instruction);
                 }
 
-                eprintln!(
-                    "DEBUG MIR ARRAYLITERAL: Array literal created, returning ValueId({:?})",
-                    list_value_id
-                );
+                trace!(list_value_id = ?list_value_id, "Array literal created");
                 Ok(list_value_id)
             }
 
@@ -3355,10 +3524,7 @@ impl MirBuilder {
                 inclusive,
             } => {
                 // Generate a range as an array of integers from start to end
-                eprintln!(
-                    "DEBUG MIR RANGE: Creating range array (inclusive: {})",
-                    inclusive
-                );
+                trace!(inclusive = inclusive, "Creating range array");
 
                 // Evaluate start and end expressions
                 let start_value_id = self.build_expression(context, start)?;
@@ -3653,7 +3819,7 @@ impl MirBuilder {
                 );
                 self.current_block = Some(loop_exit);
 
-                eprintln!("DEBUG MIR RANGE: Range array created");
+                trace!("Range array created");
                 Ok(list_value_id)
             }
 
@@ -3679,12 +3845,10 @@ impl MirBuilder {
         body: &TastBlock,
         location: &SourceLocation,
     ) -> Result<(), Vec<CompilerError>> {
-        eprintln!(
-            "DEBUG RANGE FOR: Building optimized range for loop: {} in {:?}..{:?}{}",
-            iterator_name,
-            start.kind,
-            end.kind,
-            if inclusive { "=" } else { "" }
+        trace!(
+            iterator_name = %iterator_name,
+            inclusive = inclusive,
+            "Building optimized range for loop"
         );
 
         // Evaluate start and end expressions
@@ -3840,30 +4004,17 @@ impl MirBuilder {
         }
 
         // Build loop body
-        eprintln!(
-            "DEBUG RANGE FOR: Building loop body with {} statements",
-            body.statements.len()
-        );
-        eprintln!(
-            "DEBUG RANGE FOR: current_block before body = {:?}",
-            self.current_block
+        trace!(
+            statement_count = body.statements.len(),
+            current_block = ?self.current_block,
+            "Building range for loop body"
         );
         for (idx, stmt) in body.statements.iter().enumerate() {
-            eprintln!("DEBUG RANGE FOR: Processing body statement {}", idx);
-            eprintln!(
-                "DEBUG RANGE FOR:   current_block = {:?}",
-                self.current_block
-            );
+            trace!(statement_index = idx, current_block = ?self.current_block, "Processing body statement");
             self.build_statement(context, stmt)?;
-            eprintln!(
-                "DEBUG RANGE FOR:   current_block after = {:?}",
-                self.current_block
-            );
+            trace!(statement_index = idx, current_block = ?self.current_block, "After body statement");
         }
-        eprintln!(
-            "DEBUG RANGE FOR: current_block after all body statements = {:?}",
-            self.current_block
-        );
+        trace!(current_block = ?self.current_block, "After all range for body statements");
 
         // Pop the loop body scope
         context.scope_stack.pop();
@@ -3872,8 +4023,12 @@ impl MirBuilder {
         // Body may have created additional blocks (e.g., IF statement blocks)
         let increment_block_id = BasicBlockId(context.function.blocks.len());
         let exit_block_id = BasicBlockId(context.function.blocks.len() + 1);
-        eprintln!("DEBUG RANGE FOR: Calculated increment_block_id = {:?}, exit_block_id = {:?} (blocks.len = {})",
-            increment_block_id, exit_block_id, context.function.blocks.len());
+        trace!(
+            increment_block_id = ?increment_block_id,
+            exit_block_id = ?exit_block_id,
+            blocks_len = context.function.blocks.len(),
+            "Calculated increment and exit block IDs"
+        );
 
         // Now set the header block's terminator with the correct exit_block_id
         if let Some(header_block) = context.function.blocks.get_mut(&header_block_id) {
@@ -3906,9 +4061,7 @@ impl MirBuilder {
                 },
             );
         } else {
-            eprintln!(
-                "DEBUG RANGE FOR: Current block already has terminator, skipping jump to increment"
-            );
+            trace!("Current block already has terminator, skipping jump to increment");
         }
 
         // Create increment block
@@ -3940,8 +4093,11 @@ impl MirBuilder {
         };
         self.add_instruction(context, one_instruction);
 
+        // CRITICAL FIX: Write increment result to current_iterator_value_id
+        // Since Phi nodes are NO-OPs in WASM, we must update the variable that
+        // the condition check uses directly. Otherwise the loop counter never changes.
         let inc_instruction = MirInstruction {
-            dest: Some(iterator_value_id),
+            dest: Some(current_iterator_value_id),
             operation: MirOperation::BinaryOp {
                 op: MirBinaryOp::Add,
                 left: MirOperand::Value(current_iterator_value_id),
@@ -3952,10 +4108,14 @@ impl MirBuilder {
         self.add_instruction(context, inc_instruction);
 
         // Update Phi node with increment block predecessor
+        // Note: Phi is NO-OP in WASM, but we update it for IR correctness
         if let Some(header_block) = context.function.blocks.get_mut(&header_block_id) {
             if let Some(phi_instr) = header_block.instructions.first_mut() {
                 if let MirOperation::Phi { incoming } = &mut phi_instr.operation {
-                    incoming.push((increment_block_id, MirOperand::Value(iterator_value_id)));
+                    incoming.push((
+                        increment_block_id,
+                        MirOperand::Value(current_iterator_value_id),
+                    ));
                 }
             }
         }
@@ -3981,16 +4141,10 @@ impl MirBuilder {
                 location: location.clone(),
             },
         );
-        eprintln!(
-            "DEBUG RANGE FOR: Setting current_block to exit_block {:?}",
-            exit_block_id
-        );
+        trace!(exit_block_id = ?exit_block_id, "Setting current_block to exit_block");
         self.current_block = Some(exit_block_id);
 
-        eprintln!(
-            "DEBUG RANGE FOR: Range for loop completed successfully, current_block = {:?}",
-            self.current_block
-        );
+        trace!(current_block = ?self.current_block, "Range for loop completed");
         Ok(())
     }
 
@@ -4071,9 +4225,7 @@ impl MirBuilder {
                     .symbol_table
                     .lookup_symbol("int_to_string")
                     .unwrap_or_else(|| {
-                        eprintln!(
-                            "WARNING: int_to_string not found in symbol table, using SymbolId(166)"
-                        );
+                        warn!("int_to_string not found in symbol table, using SymbolId(166)");
                         SymbolId(166)
                     });
 
@@ -4100,7 +4252,7 @@ impl MirBuilder {
                     .symbol_table
                     .lookup_symbol("float_to_string")
                     .unwrap_or_else(|| {
-                        eprintln!("WARNING: float_to_string not found in symbol table, using SymbolId(167)");
+                        warn!("float_to_string not found in symbol table, using SymbolId(167)");
                         SymbolId(167)
                     });
 
@@ -4127,7 +4279,7 @@ impl MirBuilder {
                     .symbol_table
                     .lookup_symbol("bool_to_string")
                     .unwrap_or_else(|| {
-                        eprintln!("WARNING: bool_to_string not found in symbol table, using SymbolId(165)");
+                        warn!("bool_to_string not found in symbol table, using SymbolId(165)");
                         SymbolId(165)
                     });
 
@@ -4190,10 +4342,11 @@ impl MirBuilder {
         right_type: &ConcreteType,
         operator: &BinaryOperator,
     ) -> MirType {
-        // DEBUG: Log type inference for binary operations
-        eprintln!(
-            "DEBUG TYPE INFER: Binary {:?}: left={:?}, right={:?}",
-            operator, left_type, right_type
+        trace!(
+            operator = ?operator,
+            left_type = ?left_type,
+            right_type = ?right_type,
+            "Binary operation type inference"
         );
 
         // CRITICAL FIX: Comparison and logical operations always return i32 (boolean)
@@ -4206,7 +4359,7 @@ impl MirBuilder {
             | BinaryOperator::GreaterThanOrEqual
             | BinaryOperator::And
             | BinaryOperator::Or => {
-                eprintln!("DEBUG TYPE INFER: Comparison/logical op -> I32");
+                trace!("Comparison/logical op -> I32");
                 return MirType::I32; // Boolean result
             }
             _ => {}
@@ -4244,7 +4397,7 @@ impl MirBuilder {
             // This handles cases like Class operations, Function operations, etc.
             (left, _) => MirType::from_concrete_type(left),
         };
-        eprintln!("DEBUG TYPE INFER: Result type -> {:?}", result);
+        trace!(result = ?result, "Type inference result");
         result
     }
 
@@ -4368,18 +4521,12 @@ impl MirBuilder {
     fn add_instruction(&mut self, context: &mut FunctionBuildContext, instruction: MirInstruction) {
         // DEBUG: Track GetElementPtr/Load instructions
         if matches!(instruction.operation, MirOperation::GetElementPtr { .. }) {
-            eprintln!(
-                "DEBUG ADD_INSTR: Adding GetElementPtr to block {:?}",
-                self.current_block
-            );
+            trace!(current_block = ?self.current_block, "Adding GetElementPtr");
         }
         if matches!(instruction.operation, MirOperation::Load { .. })
             && self.current_block == Some(BasicBlockId(2))
         {
-            eprintln!(
-                "DEBUG ADD_INSTR: Adding Load to body block {:?}",
-                self.current_block
-            );
+            trace!(current_block = ?self.current_block, "Adding Load to body block");
         }
 
         if let Some(block_id) = self.current_block {
@@ -4398,9 +4545,10 @@ impl MirBuilder {
         if let Some(block_id) = self.current_block {
             if let Some(block) = context.function.blocks.get_mut(&block_id) {
                 if block_id == BasicBlockId(3) && context.function.name == "test" {
-                    eprintln!(
-                        "DEBUG SET_TERM BasicBlockId(3): old={:?}, new={:?}",
-                        block.terminator, terminator
+                    trace!(
+                        old_terminator = ?block.terminator,
+                        new_terminator = ?terminator,
+                        "Setting terminator for BasicBlockId(3)"
                     );
                 }
                 block.terminator = terminator;
@@ -4540,6 +4688,10 @@ impl MirBuilder {
             .find(|c| c.symbol_id == class_symbol);
 
         if current_class_opt.is_none() {
+            tracing::debug!(
+                "find_field_index_for_class: class {:?} not found in all_classes",
+                class_symbol
+            );
             return None;
         }
 
@@ -4563,21 +4715,235 @@ impl MirBuilder {
         // Reverse to get root-to-leaf order
         hierarchy.reverse();
 
+        tracing::debug!(
+            "find_field_index_for_class: Looking for field {:?} in class {:?}, hierarchy has {} classes",
+            property_symbol, class_symbol, hierarchy.len()
+        );
+
         // Now search through hierarchy and count field offsets
         let mut field_offset = 0usize;
 
         for class in &hierarchy {
+            tracing::debug!(
+                "  Checking class {} ({:?}) with {} fields, current offset={}",
+                class.name,
+                class.symbol_id,
+                class.fields.len(),
+                field_offset
+            );
+            for (i, f) in class.fields.iter().enumerate() {
+                tracing::debug!("    Field {}: {:?} name='{}'", i, f.symbol_id, f.name);
+            }
             if let Some(position) = class
                 .fields
                 .iter()
                 .position(|f| f.symbol_id == *property_symbol)
             {
-                return Some(field_offset + position);
+                let final_index = field_offset + position;
+                tracing::debug!(
+                    "  FOUND field {:?} at position {} in class, final index = {}",
+                    property_symbol,
+                    position,
+                    final_index
+                );
+                return Some(final_index);
             }
             // Move offset past this class's fields
             field_offset += class.fields.len();
         }
 
+        tracing::debug!("  Field {:?} NOT FOUND in hierarchy", property_symbol);
+        None
+    }
+
+    /// Count total number of fields in a class including all inherited fields
+    ///
+    /// This traverses the class hierarchy from the root (most distant ancestor) to the leaf
+    /// and sums up all field counts.
+    fn count_all_fields_in_hierarchy(
+        &self,
+        context: &FunctionBuildContext,
+        class_symbol: SymbolId,
+    ) -> usize {
+        // Find the starting class
+        let mut current_class_opt = context
+            .all_classes
+            .iter()
+            .find(|c| c.symbol_id == class_symbol);
+
+        if current_class_opt.is_none() {
+            return 0;
+        }
+
+        // Collect all classes in the hierarchy from current to root
+        let mut hierarchy = Vec::new();
+
+        while let Some(current_class) = current_class_opt {
+            hierarchy.push(current_class.clone());
+
+            // Move to parent
+            if let Some(ref parent_symbol) = current_class.parent_class {
+                current_class_opt = context
+                    .all_classes
+                    .iter()
+                    .find(|c| c.symbol_id == *parent_symbol);
+            } else {
+                break;
+            }
+        }
+
+        // Sum up all field counts from all classes in the hierarchy
+        let total_fields: usize = hierarchy.iter().map(|c| c.fields.len()).sum();
+        tracing::debug!(
+            "count_all_fields_in_hierarchy: class {:?} has {} classes in hierarchy, total {} fields",
+            class_symbol,
+            hierarchy.len(),
+            total_fields
+        );
+        total_fields
+    }
+
+    /// Calculate the total byte size of all fields in a class hierarchy
+    ///
+    /// This traverses the class hierarchy and sums up the byte sizes of all fields,
+    /// accounting for different type sizes (i32=4, i64/f64=8, etc.)
+    fn calculate_instance_byte_size(
+        &self,
+        context: &FunctionBuildContext,
+        class_symbol: SymbolId,
+    ) -> usize {
+        // Find the starting class
+        let mut current_class_opt = context
+            .all_classes
+            .iter()
+            .find(|c| c.symbol_id == class_symbol);
+
+        if current_class_opt.is_none() {
+            return 0;
+        }
+
+        // Collect all classes in the hierarchy from current to root
+        let mut hierarchy = Vec::new();
+
+        while let Some(current_class) = current_class_opt {
+            hierarchy.push(current_class.clone());
+
+            // Move to parent
+            if let Some(ref parent_symbol) = current_class.parent_class {
+                current_class_opt = context
+                    .all_classes
+                    .iter()
+                    .find(|c| c.symbol_id == *parent_symbol);
+            } else {
+                break;
+            }
+        }
+
+        // Reverse to get root-to-leaf order
+        hierarchy.reverse();
+
+        // Sum up byte sizes for all fields
+        let mut total_bytes = 0usize;
+        for class in &hierarchy {
+            for field in &class.fields {
+                total_bytes += self.get_type_byte_size(&field.field_type);
+            }
+        }
+
+        tracing::debug!(
+            "calculate_instance_byte_size: class {:?} needs {} bytes",
+            class_symbol,
+            total_bytes
+        );
+        total_bytes
+    }
+
+    /// Get the byte size of a ConcreteType
+    fn get_type_byte_size(&self, concrete_type: &ConcreteType) -> usize {
+        match concrete_type {
+            ConcreteType::Integer => 4,
+            ConcreteType::Number => 8,           // f64
+            ConcreteType::Boolean => 4,          // Stored as i32
+            ConcreteType::String => 4,           // Pointer (i32)
+            ConcreteType::Null => 4,             // Stored as i32
+            ConcreteType::Undefined => 4,        // Stored as i32
+            ConcreteType::Array(_) => 4,         // Pointer
+            ConcreteType::Matrix(_) => 4,        // Pointer
+            ConcreteType::Pairs(_, _) => 4,      // Pointer
+            ConcreteType::Function { .. } => 4,  // Pointer
+            ConcreteType::Class { .. } => 4,     // Pointer
+            ConcreteType::Interface { .. } => 4, // Pointer
+            ConcreteType::Tuple(_) => 4,         // Pointer
+            ConcreteType::Union(_) => 4,         // Pointer (boxed)
+            ConcreteType::Intersection(_) => 4,  // Pointer (boxed)
+            ConcreteType::Generic { .. } => 4,   // Treat as pointer
+            ConcreteType::Unknown => 4,          // Default
+            ConcreteType::Never => 0,            // Never returns
+            ConcreteType::Namespace => 4,        // Not really used in memory
+        }
+    }
+
+    /// Calculate the byte offset of a field within a class hierarchy
+    ///
+    /// This returns the byte offset from the start of the object to the field,
+    /// accounting for different field sizes.
+    fn calculate_field_byte_offset(
+        &self,
+        context: &FunctionBuildContext,
+        class_symbol: SymbolId,
+        property_symbol: &SymbolId,
+    ) -> Option<usize> {
+        // Find the starting class
+        let mut current_class_opt = context
+            .all_classes
+            .iter()
+            .find(|c| c.symbol_id == class_symbol);
+
+        if current_class_opt.is_none() {
+            return None;
+        }
+
+        // Collect all classes in the hierarchy from current to root
+        let mut hierarchy = Vec::new();
+
+        while let Some(current_class) = current_class_opt {
+            hierarchy.push(current_class.clone());
+
+            // Move to parent
+            if let Some(ref parent_symbol) = current_class.parent_class {
+                current_class_opt = context
+                    .all_classes
+                    .iter()
+                    .find(|c| c.symbol_id == *parent_symbol);
+            } else {
+                break;
+            }
+        }
+
+        // Reverse to get root-to-leaf order
+        hierarchy.reverse();
+
+        // Calculate byte offset
+        let mut byte_offset = 0usize;
+
+        for class in &hierarchy {
+            for field in &class.fields {
+                if field.symbol_id == *property_symbol {
+                    tracing::debug!(
+                        "calculate_field_byte_offset: field {:?} at byte offset {}",
+                        property_symbol,
+                        byte_offset
+                    );
+                    return Some(byte_offset);
+                }
+                byte_offset += self.get_type_byte_size(&field.field_type);
+            }
+        }
+
+        tracing::debug!(
+            "calculate_field_byte_offset: field {:?} NOT FOUND",
+            property_symbol
+        );
         None
     }
 }

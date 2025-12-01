@@ -13,7 +13,7 @@ impl CodeGenerator {
         statement: &Statement,
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
-        eprintln!("DEBUG: generate_statement called with: {:?}", std::mem::discriminant(statement));
+        tracing::trace!("DEBUG: generate_statement called with: {:?}", std::mem::discriminant(statement));
         match statement {
             Statement::VariableDecl { name, type_, initializer, .. } => {
                 self.generate_variable_declaration(name, &Some(type_.clone()), initializer, instructions)
@@ -65,7 +65,7 @@ impl CodeGenerator {
                 self.generate_iterate_statement(&iterator, collection, body, instructions)
             },
             Statement::Expression { expr, .. } => {
-                eprintln!("DEBUG: Generating Statement::Expression");
+                tracing::trace!("DEBUG: Generating Statement::Expression");
                 self.generate_expression_statement(expr, instructions)
             },
             Statement::TypeApplyBlock { type_, assignments, .. } => {
@@ -149,27 +149,47 @@ impl CodeGenerator {
         } else if let Some(ast_type) = var_type {
             // Convert AST type to WASM type
             let wasm_type = self.ast_type_to_wasm_type(ast_type)?;
-            
+
             // Create local with default value
-            match wasm_type {
-                WasmType::I32 => instructions.push(Instruction::I32Const(0)),
-                WasmType::F64 => instructions.push(Instruction::F64Const(0.0)),
-                _ => return Err(CompilerError::codegen_error(
-                    format!("Unsupported type for uninitialized variable: {:?}", wasm_type),
-                    None,
-                    None
-                )),
+            // Special handling for list types - must allocate an empty list
+            match ast_type {
+                Type::List(_) => {
+                    // Create an empty list with default capacity of 8
+                    // Using capacity=0 causes issues when .add() is called without capacity checking
+                    instructions.push(Instruction::I32Const(8)); // capacity = 8 for empty list (size will be 0)
+                    if let Some(func_index) = self.get_function_index("list.allocate") {
+                        instructions.push(Instruction::Call(func_index));
+                    } else {
+                        return Err(CompilerError::codegen_error(
+                            "list.allocate function not found".to_string(),
+                            None,
+                            None
+                        ));
+                    }
+                },
+                _ => {
+                    // For non-list types, use default values
+                    match wasm_type {
+                        WasmType::I32 => instructions.push(Instruction::I32Const(0)),
+                        WasmType::F64 => instructions.push(Instruction::F64Const(0.0)),
+                        _ => return Err(CompilerError::codegen_error(
+                            format!("Unsupported type for uninitialized variable: {:?}", wasm_type),
+                            None,
+                            None
+                        )),
+                    }
+                }
             }
-            
+
             let local_index = self.add_local(wasm_type);
             instructions.push(Instruction::LocalSet(local_index));
-            
+
             // Register the variable
             self.variable_map.insert(name.to_string(), super::LocalVarInfo {
                 index: local_index,
                 type_: wasm_type.into(),
             });
-            
+
             wasm_type
         } else {
             return Err(CompilerError::codegen_error(
@@ -348,16 +368,45 @@ impl CodeGenerator {
         expr: &Expression,
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
-        // Generate the expression
+        // Special handling for list mutating methods like .add(), .remove(), etc.
+        // These should update the variable in-place: `list.add(item)` becomes `list = list.add(item)`
+        if let Expression::MethodCall { object, method, arguments, .. } = expr {
+            if matches!(method.as_str(), "add" | "remove" | "insert" | "pop" | "push" | "clear") {
+                // Check if object is a simple variable (not a complex expression)
+                if let Expression::Variable(var_name) = object.as_ref() {
+                    // Check if this variable exists and is a list type
+                    if let Some(_var_type) = self.variable_types.get(var_name) {
+                        // This is a mutating method call on a list variable
+                        // Generate: var = var.method(args)
+                        // First, generate the method call expression
+                        let result_type = self.generate_expression(expr, instructions)?;
+
+                        // Then store the result back into the variable
+                        if let Some(var_info) = self.variable_map.get(var_name).cloned() {
+                            instructions.push(Instruction::LocalSet(var_info.index));
+                            return Ok(());
+                        }
+
+                        // If we couldn't find the variable, fall through to normal handling
+                        if result_type != WasmType::Unit {
+                            instructions.push(Instruction::Drop);
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        // Normal expression statement handling
         let result_type = self.generate_expression(expr, instructions)?;
 
         // Only drop if the expression actually produces a value
         // Use the computed result type to determine this reliably
         if result_type != WasmType::Unit {
-            eprintln!("DEBUG: Expression statement returning {:?}, adding Drop", result_type);
+            tracing::trace!("DEBUG: Expression statement returning {:?}, adding Drop", result_type);
             instructions.push(Instruction::Drop);
         } else {
-            eprintln!("DEBUG: Expression statement returning Unit, no Drop needed");
+            tracing::trace!("DEBUG: Expression statement returning Unit, no Drop needed");
         }
 
         Ok(())
@@ -565,15 +614,12 @@ impl CodeGenerator {
     ) -> Result<(), CompilerError> {
         // For now, implement a basic iteration over lists
         // TODO: Support other iterable types like matrices, strings, etc.
-        
-        // Generate the iterable expression (this should be a list)
-        let _iterable_type = self.generate_expression(iterable, instructions)?;
-        
+
         // Get the length of the list - call the length method
         // For lists, we need to call the list.length() method
         match iterable {
             Expression::Variable(list_var_name) => {
-                // Duplicate the list reference for length call
+                // Get the list reference
                 if let Some(local_info) = self.find_local(list_var_name) {
                     instructions.push(Instruction::LocalGet(local_info.index));
                 } else {
@@ -583,7 +629,7 @@ impl CodeGenerator {
                         None
                     ));
                 }
-                
+
                 // Call the list's length method
                 // Create a method call expression for list.length()
                 let length_call = Expression::MethodCall {
@@ -592,7 +638,7 @@ impl CodeGenerator {
                     arguments: vec![],
                     location: SourceLocation::new(0, 0, "<generated>"),
                 };
-                
+
                 // Generate the method call to get the list length
                 self.generate_expression(&length_call, instructions)?;
                 

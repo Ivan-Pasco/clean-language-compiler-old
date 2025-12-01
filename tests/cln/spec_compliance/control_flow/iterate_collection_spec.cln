@@ -1,0 +1,47 @@
+// Spec Section: 9.2 - Loops (iterate)
+// Spec Section: 9.2.2 - Collection Iteration
+// Tests: iterate over lists and other collections
+
+start()
+	// Test 1: Iterate over integer list
+	print("Iterating integer list:")
+	list<integer> numbers = [10, 20, 30, 40, 50]
+	iterate num in numbers
+		print(num)
+
+	// Test 2: Iterate over string list
+	print("Iterating string list:")
+	list<string> names = ["Alice", "Bob", "Charlie"]
+	iterate name in names
+		print("Hello, " + name)
+
+	// Test 3: Iterate over boolean list
+	print("Iterating boolean list:")
+	list<boolean> flags = [true, false, true, true]
+	iterate flag in flags
+		print(flag)
+
+	// Test 4: Calculate sum from list
+	list<integer> values = [1, 2, 3, 4, 5]
+	integer total = 0
+	iterate val in values
+		total = total + val
+	print("Total: " + total.toString())
+
+	// Test 5: Find maximum in list
+	list<integer> scores = [85, 92, 78, 96, 88]
+	integer maxScore = 0
+	iterate score in scores
+		if score > maxScore
+			maxScore = score
+	print("Max score: " + maxScore.toString())
+
+	// Test 6: Count items matching condition
+	list<integer> ages = [15, 22, 18, 30, 12, 25]
+	integer adultCount = 0
+	iterate age in ages
+		if age >= 18
+			adultCount = adultCount + 1
+	print("Adults: " + adultCount.toString())
+
+	print("Collection iteration tests completed")

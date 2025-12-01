@@ -1,0 +1,56 @@
+// Spec Section: 10 - Error Handling
+// Tests: Chained onError handlers and error propagation
+
+start()
+	// Test 1: Basic onError chain
+	integer result1 = riskyOperation() onError 0
+	print("Result 1: " + result1.toString())
+
+	// Test 2: onError with function call
+	integer result2 = riskyOperation() onError getFallback()
+	print("Result 2: " + result2.toString())
+
+	// Test 3: Nested onError
+	integer result3 = veryRiskyOperation() onError riskyOperation() onError 5
+	print("Result 3: " + result3.toString())
+
+	// Test 4: onError with arithmetic
+	integer result4 = divideByZero(10) onError 0
+	print("Result 4: " + result4.toString())
+
+	// Test 5: onError chain with different types
+	string result5 = getStringOrError() onError "default"
+	print("Result 5: " + result5)
+
+	// Test 6: Multiple error handlers
+	boolean result6 = booleanOperation() onError true
+	print("Result 6: " + result6.toString())
+
+	print("Chained onError test completed")
+
+functions:
+	integer riskyOperation()
+		error("Operation failed")
+		return 42
+
+	integer getFallback()
+		return 10
+
+	integer veryRiskyOperation()
+		error("Very risky failed")
+		return 100
+
+	integer divideByZero(integer x)
+		// The error() function signals an error condition
+		// Code after error() should not normally execute, but
+		// for demonstration, return a sentinel value
+		error("Division by zero")
+		return -1
+
+	string getStringOrError()
+		error("String operation failed")
+		return "success"
+
+	boolean booleanOperation()
+		error("Boolean failed")
+		return false

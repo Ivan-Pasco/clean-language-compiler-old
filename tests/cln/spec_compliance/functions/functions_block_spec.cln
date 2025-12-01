@@ -1,0 +1,30 @@
+// Spec Section: 6.2 - Functions Block
+// Tests the requirement that all functions (except start) must be in functions: block
+
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+	integer multiply(integer x, integer y)
+		return x * y
+
+	void printMessage(string msg)
+		print(msg)
+
+	integer square(integer n)
+		return n * n
+
+start()
+	// Test function calls
+	integer sum = add(5, 3)
+	integer product = multiply(4, 7)
+	integer squared = square(6)
+
+	printMessage("Functions block test")
+	print("Sum: ")
+	print(sum.toString())
+	print("Product: ")
+	print(product.toString())
+	print("Squared: ")
+	print(squared.toString())
+	print("Functions block test complete")

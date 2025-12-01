@@ -1,3 +1,5 @@
+// Spec Section: 4.5 - Logical Operators
+// Tests: Logical AND operator
 
 start()
 	boolean x = true

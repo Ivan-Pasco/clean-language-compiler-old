@@ -1,0 +1,36 @@
+// Spec Section: 2.1 - Lexical Structure (Comments)
+// Tests: Single-line and multi-line comments
+
+// This is a single-line comment
+
+/* This is a
+   multi-line
+   comment */
+
+start()
+	// Single-line comment inside function
+	integer x = 10  // Inline comment after code
+
+	/* Multi-line comment
+	   inside function body */
+
+	/*
+	 * Block comment style
+	 * commonly used for documentation
+	 */
+
+	// Test that comments don't affect code execution
+	integer result = 5 + 3  // This adds 5 and 3
+	print("Result: " + result.toString())
+
+	// Nested concept test - comments contain code-like text
+	// integer notCode = 42
+	// if false
+	//     print("this won't run")
+
+	/* Multi-line with code-like content:
+	   integer x = 10
+	   print(x)
+	   This is all just a comment */
+
+	print("Comments test completed")

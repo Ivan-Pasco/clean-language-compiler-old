@@ -1,0 +1,61 @@
+// Spec Section: 5.4 - Comparison Operators
+// Tests: ==, !=, <, >, <=, >= operators
+
+start()
+	integer a = 10
+	integer b = 5
+	integer c = 10
+
+	// Test 1: Equality
+	boolean eq1 = a == b
+	boolean eq2 = a == c
+	print("10 == 5: " + eq1.toString())
+	print("10 == 10: " + eq2.toString())
+
+	// Test 2: Not equal
+	boolean neq1 = a != b
+	boolean neq2 = a != c
+	print("10 != 5: " + neq1.toString())
+	print("10 != 10: " + neq2.toString())
+
+	// Test 3: Less than
+	boolean lt1 = b < a
+	boolean lt2 = a < b
+	boolean lt3 = a < c
+	print("5 < 10: " + lt1.toString())
+	print("10 < 5: " + lt2.toString())
+	print("10 < 10: " + lt3.toString())
+
+	// Test 4: Greater than
+	boolean gt1 = a > b
+	boolean gt2 = b > a
+	boolean gt3 = a > c
+	print("10 > 5: " + gt1.toString())
+	print("5 > 10: " + gt2.toString())
+	print("10 > 10: " + gt3.toString())
+
+	// Test 5: Less than or equal
+	boolean lte1 = b <= a
+	boolean lte2 = a <= c
+	boolean lte3 = a <= b
+	print("5 <= 10: " + lte1.toString())
+	print("10 <= 10: " + lte2.toString())
+	print("10 <= 5: " + lte3.toString())
+
+	// Test 6: Greater than or equal
+	boolean gte1 = a >= b
+	boolean gte2 = a >= c
+	boolean gte3 = b >= a
+	print("10 >= 5: " + gte1.toString())
+	print("10 >= 10: " + gte2.toString())
+	print("5 >= 10: " + gte3.toString())
+
+	// Test 7: Number comparisons
+	number x = 3.14
+	number y = 2.71
+	boolean numLt = y < x
+	boolean numGt = x > y
+	print("2.71 < 3.14: " + numLt.toString())
+	print("3.14 > 2.71: " + numGt.toString())
+
+	print("Comparison operators test completed")

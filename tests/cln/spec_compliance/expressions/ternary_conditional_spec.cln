@@ -1,0 +1,44 @@
+// Spec Section: 5.6 - Ternary Conditional Expression
+// Tests: Inline conditional expressions (if-then-else expression)
+
+start()
+	// Test 1: Basic ternary with integers
+	integer a = 10
+	integer b = 20
+	integer max1 = if a > b then a else b
+	print("Max of 10, 20: " + max1.toString())
+
+	// Test 2: Ternary with opposite condition
+	integer min1 = if a < b then a else b
+	print("Min of 10, 20: " + min1.toString())
+
+	// Test 3: Ternary with boolean result
+	boolean isPositive = if a > 0 then true else false
+	print("Is 10 positive: " + isPositive.toString())
+
+	// Test 4: Ternary with string result
+	string status = if a > 15 then "high" else "low"
+	print("Status: " + status)
+
+	// Test 5: Nested ternary (chained)
+	integer x = 50
+	string grade = if x >= 90 then "A" else if x >= 80 then "B" else if x >= 70 then "C" else "F"
+	print("Grade for 50: " + grade)
+
+	// Test 6: Ternary with equality check
+	integer val = 42
+	string match = if val == 42 then "found" else "not found"
+	print("Match result: " + match)
+
+	// Test 7: Ternary with number type
+	number n1 = 3.14
+	number n2 = 2.71
+	number bigger = if n1 > n2 then n1 else n2
+	print("Bigger number: " + bigger.toString())
+
+	// Test 8: Ternary in expression
+	integer base = 5
+	integer result = 10 + (if base > 3 then 100 else 0)
+	print("Result with ternary: " + result.toString())
+
+	print("Ternary conditional test completed")

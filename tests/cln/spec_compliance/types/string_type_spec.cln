@@ -1,0 +1,59 @@
+// Spec Section: 3.1 - Core Types (string)
+// Tests: string type - UTF-8 text
+
+start()
+	// Test 1: String declaration and initialization
+	string empty = ""
+	string hello = "Hello"
+	string world = "World"
+	print("Empty string test")
+	print(hello)
+	print(world)
+
+	// Test 2: String concatenation
+	string greeting = hello + ", " + world + "!"
+	print(greeting)
+
+	// Test 3: String with spaces
+	string sentence = "The quick brown fox"
+	print(sentence)
+
+	// Test 4: String with numbers
+	string withNum = "Value is 42"
+	print(withNum)
+
+	// Test 5: String from integer conversion
+	integer num = 123
+	string numStr = num.toString()
+	string message = "Number: " + numStr
+	print(message)
+
+	// Test 6: String from number conversion
+	number pi = 3.14
+	string piStr = pi.toString()
+	string piMsg = "Pi: " + piStr
+	print(piMsg)
+
+	// Test 7: String from boolean conversion
+	boolean flag = true
+	string flagStr = flag.toString()
+	string flagMsg = "Flag: " + flagStr
+	print(flagMsg)
+
+	// Test 8: Multiple concatenations
+	string a = "A"
+	string b = "B"
+	string c = "C"
+	string abc = a + b + c
+	print(abc)
+
+	// Test 9: String equality
+	string s1 = "test"
+	string s2 = "test"
+	string s3 = "other"
+	boolean eq1 = s1 == s2
+	boolean eq2 = s1 == s3
+	print("test == test: " + eq1.toString())
+	print("test == other: " + eq2.toString())
+
+	print("String type test completed")

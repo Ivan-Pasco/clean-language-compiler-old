@@ -1,5 +1,6 @@
-// Default parameter values comprehensive test
-// According to Clean Language Specification, functions support default parameter values
+// Spec Section: 6.4.1 - Default Parameter Values
+// Spec Section: 6.3 - Function Declaration
+// Tests: Default parameter values in function definitions
 
 functions:
 	// Functions with default parameter values

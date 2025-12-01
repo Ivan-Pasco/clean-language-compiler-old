@@ -1,0 +1,52 @@
+// Spec Section: 5.3 - Arithmetic Operators
+// Tests: +, -, *, /, %, ^ operators
+
+start()
+	// Test 1: Addition
+	integer sum1 = 5 + 3
+	integer sum2 = -10 + 15
+	number sum3 = 2.5 + 3.5
+	print("5 + 3 = " + sum1.toString())
+	print("-10 + 15 = " + sum2.toString())
+	print("2.5 + 3.5 = " + sum3.toString())
+
+	// Test 2: Subtraction
+	integer diff1 = 10 - 3
+	integer diff2 = 5 - 10
+	number diff3 = 7.5 - 2.5
+	print("10 - 3 = " + diff1.toString())
+	print("5 - 10 = " + diff2.toString())
+	print("7.5 - 2.5 = " + diff3.toString())
+
+	// Test 3: Multiplication
+	integer prod1 = 6 * 7
+	integer prod2 = -3 * 4
+	number prod3 = 2.5 * 4.0
+	print("6 * 7 = " + prod1.toString())
+	print("-3 * 4 = " + prod2.toString())
+	print("2.5 * 4.0 = " + prod3.toString())
+
+	// Test 4: Division
+	integer quot1 = 20 / 4
+	integer quot2 = 17 / 5
+	number quot3 = 15.0 / 4.0
+	print("20 / 4 = " + quot1.toString())
+	print("17 / 5 = " + quot2.toString())
+	print("15.0 / 4.0 = " + quot3.toString())
+
+	// Test 5: Modulo
+	integer mod1 = 17 % 5
+	integer mod2 = 20 % 4
+	integer mod3 = 7 % 3
+	print("17 % 5 = " + mod1.toString())
+	print("20 % 4 = " + mod2.toString())
+	print("7 % 3 = " + mod3.toString())
+
+	// Test 6: Combined operations
+	integer combined = 10 + 5 * 2
+	print("10 + 5 * 2 = " + combined.toString())
+
+	integer parens = (10 + 5) * 2
+	print("(10 + 5) * 2 = " + parens.toString())
+
+	print("Arithmetic operators test completed")

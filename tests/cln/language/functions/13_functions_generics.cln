@@ -1,4 +1,8 @@
-// Test for typed functions (Clean Language doesn't support generics)
+// Spec Section: 6.3 - Function Declaration
+// Spec Section: 6.4 - Parameters
+// Spec Section: 6.5 - Return Types
+// Spec Section: 2.4 - Composite Types (list<T>)
+// Tests: Typed functions demonstrating different type handling
 
 functions:
 	string identityString(string value)
