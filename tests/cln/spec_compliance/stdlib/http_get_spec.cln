@@ -1,0 +1,19 @@
+// Spec Section: 6.3 - HTTP Module
+// Tests: http.get() function for HTTP GET requests
+// Requirement: Perform HTTP GET request and return response
+
+start()
+	// Test case 1: Basic GET request
+	string url = "https://httpbin.org/get"
+	string response = http.get(url)
+	print("GET response received")
+
+	// Test case 2: GET request with URL variable
+	string apiUrl = "https://api.github.com"
+	string apiResponse = http.get(apiUrl)
+	print("API response received")
+
+	// Test case 3: GET request in expression
+	print("Direct GET: " + http.get("https://httpbin.org/ip"))
+
+	print("HTTP GET tests completed")

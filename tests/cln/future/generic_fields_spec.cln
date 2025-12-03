@@ -1,0 +1,66 @@
+// Spec Section: 9.2 - Generic Classes with `any`
+// Tests: Classes with generic fields using any type
+
+class Container
+	any value
+
+	constructor(any val)
+		value = val
+
+	functions:
+		any get()
+			return value
+
+		void set(any newValue)
+			value = newValue
+
+class Wrapper
+	any data
+	string label
+
+	constructor(any d, string l)
+		data = d
+		label = l
+
+	functions:
+		string describe()
+			return label + ": " + data.toString()
+
+start()
+	// Test 1: Container with integer
+	Container intContainer = Container(42)
+	any intVal = intContainer.get()
+	print("Integer container: " + intVal.toString())
+
+	// Test 2: Container with string
+	Container strContainer = Container("hello")
+	any strVal = strContainer.get()
+	print("String container: " + strVal)
+
+	// Test 3: Container with number
+	Container numContainer = Container(3.14)
+	any numVal = numContainer.get()
+	print("Number container: " + numVal.toString())
+
+	// Test 4: Update container value
+	intContainer.set(100)
+	any updatedVal = intContainer.get()
+	print("Updated container: " + updatedVal.toString())
+
+	// Test 5: Wrapper with integer
+	Wrapper intWrapper = Wrapper(42, "Age")
+	string desc1 = intWrapper.describe()
+	print(desc1)
+
+	// Test 6: Wrapper with string
+	Wrapper strWrapper = Wrapper("Alice", "Name")
+	string desc2 = strWrapper.describe()
+	print(desc2)
+
+	// Test 7: Container reassignment to different type
+	Container flexible = Container(10)
+	print("Initial: " + flexible.get().toString())
+	flexible.set("now a string")
+	print("After change: " + flexible.get())
+
+	print("Generic fields tests completed")

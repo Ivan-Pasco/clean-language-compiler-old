@@ -1,0 +1,26 @@
+// Spec Section: 6.1 - String Operations
+// Tests: String padding operations
+// Requirement: padStart and padEnd functions
+
+start()
+	// Test case 1: Pad start with zeros
+	string num = "42"
+	string padded = num.padStart(5, "0")
+	print("Padded number: " + padded)
+
+	// Test case 2: Pad start with spaces
+	string word = "Hi"
+	string spacePadded = word.padStart(10, " ")
+	print("Right-aligned: [" + spacePadded + "]")
+
+	// Test case 3: Pad end with character
+	string code = "ABC"
+	string endPadded = code.padEnd(6, "-")
+	print("End padded: " + endPadded)
+
+	// Test case 4: No padding needed (string already long enough)
+	string long = "Already Long"
+	string unchanged = long.padStart(5, "X")
+	print("Unchanged: " + unchanged)
+
+	print("String padding tests completed")

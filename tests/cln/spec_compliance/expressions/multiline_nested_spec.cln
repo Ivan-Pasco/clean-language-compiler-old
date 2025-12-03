@@ -1,0 +1,64 @@
+// Spec Section: 4.2 - Multi-Line Expressions
+// Tests: Complex nested multi-line expressions with parentheses
+
+start()
+	// Test 1: Simple multi-line expression
+	integer result1 = (10 + 20 +
+		30 + 40)
+	print("Simple multi-line: " + result1.toString())
+
+	// Test 2: Nested parentheses in multi-line
+	integer result2 = (
+		(10 + 20) *
+		(30 + 40)
+	)
+	print("Nested multi-line: " + result2.toString())
+
+	// Test 3: Deeply nested multi-line
+	integer result3 = (
+		(10 + 20) *
+		(30 + (40 *
+			(50 + 60)))
+	)
+	print("Deeply nested: " + result3.toString())
+
+	// Test 4: Multi-line with operations
+	number result4 = (
+		3.14 * 2.0 +
+		1.5 * 3.0 -
+		0.5
+	)
+	print("Multi-line with ops: " + result4.toString())
+
+	// Test 5: Multi-line boolean expression
+	boolean result5 = (
+		10 > 5 and
+		20 > 15 and
+		30 > 25
+	)
+	print("Multi-line boolean: " + result5.toString())
+
+	// Test 6: Multi-line with function calls
+	integer a = 5
+	integer b = 10
+	integer result6 = (
+		a + b +
+		(a * b) +
+		(a - b)
+	)
+	print("Multi-line with vars: " + result6.toString())
+
+	// Test 7: Complex calculation
+	number result7 = (
+		(100.0 / 4.0) +
+		(50.0 * 2.0) -
+		(25.0 / 5.0)
+	)
+	print("Complex calculation: " + result7.toString())
+
+	// Test 8: Multi-line string concatenation
+	string result8 = ("Hello" + " " +
+		"World" + "!")
+	print("Multi-line string: " + result8)
+
+	print("Multi-line nested expressions tests completed")

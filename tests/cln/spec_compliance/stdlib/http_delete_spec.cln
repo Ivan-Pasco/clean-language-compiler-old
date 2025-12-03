@@ -1,0 +1,16 @@
+// Spec Section: 6.3 - HTTP Module
+// Tests: http.delete() function for HTTP DELETE requests
+// Requirement: Perform HTTP DELETE request to remove resources
+
+start()
+	// Test case 1: Basic DELETE request
+	string url = "https://httpbin.org/delete"
+	string response = http.delete(url)
+	print("DELETE response received")
+
+	// Test case 2: DELETE with resource ID in URL
+	string resourceUrl = "https://httpbin.org/delete"
+	string deleteResponse = http.delete(resourceUrl)
+	print("Resource deletion response received")
+
+	print("HTTP DELETE tests completed")

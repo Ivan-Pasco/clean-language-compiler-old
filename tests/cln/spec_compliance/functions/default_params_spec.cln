@@ -1,0 +1,64 @@
+// Spec Section: 5.5 - Default Parameter Values
+// Tests: Function parameters with default values
+
+functions:
+	string greet(string name = "World")
+		return "Hello, " + name
+
+	integer power(integer base, integer exponent = 2)
+		integer result = 1
+		iterate i in 1 to exponent
+			result = result * base
+		return result
+
+	void logMessage(string message, string level = "INFO")
+		print("[" + level + "] " + message)
+
+	number calculatePrice(number amount, number taxRate = 0.1)
+		return amount + (amount * taxRate)
+
+	string formatNumber(integer num, string prefix = "", string suffix = "")
+		return prefix + num.toString() + suffix
+
+start()
+	// Test 1: Using default value
+	string greeting1 = greet()
+	print("Default greet: " + greeting1)
+
+	// Test 2: Overriding default value
+	string greeting2 = greet("Alice")
+	print("Custom greet: " + greeting2)
+
+	// Test 3: Default for second parameter only
+	integer squared = power(5)
+	print("5^2 (default exponent): " + squared.toString())
+
+	// Test 4: Override second parameter
+	integer cubed = power(5, 3)
+	print("5^3 (custom exponent): " + cubed.toString())
+
+	// Test 5: Log with default level
+	logMessage("System started")
+
+	// Test 6: Log with custom level
+	logMessage("Error occurred", "ERROR")
+
+	// Test 7: Number with default tax rate
+	number price1 = calculatePrice(100.0)
+	print("Price with 10% tax: " + price1.toString())
+
+	// Test 8: Number with custom tax rate
+	number price2 = calculatePrice(100.0, 0.2)
+	print("Price with 20% tax: " + price2.toString())
+
+	// Test 9: Multiple defaults
+	string formatted1 = formatNumber(42)
+	print("No prefix/suffix: " + formatted1)
+
+	string formatted2 = formatNumber(42, "$")
+	print("With prefix: " + formatted2)
+
+	string formatted3 = formatNumber(42, "$", " USD")
+	print("With prefix and suffix: " + formatted3)
+
+	print("Default parameters tests completed")

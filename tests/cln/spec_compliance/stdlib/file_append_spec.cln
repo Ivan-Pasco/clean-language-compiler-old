@@ -1,0 +1,22 @@
+// Spec Section: 6.2 - File I/O Module
+// Tests: file.append() function to append content to file
+// Requirement: Append text to end of existing file
+
+start()
+	// Test case 1: Basic append
+	string filename = "log.txt"
+	string content = "Log entry 1\n"
+	file.append(filename, content)
+	print("Content appended to " + filename)
+
+	// Test case 2: Multiple appends
+	file.append("log.txt", "Log entry 2\n")
+	file.append("log.txt", "Log entry 3\n")
+	print("Multiple entries appended")
+
+	// Test case 3: Append with timestamp-like data
+	string entry = "2024-01-15: System started\n"
+	file.append("system_log.txt", entry)
+	print("Timestamped entry appended")
+
+	print("File append tests completed")

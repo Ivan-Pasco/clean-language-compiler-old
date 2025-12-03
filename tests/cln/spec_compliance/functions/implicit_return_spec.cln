@@ -1,0 +1,51 @@
+// Spec Section: 5.7 - Automatic Return
+// Tests: Functions that return last expression without explicit return
+
+functions:
+	integer addOne(integer x)
+		x + 1
+
+	string greet(string name)
+		"Hello, " + name
+
+	number double(number n)
+		n * 2.0
+
+	boolean isPositive(integer x)
+		x > 0
+
+	integer square(integer n)
+		n * n
+
+	integer complexCalc(integer a, integer b)
+		integer temp = a + b
+		temp * 2
+
+start()
+	// Test 1: Simple implicit return
+	integer result1 = addOne(5)
+	print("addOne(5): " + result1.toString())
+
+	// Test 2: String implicit return
+	string greeting = greet("World")
+	print("greet(World): " + greeting)
+
+	// Test 3: Number implicit return
+	number doubled = double(3.5)
+	print("double(3.5): " + doubled.toString())
+
+	// Test 4: Boolean implicit return
+	boolean positive = isPositive(10)
+	boolean notPositive = isPositive(-5)
+	print("isPositive(10): " + positive.toString())
+	print("isPositive(-5): " + notPositive.toString())
+
+	// Test 5: Expression implicit return
+	integer squared = square(7)
+	print("square(7): " + squared.toString())
+
+	// Test 6: Multi-statement with implicit return
+	integer complex = complexCalc(3, 4)
+	print("complexCalc(3, 4): " + complex.toString())
+
+	print("Implicit return tests completed")

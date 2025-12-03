@@ -1,0 +1,46 @@
+// Spec Section: 5.3 - Generic Functions with `any`
+// Tests: Generic function parameters using any type
+// NOTE: Full any type polymorphism with mixed types requires runtime boxing (future work)
+// This test covers same-type generic function usage
+
+functions:
+	any identityInt(any value)
+		return value
+
+	any identityStr(any value)
+		return value
+
+	any getFirstInt(list<any> items)
+		return items.get(0)
+
+	any getLastInt(list<any> items)
+		integer lastIndex = items.size() - 1
+		return items.get(lastIndex)
+
+	void printAnyInt(any value)
+		print("Value: " + value.toString())
+
+start()
+	// Test 1: Identity function with integer
+	integer intResult = identityInt(42)
+	print("identityInt(42): " + intResult.toString())
+
+	// Test 2: Identity function with string
+	string strResult = identityStr("hello")
+	print("identityStr(hello): " + strResult)
+
+	// Test 3: getFirst with integer list
+	list<integer> intList = [10, 20, 30]
+	integer firstInt = getFirstInt(intList)
+	print("First of [10, 20, 30]: " + firstInt.toString())
+
+	// Test 4: getLast function
+	integer lastInt = getLastInt(intList)
+	print("Last of [10, 20, 30]: " + lastInt.toString())
+
+	// Test 5: printAny with integer
+	printAnyInt(100)
+	printAnyInt(200)
+	printAnyInt(300)
+
+	print("Generic function parameters tests completed")

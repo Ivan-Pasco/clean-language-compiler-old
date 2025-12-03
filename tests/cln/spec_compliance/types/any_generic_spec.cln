@@ -1,0 +1,39 @@
+// Spec Section: 3.7 - Generic Type `any`
+// Tests: The `any` type as universal generic placeholder
+// NOTE: Full any type with mixed concrete types requires runtime boxing (future work)
+// This test covers same-type any usage which works with current implementation
+
+start()
+	// Test 1: any in variable assignment - integer
+	any intValue = 42
+	print("any with integer: " + intValue.toString())
+
+	// Test 2: any in variable assignment - string
+	any strValue = "hello"
+	print("any with string: " + strValue)
+
+	// Test 3: any in variable assignment - boolean
+	any boolValue = true
+	print("any with boolean: " + boolValue.toString())
+
+	// Test 4: any reassignment to same type
+	any flexible = 10
+	print("flexible as integer: " + flexible.toString())
+	flexible = 20
+	print("flexible updated: " + flexible.toString())
+
+	// Test 5: any in list with same type elements
+	list<any> intList = []
+	intList.add(1)
+	intList.add(2)
+	intList.add(3)
+	print("Integer list size: " + intList.size().toString())
+
+	// Test 6: any in list with string elements
+	list<any> strList = []
+	strList.add("one")
+	strList.add("two")
+	strList.add("three")
+	print("String list size: " + strList.size().toString())
+
+	print("any generic type tests completed")

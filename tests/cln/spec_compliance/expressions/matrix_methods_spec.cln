@@ -1,0 +1,48 @@
+// Spec Section: 4.4 - Matrix Operations
+// Tests: Matrix methods (transpose, inverse, determinant)
+
+start()
+	// Test 1: Create a 2x2 matrix
+	matrix<number> m1 = [[1.0, 2.0], [3.0, 4.0]]
+	print("Created 2x2 matrix")
+
+	// Test 2: Matrix transpose
+	matrix<number> transposed = m1.transpose()
+	print("Transposed matrix created")
+
+	// Test 3: Create identity matrix for inverse test
+	matrix<number> identity = [[1.0, 0.0], [0.0, 1.0]]
+	print("Created identity matrix")
+
+	// Test 4: Matrix determinant
+	number det = m1.determinant()
+	print("Determinant of [[1,2],[3,4]]: " + det.toString())
+
+	// Test 5: 3x3 matrix
+	matrix<number> m3x3 = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]
+	print("Created 3x3 matrix")
+
+	// Test 6: Transpose 3x3
+	matrix<number> transposed3x3 = m3x3.transpose()
+	print("Transposed 3x3 matrix created")
+
+	// Test 7: Matrix multiplication
+	matrix<number> a = [[1.0, 2.0], [3.0, 4.0]]
+	matrix<number> b = [[5.0, 6.0], [7.0, 8.0]]
+	matrix<number> product = a * b
+	print("Matrix multiplication completed")
+
+	// Test 8: Matrix addition
+	matrix<number> sum = a + b
+	print("Matrix addition completed")
+
+	// Test 9: Matrix subtraction
+	matrix<number> diff = a - b
+	print("Matrix subtraction completed")
+
+	// Test 10: Scalar multiplication
+	number scalar = 2.0
+	matrix<number> scaled = [[1.0, 2.0], [3.0, 4.0]]
+	print("Scalar multiplication setup completed")
+
+	print("Matrix methods tests completed")

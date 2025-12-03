@@ -1,0 +1,39 @@
+// Spec Section: 3.10 - Type Conversions
+// Tests: .toBoolean conversion from integers
+
+start()
+	// Test 1: Zero converts to false
+	integer zero = 0
+	boolean zeroAsBool = zero.toBoolean()
+	print("0.toBoolean: " + zeroAsBool.toString())
+
+	// Test 2: Non-zero positive converts to true
+	integer positive = 42
+	boolean positiveAsBool = positive.toBoolean()
+	print("42.toBoolean: " + positiveAsBool.toString())
+
+	// Test 3: Non-zero negative converts to true
+	integer negative = -5
+	boolean negativeAsBool = negative.toBoolean()
+	print("-5.toBoolean: " + negativeAsBool.toString())
+
+	// Test 4: One converts to true
+	integer one = 1
+	boolean oneAsBool = one.toBoolean()
+	print("1.toBoolean: " + oneAsBool.toString())
+
+	// Test 5: Use in conditional
+	integer value = 10
+	if value.toBoolean()
+		print("Non-zero value is truthy")
+	else
+		print("Value is falsy")
+
+	// Test 6: Zero in conditional
+	integer zeroVal = 0
+	if zeroVal.toBoolean()
+		print("Should not print")
+	else
+		print("Zero is falsy")
+
+	print("Boolean conversion tests completed")

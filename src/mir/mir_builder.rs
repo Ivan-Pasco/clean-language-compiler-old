@@ -9,9 +9,9 @@
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
 use crate::mir::mir_types::{
-    BasicBlockId, MirBasicBlock, MirBinaryOp, MirConstant, MirFunction, MirFunctionAttributes,
-    MirInstruction, MirLocal, MirOperand, MirOperation, MirParameter, MirProgram, MirTerminator,
-    MirType, MirUnaryOp, ValueId,
+    AnyTypeTag, BasicBlockId, MirBasicBlock, MirBinaryOp, MirConstant, MirFunction,
+    MirFunctionAttributes, MirInstruction, MirLocal, MirOperand, MirOperation, MirParameter,
+    MirProgram, MirTerminator, MirType, MirUnaryOp, ValueId,
 };
 use crate::resolver::SymbolId;
 use crate::typechecker::tast::{
@@ -753,7 +753,35 @@ impl MirBuilder {
             } => {
                 let value_id = if let Some(init_expr) = initializer {
                     // Build initializer expression
-                    self.build_expression(context, init_expr)?
+                    let init_value_id = self.build_expression(context, init_expr)?;
+
+                    // Check if we need to unbox: initializer type is Any but variable type is not
+                    let needs_unboxing = matches!(init_expr.expr_type, ConcreteType::Any)
+                        && !matches!(var_type, ConcreteType::Any);
+
+                    // Check if we need to box: variable type is Any but initializer is not Any
+                    let needs_boxing = matches!(var_type, ConcreteType::Any)
+                        && !matches!(init_expr.expr_type, ConcreteType::Any);
+
+                    if needs_unboxing {
+                        trace!(
+                            var_name = %name,
+                            init_type = ?init_expr.expr_type,
+                            var_type = ?var_type,
+                            "Unboxing any value to target type"
+                        );
+                        self.emit_unbox_any(context, init_value_id, var_type, location)
+                    } else if needs_boxing {
+                        trace!(
+                            var_name = %name,
+                            init_type = ?init_expr.expr_type,
+                            var_type = ?var_type,
+                            "Boxing value for any variable declaration"
+                        );
+                        self.emit_box_any(context, init_value_id, &init_expr.expr_type, location)
+                    } else {
+                        init_value_id
+                    }
                 } else {
                     // Check if this is an Array type (list) - if so, allocate an empty list
                     match var_type {
@@ -860,9 +888,24 @@ impl MirBuilder {
                 // Handle assignment target - for now, only support simple variable assignments
                 match &target.kind {
                     TastExpressionKind::Variable { symbol_id: _, name } => {
+                        // Check if we need to box: target type is Any but value type is not Any
+                        let final_value_id = if matches!(target.expr_type, ConcreteType::Any)
+                            && !matches!(value.expr_type, ConcreteType::Any)
+                        {
+                            trace!(
+                                var_name = %name,
+                                value_type = ?value.expr_type,
+                                target_type = ?target.expr_type,
+                                "Boxing value for any variable assignment"
+                            );
+                            self.emit_box_any(context, value_id, &value.expr_type, &value.location)
+                        } else {
+                            value_id
+                        };
+
                         // Update variable in current scope
                         if let Some(current_scope) = context.scope_stack.last_mut() {
-                            current_scope.insert(name.clone(), value_id);
+                            current_scope.insert(name.clone(), final_value_id);
                         }
                     }
                     TastExpressionKind::PropertyAccess {
@@ -873,6 +916,17 @@ impl MirBuilder {
                         // Handle field assignments like obj.field = value or this.field = value
                         // Build the object expression first
                         let object_id = self.build_expression(context, object)?;
+
+                        // Check if field type is 'any' and value type is not 'any' - need boxing
+                        // The target.expr_type tells us the field type
+                        let final_value_id = if matches!(target.expr_type, ConcreteType::Any)
+                            && !matches!(value.expr_type, ConcreteType::Any)
+                        {
+                            // Box the value before storing
+                            self.emit_box_any(context, value_id, &value.expr_type, &value.location)
+                        } else {
+                            value_id
+                        };
 
                         // Get the class from the object's type
                         let object_class_symbol = match &object.expr_type {
@@ -935,7 +989,7 @@ impl MirBuilder {
                             dest: None, // Store doesn't produce a value
                             operation: MirOperation::Store {
                                 destination: MirOperand::Value(field_ptr_id),
-                                value: MirOperand::Value(value_id),
+                                value: MirOperand::Value(final_value_id),
                             },
                             location: target.location.clone(),
                         };
@@ -943,7 +997,7 @@ impl MirBuilder {
 
                         // Also update the scope for simple field references (for optimization)
                         if let Some(current_scope) = context.scope_stack.last_mut() {
-                            current_scope.insert(property_name.clone(), value_id);
+                            current_scope.insert(property_name.clone(), final_value_id);
                         }
                     }
                     TastExpressionKind::ArrayAccess { array, index } => {
@@ -2043,15 +2097,108 @@ impl MirBuilder {
                 }
 
                 // Check if this is string concatenation (String + String or String + other)
+                // Also include any type since string + any should use string concat with any.toString()
                 let is_string_concat = matches!(operator, BinaryOperator::Add)
                     && (matches!(left.expr_type, ConcreteType::String)
-                        || matches!(right.expr_type, ConcreteType::String));
+                        || matches!(right.expr_type, ConcreteType::String)
+                        || matches!(left.expr_type, ConcreteType::Any)
+                        || matches!(right.expr_type, ConcreteType::Any));
 
                 if is_string_concat {
                     // String concatenation uses runtime string_concat function
                     // string_concat(str1_ptr, str1_len, str2_ptr, str2_len) -> (result_ptr, result_len)
                     let left_id = self.build_expression(context, left)?;
                     let right_id = self.build_expression(context, right)?;
+
+                    // Check if left/right are Any type (check both TAST and MIR)
+                    // Need to do this before mutable borrows of context
+                    let left_is_any = if matches!(left.expr_type, ConcreteType::Any) {
+                        true
+                    } else if matches!(left.expr_type, ConcreteType::Unknown) {
+                        context
+                            .function
+                            .locals
+                            .get(&left_id)
+                            .map(|local| matches!(local.local_type, MirType::Any))
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
+
+                    let right_is_any = if matches!(right.expr_type, ConcreteType::Any) {
+                        true
+                    } else if matches!(right.expr_type, ConcreteType::Unknown) {
+                        context
+                            .function
+                            .locals
+                            .get(&right_id)
+                            .map(|local| matches!(local.local_type, MirType::Any))
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
+
+                    // Convert any values to strings using AnyToString
+                    let left_string_id = if left_is_any {
+                        let any_to_string_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+                        self.register_temp_local(
+                            context,
+                            any_to_string_id,
+                            MirType::I32,
+                            left.location.clone(),
+                        );
+                        let instruction = MirInstruction {
+                            dest: Some(any_to_string_id),
+                            operation: MirOperation::AnyToString {
+                                value: MirOperand::Value(left_id),
+                            },
+                            location: left.location.clone(),
+                        };
+                        self.add_instruction(context, instruction);
+                        any_to_string_id
+                    } else if !matches!(left.expr_type, ConcreteType::String) {
+                        // Convert non-string to string
+                        self.convert_value_to_string(
+                            context,
+                            left_id,
+                            &left.expr_type,
+                            &left.location,
+                        )?
+                    } else {
+                        left_id
+                    };
+
+                    let right_string_id = if right_is_any {
+                        let any_to_string_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+                        self.register_temp_local(
+                            context,
+                            any_to_string_id,
+                            MirType::I32,
+                            right.location.clone(),
+                        );
+                        let instruction = MirInstruction {
+                            dest: Some(any_to_string_id),
+                            operation: MirOperation::AnyToString {
+                                value: MirOperand::Value(right_id),
+                            },
+                            location: right.location.clone(),
+                        };
+                        self.add_instruction(context, instruction);
+                        any_to_string_id
+                    } else if !matches!(right.expr_type, ConcreteType::String) {
+                        // Convert non-string to string
+                        self.convert_value_to_string(
+                            context,
+                            right_id,
+                            &right.expr_type,
+                            &right.location,
+                        )?
+                    } else {
+                        right_id
+                    };
+
                     let result_id = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;
 
@@ -2071,8 +2218,8 @@ impl MirBuilder {
                         operation: MirOperation::Call {
                             function: MirOperand::Function(SymbolId(1000)),
                             arguments: vec![
-                                MirOperand::Value(left_id),
-                                MirOperand::Value(right_id),
+                                MirOperand::Value(left_string_id),
+                                MirOperand::Value(right_string_id),
                             ],
                         },
                         location: expression.location.clone(),
@@ -2278,8 +2425,29 @@ impl MirBuilder {
                     || function_symbol_id == SymbolId(162) // print (alternative)
                     || function_symbol_id == SymbolId(163); // printl (alternative)
 
+                // Look up function parameter types for boxing any-typed parameters
+                // Check both all_functions and class constructors
+                let param_types: Vec<ConcreteType> = context
+                    .all_functions
+                    .iter()
+                    .find(|f| f.symbol_id == function_symbol_id)
+                    .map(|f| f.parameters.iter().map(|p| p.param_type.clone()).collect())
+                    .or_else(|| {
+                        // Search in class constructors
+                        context.all_classes.iter().find_map(|class| {
+                            class
+                                .constructors
+                                .iter()
+                                .find(|c| c.symbol_id == function_symbol_id)
+                                .map(|c| {
+                                    c.parameters.iter().map(|p| p.param_type.clone()).collect()
+                                })
+                        })
+                    })
+                    .unwrap_or_default();
+
                 // Add user-provided arguments
-                for arg in arguments {
+                for (arg_idx, arg) in arguments.iter().enumerate() {
                     let arg_id = self.build_expression(context, arg)?;
 
                     // For print calls, convert arguments to strings
@@ -2291,7 +2459,25 @@ impl MirBuilder {
                             &arg.location,
                         )?
                     } else {
-                        arg_id
+                        // Check if parameter type is Any and argument type is not Any
+                        // If so, we need to box the value
+                        let needs_boxing = if let Some(param_type) = param_types.get(arg_idx) {
+                            matches!(param_type, ConcreteType::Any)
+                                && !matches!(arg.expr_type, ConcreteType::Any)
+                        } else {
+                            false
+                        };
+
+                        if needs_boxing {
+                            trace!(
+                                arg_idx = arg_idx,
+                                arg_type = ?arg.expr_type,
+                                "Boxing argument to any type"
+                            );
+                            self.emit_box_any(context, arg_id, &arg.expr_type, &arg.location)
+                        } else {
+                            arg_id
+                        }
                     };
 
                     mir_arguments.push(MirOperand::Value(final_arg_id));
@@ -2469,6 +2655,42 @@ impl MirBuilder {
                     return Ok(receiver_id);
                 }
 
+                // CRITICAL FIX: Handle Any.toString() EARLY, regardless of method_symbol
+                // For chained calls like c.get().toString() where c.get() returns Any,
+                // the method_symbol might be non-zero, but we need to use AnyToString operation
+                // NOTE: Must use receiver_actual_type, not receiver.expr_type, because TAST might have Unknown
+                if matches!(&receiver_actual_type, ConcreteType::Any) && method_name == "toString" {
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    // Register the result as i32 (string pointer)
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        MirType::I32,
+                        expression.location.clone(),
+                    );
+
+                    // Use the special AnyToString operation that does runtime type dispatch
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::AnyToString {
+                            value: MirOperand::Value(receiver_id),
+                        },
+                        location: expression.location.clone(),
+                    };
+
+                    self.add_instruction(context, instruction);
+
+                    trace!(
+                        result_id = ?result_id,
+                        receiver_id = ?receiver_id,
+                        "Any.toString() with AnyToString operation (early detection)"
+                    );
+
+                    return Ok(result_id);
+                }
+
                 // CRITICAL FIX: Handle Array/List methods FIRST, regardless of method_symbol
                 // These methods have non-zero method_symbol (e.g., 103) but need special handling
                 // to use the correct stdlib function indices
@@ -2632,6 +2854,33 @@ impl MirBuilder {
                                 operation: MirOperation::Call {
                                     function: MirOperand::Function(symbol_id),
                                     arguments: vec![MirOperand::Value(receiver_id)],
+                                },
+                                location: expression.location.clone(),
+                            };
+
+                            self.add_instruction(context, instruction);
+
+                            return Ok(result_id);
+                        }
+                        // Any to String conversion with proper type dispatch
+                        // Uses the boxed any value's type tag to call the correct toString function
+                        (ConcreteType::Any, "toString") => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            // Register the result as i32 (string pointer)
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32,
+                                expression.location.clone(),
+                            );
+
+                            // Use the special AnyToString operation that does runtime type dispatch
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::AnyToString {
+                                    value: MirOperand::Value(receiver_id),
                                 },
                                 location: expression.location.clone(),
                             };
@@ -2913,9 +3162,76 @@ impl MirBuilder {
                 } else {
                     // This is a user-defined method - receiver becomes first argument
                     let mut args = vec![MirOperand::Value(receiver_id)];
-                    for arg in arguments {
+
+                    // Look up method parameter types from the class
+                    // First, get the class symbol from the receiver type
+                    let method_param_types: Vec<ConcreteType> = if let ConcreteType::Class {
+                        symbol_id: class_symbol,
+                        ..
+                    } = &receiver.expr_type
+                    {
+                        // Find the class and then the method
+                        context.all_classes.iter()
+                            .find(|c| c.symbol_id == *class_symbol)
+                            .and_then(|class| {
+                                trace!(
+                                    class_name = %class.name,
+                                    method_symbol = ?method_symbol,
+                                    method_count = %class.methods.len(),
+                                    "Looking for method in class"
+                                );
+                                class.methods.iter()
+                                    .find(|m| m.symbol_id == *method_symbol)
+                                    .map(|method| {
+                                        trace!(
+                                            method_name = %method.name,
+                                            param_count = %method.parameters.len(),
+                                            params = ?method.parameters.iter().map(|p| &p.param_type).collect::<Vec<_>>(),
+                                            "Found method with parameters"
+                                        );
+                                        // NOTE: TastFunction.parameters does NOT include 'this' for methods
+                                        // so we don't need to skip anything
+                                        method.parameters.iter()
+                                            .map(|p| p.param_type.clone())
+                                            .collect()
+                                    })
+                            })
+                            .unwrap_or_default()
+                    } else {
+                        trace!(
+                            receiver_type = ?receiver.expr_type,
+                            "Receiver is not a Class type"
+                        );
+                        Vec::new()
+                    };
+
+                    trace!(
+                        method_name = %method_name,
+                        method_param_types = ?method_param_types,
+                        arg_count = %arguments.len(),
+                        "Method call parameter types"
+                    );
+
+                    // Process arguments with boxing for 'any' parameters
+                    for (i, arg) in arguments.iter().enumerate() {
                         let arg_id = self.build_expression(context, arg)?;
-                        args.push(MirOperand::Value(arg_id));
+
+                        // Check if parameter expects 'any' but argument is not 'any'
+                        let final_arg_id = if i < method_param_types.len() {
+                            let param_type = &method_param_types[i];
+                            if matches!(param_type, ConcreteType::Any)
+                                && !matches!(arg.expr_type, ConcreteType::Any)
+                            {
+                                // Box the argument
+                                self.emit_box_any(context, arg_id, &arg.expr_type, &arg.location)
+                            } else {
+                                arg_id
+                            }
+                        } else {
+                            arg_id
+                        };
+
+                        args.push(MirOperand::Value(final_arg_id));
                     }
                     (*method_symbol, args)
                 };
@@ -2936,12 +3252,48 @@ impl MirBuilder {
                     if let ConcreteType::Array(element_type) = &receiver.expr_type {
                         // Extract element type from Array<T> -> T
                         element_type.as_ref().clone()
+                    } else if let ConcreteType::Class {
+                        symbol_id: class_symbol,
+                        ..
+                    } = &receiver.expr_type
+                    {
+                        // For user-defined classes, look up the method return type
+                        context
+                            .all_classes
+                            .iter()
+                            .find(|c| c.symbol_id == *class_symbol)
+                            .and_then(|class| {
+                                class
+                                    .methods
+                                    .iter()
+                                    .find(|m| m.name == *method_name)
+                                    .map(|method| method.return_type.clone())
+                            })
+                            .unwrap_or_else(|| expression.expr_type.clone())
                     } else {
                         expression.expr_type.clone()
                     }
                 } else if method_name == "toString" {
                     // toString always returns String
                     ConcreteType::String
+                } else if let ConcreteType::Class {
+                    symbol_id: class_symbol,
+                    ..
+                } = &receiver.expr_type
+                {
+                    // For other user-defined class methods, look up the return type
+                    context
+                        .all_classes
+                        .iter()
+                        .find(|c| c.symbol_id == *class_symbol)
+                        .and_then(|class| {
+                            class
+                                .methods
+                                .iter()
+                                .find(|m| m.name == *method_name)
+                                .map(|method| method.return_type.clone())
+                        })
+                        .unwrap_or_else(|| expression.expr_type.clone())
                 } else {
                     expression.expr_type.clone()
                 };
@@ -4153,6 +4505,91 @@ impl MirBuilder {
         MirType::from_concrete_type(concrete_type)
     }
 
+    /// Get the AnyTypeTag for a given ConcreteType
+    fn get_any_type_tag(concrete_type: &ConcreteType) -> AnyTypeTag {
+        match concrete_type {
+            ConcreteType::Integer => AnyTypeTag::Integer,
+            ConcreteType::Number => AnyTypeTag::Number,
+            ConcreteType::Boolean => AnyTypeTag::Boolean,
+            ConcreteType::String => AnyTypeTag::String,
+            ConcreteType::Array(_) | ConcreteType::Matrix(_) => AnyTypeTag::List,
+            ConcreteType::Class { .. } | ConcreteType::Interface { .. } => AnyTypeTag::Object,
+            ConcreteType::Null | ConcreteType::Undefined => AnyTypeTag::Null,
+            // For any other types, default to Integer (they'll be stored as i32)
+            _ => AnyTypeTag::Integer,
+        }
+    }
+
+    /// Box a value to any type - emits a BoxAny instruction
+    fn emit_box_any(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        source_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let type_tag = Self::get_any_type_tag(source_type);
+        let mir_source_type = self.convert_concrete_type(source_type);
+
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+
+        // Register the result as a temp local (boxed value is a pointer = i32)
+        self.register_temp_local(context, result_id, MirType::I32, location.clone());
+
+        let instruction = MirInstruction {
+            dest: Some(result_id),
+            operation: MirOperation::BoxAny {
+                value: MirOperand::Value(value_id),
+                type_tag,
+                source_type: mir_source_type,
+            },
+            location: location.clone(),
+        };
+
+        self.add_instruction(context, instruction);
+        result_id
+    }
+
+    /// Unbox an any value to a specific type - emits an UnboxAny instruction
+    fn emit_unbox_any(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        target_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+
+        let mir_target_type = self.convert_concrete_type(target_type);
+        self.register_temp_local(
+            context,
+            result_id,
+            mir_target_type.clone(),
+            location.clone(),
+        );
+
+        let operation = match target_type {
+            ConcreteType::Number => MirOperation::UnboxAnyToF64 {
+                value: MirOperand::Value(value_id),
+            },
+            // For Integer, Boolean, String, and most other types, use i32 unboxing
+            _ => MirOperation::UnboxAnyToI32 {
+                value: MirOperand::Value(value_id),
+            },
+        };
+
+        let instruction = MirInstruction {
+            dest: Some(result_id),
+            operation,
+            location: location.clone(),
+        };
+
+        self.add_instruction(context, instruction);
+        result_id
+    }
+
     /// Convert TAST literal to MIR constant
     fn convert_literal(&mut self, literal: &TastLiteral) -> MirConstant {
         match literal {
@@ -4332,6 +4769,7 @@ impl MirBuilder {
             MirType::F32 => ConcreteType::Number,
             MirType::Array(_, _) => ConcreteType::Array(Box::new(ConcreteType::Integer)),
             MirType::Struct(_) => ConcreteType::Null,
+            MirType::Any => ConcreteType::Any, // Boxed any type
         }
     }
 
@@ -4451,6 +4889,8 @@ impl MirBuilder {
             BinaryOperator::GreaterThan => MirBinaryOp::Gt,
             BinaryOperator::LessThanOrEqual => MirBinaryOp::Le,
             BinaryOperator::GreaterThanOrEqual => MirBinaryOp::Ge,
+            BinaryOperator::Is => MirBinaryOp::Eq, // Identity is equality for value types
+            BinaryOperator::IsNot => MirBinaryOp::Ne, // IsNot is not-equal for value types
 
             // Logical operators (And/Or work on booleans, lowered to i32.and/i32.or in WASM)
             // The type system ensures these are used on boolean types
@@ -4880,6 +5320,7 @@ impl MirBuilder {
             ConcreteType::Unknown => 4,          // Default
             ConcreteType::Never => 0,            // Never returns
             ConcreteType::Namespace => 4,        // Not really used in memory
+            ConcreteType::Any => 12,             // Boxed: [tag:i32][value1:i32][value2:i32]
         }
     }
 

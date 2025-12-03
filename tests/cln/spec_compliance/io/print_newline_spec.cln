@@ -1,0 +1,22 @@
+// Spec Section: 6.1 - Standard Library (Input/Output)
+// Tests: print with newline (parentheses syntax)
+// Requirement: print() outputs with newline
+
+start()
+	// Test case 1: Basic print with newline
+	print("Line 1")
+	print("Line 2")
+	print("Line 3")
+
+	// Test case 2: Print with expression
+	integer x = 10
+	integer y = 20
+	print("Sum: " + (x + y).toString())
+
+	// Test case 3: Multiple lines with different types
+	print("Integer: " + 42.toString())
+	print("Number: " + 3.14.toString())
+	print("Boolean: " + true.toString())
+	print("String: test")
+
+	print("Print newline tests completed")

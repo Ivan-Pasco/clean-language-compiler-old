@@ -1,0 +1,20 @@
+// Spec Section: 6.1 - Standard Library (Input/Output)
+// Tests: input.integer() function for integer input
+// Requirement: Integer input with automatic conversion
+
+start()
+	// Test case 1: Basic integer input
+	integer age = input.integer("Enter your age: ")
+	print("Age: " + age.toString())
+
+	// Test case 2: Integer input for calculations
+	integer num1 = input.integer("First number: ")
+	integer num2 = input.integer("Second number: ")
+	integer sum = num1 + num2
+	print("Sum: " + sum.toString())
+
+	// Test case 3: Integer input in expressions
+	integer count = input.integer("Count: ") * 2
+	print("Doubled: " + count.toString())
+
+	print("Input integer tests completed")

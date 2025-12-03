@@ -16,7 +16,10 @@
 use clap::{Parser, Subcommand};
 use clean_language_compiler::debug::DebugUtils;
 use clean_language_compiler::error::{CompilerError, ErrorReporter};
-use clean_language_compiler::{compile_with_file, runtime::wasmtime_config::CleanWasmtimeConfig};
+use clean_language_compiler::{
+    compile_with_file, compile_with_opt_level, runtime::runtime_manager::RuntimeManager,
+    runtime::wasmtime_config::CleanWasmtimeConfig,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -219,6 +222,16 @@ enum Commands {
         /// Error code to explain (e.g., SYN001, TYP001)
         code: String,
     },
+    /// Show WebAssembly runtime information
+    Runtime {
+        /// Detect and show current runtime
+        #[arg(long)]
+        detect: bool,
+
+        /// List all available runtimes
+        #[arg(long)]
+        list: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -389,6 +402,81 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Explain { code } => handle_explain(&code, &output_config)?,
+        Commands::Runtime { detect, list } => handle_runtime(detect, list, &output_config)?,
+    }
+
+    Ok(())
+}
+
+fn handle_runtime(
+    detect: bool,
+    list: bool,
+    output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let green = if output_config.use_colors {
+        "\x1b[32m"
+    } else {
+        ""
+    };
+    let cyan = if output_config.use_colors {
+        "\x1b[36m"
+    } else {
+        ""
+    };
+    let yellow = if output_config.use_colors {
+        "\x1b[33m"
+    } else {
+        ""
+    };
+    let reset = if output_config.use_colors {
+        "\x1b[0m"
+    } else {
+        ""
+    };
+
+    if list || (!detect && !list) {
+        println!("\n{}WebAssembly Runtimes{}", cyan, reset);
+        println!("{}", "=".repeat(50));
+
+        let runtimes = RuntimeManager::list_available_runtimes();
+        for runtime in &runtimes {
+            let status = if runtime.available {
+                format!("{}✓ Available{}", green, reset)
+            } else {
+                format!("{}✗ Not compiled{}", yellow, reset)
+            };
+
+            println!("\n{}{}{} ({})", cyan, runtime.name, reset, status);
+            println!("  Version: {}", runtime.version);
+            println!("  {}", runtime.description);
+            println!("  Features: {}", runtime.features.join(", "));
+        }
+        println!();
+    }
+
+    if detect {
+        use clean_language_compiler::runtime::runtime_trait::RuntimeConfig;
+
+        let config = RuntimeConfig::default();
+        match RuntimeManager::select_runtime(&config) {
+            Ok(selected) => {
+                println!("\n{}Selected Runtime{}", cyan, reset);
+                println!("{}", "=".repeat(50));
+                println!("  Runtime: {}{}{}", green, selected, reset);
+                println!("  Mode: Auto-detected based on configuration");
+
+                let recommendations = RuntimeManager::get_runtime_recommendations(selected);
+                println!("\n{}Recommendations:{}", cyan, reset);
+                for rec in recommendations {
+                    println!("  • {}", rec);
+                }
+                println!();
+            }
+            Err(e) => {
+                eprintln!("Error detecting runtime: {}", e);
+                return Err(e.into());
+            }
+        }
     }
 
     Ok(())
@@ -397,22 +485,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn handle_compile(
     input: String,
     output: String,
-    _opt_level: u8,
+    opt_level: u8,
     test: bool,
     _include_tests: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !output_config.quiet {
-        println!("Compiling {input} to {output}");
+        let opt_desc = match opt_level {
+            0 => "none (fastest compilation)",
+            1 => "light",
+            2 => "standard",
+            3 => "aggressive (speed + size)",
+            _ => "unknown",
+        };
+        println!("Compiling {input} to {output} (optimization: -O{opt_level} {opt_desc})");
     }
 
     let source = fs::read_to_string(&input)?;
 
-    tracing::debug!(source_len = source.len(), "Calling compile_with_file");
+    tracing::debug!(
+        source_len = source.len(),
+        opt_level = opt_level,
+        "Calling compile_with_opt_level"
+    );
     tracing::trace!(source_content = %source, "Source code to compile");
 
-    // Use the 7-stage pipeline for compilation
-    let wasm_binary = match compile_with_file(&source, &input) {
+    // Use the 7-stage pipeline for compilation with specified optimization level
+    let wasm_binary = match compile_with_opt_level(&source, &input, opt_level) {
         Ok(binary) => binary,
         Err(errors) => {
             output_config.report_errors(&errors, Some(&source));

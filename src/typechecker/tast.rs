@@ -376,6 +376,11 @@ pub enum ConcreteType {
 
     /// Namespace type (for namespace identifiers like 'math', 'string')
     Namespace,
+
+    /// Any type - dynamically typed value with runtime type tag
+    /// Used for generic type erasure and dynamic typing scenarios
+    /// At runtime: boxed value with [tag:i32][value1:i32][value2:i32] layout
+    Any,
 }
 
 /// Generic type parameter
@@ -438,6 +443,8 @@ pub enum BinaryOperator {
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
+    Is,    // Identity comparison (same as Equal for value types)
+    IsNot, // Negated identity comparison
 
     // Logical
     And,
@@ -678,6 +685,7 @@ impl std::fmt::Display for ConcreteType {
             ConcreteType::Unknown => write!(f, "?"),
             ConcreteType::Never => write!(f, "!"),
             ConcreteType::Namespace => write!(f, "namespace"),
+            ConcreteType::Any => write!(f, "any"),
         }
     }
 }

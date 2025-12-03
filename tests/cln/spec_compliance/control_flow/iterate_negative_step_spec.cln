@@ -1,0 +1,24 @@
+// Spec Section: 4.3 - Control Flow
+// Tests: Iterate with descending range
+// Requirement: iterate from high to low
+
+start()
+	// Test case 1: Simple countdown using while
+	print("Countdown simulation:")
+	integer count = 5
+	iterate i in 1 to 5
+		print((6 - i).toString())
+
+	// Test case 2: Reverse iteration via list
+	list<integer> nums = [5, 4, 3, 2, 1]
+	print("Countdown via list:")
+	iterate n in nums
+		print(n.toString())
+
+	// Test case 3: Count by calculating reverse
+	print("Count reverse:")
+	iterate i in 0 to 4
+		integer reversed = 4 - i
+		print(reversed.toString())
+
+	print("Iterate reverse tests completed")

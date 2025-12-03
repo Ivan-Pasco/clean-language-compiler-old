@@ -14,8 +14,8 @@
 use clean_language_compiler::error::CompilerError;
 use clean_language_compiler::parser::CleanParser;
 use clean_language_compiler::runtime::runtime_manager::RuntimeManager;
-use clean_language_compiler::runtime::runtime_trait::{RuntimeConfig, RuntimeType};
-use clean_language_compiler::targets::{TargetManager, TargetOptimizer};
+use clean_language_compiler::runtime::runtime_trait::{OptimizationLevel, RuntimeConfig, RuntimeType};
+use clean_language_compiler::targets::{OptimizationProfile, TargetManager, TargetOptimizer};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -91,7 +91,8 @@ struct CompileConfig {
     output_file: String,
     target: String,
     runtime: RuntimeType,
-    optimization: String,
+    optimization_level: OptimizationLevel,
+    optimization_profile: Option<String>,
     debug: bool,
     verbose: bool,
 }
@@ -121,7 +122,8 @@ fn parse_compile_args(args: &[String]) -> Result<CompileConfig, CompilerError> {
         output_file: String::new(),
         target: "auto".to_string(),
         runtime: RuntimeType::Auto,
-        optimization: "speed".to_string(),
+        optimization_level: OptimizationLevel::Speed, // Default: -O2 equivalent
+        optimization_profile: None,
         debug: false,
         verbose: false,
     };
@@ -168,13 +170,52 @@ fn parse_compile_args(args: &[String]) -> Result<CompileConfig, CompilerError> {
                     ));
                 }
             }
+            // Standard optimization levels: -O0, -O1, -O2, -O3
+            "-O0" => {
+                config.optimization_level = OptimizationLevel::None;
+                i += 1;
+            }
+            "-O1" => {
+                config.optimization_level = OptimizationLevel::Speed;
+                i += 1;
+            }
+            "-O2" => {
+                config.optimization_level = OptimizationLevel::Speed;
+                i += 1;
+            }
+            "-O3" => {
+                config.optimization_level = OptimizationLevel::SpeedAndSize;
+                i += 1;
+            }
+            // Optimization profile: --optimization <profile>
             "--optimization" | "-O" => {
                 if i + 1 < args.len() {
-                    config.optimization = args[i + 1].clone();
+                    let profile_or_level = &args[i + 1];
+                    // Check if it's a numeric level (0-3)
+                    match profile_or_level.as_str() {
+                        "0" | "none" => config.optimization_level = OptimizationLevel::None,
+                        "1" | "speed" => config.optimization_level = OptimizationLevel::Speed,
+                        "2" => config.optimization_level = OptimizationLevel::Speed,
+                        "3" | "size" | "aggressive" => config.optimization_level = OptimizationLevel::SpeedAndSize,
+                        // Profile names
+                        "development" | "dev" => config.optimization_profile = Some("development".to_string()),
+                        "production" | "prod" => config.optimization_profile = Some("production".to_string()),
+                        "debug" => {
+                            config.optimization_profile = Some("debug".to_string());
+                            config.debug = true;
+                        }
+                        other => {
+                            return Err(CompilerError::runtime_error(
+                                format!("Unknown optimization level or profile: '{}'. Valid values: 0-3, none, speed, size, development, production, debug", other),
+                                None,
+                                None,
+                            ));
+                        }
+                    }
                     i += 2;
                 } else {
                     return Err(CompilerError::runtime_error(
-                        "Optimization option requires a value".to_string(),
+                        "Optimization option requires a value (0-3, none, speed, size, development, production, debug)".to_string(),
                         None,
                         None,
                     ));
@@ -284,13 +325,20 @@ fn parse_runtime_type(runtime_str: &str) -> Result<RuntimeType, CompilerError> {
 
 /// Compile with enhanced configuration
 fn compile_with_config(config: &CompileConfig) -> Result<(), CompilerError> {
+    // Format optimization info for display
+    let opt_info = if let Some(ref profile) = config.optimization_profile {
+        format!("profile: {}", profile)
+    } else {
+        format!("{:?}", config.optimization_level)
+    };
+
     if config.verbose {
         println!("🔧 Compile Configuration:");
         println!("   Input: {}", config.input_file);
         println!("   Output: {}", config.output_file);
         println!("   Target: {}", config.target);
         println!("   Runtime: {}", config.runtime);
-        println!("   Optimization: {}", config.optimization);
+        println!("   Optimization: {}", opt_info);
         println!("   Debug: {}", config.debug);
     }
 
@@ -306,11 +354,38 @@ fn compile_with_config(config: &CompileConfig) -> Result<(), CompilerError> {
     runtime_config.runtime_type = config.runtime;
     runtime_config.debug_info = config.debug;
 
-    // Apply target-specific optimizations
+    // Apply optimization settings
+    if let Some(ref profile_name) = config.optimization_profile {
+        // Apply named profile
+        let profile = match profile_name.as_str() {
+            "development" | "dev" => OptimizationProfile::development(),
+            "production" | "prod" => OptimizationProfile::production(),
+            "size" => OptimizationProfile::size_optimized(),
+            "speed" => OptimizationProfile::speed_optimized(),
+            "debug" => OptimizationProfile::debug(),
+            _ => OptimizationProfile::production(), // fallback
+        };
+        TargetOptimizer::apply_optimization_profile(&mut runtime_config, &profile);
+
+        if config.verbose {
+            println!("📊 Applied optimization profile: {}", profile);
+        }
+    } else {
+        // Apply direct optimization level
+        runtime_config.optimization_level = config.optimization_level;
+    }
+
+    // Apply target-specific optimizations (may override some settings)
     TargetOptimizer::optimize_for_target(&mut runtime_config, &target);
 
     // Validate configuration
     TargetManager::validate_target_runtime_compatibility(&target, &runtime_config)?;
+
+    // Check for optimization warnings
+    let warnings = TargetOptimizer::validate_optimization_settings(&target, &runtime_config);
+    for warning in &warnings {
+        eprintln!("⚠️ {}", warning);
+    }
 
     if config.verbose {
         println!("🎯 Using target: {}", target);
@@ -593,9 +668,21 @@ fn print_usage() {
     println!("COMPILE/RUN OPTIONS:");
     println!("    --target, -t <target>       Target platform (web, nodejs, native, embedded, wasi, auto)");
     println!("    --runtime, -r <runtime>     WebAssembly runtime (wasmtime, wasmer, auto)");
-    println!("    --optimization, -O <level>  Optimization level (development, production, size, speed, debug)");
     println!("    --debug, -d                 Include debug information");
     println!("    --verbose, -v               Verbose output");
+    println!();
+    println!("OPTIMIZATION FLAGS:");
+    println!("    -O0                         No optimization (fastest compilation)");
+    println!("    -O1, -O2                    Speed optimization (default)");
+    println!("    -O3                         Aggressive optimization (speed + size)");
+    println!("    --optimization, -O <level>  Optimization level/profile:");
+    println!("                                  0, 1, 2, 3    - Numeric levels");
+    println!("                                  none          - No optimization");
+    println!("                                  speed         - Optimize for speed");
+    println!("                                  size          - Optimize for size");
+    println!("                                  development   - Fast compilation, debug info");
+    println!("                                  production    - Balanced optimization");
+    println!("                                  debug         - Maximum debug info");
     println!();
     println!("TARGET SUBCOMMANDS:");
     println!("    targets list                List all available targets");
@@ -607,7 +694,10 @@ fn print_usage() {
     println!("    runtime benchmark <file>    Benchmark runtimes with a test file");
     println!();
     println!("EXAMPLES:");
-    println!("    cln compile hello.cln                           # Basic compilation");
+    println!("    cln compile hello.cln                           # Basic compilation (default -O2)");
+    println!("    cln compile hello.cln -O3                       # Aggressive optimization");
+    println!("    cln compile hello.cln -O0 --debug               # Debug build, no optimization");
+    println!("    cln compile hello.cln -O production             # Production profile");
     println!("    cln compile hello.cln --target web --debug      # Web target with debug info");
     println!(
         "    cln run app.cln --target nodejs --verbose       # Run on Node.js with verbose output"

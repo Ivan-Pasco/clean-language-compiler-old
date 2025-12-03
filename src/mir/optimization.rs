@@ -424,6 +424,18 @@ impl DeadCodeEliminationPass {
             MirOperation::AsyncAssign { source } => {
                 self.mark_operand_live(source, function);
             }
+            MirOperation::BoxAny { value, .. } => {
+                self.mark_operand_live(value, function);
+            }
+            MirOperation::AnyToString { value } => {
+                self.mark_operand_live(value, function);
+            }
+            MirOperation::UnboxAnyToI32 { value } => {
+                self.mark_operand_live(value, function);
+            }
+            MirOperation::UnboxAnyToF64 { value } => {
+                self.mark_operand_live(value, function);
+            }
             MirOperation::Store { .. } => {
                 // Store is handled separately in optimize_function
             }

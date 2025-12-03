@@ -45,6 +45,7 @@
 #![allow(deprecated)]
 
 pub mod ast;
+pub mod builtins;
 pub mod codegen;
 pub mod debug;
 pub mod error;
@@ -118,6 +119,31 @@ pub fn compile_with_file(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<C
     compile_pure(source, file_path)
 }
 
+/// Compiles Clean Language source code with optimization level
+///
+/// # Arguments
+/// * `source` - The Clean Language source code
+/// * `file_path` - Path for error reporting
+/// * `opt_level` - Optimization level (0-3):
+///   - 0: No optimization (fastest compilation, for debugging)
+///   - 1: Light optimization
+///   - 2: Standard optimization (default)
+///   - 3: Aggressive optimization (speed + size)
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
+/// * `Err(Vec<CompilerError>)` - Compilation errors
+pub fn compile_with_opt_level(
+    source: &str,
+    file_path: &str,
+    opt_level: u8,
+) -> Result<Vec<u8>, Vec<CompilerError>> {
+    let registry = plugins::PluginRegistry::builder()
+        .build()
+        .expect("Empty registry should always build");
+    compile_with_plugins_and_opt_level(source, file_path, &registry, opt_level)
+}
+
 /// Compiles Clean Language source code with NO plugins (pure language)
 ///
 /// This is for compiling pure Clean Language code without framework extensions.
@@ -169,10 +195,36 @@ pub fn compile_with_plugins(
     file_path: &str,
     registry: &plugins::PluginRegistry,
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
+    // Default to optimization level 2 (standard optimization)
+    compile_with_plugins_and_opt_level(source, file_path, registry, 2)
+}
+
+/// Compiles Clean Language source code with custom plugin registry and optimization level
+///
+/// # Arguments
+/// * `source` - The Clean Language source code
+/// * `file_path` - Path for error reporting
+/// * `registry` - Plugin registry with registered DSL handlers
+/// * `opt_level` - Optimization level (0-3)
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
+/// * `Err(Vec<CompilerError>)` - Compilation errors
+pub fn compile_with_plugins_and_opt_level(
+    source: &str,
+    file_path: &str,
+    registry: &plugins::PluginRegistry,
+    opt_level: u8,
+) -> Result<Vec<u8>, Vec<CompilerError>> {
     use crate::lexer::specification_lexer::SpecificationLexer;
     use crate::mir::lower_tast_to_mir_with_opt_level;
     use crate::resolver::Resolver;
     use crate::typechecker::TypeChecker;
+
+    tracing::info!(
+        opt_level = opt_level,
+        "Starting compilation with optimization level"
+    );
 
     // Stage 1: Lexical Analysis - specification-compliant tokenization
     tracing::debug!("Starting Stage 1: Lexical Analysis");
@@ -273,9 +325,9 @@ pub fn compile_with_plugins(
     );
 
     // Stage 6: TAST to MIR Lowering and Optimization - SSA form with optimizations
-    tracing::debug!("Starting Stage 6: TAST to MIR");
-    let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, 2)?;
-    tracing::debug!("Stage 6 complete: MIR created");
+    tracing::debug!(opt_level = opt_level, "Starting Stage 6: TAST to MIR");
+    let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, opt_level)?;
+    tracing::debug!(opt_level = opt_level, "Stage 6 complete: MIR created");
 
     // Stage 7: WASM Code Generation - use MIR-based generator with fixes
     tracing::debug!("Starting Stage 7: WASM generation");

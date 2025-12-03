@@ -1,0 +1,18 @@
+// Spec Section: 6.3 - HTTP Module
+// Tests: http.patch() function for HTTP PATCH requests
+// Requirement: Perform HTTP PATCH request for partial updates
+
+start()
+	// Test case 1: Basic PATCH request
+	string url = "https://httpbin.org/patch"
+	string data = "field=newValue"
+	string response = http.patch(url, data)
+	print("PATCH response received")
+
+	// Test case 2: PATCH with partial update
+	string partialUrl = "https://httpbin.org/patch"
+	string partialData = "name=updated_name"
+	string partialResponse = http.patch(partialUrl, partialData)
+	print("Partial update response received")
+
+	print("HTTP PATCH tests completed")

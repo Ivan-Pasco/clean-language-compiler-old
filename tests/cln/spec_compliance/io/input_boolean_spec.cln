@@ -1,0 +1,29 @@
+// Spec Section: 6.1 - Standard Library (Input/Output)
+// Tests: input.yesNo() function for boolean input
+// Requirement: Yes/No input with boolean result
+
+start()
+	// Test case 1: Basic yes/no input
+	boolean confirmed = input.yesNo("Continue? ")
+	print("Confirmed: " + confirmed.toString())
+
+	// Test case 2: Yes/no in conditional
+	boolean proceed = input.yesNo("Proceed with operation? ")
+	if proceed
+		print("Proceeding...")
+	else
+		print("Cancelled")
+
+	// Test case 3: Multiple yes/no inputs
+	boolean save = input.yesNo("Save changes? ")
+	boolean exit = input.yesNo("Exit program? ")
+	if save and exit
+		print("Saving and exiting")
+	else if save
+		print("Saving only")
+	else if exit
+		print("Exiting without save")
+	else
+		print("Continuing")
+
+	print("Input boolean tests completed")

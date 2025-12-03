@@ -1,0 +1,19 @@
+// Spec Section: 2.2 - Composite Types
+// Tests: pairs<K,V> key-value associative container
+// STATUS: Future implementation - pairs type requires runtime hash map support
+// This file is a placeholder documenting the expected API
+
+// The pairs type will support:
+// - pairs<string, integer> ages = pairs()
+// - ages.set("Alice", 30)
+// - integer age = ages.get("Alice")
+// - boolean hasKey = ages.has("Alice")
+// - ages.remove("Bob")
+// - integer size = ages.size()
+// - list<string> keys = ages.keys()
+// - list<integer> values = ages.values()
+
+start()
+	print("Pairs type is planned for future implementation")
+	print("See documentation for expected API")
+	print("Pairs type placeholder test completed")

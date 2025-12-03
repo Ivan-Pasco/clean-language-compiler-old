@@ -1,0 +1,56 @@
+// Spec Section: 3.4 - Statements
+// Tests: Object property assignment
+// Requirement: object.property = value assignment
+
+class Point
+	integer x
+	integer y
+
+	constructor(integer xVal, integer yVal)
+		x = xVal
+		y = yVal
+
+	functions:
+		void setX(integer val)
+			x = val
+
+		void setY(integer val)
+			y = val
+
+class Rectangle
+	integer width
+	integer height
+
+	constructor()
+		width = 0
+		height = 0
+
+	functions:
+		void setWidth(integer w)
+			width = w
+
+		void setHeight(integer h)
+			height = h
+
+start()
+	// Test case 1: Basic property assignment via methods
+	Point p = Point(0, 0)
+	p.setX(10)
+	p.setY(20)
+	print("Point: (" + p.x.toString() + ", " + p.y.toString() + ")")
+
+	// Test case 2: Assignment with expressions
+	Point q = Point(5, 5)
+	integer newX = q.x + 10
+	integer newY = q.y * 2
+	q.setX(newX)
+	q.setY(newY)
+	print("Modified point: (" + q.x.toString() + ", " + q.y.toString() + ")")
+
+	// Test case 3: Multiple property assignments
+	Rectangle rect = Rectangle()
+	rect.setWidth(100)
+	rect.setHeight(50)
+	print("Rectangle: " + rect.width.toString() + " x " + rect.height.toString())
+
+	print("Property assignment tests completed")

@@ -1,0 +1,29 @@
+// Spec Section: 3.4 - Statements
+// Tests: List element assignment
+// Requirement: list[index] = value assignment
+
+start()
+	// Test case 1: Basic list element assignment
+	list<integer> nums = [1, 2, 3]
+	nums[0] = 10
+	print("First element: " + nums[0].toString())
+
+	// Test case 2: Multiple assignments
+	list<integer> values = [0, 0, 0, 0, 0]
+	values[0] = 1
+	values[2] = 3
+	values[4] = 5
+	print("Values: " + values[0].toString() + ", " + values[2].toString() + ", " + values[4].toString())
+
+	// Test case 3: Assignment with expressions
+	list<integer> data = [10, 20, 30]
+	integer idx = 1
+	data[idx] = data[0] + data[2]
+	print("Middle element: " + data[1].toString())
+
+	// Test case 4: String list assignment
+	list<string> names = ["Alice", "Bob", "Charlie"]
+	names[1] = "Robert"
+	print("Updated name: " + names[1])
+
+	print("List assignment tests completed")

@@ -2977,6 +2977,8 @@ impl TokenParser {
                 | TokenKind::Greater
                 | TokenKind::LessEqual
                 | TokenKind::GreaterEqual
+                | TokenKind::Is
+                | TokenKind::Not
         ) {
             let op_token = self.bump();
             self.skip_whitespace();
@@ -2989,6 +2991,8 @@ impl TokenParser {
                 TokenKind::Greater => BinaryOperator::Greater,
                 TokenKind::LessEqual => BinaryOperator::LessEqual,
                 TokenKind::GreaterEqual => BinaryOperator::GreaterEqual,
+                TokenKind::Is => BinaryOperator::Is,
+                TokenKind::Not => BinaryOperator::Not,
                 _ => unreachable!(),
             };
 

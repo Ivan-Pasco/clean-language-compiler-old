@@ -1,0 +1,31 @@
+// Spec Section: 6.1 - String Operations
+// Tests: String validation operations
+// Requirement: isEmpty and isBlank functions
+
+start()
+	// Test case 1: Check empty string
+	string empty = ""
+	boolean isEmptyResult = empty.isEmpty()
+	print("Empty string isEmpty: " + isEmptyResult.toString())
+
+	// Test case 2: Check non-empty string
+	string text = "Hello"
+	boolean notEmpty = text.isEmpty()
+	print("Non-empty isEmpty: " + notEmpty.toString())
+
+	// Test case 3: Check blank string (whitespace only)
+	string whitespace = "   "
+	boolean isBlankResult = whitespace.isBlank()
+	print("Whitespace isBlank: " + isBlankResult.toString())
+
+	// Test case 4: Check non-blank string
+	string content = "  text  "
+	boolean notBlank = content.isBlank()
+	print("Content isBlank: " + notBlank.toString())
+
+	// Test case 5: Empty is also blank
+	string emptyStr = ""
+	boolean emptyIsBlank = emptyStr.isBlank()
+	print("Empty isBlank: " + emptyIsBlank.toString())
+
+	print("String validation tests completed")

@@ -1,0 +1,29 @@
+// Spec Section: 6.2 - File I/O Module
+// Tests: file.delete() function to delete files
+// Requirement: Delete a file from the filesystem
+
+start()
+	// Test case 1: Delete file if exists
+	string filename = "temp_file.txt"
+	if file.exists(filename)
+		file.delete(filename)
+		print("Deleted: " + filename)
+	else
+		print("File not found: " + filename)
+
+	// Test case 2: Create then delete
+	file.write("to_delete.txt", "temporary content")
+	print("Created temporary file")
+
+	if file.exists("to_delete.txt")
+		file.delete("to_delete.txt")
+		print("Temporary file deleted")
+
+	// Test case 3: Check deletion result
+	boolean stillExists = file.exists("to_delete.txt")
+	if stillExists
+		print("File still exists (unexpected)")
+	else
+		print("File successfully deleted")
+
+	print("File delete tests completed")

@@ -1,0 +1,38 @@
+// Spec Section: 5.4 - Function Features
+// Tests: input blocks for parameter documentation
+// STATUS: Future implementation - input blocks require parser and semantic support
+// This file documents the expected syntax
+
+// The input block syntax will support:
+// functions:
+//     integer calculate()
+//         description "Calculate sum"
+//         input
+//             integer x
+//             integer y
+//         return x + y
+
+// For now, use regular parameters:
+functions:
+	integer calculate(integer x, integer y)
+		return x + y
+
+	integer multiply(integer a, integer b)
+		return a * b
+
+	string formatMessage(string name, integer age)
+		return "Hello " + name + ", you are " + age.toString() + " years old"
+
+start()
+	// Test with regular parameters (working)
+	integer sum = calculate(10, 20)
+	print("Calculate result: " + sum.toString())
+
+	integer product = multiply(5, 6)
+	print("Multiply result: " + product.toString())
+
+	string greeting = formatMessage("Alice", 25)
+	print("Formatted message: " + greeting)
+
+	print("Input block syntax is planned for future implementation")
+	print("Input block tests completed (using regular parameters)")

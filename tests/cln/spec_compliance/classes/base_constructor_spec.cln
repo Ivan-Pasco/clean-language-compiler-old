@@ -1,0 +1,74 @@
+// Spec Section: 9.3 - Inheritance
+// Tests: base() constructor calls in child classes
+
+class Animal
+	string name
+	integer age
+
+	constructor(string animalName, integer animalAge)
+		name = animalName
+		age = animalAge
+
+	functions:
+		string describe()
+			return name + " is " + age.toString() + " years old"
+
+class Dog is Animal
+	string breed
+
+	constructor(string dogName, integer dogAge, string dogBreed)
+		base(dogName, dogAge)
+		breed = dogBreed
+
+	functions:
+		string fullDescription()
+			return name + " is a " + breed + ", " + age.toString() + " years old"
+
+class Cat is Animal
+	boolean isIndoor
+
+	constructor(string catName, integer catAge, boolean indoor)
+		base(catName, catAge)
+		isIndoor = indoor
+
+	functions:
+		string getLocation()
+			if isIndoor
+				return name + " is an indoor cat"
+			else
+				return name + " is an outdoor cat"
+
+start()
+	// Test 1: Create parent class instance
+	Animal animal = Animal("Generic", 5)
+	string animalDesc = animal.describe()
+	print(animalDesc)
+
+	// Test 2: Create Dog with base() call
+	Dog dog = Dog("Buddy", 3, "Golden Retriever")
+	string dogDesc = dog.fullDescription()
+	print(dogDesc)
+
+	// Test 3: Access inherited fields in Dog
+	print("Dog name: " + dog.name)
+	print("Dog age: " + dog.age.toString())
+	print("Dog breed: " + dog.breed)
+
+	// Test 4: Use inherited method
+	string dogBasicDesc = dog.describe()
+	print("Dog basic description: " + dogBasicDesc)
+
+	// Test 5: Create Cat with base() call
+	Cat indoorCat = Cat("Whiskers", 2, true)
+	string catLocation = indoorCat.getLocation()
+	print(catLocation)
+
+	// Test 6: Create outdoor cat
+	Cat outdoorCat = Cat("Shadow", 4, false)
+	print(outdoorCat.getLocation())
+
+	// Test 7: Access inherited fields in Cat
+	print("Cat name: " + indoorCat.name)
+	print("Cat age: " + indoorCat.age.toString())
+
+	print("Base constructor tests completed")

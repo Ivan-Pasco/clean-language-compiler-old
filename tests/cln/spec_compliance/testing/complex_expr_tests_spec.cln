@@ -1,0 +1,45 @@
+// Spec Section: 7 - Testing Framework
+// Tests: Testing complex expressions within tests block
+// Requirement: Test block can verify complex expression results
+
+functions:
+	integer factorial(integer n)
+		if n <= 1
+			return 1
+		return n * factorial(n - 1)
+
+	integer fibonacci(integer n)
+		if n <= 1
+			return n
+		return fibonacci(n - 1) + fibonacci(n - 2)
+
+tests:
+	"arithmetic expression": (10 + 5) * 2 = 30
+	"subtraction chain": 100 - 50 - 25 = 25
+	"multiplication": 3 * 4 * 5 = 60
+	"division": 100 / 5 = 20
+	"mixed operations": 10 + 5 * 2 = 20
+
+start()
+	// Test factorial at runtime
+	integer fact5 = factorial(5)
+	print("factorial(5) = " + fact5.toString())
+
+	integer fact6 = factorial(6)
+	print("factorial(6) = " + fact6.toString())
+
+	// Test fibonacci at runtime
+	integer fib6 = fibonacci(6)
+	print("fibonacci(6) = " + fib6.toString())
+
+	integer fib7 = fibonacci(7)
+	print("fibonacci(7) = " + fib7.toString())
+
+	// Test complex expressions
+	integer complex1 = ((2 + 3) * (4 + 1))
+	print("((2 + 3) * (4 + 1)) = " + complex1.toString())
+
+	integer complex2 = (100 - 50) / (10 - 5)
+	print("(100 - 50) / (10 - 5) = " + complex2.toString())
+
+	print("Complex expression tests specification completed")

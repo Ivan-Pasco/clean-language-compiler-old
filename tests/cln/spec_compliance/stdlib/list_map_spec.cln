@@ -1,0 +1,34 @@
+// Spec Section: 6.1 - List Operations
+// Tests: list.map() functional operation
+// STATUS: Requires lambda/closure support for full implementation
+// This file documents expected API and tests basic list operations
+
+functions:
+	integer doubleValue(integer x)
+		return x * 2
+
+	integer tripleValue(integer x)
+		return x * 3
+
+start()
+	// Test case 1: Manual map implementation (until lambda support)
+	list<integer> nums = [1, 2, 3, 4, 5]
+	list<integer> doubled = []
+
+	iterate n in nums
+		doubled.push(doubleValue(n))
+
+	print("Original: [1, 2, 3, 4, 5]")
+	print("Doubled manually: " + doubled[0].toString() + ", " + doubled[1].toString() + ", " + doubled[2].toString())
+
+	// Test case 2: Another manual map
+	list<integer> tripled = []
+	iterate n in nums
+		tripled.push(tripleValue(n))
+
+	print("Tripled manually: " + tripled[0].toString() + ", " + tripled[1].toString() + ", " + tripled[2].toString())
+
+	// When lambda support is added:
+	// list<integer> mapped = list.map(nums, x => x * 2)
+
+	print("List map tests completed (manual implementation)")

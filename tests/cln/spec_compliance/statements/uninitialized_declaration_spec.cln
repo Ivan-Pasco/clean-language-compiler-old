@@ -1,0 +1,35 @@
+// Spec Section: 3.4 - Statements
+// Tests: Variable declaration without initialization
+// Requirement: Variables can be declared without initial value
+
+start()
+	// Test case 1: Declare then assign integer
+	integer x
+	x = 10
+	print("Integer x: " + x.toString())
+
+	// Test case 2: Declare then assign string
+	string name
+	name = "Alice"
+	print("String name: " + name)
+
+	// Test case 3: Declare then assign number
+	number pi
+	pi = 3.14159
+	print("Number pi: " + pi.toString())
+
+	// Test case 4: Declare then assign boolean
+	boolean flag
+	flag = true
+	print("Boolean flag: " + flag.toString())
+
+	// Test case 5: Multiple declarations then assignments
+	integer a
+	integer b
+	integer c
+	a = 1
+	b = 2
+	c = a + b
+	print("Sum c: " + c.toString())
+
+	print("Uninitialized declaration tests completed")

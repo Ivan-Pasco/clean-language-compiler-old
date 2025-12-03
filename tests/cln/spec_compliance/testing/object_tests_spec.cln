@@ -1,0 +1,61 @@
+// Spec Section: 7 - Testing Framework
+// Tests: Testing object creation and properties
+// Requirement: Test block can verify object state
+
+class Point
+	integer x
+	integer y
+
+	constructor(integer xVal, integer yVal)
+		x = xVal
+		y = yVal
+
+	functions:
+		integer getX()
+			return x
+
+		integer getY()
+			return y
+
+		integer sum()
+			return x + y
+
+class Rectangle
+	integer width
+	integer height
+
+	constructor(integer w, integer h)
+		width = w
+		height = h
+
+	functions:
+		integer area()
+			return width * height
+
+		integer perimeter()
+			return 2 * (width + height)
+
+tests:
+	"coordinate sum": 10 + 20 = 30
+	"area calculation": 5 * 10 = 50
+	"perimeter formula": 2 * (5 + 10) = 30
+
+start()
+	// Test Point at runtime
+	Point p = Point(10, 20)
+	print("Point x: " + p.getX().toString())
+	print("Point y: " + p.getY().toString())
+	print("Point sum: " + p.sum().toString())
+
+	// Test Rectangle at runtime
+	Rectangle r = Rectangle(5, 10)
+	print("Rectangle area: " + r.area().toString())
+	print("Rectangle perimeter: " + r.perimeter().toString())
+
+	// Multiple objects
+	Point p1 = Point(1, 2)
+	Point p2 = Point(3, 4)
+	print("P1 sum: " + p1.sum().toString())
+	print("P2 sum: " + p2.sum().toString())
+
+	print("Object tests specification completed")

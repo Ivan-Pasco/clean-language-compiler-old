@@ -1,0 +1,18 @@
+// Spec Section: 6.1 - Standard Library (Input/Output)
+// Tests: input() function for text input
+// Requirement: Basic string input from user with prompt
+
+start()
+	// Test case 1: Basic input with prompt
+	string name = input("Enter your name: ")
+	print("Hello, " + name)
+
+	// Test case 2: Input can be assigned to variable
+	string city = input("Enter city: ")
+	print("City: " + city)
+
+	// Test case 3: Input result can be concatenated
+	string greeting = "Welcome, " + input("Your name: ")
+	print(greeting)
+
+	print("Input text tests completed")

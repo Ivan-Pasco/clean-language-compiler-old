@@ -201,3 +201,8 @@ wasmtime-runtime = ["wasmtime"]
 # Temporarily disabled due to version conflicts - kept for config compatibility
 wasmer-runtime = ["wasmer"]
 both-runtimes = ["wasmtime-runtime", "wasmer-runtime"]
+
+# Benchmark configuration
+[[bench]]
+name = "compiler_benchmarks"
+harness = false

@@ -1,0 +1,24 @@
+// Spec Section: 6.3 - HTTP Module
+// Tests: http.post() function for HTTP POST requests
+// Requirement: Perform HTTP POST request with data and return response
+
+start()
+	// Test case 1: Basic POST request
+	string url = "https://httpbin.org/post"
+	string data = "name=test"
+	string response = http.post(url, data)
+	print("POST response received")
+
+	// Test case 2: POST with form data
+	string formUrl = "https://httpbin.org/post"
+	string formData = "key=value&other=data"
+	string formResponse = http.post(formUrl, formData)
+	print("Form POST response received")
+
+	// Test case 3: POST with more form data
+	string jsonUrl = "https://httpbin.org/post"
+	string jsonData = "message=hello&count=42"
+	string jsonResponse = http.post(jsonUrl, jsonData)
+	print("JSON POST response received")
+
+	print("HTTP POST tests completed")

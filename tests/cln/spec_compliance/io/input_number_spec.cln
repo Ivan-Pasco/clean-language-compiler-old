@@ -1,0 +1,22 @@
+// Spec Section: 6.1 - Standard Library (Input/Output)
+// Tests: input.float() function for floating-point input
+// Requirement: Number input with automatic conversion
+
+start()
+	// Test case 1: Basic number input
+	number height = input.number("Enter height: ")
+	print("Height: " + height.toString())
+
+	// Test case 2: Number input for calculations
+	number price = input.number("Price: ")
+	number quantity = input.number("Quantity: ")
+	number total = price * quantity
+	print("Total: " + total.toString())
+
+	// Test case 3: Number input with decimal precision
+	number rate = input.number("Interest rate: ")
+	number principal = input.number("Principal: ")
+	number interest = principal * rate / 100.0
+	print("Interest: " + interest.toString())
+
+	print("Input number tests completed")

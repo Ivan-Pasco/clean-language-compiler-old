@@ -1,0 +1,41 @@
+// Spec Section: 6.1 - List Operations
+// Tests: list.reduce() functional operation
+// STATUS: Requires lambda/closure support for full implementation
+// This file documents expected API and tests basic list operations
+
+start()
+	// Test case 1: Manual reduce - sum
+	list<integer> nums = [1, 2, 3, 4, 5]
+	integer sum = 0
+
+	iterate n in nums
+		sum = sum + n
+
+	print("Numbers: [1, 2, 3, 4, 5]")
+	print("Sum: " + sum.toString())
+
+	// Test case 2: Manual reduce - product
+	list<integer> factors = [2, 3, 4]
+	integer product = 1
+
+	iterate f in factors
+		product = product * f
+
+	print("Factors: [2, 3, 4]")
+	print("Product: " + product.toString())
+
+	// Test case 3: Manual reduce - find max
+	list<integer> values = [3, 7, 2, 9, 1, 5]
+	integer maxVal = values[0]
+
+	iterate v in values
+		if v > maxVal
+			maxVal = v
+
+	print("Values: [3, 7, 2, 9, 1, 5]")
+	print("Max: " + maxVal.toString())
+
+	// When lambda support is added:
+	// integer total = list.reduce(nums, (acc, x) => acc + x, 0)
+
+	print("List reduce tests completed (manual implementation)")

@@ -1308,10 +1308,16 @@ impl<'a> TypeInference<'a> {
                 };
 
                 if is_empty_literal {
-                    // For empty literals, use the declared field type directly
+                    // For empty array literals, create an ArrayLiteral with empty elements
+                    // This ensures the list gets properly allocated rather than set to 0
+                    let element_type = match &field_type {
+                        ConcreteType::Array(elem_type) => (**elem_type).clone(),
+                        _ => ConcreteType::Unknown,
+                    };
                     Some(TastExpression {
-                        kind: TastExpressionKind::Literal {
-                            value: TastLiteral::Null,
+                        kind: TastExpressionKind::ArrayLiteral {
+                            elements: vec![],
+                            element_type,
                         },
                         expr_type: field_type.clone(),
                         location: init_expr.location().clone(),
@@ -1563,11 +1569,17 @@ impl<'a> TypeInference<'a> {
                     };
 
                     let tast_init = if is_empty_literal {
-                        // For empty literals, use the declared type directly
-                        // This ensures list<integer> myList = [] works correctly
+                        // For empty array literals, create an ArrayLiteral with empty elements
+                        // This ensures list<integer> myList = [] allocates an actual list
+                        // rather than setting the pointer to 0 (null)
+                        let element_type = match &declared_type {
+                            ConcreteType::Array(elem_type) => (**elem_type).clone(),
+                            _ => ConcreteType::Unknown,
+                        };
                         TastExpression {
-                            kind: TastExpressionKind::Literal {
-                                value: TastLiteral::Null,
+                            kind: TastExpressionKind::ArrayLiteral {
+                                elements: vec![],
+                                element_type,
                             },
                             expr_type: declared_type.clone(),
                             location: init_expr.location().clone(),
@@ -1790,10 +1802,16 @@ impl<'a> TypeInference<'a> {
 
                 let tast_value =
                     if is_empty_literal && !matches!(target_type, ConcreteType::Unknown) {
-                        // Use target type for empty literals
+                        // For empty array literals, create an ArrayLiteral with empty elements
+                        // This ensures the list gets properly allocated rather than set to 0
+                        let element_type = match &target_type {
+                            ConcreteType::Array(elem_type) => (**elem_type).clone(),
+                            _ => ConcreteType::Unknown,
+                        };
                         TastExpression {
-                            kind: TastExpressionKind::Literal {
-                                value: TastLiteral::Null,
+                            kind: TastExpressionKind::ArrayLiteral {
+                                elements: vec![],
+                                element_type,
                             },
                             expr_type: target_type.clone(),
                             location: value.location().clone(),
@@ -2763,8 +2781,8 @@ impl<'a> TypeInference<'a> {
                 }
             }
 
-            HirBinaryOp::Equal | HirBinaryOp::NotEqual => {
-                // Equality can compare any types
+            HirBinaryOp::Equal | HirBinaryOp::NotEqual | HirBinaryOp::Is | HirBinaryOp::IsNot => {
+                // Equality/identity can compare any types
                 Ok(ConcreteType::Boolean)
             }
 
@@ -3113,6 +3131,8 @@ impl<'a> TypeInference<'a> {
             ConcreteType::Array(_) => Some("list".to_string()), // Fixed: list is the correct type name in Clean Language
             ConcreteType::Matrix(_) => Some("matrix".to_string()),
             ConcreteType::Pairs(_, _) => Some("pairs".to_string()),
+            // Any type for generic/dynamic values
+            ConcreteType::Any => Some("any".to_string()),
             // Class, Interface, Function, Tuple, Union, etc. are not primitive types
             _ => None,
         }
@@ -3157,6 +3177,9 @@ impl<'a> TypeInference<'a> {
 
             // Boolean methods
             (ConcreteType::Boolean, "toString") => Ok(ConcreteType::String),
+
+            // Any type methods - returns string for toString, preserves any for others
+            (ConcreteType::Any, "toString") => Ok(ConcreteType::String),
 
             // Class instance methods - look up in symbol table
             (ConcreteType::Class { symbol_id, .. }, _) => {
@@ -3960,14 +3983,12 @@ impl<'a> TypeInference<'a> {
                         ConcreteType::Unknown
                     }
                 } else {
-                    // Check for generic placeholder 'any'
+                    // Check for 'any' type - dynamically typed boxed values
                     if name == "any" {
-                        // 'any' is the generic placeholder type in Clean Language
-                        // It represents a value of any type, determined at usage
-                        return ConcreteType::Generic {
-                            name: "any".to_string(),
-                            bounds: Vec::new(),
-                        };
+                        // 'any' is the dynamic type in Clean Language
+                        // It represents a value of any type with runtime type tag
+                        // Memory layout: [tag:i32][value1:i32][value2:i32] = 12 bytes
+                        return ConcreteType::Any;
                     }
 
                     // If not found in symbol table, could be a built-in type
@@ -4015,6 +4036,8 @@ impl<'a> TypeInference<'a> {
             HirBinaryOp::LessEqual => BinaryOperator::LessThanOrEqual,
             HirBinaryOp::Greater => BinaryOperator::GreaterThan,
             HirBinaryOp::GreaterEqual => BinaryOperator::GreaterThanOrEqual,
+            HirBinaryOp::Is => BinaryOperator::Is,
+            HirBinaryOp::IsNot => BinaryOperator::IsNot,
             HirBinaryOp::And => BinaryOperator::And,
             HirBinaryOp::Or => BinaryOperator::Or,
             HirBinaryOp::StringConcat => BinaryOperator::Concatenate,

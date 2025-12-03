@@ -1,0 +1,45 @@
+// Spec Section: 5.5 - Error Handling
+// Tests: Error stack and propagation through call chain
+// Requirement: Errors propagate through function calls
+
+functions:
+	integer level3()
+		error("Error at level 3")
+		return 0
+
+	integer level2()
+		return level3()
+
+	integer level1()
+		return level2()
+
+	integer safeCallChain()
+		integer result = level1() onError 999
+		return result
+
+	integer riskyOperation(integer x)
+		if x < 0
+			error("Negative value not allowed")
+		return x * 2
+
+	integer processValue(integer val)
+		integer result = riskyOperation(val) onError 0
+		return result
+
+start()
+	// Test case 1: Error propagation through call chain
+	integer chainResult = safeCallChain()
+	print("Call chain result: " + chainResult.toString())
+
+	// Test case 2: Nested error handling
+	integer result1 = processValue(10)
+	print("Process positive: " + result1.toString())
+
+	integer result2 = processValue(0)
+	print("Process zero: " + result2.toString())
+
+	// Test case 3: Error with recovery
+	integer recovered = riskyOperation(5) onError 999
+	print("Recovered value: " + recovered.toString())
+
+	print("Error stack tests completed")

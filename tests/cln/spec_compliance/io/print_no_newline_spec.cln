@@ -1,0 +1,24 @@
+// Spec Section: 6.1 - Standard Library (Input/Output)
+// Tests: print without newline
+// Requirement: print without parentheses outputs without newline
+
+start()
+	// Test case 1: Multiple prints without newlines
+	print "Hello"
+	print " "
+	print "World"
+	print("\n")
+
+	// Test case 2: Building output piece by piece
+	print "Count: "
+	integer count = 42
+	print count.toString()
+	print("\n")
+
+	// Test case 3: Mixed output
+	print "Result = "
+	number result = 3.14159
+	print result.toString()
+	print("\n")
+
+	print("Print no-newline tests completed")

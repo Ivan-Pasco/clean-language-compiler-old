@@ -571,6 +571,418 @@ pub struct FixSuggestion {
     pub context: FixContext,
 }
 
+/// Actionable fix suggestion with precise location and replacement text
+/// This can be used by IDEs/editors to apply quick fixes
+#[derive(Debug, Clone)]
+pub struct ActionableFix {
+    /// Human-readable description of the fix
+    pub message: String,
+    /// The exact text to replace (None means insert)
+    pub old_text: Option<String>,
+    /// The replacement text to insert
+    pub new_text: String,
+    /// Start line (1-indexed)
+    pub start_line: usize,
+    /// Start column (1-indexed)
+    pub start_column: usize,
+    /// End line (1-indexed, inclusive)
+    pub end_line: usize,
+    /// End column (1-indexed, inclusive)
+    pub end_column: usize,
+    /// Confidence score (0.0 to 1.0) - higher means more likely to be correct
+    pub confidence: f64,
+    /// Whether this fix can be auto-applied safely
+    pub auto_applicable: bool,
+}
+
+impl ActionableFix {
+    /// Create an insertion fix (adds text at a position)
+    pub fn insert(
+        message: impl Into<String>,
+        new_text: impl Into<String>,
+        line: usize,
+        column: usize,
+        confidence: f64,
+    ) -> Self {
+        Self {
+            message: message.into(),
+            old_text: None,
+            new_text: new_text.into(),
+            start_line: line,
+            start_column: column,
+            end_line: line,
+            end_column: column,
+            confidence,
+            auto_applicable: confidence >= 0.9,
+        }
+    }
+
+    /// Create a replacement fix (replaces text at a range)
+    pub fn replace(
+        message: impl Into<String>,
+        old_text: impl Into<String>,
+        new_text: impl Into<String>,
+        start_line: usize,
+        start_column: usize,
+        end_line: usize,
+        end_column: usize,
+        confidence: f64,
+    ) -> Self {
+        Self {
+            message: message.into(),
+            old_text: Some(old_text.into()),
+            new_text: new_text.into(),
+            start_line,
+            start_column,
+            end_line,
+            end_column,
+            confidence,
+            auto_applicable: confidence >= 0.9,
+        }
+    }
+
+    /// Create a deletion fix (removes text at a range)
+    pub fn delete(
+        message: impl Into<String>,
+        old_text: impl Into<String>,
+        start_line: usize,
+        start_column: usize,
+        end_line: usize,
+        end_column: usize,
+        confidence: f64,
+    ) -> Self {
+        Self {
+            message: message.into(),
+            old_text: Some(old_text.into()),
+            new_text: String::new(),
+            start_line,
+            start_column,
+            end_line,
+            end_column,
+            confidence,
+            auto_applicable: false, // Deletions are risky, don't auto-apply
+        }
+    }
+}
+
+/// Generator for actionable fixes based on error analysis
+pub struct ActionableFixGenerator;
+
+impl ActionableFixGenerator {
+    /// Generate actionable fixes for common error patterns
+    pub fn generate_fixes(error: &CompilerError, source: &str) -> Vec<ActionableFix> {
+        let mut fixes = Vec::new();
+
+        let (context, error_type) = match error {
+            CompilerError::Syntax { context } => (context, "syntax"),
+            CompilerError::Type { context } => (context, "type"),
+            CompilerError::Validation { context } => (context, "validation"),
+            _ => return fixes,
+        };
+
+        let location = match &context.location {
+            Some(loc) => loc,
+            None => return fixes,
+        };
+
+        let message = &context.message;
+
+        // Generate fixes based on error patterns
+        match error_type {
+            "syntax" => {
+                fixes.extend(Self::generate_syntax_fixes(message, location, source));
+            }
+            "type" => {
+                fixes.extend(Self::generate_type_fixes(
+                    message, location, source, context,
+                ));
+            }
+            "validation" => {
+                fixes.extend(Self::generate_validation_fixes(message, location, source));
+            }
+            _ => {}
+        }
+
+        // Sort by confidence (highest first)
+        fixes.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        fixes
+    }
+
+    fn generate_syntax_fixes(
+        message: &str,
+        location: &SourceLocation,
+        source: &str,
+    ) -> Vec<ActionableFix> {
+        let mut fixes = Vec::new();
+
+        // Missing closing parenthesis
+        if message.contains("Expected ')'") || message.contains("missing )") {
+            fixes.push(ActionableFix::insert(
+                "Add missing closing parenthesis",
+                ")",
+                location.line,
+                Self::get_line_end_column(source, location.line),
+                0.85,
+            ));
+        }
+
+        // Missing closing bracket
+        if message.contains("Expected ']'") || message.contains("missing ]") {
+            fixes.push(ActionableFix::insert(
+                "Add missing closing bracket",
+                "]",
+                location.line,
+                Self::get_line_end_column(source, location.line),
+                0.85,
+            ));
+        }
+
+        // Missing closing brace
+        if message.contains("Expected '}'") || message.contains("missing }") {
+            fixes.push(ActionableFix::insert(
+                "Add missing closing brace",
+                "}",
+                location.line,
+                Self::get_line_end_column(source, location.line),
+                0.80,
+            ));
+        }
+
+        // Traditional function syntax suggestions
+        if message.contains("only available as a method") {
+            if let Some(func_name) = Self::extract_function_name(message) {
+                fixes.push(ActionableFix {
+                    message: format!("Convert to method syntax: object.{}()", func_name),
+                    old_text: Some(format!("{}(", func_name)),
+                    new_text: format!("object.{}(", func_name),
+                    start_line: location.line,
+                    start_column: location.column,
+                    end_line: location.line,
+                    end_column: location.column + func_name.len() + 1,
+                    confidence: 0.70,
+                    auto_applicable: false, // Needs user to specify object
+                });
+            }
+        }
+
+        // 'func' instead of 'function'
+        if message.contains("expected 'function'")
+            || (message.contains("unexpected") && message.contains("func"))
+        {
+            if let Some((line_content, col)) = Self::find_in_line(source, location.line, "func ") {
+                if !line_content.contains("function") {
+                    fixes.push(ActionableFix::replace(
+                        "Use 'function' keyword instead of 'func'",
+                        "func",
+                        "function",
+                        location.line,
+                        col,
+                        location.line,
+                        col + 4,
+                        0.95,
+                    ));
+                }
+            }
+        }
+
+        // 'let' variable declaration
+        if message.contains("unexpected 'let'") || message.contains("use explicit types") {
+            if let Some((_, col)) = Self::find_in_line(source, location.line, "let ") {
+                fixes.push(ActionableFix {
+                    message: "Use explicit type instead of 'let' (e.g., 'integer x = 5')"
+                        .to_string(),
+                    old_text: Some("let".to_string()),
+                    new_text: "integer".to_string(), // Default suggestion
+                    start_line: location.line,
+                    start_column: col,
+                    end_line: location.line,
+                    end_column: col + 3,
+                    confidence: 0.60,
+                    auto_applicable: false,
+                });
+            }
+        }
+
+        fixes
+    }
+
+    fn generate_type_fixes(
+        message: &str,
+        location: &SourceLocation,
+        _source: &str,
+        context: &ErrorContext,
+    ) -> Vec<ActionableFix> {
+        let mut fixes = Vec::new();
+
+        // Type mismatch fixes
+        if message.contains("Type mismatch") || message.contains("Incompatible types") {
+            // Check if we have type info in help text
+            if let Some(help) = &context.help {
+                if help.contains("Expected type") && help.contains("but found") {
+                    // Extract types from help message
+                    if let (Some(expected), Some(actual)) = (
+                        Self::extract_type_from_help(help, "Expected type '", "'"),
+                        Self::extract_type_from_help(help, "but found '", "'"),
+                    ) {
+                        // Suggest type conversion
+                        if expected == "integer" && actual == "number" {
+                            fixes.push(ActionableFix {
+                                message: "Convert number to integer using .toInteger()".to_string(),
+                                old_text: None,
+                                new_text: ".toInteger()".to_string(),
+                                start_line: location.line,
+                                start_column: location.column,
+                                end_line: location.line,
+                                end_column: location.column,
+                                confidence: 0.75,
+                                auto_applicable: false,
+                            });
+                        } else if expected == "number" && actual == "integer" {
+                            fixes.push(ActionableFix {
+                                message: "Convert integer to number using .toNumber()".to_string(),
+                                old_text: None,
+                                new_text: ".toNumber()".to_string(),
+                                start_line: location.line,
+                                start_column: location.column,
+                                end_line: location.line,
+                                end_column: location.column,
+                                confidence: 0.75,
+                                auto_applicable: false,
+                            });
+                        } else if expected == "string" {
+                            fixes.push(ActionableFix {
+                                message: "Convert to string using .toString()".to_string(),
+                                old_text: None,
+                                new_text: ".toString()".to_string(),
+                                start_line: location.line,
+                                start_column: location.column,
+                                end_line: location.line,
+                                end_column: location.column,
+                                confidence: 0.70,
+                                auto_applicable: false,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Variable not found
+        if message.contains("Variable") && message.contains("not found") {
+            if let Some(var_name) = Self::extract_quoted_name(message) {
+                fixes.push(ActionableFix {
+                    message: format!("Declare variable '{}' before use", var_name),
+                    old_text: None,
+                    new_text: format!("integer {} = 0\n", var_name),
+                    start_line: location.line,
+                    start_column: 1,
+                    end_line: location.line,
+                    end_column: 1,
+                    confidence: 0.50,
+                    auto_applicable: false,
+                });
+            }
+        }
+
+        // Function not found - use similar names from suggestions
+        if message.contains("Function") && message.contains("not found") {
+            for suggestion in &context.suggestions {
+                if suggestion.contains("Did you mean") {
+                    if let Some(suggested_name) = Self::extract_quoted_name(suggestion) {
+                        if let Some(original_name) = Self::extract_quoted_name(message) {
+                            fixes.push(ActionableFix::replace(
+                                format!("Replace '{}' with '{}'", original_name, suggested_name),
+                                original_name.clone(),
+                                suggested_name,
+                                location.line,
+                                location.column,
+                                location.line,
+                                location.column + original_name.len(),
+                                0.80,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        fixes
+    }
+
+    fn generate_validation_fixes(
+        message: &str,
+        location: &SourceLocation,
+        _source: &str,
+    ) -> Vec<ActionableFix> {
+        let mut fixes = Vec::new();
+
+        // Unused variable warning
+        if message.contains("declared but never used") {
+            if let Some(var_name) = Self::extract_quoted_name(message) {
+                fixes.push(ActionableFix {
+                    message: format!(
+                        "Prefix with underscore to mark as intentionally unused: _{}",
+                        var_name
+                    ),
+                    old_text: Some(var_name.clone()),
+                    new_text: format!("_{}", var_name),
+                    start_line: location.line,
+                    start_column: location.column,
+                    end_line: location.line,
+                    end_column: location.column + var_name.len(),
+                    confidence: 0.90,
+                    auto_applicable: true,
+                });
+            }
+        }
+
+        fixes
+    }
+
+    // Helper functions
+    fn get_line_end_column(source: &str, line: usize) -> usize {
+        source
+            .lines()
+            .nth(line.saturating_sub(1))
+            .map(|l| l.len() + 1)
+            .unwrap_or(1)
+    }
+
+    fn find_in_line(source: &str, line: usize, pattern: &str) -> Option<(String, usize)> {
+        source
+            .lines()
+            .nth(line.saturating_sub(1))
+            .and_then(|line_content| {
+                line_content
+                    .find(pattern)
+                    .map(|pos| (line_content.to_string(), pos + 1))
+            })
+    }
+
+    fn extract_function_name(message: &str) -> Option<String> {
+        // Extract function name from messages like "Function 'length' is only available as a method"
+        Self::extract_quoted_name(message)
+    }
+
+    fn extract_quoted_name(text: &str) -> Option<String> {
+        let start = text.find('\'')?;
+        let end = text[start + 1..].find('\'')?;
+        Some(text[start + 1..start + 1 + end].to_string())
+    }
+
+    fn extract_type_from_help(help: &str, prefix: &str, suffix: &str) -> Option<String> {
+        let start = help.find(prefix)? + prefix.len();
+        let rest = &help[start..];
+        let end = rest.find(suffix)?;
+        Some(rest[..end].to_string())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FixContext {
     pub location: Option<SourceLocation>,
@@ -615,5 +1027,142 @@ pub struct DiagnosticReport {
 impl Default for DiagnosticSystem {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_actionable_fix_insert() {
+        let fix = ActionableFix::insert("Add missing parenthesis", ")", 10, 25, 0.95);
+
+        assert_eq!(fix.message, "Add missing parenthesis");
+        assert_eq!(fix.new_text, ")");
+        assert!(fix.old_text.is_none());
+        assert_eq!(fix.start_line, 10);
+        assert_eq!(fix.start_column, 25);
+        assert!(fix.auto_applicable); // confidence >= 0.9
+    }
+
+    #[test]
+    fn test_actionable_fix_replace() {
+        let fix = ActionableFix::replace(
+            "Replace func with function",
+            "func",
+            "function",
+            5,
+            1,
+            5,
+            5,
+            0.95,
+        );
+
+        assert_eq!(fix.message, "Replace func with function");
+        assert_eq!(fix.old_text, Some("func".to_string()));
+        assert_eq!(fix.new_text, "function");
+        assert_eq!(fix.start_line, 5);
+        assert_eq!(fix.end_column, 5);
+        assert!(fix.auto_applicable);
+    }
+
+    #[test]
+    fn test_actionable_fix_delete() {
+        let fix = ActionableFix::delete("Remove unused import", "import foo", 1, 1, 1, 11, 0.85);
+
+        assert_eq!(fix.message, "Remove unused import");
+        assert_eq!(fix.old_text, Some("import foo".to_string()));
+        assert!(fix.new_text.is_empty());
+        assert!(!fix.auto_applicable); // deletions are never auto-applicable
+    }
+
+    #[test]
+    fn test_actionable_fix_low_confidence() {
+        let fix = ActionableFix::insert("Maybe add this", "?", 1, 1, 0.5);
+
+        assert!(!fix.auto_applicable); // confidence < 0.9
+    }
+
+    #[test]
+    fn test_extract_quoted_name() {
+        let text = "Variable 'myVar' not found";
+        let result = ActionableFixGenerator::extract_quoted_name(text);
+        assert_eq!(result, Some("myVar".to_string()));
+
+        let text2 = "Function 'calculate' is undefined";
+        let result2 = ActionableFixGenerator::extract_quoted_name(text2);
+        assert_eq!(result2, Some("calculate".to_string()));
+
+        let text3 = "No quotes here";
+        let result3 = ActionableFixGenerator::extract_quoted_name(text3);
+        assert!(result3.is_none());
+    }
+
+    #[test]
+    fn test_generate_syntax_fixes_for_missing_paren() {
+        let location = SourceLocation {
+            line: 5,
+            column: 10,
+            file: "test.cln".to_string(),
+        };
+
+        let source = "line1\nline2\nline3\nline4\nprint(x\nline6";
+        let message = "Expected ')' at end of function call";
+
+        let fixes = ActionableFixGenerator::generate_syntax_fixes(message, &location, source);
+
+        assert!(!fixes.is_empty());
+        assert!(fixes[0].message.contains("parenthesis"));
+        assert_eq!(fixes[0].new_text, ")");
+    }
+
+    #[test]
+    fn test_diagnostic_system_creation() {
+        let system = DiagnosticSystem::new();
+        let report = system.error_patterns.detect_patterns(&[]);
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn test_error_pattern_database() {
+        let db = ErrorPatternDatabase::new();
+
+        // Verify patterns are loaded
+        assert!(!db.patterns.is_empty());
+
+        // Should find at least the common patterns
+        let pattern_ids: Vec<&str> = db.patterns.iter().map(|p| p.id.as_str()).collect();
+        assert!(pattern_ids.contains(&"missing_semicolon"));
+        assert!(pattern_ids.contains(&"unmatched_braces"));
+        assert!(pattern_ids.contains(&"undefined_variable"));
+        assert!(pattern_ids.contains(&"type_mismatch"));
+    }
+
+    #[test]
+    fn test_fix_suggestion_engine() {
+        let engine = FixSuggestionEngine::new();
+
+        // Verify fix templates are loaded
+        assert!(engine.fix_templates.contains_key("missing_semicolon"));
+        assert!(engine.fix_templates.contains_key("unmatched_braces"));
+        assert!(engine.fix_templates.contains_key("undefined_variable"));
+    }
+
+    #[test]
+    fn test_error_statistics() {
+        let mut stats = ErrorStatistics::new();
+
+        let errors = vec![
+            CompilerError::syntax_error("test syntax error", None, None),
+            CompilerError::type_error("test type error", None, None),
+            CompilerError::syntax_error("another syntax error", None, None),
+        ];
+
+        stats.update(&errors);
+
+        assert_eq!(stats.total_errors, 3);
+        assert_eq!(stats.error_types.get("syntax"), Some(&2));
+        assert_eq!(stats.error_types.get("type"), Some(&1));
     }
 }

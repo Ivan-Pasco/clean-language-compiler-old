@@ -1,0 +1,55 @@
+// Spec Section: 4.3 - Comparison Operators
+// Tests: Identity operators `is` and `not`
+
+start()
+	// Test 1: is operator with equal integers
+	integer x = 10
+	integer y = 10
+	boolean sameValue = x is y
+	print("10 is 10: " + sameValue.toString())
+
+	// Test 2: is operator with different integers
+	integer a = 5
+	integer b = 15
+	boolean differentValue = a is b
+	print("5 is 15: " + differentValue.toString())
+
+	// Test 3: not operator (negated identity)
+	integer m = 10
+	integer n = 20
+	boolean notSame = m not n
+	print("10 not 20: " + notSame.toString())
+
+	// Test 4: not with equal values
+	integer p = 7
+	integer q = 7
+	boolean notEqual = p not q
+	print("7 not 7: " + notEqual.toString())
+
+	// Test 5: is with strings
+	string str1 = "hello"
+	string str2 = "hello"
+	boolean strSame = str1 is str2
+	print("hello is hello: " + strSame.toString())
+
+	// Test 6: is with booleans
+	boolean t1 = true
+	boolean t2 = true
+	boolean boolSame = t1 is t2
+	print("true is true: " + boolSame.toString())
+
+	// Test 7: not with booleans
+	boolean trueVal = true
+	boolean falseVal = false
+	boolean boolNot = trueVal not falseVal
+	print("true not false: " + boolNot.toString())
+
+	// Test 8: is in conditional
+	integer value = 42
+	integer expected = 42
+	if value is expected
+		print("Values match with is operator")
+	else
+		print("Values don't match")
+
+	print("Identity operators tests completed")

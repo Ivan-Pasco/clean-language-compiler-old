@@ -1,0 +1,51 @@
+// Spec Section: 7 - Testing Framework
+// Tests: Testing error conditions
+// Requirement: Test block with error handling patterns
+
+functions:
+	integer divide(integer a, integer b)
+		if b == 0
+			return 0
+		return a / b
+
+	integer safeDivide(integer a, integer b)
+		if b == 0
+			return 0
+		return a / b
+
+	integer riskyOperation(integer x)
+		if x < 0
+			error("Negative not allowed")
+		return x * 2
+
+tests:
+	"division works": 10 / 2 = 5
+	"safe division": 20 / 4 = 5
+	"zero handling": 0 / 5 = 0
+
+start()
+	// Test normal division
+	integer result1 = divide(20, 4)
+	print("divide(20, 4) = " + result1.toString())
+
+	// Test safe division
+	integer result2 = safeDivide(100, 5)
+	print("safeDivide(100, 5) = " + result2.toString())
+
+	// Test zero division returns 0
+	integer result3 = safeDivide(100, 0)
+	print("safeDivide(100, 0) = " + result3.toString())
+
+	// Test divide with zero returns 0
+	integer result4 = divide(50, 0)
+	print("divide(50, 0) = " + result4.toString())
+
+	// Test risky operation with valid input
+	integer result5 = riskyOperation(10)
+	print("riskyOperation(10) = " + result5.toString())
+
+	// Test risky operation with onError
+	integer recovered = riskyOperation(5) onError 999
+	print("riskyOperation(5) onError 999 = " + recovered.toString())
+
+	print("Error tests specification completed")

@@ -1,0 +1,28 @@
+// Spec Section: 6.1 - Standard Library (Input/Output)
+// Tests: print with apply block
+// Requirement: print: block outputs multiple lines
+
+start()
+	// Test case 1: Basic print block
+	print:
+		"First line"
+		"Second line"
+		"Third line"
+
+	// Test case 2: Print block with expressions
+	integer count = 5
+	print:
+		"Header"
+		"Count: " + count.toString()
+		"Footer"
+
+	// Test case 3: Print block with calculations
+	number pi = 3.14159
+	number radius = 10.0
+	number area = pi * radius * radius
+	print:
+		"Circle calculations:"
+		"Radius: " + radius.toString()
+		"Area: " + area.toString()
+
+	print("Print block tests completed")

@@ -1,0 +1,55 @@
+// Spec Section: 2.4 - List Properties
+// Tests: Combined list behavior modifiers (line-unique, pile-unique)
+
+start()
+	// Test 1: Line-unique behavior (FIFO queue with no duplicates)
+	list<integer> lineUnique = []
+	lineUnique.type = "line-unique"
+	lineUnique.add(1)
+	lineUnique.add(2)
+	lineUnique.add(1)
+	lineUnique.add(3)
+	integer lineUniqueSize = lineUnique.size()
+	print("Line-unique size (should be 3): " + lineUniqueSize.toString())
+
+	// FIFO behavior
+	integer firstItem = lineUnique.remove()
+	print("First item removed (FIFO, should be 1): " + firstItem.toString())
+
+	// Test 2: Pile-unique behavior (LIFO stack with no duplicates)
+	list<string> pileUnique = []
+	pileUnique.type = "pile-unique"
+	pileUnique.add("apple")
+	pileUnique.add("banana")
+	pileUnique.add("apple")
+	pileUnique.add("cherry")
+	integer pileUniqueSize = pileUnique.size()
+	print("Pile-unique size (should be 3): " + pileUniqueSize.toString())
+
+	// LIFO behavior
+	string topItem = pileUnique.remove()
+	print("Top item removed (LIFO, should be cherry): " + topItem)
+
+	// Test 3: Switching behaviors at runtime
+	list<integer> dynamic = []
+	dynamic.type = "line"
+	dynamic.add(10)
+	dynamic.add(20)
+
+	// Switch to pile
+	dynamic.type = "pile"
+	dynamic.add(30)
+	integer dynamicTop = dynamic.remove()
+	print("After switch to pile, top (should be 30): " + dynamicTop.toString())
+
+	// Test 4: Contains check with unique behavior
+	list<integer> uniqueSet = []
+	uniqueSet.type = "unique"
+	uniqueSet.add(100)
+	uniqueSet.add(200)
+	boolean hasHundred = uniqueSet.contains(100)
+	boolean hasThreeHundred = uniqueSet.contains(300)
+	print("Contains 100: " + hasHundred.toString())
+	print("Contains 300: " + hasThreeHundred.toString())
+
+	print("Combined list behaviors tests completed")

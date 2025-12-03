@@ -364,6 +364,10 @@ impl<'a> ConstraintSolver<'a> {
             // Unknown type unifies with anything (error recovery)
             (ConcreteType::Unknown, _) | (_, ConcreteType::Unknown) => Ok(()),
 
+            // Any type unifies with anything (dynamic typing)
+            // At runtime, values are boxed with type tags for proper handling
+            (ConcreteType::Any, _) | (_, ConcreteType::Any) => Ok(()),
+
             // Types cannot be unified
             _ => Err(CompilerError::type_error(
                 &format!("Cannot unify types: {} and {}", left, right),

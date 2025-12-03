@@ -1,0 +1,24 @@
+// Spec Section: 6.1 - String Operations
+// Tests: Character-level string operations
+// Requirement: charAt and charCodeAt functions
+
+start()
+	// Test case 1: Get character at index
+	string text = "Hello"
+	string first = text.charAt(0)
+	print("First character: " + first)
+
+	// Test case 2: Get multiple characters
+	string word = "World"
+	string w = word.charAt(0)
+	string o = word.charAt(1)
+	string r = word.charAt(2)
+	print("W-O-R: " + w + "-" + o + "-" + r)
+
+	// Test case 3: Get last character
+	string greeting = "Hello!"
+	integer lastIndex = greeting.length() - 1
+	string lastChar = greeting.charAt(lastIndex)
+	print("Last character: " + lastChar)
+
+	print("String char ops tests completed")

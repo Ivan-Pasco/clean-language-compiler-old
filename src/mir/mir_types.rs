@@ -232,6 +232,36 @@ pub enum MirOperation {
 
     /// Async assignment for later variables
     AsyncAssign { source: MirOperand },
+
+    /// Box a value into an `any` type with runtime type tag
+    /// Memory layout: [tag:i32][value1:i32][value2:i32] = 12 bytes
+    BoxAny {
+        /// The value to box
+        value: MirOperand,
+        /// The type tag to use
+        type_tag: AnyTypeTag,
+        /// The source type (needed for f64 handling)
+        source_type: MirType,
+    },
+
+    /// Convert an `any` value to string with proper type dispatch
+    /// Reads the type tag and calls the appropriate toString function
+    AnyToString {
+        /// The boxed any value
+        value: MirOperand,
+    },
+
+    /// Unbox an `any` value to its i32 representation
+    UnboxAnyToI32 {
+        /// The boxed any value
+        value: MirOperand,
+    },
+
+    /// Unbox an `any` value to its f64 representation
+    UnboxAnyToF64 {
+        /// The boxed any value
+        value: MirOperand,
+    },
 }
 
 /// MIR terminator instructions (end basic blocks)
@@ -345,6 +375,47 @@ pub enum MirType {
     /// String tuple type (pointer, length) for WebAssembly compatibility
     /// Strings in WASM are represented as (i32 ptr, i32 len) pairs
     StringTuple,
+
+    /// Any type - boxed value with runtime type tag
+    /// Memory layout: [tag:i32][value1:i32][value2:i32] = 12 bytes
+    /// Tag values: 0=Null, 1=Integer, 2=Boolean, 3=Number, 4=String, 5=List, 6=Object
+    /// For Number (f64): bits are split across value1 (low) and value2 (high)
+    /// Represented as i32 pointer to boxed structure in memory
+    Any,
+}
+
+/// Type tags for boxed `any` values
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum AnyTypeTag {
+    Null = 0,
+    Integer = 1,
+    Boolean = 2,
+    Number = 3,
+    String = 4,
+    List = 5,
+    Object = 6,
+}
+
+impl AnyTypeTag {
+    /// Get the tag value as i32 for WASM
+    pub fn as_i32(self) -> i32 {
+        self as i32
+    }
+
+    /// Convert from i32 tag value
+    pub fn from_i32(value: i32) -> Option<Self> {
+        match value {
+            0 => Some(AnyTypeTag::Null),
+            1 => Some(AnyTypeTag::Integer),
+            2 => Some(AnyTypeTag::Boolean),
+            3 => Some(AnyTypeTag::Number),
+            4 => Some(AnyTypeTag::String),
+            5 => Some(AnyTypeTag::List),
+            6 => Some(AnyTypeTag::Object),
+            _ => None,
+        }
+    }
 }
 
 /// Binary operations in MIR
@@ -425,6 +496,7 @@ impl MirType {
             MirType::I32 | MirType::U32 | MirType::F32 => 4,
             MirType::I64 | MirType::U64 | MirType::F64 | MirType::Ptr(_) => 8,
             MirType::StringTuple => 8, // Two i32 values (ptr + len)
+            MirType::Any => 12,        // [tag:i32][value1:i32][value2:i32]
             MirType::Array(element_type, count) => element_type.size_bytes() * count,
             MirType::Function { .. } => 8, // Function pointer
             MirType::Struct(fields) => fields.iter().map(|f| f.size_bytes()).sum(),
@@ -440,6 +512,7 @@ impl MirType {
             MirType::I32 | MirType::U32 | MirType::F32 => 4,
             MirType::I64 | MirType::U64 | MirType::F64 | MirType::Ptr(_) => 8,
             MirType::StringTuple => 4, // Aligned to i32
+            MirType::Any => 4,         // Aligned to i32 (all fields are i32)
             MirType::Array(element_type, _) => element_type.alignment(),
             MirType::Function { .. } => 8,
             MirType::Struct(fields) => fields.iter().map(|f| f.alignment()).max().unwrap_or(1),
@@ -509,6 +582,7 @@ impl MirType {
                     MirType::Ptr(Box::new(MirType::Void)) // Fallback for other generics
                 }
             }
+            ConcreteType::Any => MirType::Any, // Boxed any type with runtime type tag
             _ => MirType::Ptr(Box::new(MirType::Void)), // Fallback for complex types
         }
     }
@@ -551,6 +625,7 @@ impl fmt::Display for MirType {
                 write!(f, "{{{}}}", field_types)
             }
             MirType::StringTuple => write!(f, "string"),
+            MirType::Any => write!(f, "any"),
         }
     }
 }

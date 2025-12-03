@@ -7,8 +7,8 @@
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
 use crate::mir::mir_types::{
-    BasicBlockId, MirBasicBlock, MirBinaryOp, MirConstant, MirFunction, MirInstruction, MirOperand,
-    MirOperation, MirProgram, MirTerminator, MirType, MirUnaryOp, ValueId,
+    AnyTypeTag, BasicBlockId, MirBasicBlock, MirBinaryOp, MirConstant, MirFunction, MirInstruction,
+    MirOperand, MirOperation, MirProgram, MirTerminator, MirType, MirUnaryOp, ValueId,
 };
 use crate::resolver::SymbolId;
 use std::collections::HashMap;
@@ -1810,6 +1810,30 @@ impl<'a> MirCodeGenerator<'a> {
                                                 .push(Instruction::F64ConvertI32S);
                                         }
                                     }
+
+                                    // Check if parameter expects Any type
+                                    // For now, Any type accepts any i32 value (integer, boolean, pointer)
+                                    // f64 values need to be converted to i32 (truncated)
+                                    if matches!(expected_param.param_type, MirType::Any) {
+                                        // Get the argument's actual type
+                                        let arg_type = match arg {
+                                            MirOperand::Constant(MirConstant::Float(_)) => Some(MirType::F64),
+                                            MirOperand::Value(value_id) => self.value_to_type.get(value_id).cloned(),
+                                            _ => None,
+                                        };
+
+                                        // If argument is f64, convert to i32 (truncate)
+                                        // This is a limitation - proper boxing would preserve the f64
+                                        if let Some(ref actual_type) = arg_type {
+                                            if matches!(actual_type, MirType::F64) {
+                                                debug_mir!(
+                "DEBUG CALL ARGS:   Converting f64 arg[{}] to i32 for any type",
+                                                    i
+                                                );
+                                                self.current_instructions.push(Instruction::I32TruncF64S);
+                                            }
+                                        }
+                                    }
                                 }
                             }
 
@@ -2438,6 +2462,74 @@ impl<'a> MirCodeGenerator<'a> {
                 }
             }
 
+            MirOperation::BoxAny {
+                value,
+                type_tag,
+                source_type,
+            } => {
+                debug_mir!(?value, ?type_tag, ?source_type, "Processing BoxAny");
+
+                // Load the value onto the stack
+                self.load_operand(value)?;
+
+                // Call the boxing helper
+                self.emit_box_value(*type_tag, source_type)?;
+
+                // Store result if there's a destination
+                if let Some(dest) = instruction.dest {
+                    self.store_to_local(dest)?;
+                    debug_mir!("BoxAny completed successfully");
+                }
+            }
+
+            MirOperation::AnyToString { value } => {
+                debug_mir!(?value, "Processing AnyToString with type dispatch");
+
+                // Load the boxed any pointer onto the stack
+                self.load_operand(value)?;
+
+                // Call the any_to_string helper which does type dispatch
+                self.emit_any_to_string()?;
+
+                // Store result if there's a destination
+                if let Some(dest) = instruction.dest {
+                    self.store_to_local(dest)?;
+                    debug_mir!("AnyToString completed successfully");
+                }
+            }
+
+            MirOperation::UnboxAnyToI32 { value } => {
+                debug_mir!(?value, "Processing UnboxAnyToI32");
+
+                // Load the boxed any pointer onto the stack
+                self.load_operand(value)?;
+
+                // Unbox to i32
+                self.emit_unbox_to_i32()?;
+
+                // Store result if there's a destination
+                if let Some(dest) = instruction.dest {
+                    self.store_to_local(dest)?;
+                    debug_mir!("UnboxAnyToI32 completed successfully");
+                }
+            }
+
+            MirOperation::UnboxAnyToF64 { value } => {
+                debug_mir!(?value, "Processing UnboxAnyToF64");
+
+                // Load the boxed any pointer onto the stack
+                self.load_operand(value)?;
+
+                // Unbox to f64
+                self.emit_unbox_to_f64()?;
+
+                // Store result if there's a destination
+                if let Some(dest) = instruction.dest {
+                    self.store_to_local(dest)?;
+                    debug_mir!("UnboxAnyToF64 completed successfully");
+                }
+            }
+
             MirOperation::Alloca { size, alignment: _ } => {
                 debug_mir!(size = ?size, "Processing Alloca - converting to mem_alloc call");
 
@@ -2826,6 +2918,12 @@ impl<'a> MirCodeGenerator<'a> {
         }
         Ok(())
     }
+
+    // NOTE: Full boxing implementation for `any` type is pending.
+    // The `any` type currently works with i32 values only (integers, booleans, pointers).
+    // f64 values are truncated to i32 when passed to `any` parameters.
+    // Proper boxing with type tags and memory allocation will be implemented in a future version.
+    // See MirType::Any and AnyTypeTag for the planned memory layout.
 
     /// Load string argument for print functions (expands to pointer + length)
     fn load_string_argument_for_print(
@@ -3400,6 +3498,12 @@ impl<'a> MirCodeGenerator<'a> {
                 Ok(ValType::I32)
             }
 
+            MirType::Any => {
+                // Any type is a pointer to boxed value structure: [tag:i32][value1:i32][value2:i32]
+                // The pointer itself is an i32
+                Ok(ValType::I32)
+            }
+
             _ => Err(CompilerError::Codegen {
                 context: Box::new(crate::error::ErrorContext::new(
                     format!("Cannot convert MIR type to WASM: {:?}", mir_type),
@@ -3934,6 +4038,404 @@ impl<'a> MirCodeGenerator<'a> {
             ));
         }
 
+        Ok(())
+    }
+
+    /// Emit code to box a value into an `any` type
+    ///
+    /// Boxing allocates 12 bytes: [tag:i32][value1:i32][value2:i32]
+    /// - tag: type discriminator from AnyTypeTag
+    /// - value1: primary value (integer, boolean, string pointer, or f64 low bits)
+    /// - value2: secondary value (f64 high bits, or 0 for other types)
+    ///
+    /// After this function, the boxed pointer is on the stack
+    fn emit_box_value(
+        &mut self,
+        tag: AnyTypeTag,
+        source_type: &MirType,
+    ) -> Result<(), CompilerError> {
+        debug_mir!(?tag, ?source_type, "Boxing value to any type");
+
+        // Get mem_alloc function index
+        let mem_alloc_idx = *self
+            .wasm_generator
+            .function_map
+            .get("mem_alloc")
+            .ok_or_else(|| CompilerError::Codegen {
+                context: Box::new(crate::error::ErrorContext::new(
+                    "mem_alloc function not found in function_map for boxing".to_string(),
+                    None,
+                    crate::error::ErrorType::Codegen,
+                    None,
+                )),
+            })?;
+
+        // The value to box is already on the stack
+        // We need to save it to a temporary local first
+
+        // Create a temporary local for the value
+        let temp_local = self.next_local_index;
+        self.next_local_index += 1;
+
+        // Store the value to the temp local
+        match source_type {
+            MirType::F64 => {
+                self.current_instructions
+                    .push(Instruction::LocalSet(temp_local));
+                self.temp_local_types.insert(temp_local, ValType::F64);
+            }
+            _ => {
+                self.current_instructions
+                    .push(Instruction::LocalSet(temp_local));
+                self.temp_local_types.insert(temp_local, ValType::I32);
+            }
+        }
+
+        // Allocate 12 bytes for the boxed structure
+        // mem_alloc(type_id=0, size=12)
+        self.current_instructions.push(Instruction::I32Const(0)); // type_id
+        self.current_instructions.push(Instruction::I32Const(12)); // size
+        self.current_instructions
+            .push(Instruction::Call(mem_alloc_idx));
+
+        // Save the pointer to another temp local
+        let ptr_local = self.next_local_index;
+        self.next_local_index += 1;
+        self.temp_local_types.insert(ptr_local, ValType::I32);
+        self.current_instructions
+            .push(Instruction::LocalTee(ptr_local));
+
+        // Store the tag at offset 0
+        // Stack: [ptr]
+        self.current_instructions
+            .push(Instruction::I32Const(tag.as_i32()));
+        self.current_instructions
+            .push(Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2, // 4-byte alignment
+                memory_index: 0,
+            }));
+
+        // Store value1 at offset 4
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+
+        match source_type {
+            MirType::F64 => {
+                // For f64, we need to reinterpret as i64 and split into two i32s
+                self.current_instructions
+                    .push(Instruction::LocalGet(temp_local));
+                self.current_instructions
+                    .push(Instruction::I64ReinterpretF64);
+                // Store low 32 bits
+                self.current_instructions.push(Instruction::I32WrapI64);
+                self.current_instructions
+                    .push(Instruction::I32Store(wasm_encoder::MemArg {
+                        offset: 4,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+
+                // Store value2 (high 32 bits) at offset 8
+                self.current_instructions
+                    .push(Instruction::LocalGet(ptr_local));
+                self.current_instructions
+                    .push(Instruction::LocalGet(temp_local));
+                self.current_instructions
+                    .push(Instruction::I64ReinterpretF64);
+                self.current_instructions.push(Instruction::I64Const(32));
+                self.current_instructions.push(Instruction::I64ShrU);
+                self.current_instructions.push(Instruction::I32WrapI64);
+                self.current_instructions
+                    .push(Instruction::I32Store(wasm_encoder::MemArg {
+                        offset: 8,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+            }
+            _ => {
+                // For i32 types (integer, boolean, string pointer, etc.)
+                self.current_instructions
+                    .push(Instruction::LocalGet(temp_local));
+                self.current_instructions
+                    .push(Instruction::I32Store(wasm_encoder::MemArg {
+                        offset: 4,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+
+                // Store 0 in value2 at offset 8
+                self.current_instructions
+                    .push(Instruction::LocalGet(ptr_local));
+                self.current_instructions.push(Instruction::I32Const(0));
+                self.current_instructions
+                    .push(Instruction::I32Store(wasm_encoder::MemArg {
+                        offset: 8,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+            }
+        }
+
+        // Push the boxed pointer onto the stack as the result
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+
+        debug_mir!(?tag, "Boxing complete, pointer on stack");
+        Ok(())
+    }
+
+    /// Emit code to unbox a value from an `any` type
+    ///
+    /// The boxed pointer is on the stack. This function:
+    /// 1. Reads the tag to determine the type
+    /// 2. Reads and reconstructs the value
+    ///
+    /// Returns the type tag so the caller can dispatch appropriately
+    fn emit_unbox_to_i32(&mut self) -> Result<(), CompilerError> {
+        debug_mir!("Unboxing any value to i32");
+
+        // The boxed pointer is on the stack
+        // Read value1 at offset 4 (the primary i32 value)
+        self.current_instructions
+            .push(Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }));
+
+        Ok(())
+    }
+
+    /// Emit code to read the type tag from a boxed any value
+    /// The boxed pointer should be on the stack
+    /// After this, the tag (i32) is on the stack
+    fn emit_read_any_tag(&mut self) -> Result<(), CompilerError> {
+        self.current_instructions
+            .push(Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }));
+        Ok(())
+    }
+
+    /// Emit code to unbox a value to f64
+    /// The boxed pointer should be on the stack
+    fn emit_unbox_to_f64(&mut self) -> Result<(), CompilerError> {
+        debug_mir!("Unboxing any value to f64");
+
+        // Save pointer to temp
+        let ptr_local = self.next_local_index;
+        self.next_local_index += 1;
+        self.temp_local_types.insert(ptr_local, ValType::I32);
+        self.current_instructions
+            .push(Instruction::LocalSet(ptr_local));
+
+        // Read low bits from offset 4
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.current_instructions
+            .push(Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }));
+        self.current_instructions.push(Instruction::I64ExtendI32U);
+
+        // Read high bits from offset 8
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.current_instructions
+            .push(Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }));
+        self.current_instructions.push(Instruction::I64ExtendI32U);
+        self.current_instructions.push(Instruction::I64Const(32));
+        self.current_instructions.push(Instruction::I64Shl);
+
+        // Combine: high | low
+        self.current_instructions.push(Instruction::I64Or);
+
+        // Reinterpret as f64
+        self.current_instructions
+            .push(Instruction::F64ReinterpretI64);
+
+        Ok(())
+    }
+
+    /// Emit code to convert an any value to string with proper type dispatch
+    /// The boxed pointer should be on the stack
+    fn emit_any_to_string(&mut self) -> Result<(), CompilerError> {
+        debug_mir!("Converting any value to string with type dispatch");
+
+        // Get function indices for conversion functions
+        let int_to_string_idx = *self
+            .wasm_generator
+            .function_map
+            .get("int_to_string")
+            .ok_or_else(|| CompilerError::Codegen {
+                context: Box::new(crate::error::ErrorContext::new(
+                    "int_to_string function not found".to_string(),
+                    None,
+                    crate::error::ErrorType::Codegen,
+                    None,
+                )),
+            })?;
+
+        let float_to_string_idx = *self
+            .wasm_generator
+            .function_map
+            .get("float_to_string")
+            .ok_or_else(|| CompilerError::Codegen {
+                context: Box::new(crate::error::ErrorContext::new(
+                    "float_to_string function not found".to_string(),
+                    None,
+                    crate::error::ErrorType::Codegen,
+                    None,
+                )),
+            })?;
+
+        let bool_to_string_idx = *self
+            .wasm_generator
+            .function_map
+            .get("bool_to_string")
+            .ok_or_else(|| CompilerError::Codegen {
+                context: Box::new(crate::error::ErrorContext::new(
+                    "bool_to_string function not found".to_string(),
+                    None,
+                    crate::error::ErrorType::Codegen,
+                    None,
+                )),
+            })?;
+
+        // Save the boxed pointer to a local
+        let ptr_local = self.next_local_index;
+        self.next_local_index += 1;
+        self.temp_local_types.insert(ptr_local, ValType::I32);
+        self.current_instructions
+            .push(Instruction::LocalSet(ptr_local));
+
+        // Read the tag
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.emit_read_any_tag()?;
+
+        // Create a result local
+        let result_local = self.next_local_index;
+        self.next_local_index += 1;
+        self.temp_local_types.insert(result_local, ValType::I32);
+
+        // Dispatch based on tag using if-else chain
+        // if tag == 1 (Integer) -> int_to_string
+        // else if tag == 2 (Boolean) -> bool_to_string
+        // else if tag == 3 (Number) -> float_to_string
+        // else if tag == 4 (String) -> return value directly
+        // else -> int_to_string as fallback
+
+        // Check for Integer (tag == 1)
+        self.current_instructions
+            .push(Instruction::I32Const(AnyTypeTag::Integer.as_i32()));
+        self.current_instructions.push(Instruction::I32Eq);
+        self.current_instructions
+            .push(Instruction::If(BlockType::Empty));
+        {
+            // Integer case: call int_to_string
+            self.current_instructions
+                .push(Instruction::LocalGet(ptr_local));
+            self.emit_unbox_to_i32()?;
+            self.current_instructions
+                .push(Instruction::Call(int_to_string_idx));
+            self.current_instructions
+                .push(Instruction::LocalSet(result_local));
+        }
+        self.current_instructions.push(Instruction::Else);
+        {
+            // Check for Boolean (tag == 2)
+            self.current_instructions
+                .push(Instruction::LocalGet(ptr_local));
+            self.emit_read_any_tag()?;
+            self.current_instructions
+                .push(Instruction::I32Const(AnyTypeTag::Boolean.as_i32()));
+            self.current_instructions.push(Instruction::I32Eq);
+            self.current_instructions
+                .push(Instruction::If(BlockType::Empty));
+            {
+                // Boolean case: call bool_to_string
+                self.current_instructions
+                    .push(Instruction::LocalGet(ptr_local));
+                self.emit_unbox_to_i32()?;
+                self.current_instructions
+                    .push(Instruction::Call(bool_to_string_idx));
+                self.current_instructions
+                    .push(Instruction::LocalSet(result_local));
+            }
+            self.current_instructions.push(Instruction::Else);
+            {
+                // Check for Number (tag == 3)
+                self.current_instructions
+                    .push(Instruction::LocalGet(ptr_local));
+                self.emit_read_any_tag()?;
+                self.current_instructions
+                    .push(Instruction::I32Const(AnyTypeTag::Number.as_i32()));
+                self.current_instructions.push(Instruction::I32Eq);
+                self.current_instructions
+                    .push(Instruction::If(BlockType::Empty));
+                {
+                    // Number case: call float_to_string
+                    self.current_instructions
+                        .push(Instruction::LocalGet(ptr_local));
+                    self.emit_unbox_to_f64()?;
+                    self.current_instructions
+                        .push(Instruction::Call(float_to_string_idx));
+                    self.current_instructions
+                        .push(Instruction::LocalSet(result_local));
+                }
+                self.current_instructions.push(Instruction::Else);
+                {
+                    // Check for String (tag == 4)
+                    self.current_instructions
+                        .push(Instruction::LocalGet(ptr_local));
+                    self.emit_read_any_tag()?;
+                    self.current_instructions
+                        .push(Instruction::I32Const(AnyTypeTag::String.as_i32()));
+                    self.current_instructions.push(Instruction::I32Eq);
+                    self.current_instructions
+                        .push(Instruction::If(BlockType::Empty));
+                    {
+                        // String case: return value directly (it's already a string pointer)
+                        self.current_instructions
+                            .push(Instruction::LocalGet(ptr_local));
+                        self.emit_unbox_to_i32()?;
+                        self.current_instructions
+                            .push(Instruction::LocalSet(result_local));
+                    }
+                    self.current_instructions.push(Instruction::Else);
+                    {
+                        // Default case: treat as integer
+                        self.current_instructions
+                            .push(Instruction::LocalGet(ptr_local));
+                        self.emit_unbox_to_i32()?;
+                        self.current_instructions
+                            .push(Instruction::Call(int_to_string_idx));
+                        self.current_instructions
+                            .push(Instruction::LocalSet(result_local));
+                    }
+                    self.current_instructions.push(Instruction::End); // End String if
+                }
+                self.current_instructions.push(Instruction::End); // End Number if
+            }
+            self.current_instructions.push(Instruction::End); // End Boolean if
+        }
+        self.current_instructions.push(Instruction::End); // End Integer if
+
+        // Push the result onto the stack
+        self.current_instructions
+            .push(Instruction::LocalGet(result_local));
+
+        debug_mir!("any.toString() dispatch complete");
         Ok(())
     }
 

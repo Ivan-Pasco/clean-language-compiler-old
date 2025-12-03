@@ -1,0 +1,53 @@
+// Spec Section: 4.5 - Method Calls and Property Access
+// Tests: List indexing with bracket notation
+
+start()
+	// Test 1: Access first element (index 0)
+	list<integer> nums = [10, 20, 30, 40, 50]
+	integer first = nums[0]
+	print("nums[0]: " + first.toString())
+
+	// Test 2: Access middle element
+	integer middle = nums[2]
+	print("nums[2]: " + middle.toString())
+
+	// Test 3: Access last element
+	integer last = nums[4]
+	print("nums[4]: " + last.toString())
+
+	// Test 4: Modify element via indexing
+	nums[1] = 99
+	integer modified = nums[1]
+	print("nums[1] after modification: " + modified.toString())
+
+	// Test 5: String list indexing
+	list<string> words = ["apple", "banana", "cherry"]
+	string secondWord = words[1]
+	print("words[1]: " + secondWord)
+
+	// Test 6: Modify string list element
+	words[0] = "apricot"
+	string modifiedWord = words[0]
+	print("words[0] after modification: " + modifiedWord)
+
+	// Test 7: Use index from variable
+	integer idx = 2
+	integer valueAtIdx = nums[idx]
+	print("nums[idx] where idx=2: " + valueAtIdx.toString())
+
+	// Test 8: Use indexed value in expression
+	integer sum = nums[0] + nums[2] + nums[4]
+	print("nums[0] + nums[2] + nums[4]: " + sum.toString())
+
+	// Test 9: Nested access
+	list<list<integer>> matrix = [[1, 2], [3, 4], [5, 6]]
+	integer nested = matrix[1][0]
+	print("matrix[1][0]: " + nested.toString())
+
+	// Test 10: Use index in loop iteration
+	integer total = 0
+	iterate i in 0 to 4
+		total = total + nums[i]
+	print("Sum of all elements: " + total.toString())
+
+	print("List indexing tests completed")

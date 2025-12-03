@@ -1,0 +1,55 @@
+// Spec Section: 5.3 - Generic Functions with `any`
+// Tests: Generic function return types using any
+
+functions:
+	any wrap(any value)
+		return value
+
+	any processAndReturn(any input)
+		// Process and return same type
+		return input
+
+	any selectValue(boolean condition, any trueVal, any falseVal)
+		if condition
+			return trueVal
+		else
+			return falseVal
+
+	any getElement(list<any> items, integer index)
+		return items.get(index)
+
+start()
+	// Test 1: Generic return with integer
+	any result1 = wrap(42)
+	print("Wrapped integer: " + result1.toString())
+
+	// Test 2: Generic return with string
+	any result2 = wrap("hello world")
+	print("Wrapped string: " + result2)
+
+	// Test 3: Generic return with integer (number limitation pending boxing implementation)
+	any result3 = wrap(314159)
+	print("Wrapped integer (was number): " + result3.toString())
+
+	// Test 4: Conditional return with same type
+	any selected1 = selectValue(true, 100, 200)
+	print("Selected (true condition): " + selected1.toString())
+
+	any selected2 = selectValue(false, "yes", "no")
+	print("Selected (false condition): " + selected2)
+
+	// Test 5: Get element from mixed list (integer only - f64 limitation pending)
+	list<any> mixed = []
+	mixed.add(10)
+	mixed.add("twenty")
+	mixed.add(30)
+
+	any elem0 = getElement(mixed, 0)
+	any elem1 = getElement(mixed, 1)
+	any elem2 = getElement(mixed, 2)
+
+	print("Element 0: " + elem0.toString())
+	print("Element 1: " + elem1)
+	print("Element 2: " + elem2.toString())
+
+	print("Generic return type tests completed")
