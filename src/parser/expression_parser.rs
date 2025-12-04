@@ -981,8 +981,7 @@ pub fn parse_list_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError>
         .map(|expr| match expr {
             Expression::Literal(value) => Ok(value),
             Expression::Variable(name) => {
-                // Allow variables in list literals for now
-                // TODO: Evaluate variables during compilation
+                // Variables in list literals require runtime evaluation
                 Err(CompilerError::parse_error(
                     format!("Variable '{}' cannot be used in list literal", name),
                     None,

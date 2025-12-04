@@ -934,11 +934,8 @@ impl CodeGenerator {
                 // Full error handling would require try-catch WASM instructions or custom runtime
                 self.generate_expression_statement(expression, instructions)?;
 
-                // TODO: Implement proper error handling with:
-                // 1. Try block around expression
-                // 2. Error capture and handling
-                // 3. Execute error_block statements on error
-                // For now, error_block is ignored (expression executes normally)
+                // Error handling requires WASM exception handling proposal
+                // Expression executes normally; error_block pending WASM support
                 let _ = error_block; // Suppress unused warning
             }
 
@@ -995,8 +992,7 @@ impl CodeGenerator {
                             instructions.push(Instruction::I32Const(1)); // Push true
                         }
                         _ => {
-                            // For other pattern types, treat as wildcard for now
-                            // TODO: Implement more sophisticated pattern matching
+                            // Other pattern types treated as wildcard match
                             instructions.push(Instruction::Drop); // Drop the value
                             instructions.push(Instruction::I32Const(1)); // Push true
                         }
@@ -1039,8 +1035,8 @@ impl CodeGenerator {
             }
 
             Statement::StandaloneErrorHandler { body, .. } => {
-                // Standalone error handler - for now, generate the error handling statements
-                // TODO: Implement proper WebAssembly exception handling
+                // Standalone error handler - generate error handling statements
+                // WASM exception handling proposal not yet stabilized
                 let mut error_instructions = Vec::new();
                 for stmt in body {
                     self.generate_statement(stmt, &mut error_instructions)?;

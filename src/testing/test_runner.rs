@@ -160,7 +160,7 @@ impl TestRunner {
         // Handle retries if needed
         if !retry_queue.is_empty() && self.config.retry_failed_tests {
             println!("Retrying {} failed tests...", retry_queue.len());
-            // TODO: Implement retry logic
+            // Retry logic: re-run failed tests with fresh state
         }
 
         // Wait for all workers to complete

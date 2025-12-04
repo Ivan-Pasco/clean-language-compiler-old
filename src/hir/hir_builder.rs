@@ -554,8 +554,7 @@ impl HirBuilder {
                 let hir_start = self.build_expression(start)?;
                 let hir_end = self.build_expression(end)?;
 
-                // For now, ignore step - will need to handle this in codegen
-                // TODO: Handle step parameter in range iteration
+                // Step parameter warning (not yet in language specification)
                 if step.is_some() {
                     eprintln!("WARNING: Range iteration with step is not yet fully supported");
                 }

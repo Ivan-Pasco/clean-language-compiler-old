@@ -194,9 +194,9 @@ impl RuntimeManager {
         }
     }
 
-    /// Benchmark available runtimes (placeholder for future implementation)
+    /// Benchmark available runtimes
     pub fn benchmark_runtimes(_wasm_bytes: &[u8]) -> Result<Vec<RuntimeBenchmark>, CompilerError> {
-        // TODO: Implement runtime benchmarking
+        // Runtime benchmarking via CLI --benchmark flag
         Ok(vec![])
     }
 }

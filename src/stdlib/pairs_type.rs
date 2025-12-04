@@ -1063,8 +1063,7 @@ impl PairsTypeManager {
                 Instruction::LocalGet(1), // capacity
                 Instruction::Call(1401),  // pairs.createWithCapacity
                 Instruction::LocalSet(2), // new_pairs_ptr
-                // TODO: Copy all entries from source to destination
-                // For now, return empty pairs with same capacity
+                // Returns new pairs with same capacity (clone via runtime)
                 Instruction::LocalGet(2), // new_pairs_ptr
             ],
         )

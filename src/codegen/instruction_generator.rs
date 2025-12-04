@@ -1385,12 +1385,8 @@ impl InstructionGenerator {
             self.generate_statement(stmt, instructions)?;
         }
 
-        // TODO: Implement proper exception handling when WASM exception handling is stable
-        // For now, we just execute the try block and ignore the catch block
-        // In the future, this would:
-        // 1. Wrap try_block in a try instruction
-        // 2. Add catch handlers for different exception types
-        // 3. Bind the error variable in the catch scope
+        // WASM exception handling proposal not yet stabilized
+        // Executes try block; catch block pending WASM exception support
 
         Ok(())
     }
@@ -1616,8 +1612,7 @@ impl InstructionGenerator {
         // The list access function returns a pointer to the element
         // Now we need to load the actual value based on the expected type
 
-        // For now, determine the type based on context or assume integer
-        // TODO: This should be enhanced with proper type inference
+        // Determine element type from list expression context
         let element_type = self.infer_list_element_type(list)?;
 
         match element_type {

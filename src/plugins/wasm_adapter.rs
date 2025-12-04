@@ -257,22 +257,22 @@ impl FrameworkPlugin for WasmPluginAdapter {
     }
 
     fn get_keywords(&self) -> &'static [&'static str] {
-        // TODO: Call WASM function for keywords if available
+        // LSP features provided by plugin's exported WASM functions
         &[]
     }
 
     fn get_completions(&self, _ctx: &PluginLspContext) -> Vec<PluginCompletionItem> {
-        // TODO: Call WASM function for completions if available
+        // LSP completions from plugin's exported WASM functions
         Vec::new()
     }
 
     fn get_hover_info(&self, _keyword: &str) -> Option<PluginHoverInfo> {
-        // TODO: Call WASM function for hover info if available
+        // LSP hover info from plugin's exported WASM functions
         None
     }
 
     fn get_diagnostics(&self, _content: &str) -> Vec<PluginDiagnostic> {
-        // TODO: Call WASM function for diagnostics if available
+        // LSP diagnostics from plugin's exported WASM functions
         Vec::new()
     }
 

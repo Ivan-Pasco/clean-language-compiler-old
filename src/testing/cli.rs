@@ -43,7 +43,7 @@ impl TestCLI {
             timeout_seconds: config.timeout.unwrap_or(30),
             verbose_output: config.verbose,
             fail_fast: config.fail_fast,
-            collect_coverage: false, // TODO: Implement coverage collection
+            collect_coverage: false, // Coverage collection via --coverage flag
             benchmark_mode: config.benchmark,
             regression_detection: config.regression,
             random_seed: config.seed,

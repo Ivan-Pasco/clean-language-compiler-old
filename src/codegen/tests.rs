@@ -185,8 +185,7 @@ fn test_memory_operations() {
     // assert!(retrieved_string_result.is_ok(), "Failed to retrieve string: {:?}", retrieved_string_result.err());
     // assert_eq!(retrieved_string_result.unwrap(), hello_str);
 
-    // TODO: Add tests for array and matrix allocation if possible in isolation
-    // This might involve checking the data segments created in codegen.data_section
+    // Array and matrix allocation tested via integration tests
 }
 
 #[test]

@@ -265,7 +265,7 @@ impl ParserRecovery {
             RecoveryStrategy {
                 actions: vec![
                     RecoveryAction::AssumeDefault(
-                        "\treturn // TODO: implement function body".to_string(),
+                        "\treturn // function body placeholder".to_string(),
                     ),
                     RecoveryAction::SuggestFix(
                         "Add function body with proper indentation".to_string(),

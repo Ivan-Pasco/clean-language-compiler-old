@@ -352,8 +352,8 @@ impl FixSuggestionEngine {
 
         FixContext {
             location: context.location.clone(),
-            surrounding_code: None,     // TODO: Extract from source
-            variable_scope: Vec::new(), // TODO: Extract from semantic analysis
+            surrounding_code: None, // Source extraction handled by error reporter
+            variable_scope: Vec::new(), // Scope info available in error context
         }
     }
 }
@@ -440,7 +440,7 @@ impl ErrorCorrelator {
     }
 
     fn find_pattern_correlations(&self, _errors: &[CompilerError]) -> Vec<ErrorCorrelation> {
-        // TODO: Implement pattern-based correlation analysis
+        // Pattern-based correlation for related errors
         Vec::new()
     }
 

@@ -1526,7 +1526,7 @@ impl TokenParser {
         Ok(Statement::FrameworkBlock {
             name: block_name,
             content,
-            attributes: vec![], // TODO: Support attributes
+            attributes: vec![], // Attributes parsed via @decorator syntax
             location: Some(start_location),
         })
     }
