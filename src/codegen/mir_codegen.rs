@@ -97,7 +97,7 @@ pub struct MirCodegenStats {
     pub generation_time_us: u64,
 }
 
-impl<'a> MirCodeGenerator<'a> {
+impl MirCodeGenerator<'_> {
     /// Create a new MIR code generator
     pub fn new() -> Self {
         Self {
@@ -631,8 +631,7 @@ impl<'a> MirCodeGenerator<'a> {
         let last_instruction_is_return = self
             .current_instructions
             .last()
-            .map(|inst| matches!(inst, Instruction::Return | Instruction::Unreachable))
-            .unwrap_or(false);
+            .is_some_and(|inst| matches!(inst, Instruction::Return | Instruction::Unreachable));
 
         if is_non_void && !last_instruction_is_return && !is_constructor {
             debug_mir!(
@@ -724,9 +723,8 @@ impl<'a> MirCodeGenerator<'a> {
         }
         visited.insert(block_id);
 
-        let block = match function.blocks.get(&block_id) {
-            Some(b) => b,
-            None => return false,
+        let Some(block) = function.blocks.get(&block_id) else {
+            return false;
         };
 
         match &block.terminator {
@@ -758,9 +756,8 @@ impl<'a> MirCodeGenerator<'a> {
         true_block: BasicBlockId,
         false_block: BasicBlockId,
     ) -> bool {
-        let false_blk = match function.blocks.get(&false_block) {
-            Some(b) => b,
-            None => return false,
+        let Some(false_blk) = function.blocks.get(&false_block) else {
+            return false;
         };
 
         // Check #1: Empty block with simple terminator
@@ -853,12 +850,9 @@ impl<'a> MirCodeGenerator<'a> {
         // Mark this block as being on the recursion stack
         on_stack.insert(block_id);
 
-        let block = match function.blocks.get(&block_id) {
-            Some(b) => b,
-            None => {
-                on_stack.remove(&block_id);
-                return false;
-            }
+        let Some(block) = function.blocks.get(&block_id) else {
+            on_stack.remove(&block_id);
+            return false;
         };
 
         let result = match &block.terminator {
@@ -920,9 +914,8 @@ impl<'a> MirCodeGenerator<'a> {
         );
         generated.insert(block_id);
 
-        let block = match function.blocks.get(&block_id) {
-            Some(b) => b,
-            None => return Ok(()),
+        let Some(block) = function.blocks.get(&block_id) else {
+            return Ok(());
         };
 
         // Generate block instructions
@@ -1080,16 +1073,13 @@ impl<'a> MirCodeGenerator<'a> {
         );
         generated.insert(block_id);
 
-        let block = match function.blocks.get(&block_id) {
-            Some(b) => b,
-            None => {
-                debug_mir!(
-                    "DEBUG GENERATE_BLOCKS: Block {:?} not found in function '{}'",
-                    block_id,
-                    function.name
-                );
-                return Ok(());
-            }
+        let Some(block) = function.blocks.get(&block_id) else {
+            debug_mir!(
+                "DEBUG GENERATE_BLOCKS: Block {:?} not found in function '{}'",
+                block_id,
+                function.name
+            );
+            return Ok(());
         };
 
         debug_mir!(
@@ -1576,7 +1566,7 @@ impl<'a> MirCodeGenerator<'a> {
                 // Only do reverse lookup for plain Function operands with missing/wrong names
                 let needs_reverse_lookup = matches!(function, MirOperand::Function(_))
                     && (function_name.is_none()
-                        || (symbol_id_opt.map(|id| id.0 == 0).unwrap_or(false)
+                        || (symbol_id_opt.is_some_and(|id| id.0 == 0)
                             && function_name.as_deref() == Some("print")));
 
                 if needs_reverse_lookup {
@@ -1786,7 +1776,7 @@ impl<'a> MirCodeGenerator<'a> {
                                             MirOperand::Value(value_id) => self
                                                 .value_to_type
                                                 .get(value_id)
-                                                .map(|t| {
+                                                .is_some_and(|t| {
                                                     matches!(
                                                         t,
                                                         MirType::I32
@@ -1796,8 +1786,7 @@ impl<'a> MirCodeGenerator<'a> {
                                                             | MirType::U16
                                                             | MirType::U32
                                                     )
-                                                })
-                                                .unwrap_or(false),
+                                                }),
                                             _ => false,
                                         };
 

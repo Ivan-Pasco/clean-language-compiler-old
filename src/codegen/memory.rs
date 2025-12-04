@@ -134,7 +134,7 @@ impl MemoryPool {
     fn validate_integrity(&self) -> Result<(), MemorySafetyError> {
         // Ensure all free blocks are unique
         let mut sorted_blocks = self.free_blocks.clone();
-        sorted_blocks.sort();
+        sorted_blocks.sort_unstable();
         sorted_blocks.dedup();
 
         if sorted_blocks.len() != self.free_blocks.len() {
