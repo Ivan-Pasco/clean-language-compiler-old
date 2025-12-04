@@ -742,21 +742,6 @@ fn parse_later_assignment_statement(
     })
 }
 
-#[allow(dead_code)]
-fn parse_print_statement(
-    pair: Pair<Rule>,
-    ast_location: crate::ast::SourceLocation,
-) -> Result<Statement, CompilerError> {
-    let mut parts = pair.into_inner();
-    let expression = parse_expression(parts.next().unwrap())?;
-
-    Ok(Statement::Print {
-        expression,
-        newline: false,
-        location: Some(ast_location),
-    })
-}
-
 fn parse_print_newline_statement(
     pair: Pair<Rule>,
     ast_location: crate::ast::SourceLocation,
@@ -841,36 +826,6 @@ fn parse_print_parenthesized_statement(
             location: Some(ast_location),
         })
     }
-}
-
-#[allow(dead_code)]
-fn parse_printl_statement(
-    pair: Pair<Rule>,
-    ast_location: crate::ast::SourceLocation,
-) -> Result<Statement, CompilerError> {
-    let mut parts = pair.into_inner();
-    let expression = parse_expression(parts.next().unwrap())?;
-
-    Ok(Statement::Print {
-        expression,
-        newline: true,
-        location: Some(ast_location),
-    })
-}
-
-#[allow(dead_code)]
-fn parse_println_statement(
-    pair: Pair<Rule>,
-    ast_location: crate::ast::SourceLocation,
-) -> Result<Statement, CompilerError> {
-    let mut parts = pair.into_inner();
-    let expression = parse_expression(parts.next().unwrap())?;
-
-    Ok(Statement::Print {
-        expression,
-        newline: true,
-        location: Some(ast_location),
-    })
 }
 
 fn parse_import_block_statement(
