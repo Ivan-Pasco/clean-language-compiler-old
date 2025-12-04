@@ -345,6 +345,136 @@ pub fn compile_with_plugins_and_opt_level(
     Ok(wasm_bytes)
 }
 
+/// Compiles Clean Language source code with external WASM plugins loaded from ~/.cleen/plugins/
+///
+/// This function automatically discovers plugins based on `import:` blocks in the source code.
+/// Plugins must be installed using `cleen plugin add <name>` before they can be used.
+///
+/// # Arguments
+/// * `source` - The Clean Language source code (may contain `import:` blocks)
+/// * `file_path` - Path for error reporting
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
+/// * `Err(Vec<CompilerError>)` - Compilation errors
+///
+/// # Example
+/// ```ignore
+/// // Source code with import block:
+/// // import:
+/// //     frame.web
+/// //     frame.data
+/// //
+/// // endpoints:
+/// //     GET "/users" -> listUsers
+/// //
+/// let wasm = compile_with_external_plugins(source, "app.cln")?;
+/// ```
+pub fn compile_with_external_plugins(
+    source: &str,
+    file_path: &str,
+) -> Result<Vec<u8>, Vec<CompilerError>> {
+    compile_with_external_plugins_and_opt_level(source, file_path, 2)
+}
+
+/// Compiles Clean Language source code with external WASM plugins and custom optimization level
+///
+/// # Arguments
+/// * `source` - The Clean Language source code (may contain `import:` blocks)
+/// * `file_path` - Path for error reporting
+/// * `opt_level` - Optimization level (0-3)
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
+/// * `Err(Vec<CompilerError>)` - Compilation errors
+pub fn compile_with_external_plugins_and_opt_level(
+    source: &str,
+    file_path: &str,
+    opt_level: u8,
+) -> Result<Vec<u8>, Vec<CompilerError>> {
+    // Extract import statements from source
+    let imports = extract_imports(source);
+
+    if imports.is_empty() {
+        // No imports, compile without external plugins
+        tracing::debug!("No import: block found, compiling without external plugins");
+        return compile_pure(source, file_path);
+    }
+
+    tracing::info!(imports = ?imports, "Loading external plugins");
+
+    // Load plugins using WasmPluginLoader
+    let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
+        vec![CompilerError::PluginError {
+            message: format!("Failed to create plugin loader: {}", e),
+            location: None,
+        }]
+    })?;
+
+    let registry = loader.load_plugins(&imports).map_err(|e| {
+        vec![CompilerError::PluginError {
+            message: format!("Failed to load plugins: {}", e),
+            location: None,
+        }]
+    })?;
+
+    tracing::info!(
+        plugins = ?registry.registered_plugins(),
+        "External plugins loaded"
+    );
+
+    // Compile with loaded plugins
+    compile_with_plugins_and_opt_level(source, file_path, &registry, opt_level)
+}
+
+/// Extracts plugin names from `import:` blocks in source code
+///
+/// # Format
+/// ```clean
+/// import:
+///     frame.web
+///     frame.data
+/// ```
+///
+/// # Returns
+/// Vector of plugin names (e.g., ["frame.web", "frame.data"])
+fn extract_imports(source: &str) -> Vec<String> {
+    let mut imports = Vec::new();
+    let mut in_import_block = false;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+
+        // Check for import: block start
+        if trimmed == "import:" {
+            in_import_block = true;
+            continue;
+        }
+
+        // If in import block, collect plugin names
+        if in_import_block {
+            // Empty line or new block ends the import block
+            if trimmed.is_empty() || (trimmed.ends_with(':') && !trimmed.starts_with('\t')) {
+                in_import_block = false;
+                continue;
+            }
+
+            // Lines starting with whitespace are part of the block
+            if line.starts_with('\t') || line.starts_with("    ") {
+                let plugin_name = trimmed.to_string();
+                if !plugin_name.is_empty() && !plugin_name.starts_with('#') {
+                    imports.push(plugin_name);
+                }
+            } else {
+                // Non-indented line ends the block
+                in_import_block = false;
+            }
+        }
+    }
+
+    imports
+}
+
 /// Compile for testing without runtime imports
 pub fn compile_minimal(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
     use crate::lexer::specification_lexer::SpecificationLexer;

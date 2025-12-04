@@ -58,10 +58,16 @@
  */
 
 mod expander;
+mod plugin_abi;
 mod registry;
+mod wasm_adapter;
+mod wasm_loader;
 
 pub use expander::PluginExpander;
+pub use plugin_abi::{PluginAbi, PluginManifest, PLUGIN_ABI_VERSION};
 pub use registry::{PluginError, PluginRegistry, PluginRegistryBuilder};
+pub use wasm_adapter::WasmPluginAdapter;
+pub use wasm_loader::WasmPluginLoader;
 
 use crate::ast::{SourceLocation, Statement};
 

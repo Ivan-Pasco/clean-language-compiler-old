@@ -83,7 +83,9 @@ src/plugins/
 ├── mod.rs           # Plugin trait and exports
 ├── registry.rs      # Plugin registration and dispatch
 ├── expander.rs      # AST transformation engine
-└── frame_web.rs     # Built-in web plugin (endpoints:)
+├── plugin_abi.rs    # Plugin manifest and ABI definitions (NEW)
+├── wasm_adapter.rs  # Wraps WASM plugins as FrameworkPlugin (NEW)
+└── wasm_loader.rs   # External plugin loader from ~/.cleen/plugins/ (NEW)
 ```
 
 | Component | Purpose |
@@ -92,27 +94,105 @@ src/plugins/
 | `PluginRegistry` | Stores and dispatches to registered plugins |
 | `PluginExpander` | Walks AST and triggers plugin expansion |
 | `FrameworkBlock` | AST node representing a DSL block |
+| `WasmPluginLoader` | Discovers and loads external WASM plugins |
+| `WasmPluginAdapter` | Wraps WASM modules to implement FrameworkPlugin |
+| `PluginManifest` | Plugin metadata from plugin.toml |
 
 ---
 
 ## How Plugins Work
 
+### Plugin Types
+
+Clean Language supports two types of plugins:
+
+| Type | Written In | Location | Registration |
+|------|------------|----------|--------------|
+| **Built-in** | Rust | Compiled into compiler | Manual in lib.rs |
+| **External** | Clean Language | `~/.cleen/plugins/` | Auto-loaded from `import:` |
+
+### External Plugin Architecture (v2)
+
+External plugins are written in Clean Language, compiled to WASM, and loaded at compile-time:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         EXTERNAL PLUGIN SYSTEM                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ~/.cleen/plugins/                                                         │
+│   ├── frame.web/                                                            │
+│   │   └── 1.0.0/                                                            │
+│   │       ├── plugin.toml      ◀─── Plugin manifest                         │
+│   │       └── plugin.wasm      ◀─── Compiled Clean Language                 │
+│   └── frame.data/                                                           │
+│       └── 1.0.0/                                                            │
+│           ├── plugin.toml                                                   │
+│           └── plugin.wasm                                                   │
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                      WasmPluginLoader                               │   │
+│   │                                                                     │   │
+│   │   1. Parse import: blocks from source code                         │   │
+│   │   2. Find plugin directories in ~/.cleen/plugins/                  │   │
+│   │   3. Load plugin.toml manifest                                     │   │
+│   │   4. Compile plugin.wasm with wasmtime                             │   │
+│   │   5. Create WasmPluginAdapter for each plugin                      │   │
+│   │   6. Register adapters in PluginRegistry                           │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Plugin Manifest (plugin.toml)
+
+Every external plugin requires a manifest file:
+
+```toml
+[plugin]
+name = "frame.web"
+version = "1.0.0"
+description = "Web framework plugin for Clean Language"
+author = "Clean Language Team"
+
+[compatibility]
+min_compiler_version = "0.15.0"
+
+[handles]
+blocks = ["server", "route", "middleware"]
+
+[exports]
+expand = "expand"              # Required: expand(block_ptr, block_len) -> result_ptr
+validate = "validate"          # Optional: validate(block_ptr, block_len) -> error_ptr
+get_keywords = "get_keywords"  # Optional: () -> keywords_ptr
+```
+
 ### The Plugin Lifecycle
 
 ```
-1. REGISTRATION
-   Plugin registers with the compiler, declaring which blocks it handles
+1. IMPORT DETECTION
+   Compiler parses import: blocks in source file
+   Extracts plugin names (e.g., "frame.web", "frame.data")
 
-2. PARSING
+2. PLUGIN LOADING
+   WasmPluginLoader finds plugins in ~/.cleen/plugins/
+   Loads plugin.toml manifest and plugin.wasm module
+   Creates WasmPluginAdapter wrapping each WASM module
+
+3. REGISTRATION
+   Plugin adapters register with PluginRegistry
+   Each declares which blocks it handles
+
+4. PARSING
    Parser encounters unknown "identifier:" block
    Creates FrameworkBlock AST node (doesn't parse content)
 
-3. EXPANSION
+5. EXPANSION
    PluginExpander finds FrameworkBlock nodes
    Dispatches to registered plugin handler
    Plugin returns standard Clean Language AST
 
-4. COMPILATION
+6. COMPILATION
    Expanded AST continues through normal compilation
    Type checking, optimization, WASM generation
 ```
@@ -153,6 +233,93 @@ Statement::FunctionsBlock {
 
 **Final (compiled to WASM):**
 The generated function is compiled like any other Clean code.
+
+---
+
+## Using External Plugins
+
+### Importing Plugins in Clean Code
+
+To use external plugins, add an `import:` block at the top of your Clean file:
+
+```clean
+import:
+    frame.web
+    frame.data
+
+server: port=3000
+    route: method="GET" path="/users"
+        users = User.all()
+        return users
+
+model: name="User" table="users"
+    string name
+    string email
+```
+
+### Compiling with Plugins
+
+Use the `--plugins` flag to enable external plugin loading:
+
+```bash
+# Compile with external plugins
+cln compile app.cln -o app.wasm --plugins
+
+# Or use compile_with_external_plugins() programmatically
+```
+
+### Plugin Installation
+
+External plugins are installed to `~/.cleen/plugins/`:
+
+```bash
+# Install from registry (future)
+cleen plugin install frame.web
+
+# Install local plugin
+cleen plugin install ./my-plugin/
+
+# List installed plugins
+cleen plugin list
+
+# Plugin structure after installation:
+~/.cleen/plugins/
+├── frame.web/
+│   └── 1.0.0/
+│       ├── plugin.toml
+│       └── plugin.wasm
+└── frame.data/
+    └── 1.0.0/
+        ├── plugin.toml
+        └── plugin.wasm
+```
+
+### Programmatic Plugin Loading
+
+You can load external plugins programmatically:
+
+```rust
+use clean_language_compiler::plugins::WasmPluginLoader;
+
+// Create loader (uses ~/.cleen/plugins/ by default)
+let mut loader = WasmPluginLoader::new()?;
+
+// Load specific plugins
+let registry = loader.load_plugins(&["frame.web".to_string()])?;
+
+// Or use custom plugins directory
+let mut loader = WasmPluginLoader::with_plugins_dir("/path/to/plugins")?;
+
+// Check if plugin is installed
+if loader.is_plugin_installed("frame.web") {
+    println!("frame.web is available");
+}
+
+// List all installed plugins
+for (name, version) in loader.list_installed_plugins()? {
+    println!("{} v{}", name, version);
+}
+```
 
 ---
 
@@ -1109,6 +1276,6 @@ Happy plugin development!
 
 ---
 
-*Document Version: 2.0.0*
-*Last Updated: November 2025*
-*Clean Language Compiler Version: 0.14.0+*
+*Document Version: 2.1.0*
+*Last Updated: December 2025*
+*Clean Language Compiler Version: 0.15.0+*

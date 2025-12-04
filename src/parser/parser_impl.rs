@@ -2181,6 +2181,12 @@ impl ErrorRecoveringParser {
                     CompilerError::LexError(_) => {
                         "lexer".to_string()
                     }
+                    CompilerError::PluginError { location, .. } => {
+                        location
+                            .as_ref()
+                            .map(|l| format!("{}:{}", l.line, l.column))
+                            .unwrap_or_else(|| "plugin".to_string())
+                    }
                 }
             );
 

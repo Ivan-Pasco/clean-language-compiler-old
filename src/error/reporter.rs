@@ -129,6 +129,13 @@ impl ErrorReporter {
                 // Handle lexical errors
                 writeln!(stderr, "Lexical error: {}", lex_error)?;
             }
+            CompilerError::PluginError { message, location } => {
+                // Handle plugin errors
+                writeln!(stderr, "Plugin error: {}", message)?;
+                if let Some(loc) = location {
+                    writeln!(stderr, "  at {}:{}:{}", loc.file, loc.line, loc.column)?;
+                }
+            }
         }
 
         Ok(())
@@ -672,6 +679,7 @@ impl ErrorReporter {
                 CompilerError::Module { .. } => "module",
                 CompilerError::Testing { .. } => "testing",
                 CompilerError::LexError(_) => "lexical",
+                CompilerError::PluginError { .. } => "plugin",
             };
 
             *type_counts.entry(error_type).or_insert(0) += 1;

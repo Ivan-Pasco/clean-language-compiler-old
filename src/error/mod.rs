@@ -404,16 +404,39 @@ impl Default for ErrorContext {
 
 #[derive(Debug, Clone)]
 pub enum CompilerError {
-    Syntax { context: Box<ErrorContext> },
-    Type { context: Box<ErrorContext> },
-    Memory { context: Box<ErrorContext> },
-    Codegen { context: Box<ErrorContext> },
-    IO { context: Box<ErrorContext> },
-    Runtime { context: Box<ErrorContext> },
-    Validation { context: Box<ErrorContext> },
-    Module { context: Box<ErrorContext> },
-    Testing { context: Box<ErrorContext> },
+    Syntax {
+        context: Box<ErrorContext>,
+    },
+    Type {
+        context: Box<ErrorContext>,
+    },
+    Memory {
+        context: Box<ErrorContext>,
+    },
+    Codegen {
+        context: Box<ErrorContext>,
+    },
+    IO {
+        context: Box<ErrorContext>,
+    },
+    Runtime {
+        context: Box<ErrorContext>,
+    },
+    Validation {
+        context: Box<ErrorContext>,
+    },
+    Module {
+        context: Box<ErrorContext>,
+    },
+    Testing {
+        context: Box<ErrorContext>,
+    },
     LexError(crate::lexer::specification_lexer::LexError),
+    /// Error from plugin system (loading, execution, expansion)
+    PluginError {
+        message: String,
+        location: Option<crate::ast::SourceLocation>,
+    },
 }
 
 impl CompilerError {
@@ -916,6 +939,7 @@ impl CompilerError {
             CompilerError::Module { context } => &context.message,
             CompilerError::Testing { context } => &context.message,
             CompilerError::LexError(_lex_error) => "Lexical error",
+            CompilerError::PluginError { message, .. } => message,
         }
     }
 }
@@ -968,6 +992,15 @@ impl fmt::Display for CompilerError {
             CompilerError::LexError(lex_error) => {
                 write!(f, "Lexical error: {}", lex_error)
             }
+            CompilerError::PluginError { message, location } => {
+                write!(f, "Plugin error: {}", message)?;
+                if let Some(loc) = location {
+                    if !loc.file.is_empty() && loc.file != "<unknown>" {
+                        write!(f, "\n  at {}:{}:{}", loc.file, loc.line, loc.column)?;
+                    }
+                }
+                Ok(())
+            }
             _ => {
                 let context = match self {
                     CompilerError::Syntax { context } => {
@@ -1006,7 +1039,9 @@ impl fmt::Display for CompilerError {
                         write!(f, "Testing error: {}", context.message)?;
                         context
                     }
-                    CompilerError::LexError(_) => unreachable!(),
+                    CompilerError::LexError(_) | CompilerError::PluginError { .. } => {
+                        unreachable!()
+                    }
                 };
 
                 if let Some(location) = &context.location {

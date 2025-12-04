@@ -340,6 +340,14 @@ impl FixSuggestionEngine {
                     variable_scope: Vec::new(),
                 };
             }
+            CompilerError::PluginError { location, .. } => {
+                // PluginError has location but no full ErrorContext
+                return FixContext {
+                    location: location.clone(),
+                    surrounding_code: None,
+                    variable_scope: Vec::new(),
+                };
+            }
         };
 
         FixContext {
@@ -448,6 +456,7 @@ impl ErrorCorrelator {
             CompilerError::Module { context } => context,
             CompilerError::Testing { context } => context,
             CompilerError::LexError(_) => return None,
+            CompilerError::PluginError { location, .. } => return location.as_ref(),
         };
 
         context.location.as_ref()
@@ -489,6 +498,7 @@ impl ErrorStatistics {
                 CompilerError::Module { .. } => "module",
                 CompilerError::Testing { .. } => "testing",
                 CompilerError::LexError(_) => "lexical",
+                CompilerError::PluginError { .. } => "plugin",
             };
 
             *self.error_types.entry(error_type.to_string()).or_insert(0) += 1;
@@ -513,6 +523,7 @@ impl ErrorStatistics {
             CompilerError::Module { context } => context,
             CompilerError::Testing { context } => context,
             CompilerError::LexError(_) => return None,
+            CompilerError::PluginError { location, .. } => return location.as_ref(),
         };
 
         context.location.as_ref()

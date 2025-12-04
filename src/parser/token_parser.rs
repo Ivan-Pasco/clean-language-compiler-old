@@ -175,6 +175,9 @@ impl TokenParser {
                     CompilerError::LexError(_) => {
                         // LexError doesn't have ErrorContext, skip related errors
                     }
+                    CompilerError::PluginError { .. } => {
+                        // PluginError doesn't have ErrorContext, skip related errors
+                    }
                 }
             }
 

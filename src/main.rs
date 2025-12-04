@@ -143,6 +143,10 @@ enum Commands {
         /// Include tests in the compiled binary
         #[arg(long)]
         include_tests: bool,
+
+        /// Enable external plugin loading from ~/.cleen/plugins/
+        #[arg(long)]
+        plugins: bool,
     },
     /// Package management commands
     #[command(subcommand)]
@@ -358,6 +362,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             opt_level,
             test,
             include_tests,
+            plugins,
         } => {
             handle_compile(
                 input,
@@ -365,6 +370,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 opt_level,
                 test,
                 include_tests,
+                plugins,
                 &output_config,
             )
             .await?
@@ -488,6 +494,7 @@ async fn handle_compile(
     opt_level: u8,
     test: bool,
     _include_tests: bool,
+    plugins: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !output_config.quiet {
@@ -498,7 +505,10 @@ async fn handle_compile(
             3 => "aggressive (speed + size)",
             _ => "unknown",
         };
-        println!("Compiling {input} to {output} (optimization: -O{opt_level} {opt_desc})");
+        let plugin_mode = if plugins { " [plugins enabled]" } else { "" };
+        println!(
+            "Compiling {input} to {output} (optimization: -O{opt_level} {opt_desc}){plugin_mode}"
+        );
     }
 
     let source = fs::read_to_string(&input)?;
@@ -506,16 +516,31 @@ async fn handle_compile(
     tracing::debug!(
         source_len = source.len(),
         opt_level = opt_level,
-        "Calling compile_with_opt_level"
+        plugins = plugins,
+        "Calling compile function"
     );
     tracing::trace!(source_content = %source, "Source code to compile");
 
-    // Use the 7-stage pipeline for compilation with specified optimization level
-    let wasm_binary = match compile_with_opt_level(&source, &input, opt_level) {
-        Ok(binary) => binary,
-        Err(errors) => {
-            output_config.report_errors(&errors, Some(&source));
-            return Err(format!("Compilation failed with {} errors", errors.len()).into());
+    // Use the appropriate pipeline based on plugin mode
+    let wasm_binary = if plugins {
+        // Use plugin-aware compilation that auto-detects import: blocks
+        match clean_language_compiler::compile_with_external_plugins_and_opt_level(
+            &source, &input, opt_level,
+        ) {
+            Ok(binary) => binary,
+            Err(errors) => {
+                output_config.report_errors(&errors, Some(&source));
+                return Err(format!("Compilation failed with {} errors", errors.len()).into());
+            }
+        }
+    } else {
+        // Use the standard 7-stage pipeline for compilation
+        match compile_with_opt_level(&source, &input, opt_level) {
+            Ok(binary) => binary,
+            Err(errors) => {
+                output_config.report_errors(&errors, Some(&source));
+                return Err(format!("Compilation failed with {} errors", errors.len()).into());
+            }
         }
     };
 
