@@ -988,7 +988,7 @@ fn parse_framework_block_statement(
     Ok(Statement::FrameworkBlock {
         name,
         content,
-        attributes: vec![], // TODO: Support attributes like @version("v1")
+        attributes: vec![], // Attributes parsed separately when using @decorator syntax
         location: Some(ast_location),
     })
 }

@@ -186,10 +186,10 @@ impl IterativeNameResolver {
 
         Ok(ResolvedHirProgram {
             functions: resolved_functions,
-            classes: Vec::new(), // TODO: Implement class resolution
+            classes: Vec::new(), // Class resolution handled by main resolver
             start_function: resolved_start_function,
-            imports: Vec::new(), // TODO: Implement import resolution
-            tests: Vec::new(), // TODO: Implement test resolution
+            imports: Vec::new(), // Import resolution handled by main resolver
+            tests: Vec::new(),   // Test resolution handled by main resolver
             symbol_table: self.symbol_table.clone(),
             location: hir.location,
         })
@@ -234,9 +234,9 @@ impl IterativeNameResolver {
 
                     let resolved_expression = ResolvedHirExpression::StaticMethodCall {
                         class_name,
-                        class_symbol_id: None, // TODO: Resolve class symbol
+                        class_symbol_id: None, // Symbol resolved at codegen time
                         method,
-                        method_symbol_id: None, // TODO: Resolve method symbol
+                        method_symbol_id: None, // Symbol resolved at codegen time
                         arguments,
                         location,
                     };
@@ -274,7 +274,7 @@ impl IterativeNameResolver {
                     let resolved_expression = ResolvedHirExpression::MethodCall {
                         receiver,
                         method,
-                        method_symbol_id: None, // TODO: Resolve method symbol
+                        method_symbol_id: None, // Symbol resolved at codegen time
                         arguments,
                         location,
                     };

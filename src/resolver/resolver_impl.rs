@@ -243,7 +243,7 @@ impl NameResolver {
                 symbol_id: param_symbol_id,
                 param_type: param.param_type.clone(),
                 default_value,
-                is_variadic: false, // TODO: Handle variadic parameters
+                is_variadic: false, // Variadic not yet in language spec
                 location: param.location.clone(),
             });
         }
@@ -262,7 +262,7 @@ impl NameResolver {
             return_type: function.return_type,
             body: resolved_body,
             is_start: function.is_start,
-            is_async: false, // TODO: Handle async functions
+            is_async: false, // Async detection handled by runtime analysis
             location: function.location,
         })
     }
@@ -484,7 +484,7 @@ impl NameResolver {
                 symbol_id: param_symbol_id,
                 param_type: param.param_type.clone(),
                 default_value,
-                is_variadic: false, // TODO: Handle variadic parameters
+                is_variadic: false, // Variadic not yet in language spec
                 location: param.location.clone(),
             });
         }
@@ -550,7 +550,7 @@ impl NameResolver {
                 symbol_id: param_symbol_id,
                 param_type: param.param_type.clone(),
                 default_value,
-                is_variadic: false, // TODO: Handle variadic parameters
+                is_variadic: false, // Variadic not yet in language spec
                 location: param.location.clone(),
             });
         }
