@@ -1003,13 +1003,6 @@ impl WasmPluginAdapter {
             return Ok(PluginExpansion::default());
         }
 
-        // Debug: print the generated code
-        eprintln!(
-            "[DEBUG] Plugin generated code ({} bytes):\n{}",
-            generated_code.len(),
-            generated_code
-        );
-
         // Try parsing as a full program - this preserves the start function
         if let Ok(program) = crate::parser::CleanParser::parse_program(generated_code) {
             return Ok(PluginExpansion {
@@ -1254,7 +1247,10 @@ struct PluginState {
 impl PluginState {
     fn new() -> Self {
         Self {
-            alloc_offset: 1024, // Start after initial memory region
+            // Start allocations at 64KB to avoid collision with WASM data section
+            // The WASM module's static data (string constants) starts at 4KB (0x1000)
+            // and can extend quite far for large plugins
+            alloc_offset: 65536,
             last_error: None,
         }
     }
@@ -1302,14 +1298,15 @@ mod tests {
         let mut state = PluginState::new();
 
         let ptr1 = state.allocate(100);
-        assert_eq!(ptr1, 1024);
+        // Starts at 64KB (65536) to avoid collision with WASM data section
+        assert_eq!(ptr1, 65536);
 
         let ptr2 = state.allocate(200);
-        // 1024 + 100 = 1124, aligned to 8 = 1128
-        assert_eq!(ptr2, 1128);
+        // 65536 + 100 = 65636, aligned to 8 = 65640
+        assert_eq!(ptr2, 65640);
 
         let ptr3 = state.allocate(50);
-        // 1128 + 200 = 1328, aligned to 8 = 1328
-        assert_eq!(ptr3, 1328);
+        // 65640 + 200 = 65840, aligned to 8 = 65840
+        assert_eq!(ptr3, 65840);
     }
 }
