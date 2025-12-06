@@ -1905,4 +1905,61 @@ mod tests {
         let pair = pairs.next().unwrap();
         println!("Parse tree: {:#?}", pair);
     }
+
+    #[test]
+    fn debug_iterate_with_nested_if_parsing() {
+        // This test traces how iterate with nested if is parsed - matches debug_iterate_with_if.cln
+        let source = "start()\n\tlist<integer> nums = [5, 15, 25]\n\tprint(\"Before iterate\")\n\titerate item in nums\n\t\tif item > 10\n\t\t\tprint(\"Large\")\n\tprint(\"After iterate\")\n";
+
+        println!("=== Input with explicit characters ===");
+        for c in source.chars() {
+            if c == '\t' {
+                print!("→");
+            } else if c == '\n' {
+                println!("↵");
+            } else {
+                print!("{}", c);
+            }
+        }
+        println!("\n");
+
+        let result = <CleanParser as Parser<Rule>>::parse(Rule::program, source);
+        match result {
+            Ok(pairs) => {
+                println!("=== Parse tree ===");
+                for pair in pairs {
+                    print_pair(&pair, 0);
+                }
+            }
+            Err(e) => {
+                println!("Parse error: {}", e);
+            }
+        }
+    }
+
+    fn print_pair(pair: &pest::iterators::Pair<Rule>, indent: usize) {
+        let rule = pair.as_rule();
+        let span = pair.as_str();
+        let indent_str = "  ".repeat(indent);
+
+        // Show rule and first 80 chars of content
+        let preview: String = span
+            .chars()
+            .take(80)
+            .map(|c| {
+                if c == '\n' {
+                    '↵'
+                } else if c == '\t' {
+                    '→'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        println!("{}{:?}: '{}'", indent_str, rule, preview);
+
+        for inner in pair.clone().into_inner() {
+            print_pair(&inner, indent + 1);
+        }
+    }
 }

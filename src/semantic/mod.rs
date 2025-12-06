@@ -1219,6 +1219,48 @@ impl SemanticAnalyzer {
             )],
         );
 
+        // HTTP server functions (internal bridge functions for Frame runtime)
+        // _http_route(method: string, path: string, handler_idx: integer) -> integer
+        self.function_table.insert(
+            "_http_route".to_string(),
+            vec![(
+                vec![Type::String, Type::String, Type::Integer],
+                Type::Integer,
+                3,
+            )],
+        );
+        // _http_listen(port: integer) -> integer
+        self.function_table.insert(
+            "_http_listen".to_string(),
+            vec![(vec![Type::Integer], Type::Integer, 1)],
+        );
+
+        // Request context access functions (for reading request data in handlers)
+        // _req_param(name: string) -> string
+        self.function_table.insert(
+            "_req_param".to_string(),
+            vec![(vec![Type::String], Type::String, 1)],
+        );
+        // _req_query(name: string) -> string
+        self.function_table.insert(
+            "_req_query".to_string(),
+            vec![(vec![Type::String], Type::String, 1)],
+        );
+        // _req_body() -> string
+        self.function_table
+            .insert("_req_body".to_string(), vec![(vec![], Type::String, 0)]);
+        // _req_header(name: string) -> string
+        self.function_table.insert(
+            "_req_header".to_string(),
+            vec![(vec![Type::String], Type::String, 1)],
+        );
+        // _req_method() -> string
+        self.function_table
+            .insert("_req_method".to_string(), vec![(vec![], Type::String, 0)]);
+        // _req_path() -> string
+        self.function_table
+            .insert("_req_path".to_string(), vec![(vec![], Type::String, 0)]);
+
         // Register method-style functions for type-based method calls
         self.register_method_style_functions();
     }

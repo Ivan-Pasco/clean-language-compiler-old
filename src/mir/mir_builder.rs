@@ -1462,12 +1462,36 @@ impl MirBuilder {
                 let iterable_value = self.build_expression(context, iterable)?;
 
                 // Create loop blocks
-                // CRITICAL FIX: Add dedicated increment block to ensure counter
-                // is always incremented, even when loop body contains IF statements
+                // CRITICAL FIX: Pre-allocate ALL loop blocks upfront to prevent block ID
+                // collisions when nested control flow (IF statements) creates its own blocks.
+                // This ensures the For loop's header, body, increment, and exit blocks have
+                // reserved IDs before any nested statements are processed.
                 let header_block_id = BasicBlockId(context.function.blocks.len());
                 let body_block_id = BasicBlockId(context.function.blocks.len() + 1);
                 let increment_block_id = BasicBlockId(context.function.blocks.len() + 2);
                 let exit_block_id = BasicBlockId(context.function.blocks.len() + 3);
+
+                // CRITICAL: Pre-insert placeholder blocks to reserve their IDs
+                // This prevents nested IF statements from creating blocks with the same IDs
+                for (block_id, label) in [
+                    (header_block_id, "for_header"),
+                    (body_block_id, "for_body"),
+                    (increment_block_id, "for_increment"),
+                    (exit_block_id, "for_exit"),
+                ] {
+                    context.function.blocks.insert(
+                        block_id,
+                        MirBasicBlock {
+                            id: block_id,
+                            label: Some(label.to_string()),
+                            instructions: Vec::new(),
+                            terminator: MirTerminator::Unreachable, // Will be replaced
+                            predecessors: HashSet::new(),
+                            successors: HashSet::new(),
+                            location: location.clone(),
+                        },
+                    );
+                }
 
                 // Create iterator index variable (starts at 0)
                 let index_value_id = ValueId(context.function.next_value_id);
@@ -1540,19 +1564,7 @@ impl MirBuilder {
                     },
                 );
 
-                // Create header block (loop condition check)
-                context.function.blocks.insert(
-                    header_block_id,
-                    MirBasicBlock {
-                        id: header_block_id,
-                        label: Some("for_header".to_string()),
-                        instructions: Vec::new(),
-                        terminator: MirTerminator::Unreachable,
-                        predecessors: HashSet::new(),
-                        successors: HashSet::new(),
-                        location: location.clone(),
-                    },
-                );
+                // Switch to header block (already pre-allocated)
                 self.current_block = Some(header_block_id);
 
                 // SSA FIX: Create Phi node to merge index values from different predecessors
@@ -1620,19 +1632,7 @@ impl MirBuilder {
                     },
                 );
 
-                // Create body block
-                context.function.blocks.insert(
-                    body_block_id,
-                    MirBasicBlock {
-                        id: body_block_id,
-                        label: Some("for_body".to_string()),
-                        instructions: Vec::new(),
-                        terminator: MirTerminator::Unreachable,
-                        predecessors: HashSet::new(),
-                        successors: HashSet::new(),
-                        location: location.clone(),
-                    },
-                );
+                // Switch to body block (already pre-allocated)
                 self.current_block = Some(body_block_id);
 
                 // CRITICAL FIX: Get the address of the element, then LOAD the value
@@ -1737,19 +1737,7 @@ impl MirBuilder {
                     }
                 }
 
-                // Create increment block
-                context.function.blocks.insert(
-                    increment_block_id,
-                    MirBasicBlock {
-                        id: increment_block_id,
-                        label: Some("for_increment".to_string()),
-                        instructions: Vec::new(),
-                        terminator: MirTerminator::Unreachable,
-                        predecessors: HashSet::new(),
-                        successors: HashSet::new(),
-                        location: location.clone(),
-                    },
-                );
+                // Switch to increment block (already pre-allocated)
                 self.current_block = Some(increment_block_id);
 
                 // Increment index: index = index + 1
@@ -1809,19 +1797,7 @@ impl MirBuilder {
                     },
                 );
 
-                // Create exit block
-                context.function.blocks.insert(
-                    exit_block_id,
-                    MirBasicBlock {
-                        id: exit_block_id,
-                        label: Some("for_exit".to_string()),
-                        instructions: Vec::new(),
-                        terminator: MirTerminator::Unreachable,
-                        predecessors: HashSet::new(),
-                        successors: HashSet::new(),
-                        location: location.clone(),
-                    },
-                );
+                // Switch to exit block (already pre-allocated)
                 self.current_block = Some(exit_block_id);
             }
 

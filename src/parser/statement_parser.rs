@@ -367,11 +367,8 @@ fn parse_iterate_statement(
     let mut body = Vec::new();
     for part in parts {
         if part.as_rule() == Rule::indented_block {
-            for stmt_pair in part.into_inner() {
-                if stmt_pair.as_rule() == Rule::statement {
-                    body.push(parse_statement(stmt_pair)?);
-                }
-            }
+            // Use the shared helper that properly handles simple_indented_block and function_nested_block
+            parse_indented_block_statements(part, &mut body)?;
         }
     }
 
@@ -401,14 +398,8 @@ fn parse_range_iterate_statement(
                 step = Some(parse_expression(part)?);
             }
             Rule::indented_block => {
-                for stmt_pair in part.into_inner() {
-                    match stmt_pair.as_rule() {
-                        Rule::statement => {
-                            body.push(parse_statement(stmt_pair)?);
-                        }
-                        _ => {}
-                    }
-                }
+                // Use the shared helper that properly handles simple_indented_block and function_nested_block
+                parse_indented_block_statements(part, &mut body)?;
             }
             _ => {}
         }

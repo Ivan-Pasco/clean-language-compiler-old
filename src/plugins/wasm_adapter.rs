@@ -605,6 +605,100 @@ impl WasmPluginAdapter {
         )?;
 
         // =========================================
+        // HTTP SERVER NAMESPACE - Server functions (stubs)
+        // These are for Frame runtime, stubbed for plugin execution
+        // =========================================
+
+        // env._http_route - Register route handler (stub)
+        linker.func_wrap(
+            "env",
+            "_http_route",
+            |_: Caller<'_, PluginState>,
+             _method_ptr: i32,
+             _method_len: i32,
+             _path_ptr: i32,
+             _path_len: i32,
+             _handler_idx: i32|
+             -> i32 {
+                0 // Success (stub - plugins don't actually register routes)
+            },
+        )?;
+
+        // env._http_listen - Start HTTP server (stub)
+        linker.func_wrap(
+            "env",
+            "_http_listen",
+            |_: Caller<'_, PluginState>, _port: i32| -> i32 {
+                0 // Success (stub - plugins don't actually start servers)
+            },
+        )?;
+
+        // =========================================
+        // REQUEST CONTEXT ACCESS - Stubs for plugins
+        // =========================================
+
+        // env._req_param - Get path parameter (stub)
+        linker.func_wrap(
+            "env",
+            "_req_param",
+            |mut caller: Caller<'_, PluginState>, _name_ptr: i32, _name_len: i32| -> i32 {
+                // Return empty string (stub)
+                let state = caller.data_mut();
+                state.allocate(4) as i32
+            },
+        )?;
+
+        // env._req_query - Get query parameter (stub)
+        linker.func_wrap(
+            "env",
+            "_req_query",
+            |mut caller: Caller<'_, PluginState>, _name_ptr: i32, _name_len: i32| -> i32 {
+                let state = caller.data_mut();
+                state.allocate(4) as i32
+            },
+        )?;
+
+        // env._req_body - Get request body (stub)
+        linker.func_wrap(
+            "env",
+            "_req_body",
+            |mut caller: Caller<'_, PluginState>| -> i32 {
+                let state = caller.data_mut();
+                state.allocate(4) as i32
+            },
+        )?;
+
+        // env._req_header - Get request header (stub)
+        linker.func_wrap(
+            "env",
+            "_req_header",
+            |mut caller: Caller<'_, PluginState>, _name_ptr: i32, _name_len: i32| -> i32 {
+                let state = caller.data_mut();
+                state.allocate(4) as i32
+            },
+        )?;
+
+        // env._req_method - Get request method (stub)
+        linker.func_wrap(
+            "env",
+            "_req_method",
+            |mut caller: Caller<'_, PluginState>| -> i32 {
+                let state = caller.data_mut();
+                state.allocate(4) as i32
+            },
+        )?;
+
+        // env._req_path - Get request path (stub)
+        linker.func_wrap(
+            "env",
+            "_req_path",
+            |mut caller: Caller<'_, PluginState>| -> i32 {
+                let state = caller.data_mut();
+                state.allocate(4) as i32
+            },
+        )?;
+
+        // =========================================
         // FILE NAMESPACE - File operations (stubs)
         // =========================================
 
@@ -908,6 +1002,13 @@ impl WasmPluginAdapter {
         if generated_code.trim().is_empty() {
             return Ok(PluginExpansion::default());
         }
+
+        // Debug: print the generated code
+        eprintln!(
+            "[DEBUG] Plugin generated code ({} bytes):\n{}",
+            generated_code.len(),
+            generated_code
+        );
 
         // Try parsing as a full program - this preserves the start function
         if let Ok(program) = crate::parser::CleanParser::parse_program(generated_code) {

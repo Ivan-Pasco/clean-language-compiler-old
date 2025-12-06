@@ -2210,6 +2210,66 @@ impl NameResolver {
             Some(HirType::Integer),
             builtin_location.clone(),
         );
+
+        // HTTP server functions (internal bridge functions for Frame runtime)
+        // _http_route(method: string, path: string, handler_idx: integer) -> integer
+        self.register_builtin_fn(
+            "_http_route",
+            vec![HirType::String, HirType::String, HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        // _http_listen(port: integer) -> integer
+        self.register_builtin_fn(
+            "_http_listen",
+            vec![HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // Request context access functions (for reading request data in handlers)
+        // _req_param(name: string) -> string
+        self.register_builtin_fn(
+            "_req_param",
+            vec![HirType::String],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        // _req_query(name: string) -> string
+        self.register_builtin_fn(
+            "_req_query",
+            vec![HirType::String],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        // _req_body() -> string
+        self.register_builtin_fn(
+            "_req_body",
+            vec![],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        // _req_header(name: string) -> string
+        self.register_builtin_fn(
+            "_req_header",
+            vec![HirType::String],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        // _req_method() -> string
+        self.register_builtin_fn(
+            "_req_method",
+            vec![],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        // _req_path() -> string
+        self.register_builtin_fn(
+            "_req_path",
+            vec![],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
     }
 
     /// Helper to register a single builtin function

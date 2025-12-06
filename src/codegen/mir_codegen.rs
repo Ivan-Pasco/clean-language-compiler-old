@@ -1651,6 +1651,43 @@ impl MirCodeGenerator<'_> {
                             self.load_string_argument_for_print(arg)?;
                         }
                     }
+                    Some("_http_route") => {
+                        // _http_route(method, path, handler_idx) needs strings expanded
+                        // -> _http_route(method_ptr, method_len, path_ptr, path_len, handler_idx)
+                        debug_mir!(": Matched _http_route, expanding string arguments");
+                        if arguments.len() >= 3 {
+                            // Expand first string argument (method)
+                            self.load_string_argument_for_print(&arguments[0])?;
+                            // Expand second string argument (path)
+                            self.load_string_argument_for_print(&arguments[1])?;
+                            // Load third argument normally (handler_idx is integer)
+                            self.load_operand(&arguments[2])?;
+                        } else {
+                            for arg in arguments {
+                                self.load_operand(arg)?;
+                            }
+                        }
+                    }
+                    Some("_http_listen") => {
+                        // _http_listen(port) - single integer argument, no string expansion needed
+                        debug_mir!(": Matched _http_listen");
+                        for arg in arguments {
+                            self.load_operand(arg)?;
+                        }
+                    }
+                    Some("_req_param") | Some("_req_query") | Some("_req_header") => {
+                        // Request context functions with string argument: _req_param(name) -> string
+                        // Need to expand string argument to (ptr, len)
+                        debug_mir!(": Matched request context function, expanding string argument");
+                        if !arguments.is_empty() {
+                            self.load_string_argument_for_print(&arguments[0])?;
+                        }
+                    }
+                    Some("_req_body") | Some("_req_method") | Some("_req_path") => {
+                        // Request context functions with no arguments: _req_body() -> string
+                        debug_mir!(": Matched request context function with no args");
+                        // No arguments to load
+                    }
                     Some("conditional.number") => {
                         // conditional.number(bool, f64, f64) -> f64
                         // Need to convert integer arguments to f64
@@ -4450,8 +4487,10 @@ impl MirCodeGenerator<'_> {
         // Export all user-defined functions (from functions: block)
         // These are needed for plugins and library modules
         for (name, &index) in &self.wasm_generator.function_map {
-            // Skip internal functions (starting with __)
-            if !name.starts_with("__") && !name.starts_with("_") {
+            // Skip internal functions (starting with __) EXCEPT route handlers
+            // Route handlers (__route_handler_N) MUST be exported for frame-runtime
+            let is_route_handler = name.starts_with("__route_handler_");
+            if is_route_handler || (!name.starts_with("__") && !name.starts_with("_")) {
                 self.wasm_generator.export_section.export(
                     name,
                     wasm_encoder::ExportKind::Func,
