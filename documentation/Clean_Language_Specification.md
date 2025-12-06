@@ -2358,6 +2358,150 @@ list.join(myList, ", ")
 
 ## Modules and Imports
 
+Clean Language supports multi-file programs through a module system. Each `.cln` file is a module that can import and use code from other modules.
+
+**Important:** The `import:` statement is **exclusively for Clean Language modules** (`.cln` files). Plugins are NOT imported - they are declared at the project level in `configuration.cln`. See the [Plugin System](#plugin-system) section for details.
+
+### Module Definition
+
+Every `.cln` file is implicitly a module. The module name is derived from the filename (without the `.cln` extension).
+
+```clean
+// file: utils.cln
+// This file defines the "utils" module
+
+functions:
+    integer add(integer a, integer b)
+        return a + b
+
+    integer multiply(integer a, integer b)
+        return a * b
+```
+
+### Importing Modules
+
+Use the `import:` block to import other modules. All public functions and classes from the imported module become available.
+
+```clean
+// file: main.cln
+import:
+    utils
+
+start()
+    // Use functions from utils module
+    integer sum = add(5, 3)
+    integer product = multiply(4, 2)
+    print(sum)
+    print(product)
+```
+
+#### Import Block Syntax
+
+The import block uses indentation to list imported modules:
+
+```clean
+import:
+    utils           // Import the utils module
+    math_helpers    // Import the math_helpers module
+    data.models     // Import from nested path (data/models.cln)
+```
+
+#### Import Variations
+
+```clean
+import:
+    Math                // whole module
+    math.sqrt           // single symbol (import specific function)
+    Utils as U          // module alias
+    Json.decode as jd   // symbol alias
+```
+
+### Multi-File Compilation
+
+The compiler automatically discovers and compiles all imported modules. The `build` command is the recommended way to compile multi-file projects:
+
+```bash
+# Build a multi-file project (resolves all imports)
+cln build main.cln
+
+# Build with custom output path
+cln build main.cln -o app.wasm
+
+# Build with library search paths
+cln build main.cln -L ./lib -L ./modules
+
+# Build with optimization level
+cln build main.cln -O3
+```
+
+#### Module Resolution
+
+When resolving an import, the compiler searches in the following order:
+
+1. **Current directory** - Same directory as the importing file
+2. **./lib/** - Library directory
+3. **./modules/** - Modules directory
+4. **./src/** - Source directory
+5. **Custom paths** - Paths specified with `-L` flag
+
+For each search path, the compiler tries these file patterns:
+- `{module}.cln` (e.g., `utils.cln`)
+- `{module}/mod.cln` (e.g., `utils/mod.cln`)
+- `{module}/index.cln` (e.g., `utils/index.cln`)
+
+#### Dependency Graph
+
+The compiler builds a dependency graph of all modules and compiles them in topological order (dependencies before dependents). This ensures that when a module is compiled, all its dependencies are already available.
+
+```
+main.cln → math_helpers.cln → utils.cln
+         ↘ data.cln
+```
+
+In this example, `utils.cln` is compiled first, then `math_helpers.cln` and `data.cln`, and finally `main.cln`.
+
+#### Circular Dependencies
+
+Circular dependencies are detected and reported as errors:
+
+```clean
+// file: a.cln
+import:
+    b  // a imports b
+
+// file: b.cln
+import:
+    a  // b imports a - CIRCULAR DEPENDENCY ERROR!
+```
+
+### Built-in Modules
+
+The following modules are built into the language and don't need to be imported from files:
+
+| Module | Description |
+|--------|-------------|
+| `math` | Mathematical functions (sin, cos, sqrt, etc.) |
+| `string` | String manipulation functions |
+| `list` | List operations |
+| `file` | File I/O operations |
+| `http` | HTTP client functions |
+| `json` | JSON parsing and serialization |
+| `console` | Console I/O |
+
+Built-in modules are automatically available when imported:
+
+```clean
+import:
+    math
+    string
+    list
+
+start()
+    number pi = math.pi
+    string upper = string.toUpperCase("hello")
+    list<integer> nums = list.range(1, 10)
+```
+
 ### Visibility Model
 
 **Public by default** - functions and classes are exported unless marked private:
@@ -2367,24 +2511,92 @@ list.join(myList, ", ")
 functions:
     calculateTotal()
         // implementation
-    
+
     formatCurrency()
         // implementation
-    
-    // Mark private when needed
-    private:
-        internalHelper()
-            // implementation
+
+// Mark functions as private
+private:
+    internalHelper
+    secretKey
 ```
 
-### Importing
+Private functions cannot be accessed from other modules:
 
 ```clean
+// file: mymodule.cln
+functions:
+    integer publicFunc()
+        return helperFunc() * 2
+
+    integer helperFunc()
+        return 42
+
+private:
+    helperFunc  // Not accessible from outside
+
+// file: main.cln
 import:
-    Math                # whole module
-    math.sqrt           # single symbol
-    Utils as U          # module alias
-    Json.decode as jd   # symbol alias
+    mymodule
+
+start()
+    integer x = publicFunc()   // OK
+    integer y = helperFunc()   // ERROR: helperFunc is private
+```
+
+### Example: Multi-File Project
+
+Here's a complete example of a multi-file Clean Language project:
+
+```clean
+// file: utils.cln
+functions:
+    integer add(integer a, integer b)
+        return a + b
+
+    integer multiply(integer a, integer b)
+        return a * b
+
+    integer double_value(integer n)
+        return n * 2
+```
+
+```clean
+// file: math_helpers.cln
+import:
+    utils
+
+functions:
+    integer square(integer n)
+        return multiply(n, n)
+
+    integer quadruple(integer n)
+        return double_value(double_value(n))
+```
+
+```clean
+// file: main.cln
+import:
+    utils
+    math_helpers
+
+start()
+    // Use functions from utils
+    integer sum = add(10, 5)
+    print(sum)  // Output: 15
+
+    // Use functions from math_helpers
+    integer sq = square(4)
+    print(sq)  // Output: 16
+
+    // Combined usage
+    integer result = multiply(sq, 2)
+    print(result)  // Output: 32
+```
+
+Compile with:
+```bash
+cln build main.cln -o app.wasm
 ```
 
 ## Package Management (Future Feature)
@@ -2420,6 +2632,32 @@ Clean uses Automatic Reference Counting (ARC) for memory management.
 
 The Clean Language Plugin System allows you to extend the language with custom Domain-Specific Language (DSL) blocks. Plugins transform DSL syntax into standard Clean Language code before compilation.
 
+### Important: Plugins vs Imports
+
+**Plugins are NOT imported in source files.** The `import:` statement is exclusively for importing Clean Language modules (other `.cln` files).
+
+Plugins are declared at the **project level** in `configuration.cln`:
+
+```clean
+// configuration.cln - Project configuration file
+plugins:
+    frame.web
+    frame.ui
+    frame.data
+```
+
+If a plugin provides runtime helper functions, those helpers may be imported using `import:`, but the plugin itself is never imported:
+
+```clean
+// ✅ CORRECT - Import runtime helpers provided by a plugin
+import:
+    frame.web.request    // Runtime helpers from the web plugin
+
+// ❌ WRONG - Never import plugins directly
+import:
+    frame.web            // This is NOT how plugins work!
+```
+
 ### Overview
 
 Plugins operate during the compilation pipeline, transforming custom blocks (like `endpoints:`, `data:`, `component:`) into standard Clean Language AST. This enables powerful abstractions without modifying the core language.
@@ -2429,6 +2667,24 @@ Source → Lexer → Parser → [PLUGIN EXPANSION] → HIR → TypeChecker → M
                               ↑
                       Plugins transform here
 ```
+
+### Project Configuration
+
+Every Clean Language project that uses plugins must have a `configuration.cln` file in the project root:
+
+```clean
+// configuration.cln
+project:
+    name: "my-web-app"
+    version: "1.0.0"
+
+plugins:
+    frame.web       // Enables endpoints: blocks
+    frame.ui        // Enables component: blocks
+    frame.data      // Enables schema: blocks
+```
+
+The compiler reads this configuration and loads the specified plugins before compilation.
 
 ### Framework Blocks
 
@@ -2443,9 +2699,14 @@ blockname:
 
 ### Example: HTTP Endpoints Plugin
 
-The built-in `endpoints:` plugin allows declarative HTTP API definition:
+With `frame.web` declared in `configuration.cln`, the `endpoints:` block becomes available:
 
 ```clean
+// configuration.cln
+plugins:
+    frame.web
+
+// app.cln
 endpoints:
     GET "/users" -> listUsers
     GET "/users/{id}" -> getUser

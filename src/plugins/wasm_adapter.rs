@@ -8,11 +8,11 @@ use wasmtime::{Caller, Engine, Linker, Memory, Module, Store, TypedFunc};
 
 use crate::ast::{FrameworkBlock, Statement};
 use crate::plugins::{
-    FrameworkPlugin, PluginCompletionItem, PluginDiagnostic, PluginError, PluginHoverInfo,
-    PluginLspContext, PluginResult,
+    FrameworkPlugin, PluginCompletionItem, PluginDiagnostic, PluginError, PluginExpansion,
+    PluginHoverInfo, PluginLspContext, PluginResult,
 };
 
-use super::plugin_abi::{PluginFrameworkBlock, PluginManifest};
+use super::plugin_abi::PluginManifest;
 
 /// Adapter that wraps a WASM plugin module
 pub struct WasmPluginAdapter {
@@ -719,32 +719,180 @@ impl WasmPluginAdapter {
     }
 
     /// Call the expand function in the WASM module
+    ///
+    /// Plugin ABI: expand(block_name: string, attributes: string, body: string) -> string
+    /// Clean Language strings are pointers to [4-byte length][data] structures
+    ///
+    /// IMPORTANT: Clean Language uses pointer equality for string comparison.
+    /// To match string literals in the plugin, we must find and reuse the
+    /// existing string pointers from the plugin's data section.
     fn call_expand(&self, block: &FrameworkBlock) -> Result<Vec<Statement>> {
         let mut store = self.create_store();
         let linker = self.setup_linker()?;
 
-        let instance = linker.instantiate(&mut store, &self.module)?;
-
-        // Convert to plugin ABI format and serialize to JSON
-        let plugin_block = PluginFrameworkBlock::from(block);
-        let block_json = serde_json::to_string(&plugin_block)
-            .map_err(|e| anyhow!("Failed to serialize FrameworkBlock: {}", e))?;
+        let instance = linker
+            .instantiate(&mut store, &self.module)
+            .map_err(|e| anyhow!("Failed to instantiate plugin module: {}", e))?;
 
         // Get memory
         let memory = instance
             .get_memory(&mut store, "memory")
             .ok_or_else(|| anyhow!("Plugin does not export memory"))?;
 
-        // Write the JSON to WASM memory
-        let json_bytes = block_json.as_bytes();
-        let json_ptr = self.write_to_memory(&mut store, &memory, json_bytes)?;
+        // Strip trailing colon from block name (e.g., "server:" -> "server")
+        let block_name = block.name.trim_end_matches(':');
 
-        // Call the expand function
-        let expand: TypedFunc<(i32, i32), i32> = instance
+        // Try to find an existing string pointer in the plugin's memory that matches
+        // Clean Language uses pointer equality for string comparison, so we need
+        // to return the same pointer the plugin uses for its string literals
+        let block_name_ptr = self.find_or_write_string(&mut store, &memory, block_name)?;
+
+        // Format attributes as a simple string (name=value pairs)
+        let attributes_str = block
+            .attributes
+            .iter()
+            .map(|attr| {
+                if let Some(ref val) = attr.value {
+                    format!("{}={}", attr.name, val)
+                } else {
+                    attr.name.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let attributes_ptr = self.find_or_write_string(&mut store, &memory, &attributes_str)?;
+
+        // Use the raw content string as the body (it's already in Clean syntax)
+        let body_ptr = self.find_or_write_string(&mut store, &memory, &block.content)?;
+
+        // Call the expand function with signature: (i32, i32, i32) -> i32
+        // Three string pointers, returns a string pointer
+        let expand: TypedFunc<(i32, i32, i32), i32> = instance
             .get_typed_func(&mut store, "expand")
             .map_err(|e| anyhow!("Plugin does not export 'expand' function: {}", e))?;
 
-        let result_ptr = expand.call(&mut store, (json_ptr, json_bytes.len() as i32))?;
+        let result_ptr = expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?;
+
+        // Check for errors
+        if let Some(error) = store.data().last_error.clone() {
+            return Err(anyhow!("Plugin error: {}", error));
+        }
+
+        // Read the result (Clean string format)
+        let result_bytes = self.read_result(&store, &memory, result_ptr)?;
+
+        // The plugin returns Clean Language source code, which we parse
+        let generated_code = std::str::from_utf8(&result_bytes)
+            .map_err(|e| anyhow!("Invalid UTF-8 in plugin response: {}", e))?;
+
+        // Handle empty result
+        if generated_code.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Plugin output is typically a "start:" block like:
+        //   start:
+        //       _http_listen(3000)
+        //
+        // We need to extract the statements from this format.
+        // First, try parsing as a full program (in case plugin returns complete code)
+        if let Ok(program) = crate::parser::CleanParser::parse_program(generated_code) {
+            if let Some(start_fn) = program.start_function {
+                return Ok(start_fn.body);
+            }
+            return Ok(Vec::new());
+        }
+
+        // If full program parsing fails, try extracting statements from start() or start: block
+        // Strip the start prefix and parse individual statements
+        let code_without_start = if generated_code.trim().starts_with("start()")
+            || generated_code.trim().starts_with("start:")
+        {
+            generated_code
+                .lines()
+                .skip(1) // Skip "start()" or "start:" line
+                .filter(|line| !line.trim().is_empty()) // Skip empty lines
+                .map(|line| {
+                    // Remove one level of indentation (tab or spaces)
+                    if line.starts_with('\t') {
+                        &line[1..]
+                    } else if line.starts_with("    ") {
+                        &line[4..]
+                    } else {
+                        line
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            generated_code.trim().to_string()
+        };
+
+        // Wrap the statements in a minimal program structure to parse
+        // Use start() syntax which is valid Clean Language
+        let wrapper = format!(
+            "start()\n\t{}",
+            code_without_start.trim().replace('\n', "\n\t")
+        );
+        let program = crate::parser::CleanParser::parse_program(&wrapper).map_err(|e| {
+            anyhow!(
+                "Failed to parse plugin output '{}' (wrapped: '{}'): {}",
+                generated_code.chars().take(100).collect::<String>(),
+                wrapper.chars().take(100).collect::<String>(),
+                e
+            )
+        })?;
+
+        // Extract statements from the start function (if present)
+        let statements = program.start_function.map(|f| f.body).unwrap_or_default();
+
+        Ok(statements)
+    }
+
+    /// Call the expand function and return full expansion result
+    ///
+    /// This version preserves the start function if the plugin generates one
+    fn call_expand_full(&self, block: &FrameworkBlock) -> Result<PluginExpansion> {
+        let mut store = self.create_store();
+        let linker = self.setup_linker()?;
+
+        let instance = linker
+            .instantiate(&mut store, &self.module)
+            .map_err(|e| anyhow!("Failed to instantiate plugin module: {}", e))?;
+
+        // Get memory
+        let memory = instance
+            .get_memory(&mut store, "memory")
+            .ok_or_else(|| anyhow!("Plugin does not export memory"))?;
+
+        // Strip trailing colon from block name
+        let block_name = block.name.trim_end_matches(':');
+        let block_name_ptr = self.find_or_write_string(&mut store, &memory, block_name)?;
+
+        // Format attributes
+        let attributes_str = block
+            .attributes
+            .iter()
+            .map(|attr| {
+                if let Some(ref val) = attr.value {
+                    format!("{}={}", attr.name, val)
+                } else {
+                    attr.name.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let attributes_ptr = self.find_or_write_string(&mut store, &memory, &attributes_str)?;
+
+        // Body
+        let body_ptr = self.find_or_write_string(&mut store, &memory, &block.content)?;
+
+        // Call expand function
+        let expand: TypedFunc<(i32, i32, i32), i32> = instance
+            .get_typed_func(&mut store, "expand")
+            .map_err(|e| anyhow!("Plugin does not export 'expand' function: {}", e))?;
+
+        let result_ptr = expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?;
 
         // Check for errors
         if let Some(error) = store.data().last_error.clone() {
@@ -753,34 +901,132 @@ impl WasmPluginAdapter {
 
         // Read the result
         let result_bytes = self.read_result(&store, &memory, result_ptr)?;
-
-        // The plugin returns Clean Language source code, which we parse
         let generated_code = std::str::from_utf8(&result_bytes)
             .map_err(|e| anyhow!("Invalid UTF-8 in plugin response: {}", e))?;
 
-        // Parse the generated code into a program
-        // Plugins output code in a "start:" block format
-        let program = crate::parser::CleanParser::parse_program(generated_code)
+        // Handle empty result
+        if generated_code.trim().is_empty() {
+            return Ok(PluginExpansion::default());
+        }
+
+        // Try parsing as a full program - this preserves the start function
+        if let Ok(program) = crate::parser::CleanParser::parse_program(generated_code) {
+            return Ok(PluginExpansion {
+                statements: program.statements,
+                start_function: program.start_function,
+                functions: program.functions,
+            });
+        }
+
+        // If full program parsing fails, try wrapping and parsing
+        let code_without_start = if generated_code.trim().starts_with("start()")
+            || generated_code.trim().starts_with("start:")
+        {
+            generated_code
+                .lines()
+                .skip(1)
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| {
+                    if line.starts_with('\t') {
+                        &line[1..]
+                    } else if line.starts_with("    ") {
+                        &line[4..]
+                    } else {
+                        line
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            generated_code.trim().to_string()
+        };
+
+        let wrapper = format!(
+            "start()\n\t{}",
+            code_without_start.trim().replace('\n', "\n\t")
+        );
+        let program = crate::parser::CleanParser::parse_program(&wrapper)
             .map_err(|e| anyhow!("Failed to parse plugin output: {}", e))?;
 
-        // Extract statements from the start function (if present)
-        let statements = program.start_function.map(|f| f.body).unwrap_or_default();
-
-        Ok(statements)
+        Ok(PluginExpansion {
+            statements: Vec::new(),
+            start_function: program.start_function,
+            functions: program.functions,
+        })
     }
 
-    /// Write bytes to WASM memory
-    fn write_to_memory(
+    /// Find an existing string in plugin memory or write a new one
+    ///
+    /// Clean Language uses pointer equality for string comparison, so we scan
+    /// the plugin's data section for matching strings and return the existing
+    /// pointer if found. This allows `block_name == "server"` to work correctly.
+    fn find_or_write_string(
         &self,
         store: &mut Store<PluginState>,
         memory: &Memory,
-        bytes: &[u8],
+        s: &str,
     ) -> Result<i32> {
-        // Find a free region in memory (simple bump allocator)
-        let ptr = store.data_mut().allocate(bytes.len());
+        let bytes = s.as_bytes();
+        let len = bytes.len();
+
+        // Scan the plugin's data section for a matching string
+        // Clean strings are stored as [4-byte length][data]
+        // Data section typically starts around 4096 and extends to ~8192
+        let data = memory.data(&*store);
+        let scan_start = 4096usize;
+        let scan_end = std::cmp::min(8192usize, data.len().saturating_sub(4 + len));
+
+        for ptr in scan_start..scan_end {
+            // Check if this looks like a string with our length
+            if ptr + 4 + len <= data.len() {
+                let stored_len =
+                    u32::from_le_bytes([data[ptr], data[ptr + 1], data[ptr + 2], data[ptr + 3]])
+                        as usize;
+
+                if stored_len == len {
+                    // Check if content matches
+                    let stored_data = &data[ptr + 4..ptr + 4 + len];
+                    if stored_data == bytes {
+                        // Found a match - return the pointer to the existing string
+                        return Ok(ptr as i32);
+                    }
+                }
+            }
+        }
+
+        // No match found, write a new string
+        self.write_clean_string(store, memory, s)
+    }
+
+    /// Write a Clean string to WASM memory
+    ///
+    /// Clean string memory layout (from the string pointer):
+    /// - Offset 0: string length (u32)
+    /// - Offset 4: string data bytes
+    /// - Offset 8: type_id (u32) - must be 3 for STRING_TYPE_ID
+    ///
+    /// The string.length() function checks type_id at offset 8 to verify
+    /// it's a string before reading the length at offset 0.
+    fn write_clean_string(
+        &self,
+        store: &mut Store<PluginState>,
+        memory: &Memory,
+        s: &str,
+    ) -> Result<i32> {
+        let bytes = s.as_bytes();
+        let len = bytes.len();
+
+        // We need space for: length (4) + data (len) + padding to offset 8 + type_id (4)
+        // Layout: [length:4][data:len][padding:?][type_id:4]
+        // The type_id must be at offset 8 from the start
+        // So if len < 4, we need padding; if len >= 4, type_id goes at offset 4 + len (aligned to 8)
+        let type_id_offset = 8; // type_id is always at offset 8
+        let total_size = std::cmp::max(4 + len, type_id_offset) + 4; // At least offset 8 + 4 bytes for type_id
+
+        let ptr = store.data_mut().allocate(total_size);
 
         // Ensure memory is large enough
-        let required_pages = ((ptr + bytes.len()) / 65536) + 1;
+        let required_pages = ((ptr + total_size) / 65536) + 1;
         let current_pages = memory.size(&mut *store) as usize;
         if required_pages > current_pages {
             memory
@@ -788,8 +1034,18 @@ impl WasmPluginAdapter {
                 .map_err(|e| anyhow!("Failed to grow memory: {}", e))?;
         }
 
-        // Write the bytes
-        memory.write(&mut *store, ptr, bytes)?;
+        // Write length at offset 0 (4 bytes, little-endian)
+        let len_bytes = (len as u32).to_le_bytes();
+        memory.write(&mut *store, ptr, &len_bytes)?;
+
+        // Write string data at offset 4
+        if !bytes.is_empty() {
+            memory.write(&mut *store, ptr + 4, bytes)?;
+        }
+
+        // Write type_id (STRING_TYPE_ID = 3) at offset 8
+        let type_id_bytes = 3u32.to_le_bytes();
+        memory.write(&mut *store, ptr + type_id_offset, &type_id_bytes)?;
 
         Ok(ptr as i32)
     }
@@ -839,6 +1095,16 @@ impl FrameworkPlugin for WasmPluginAdapter {
 
     fn expand(&self, block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
         self.call_expand(block)
+            .map_err(|e| PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: block.name.clone(),
+                message: e.to_string(),
+                location: block.location.clone(),
+            })
+    }
+
+    fn expand_full(&self, block: &FrameworkBlock) -> PluginResult<PluginExpansion> {
+        self.call_expand_full(block)
             .map_err(|e| PluginError::ExpansionFailed {
                 plugin_name: self.name.clone(),
                 block_name: block.name.clone(),

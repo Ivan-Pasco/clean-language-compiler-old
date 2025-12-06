@@ -1,0 +1,19 @@
+// main_multi_import.cln - Multiple imports test
+// Tests importing from multiple modules
+
+import:
+	utils
+	math_helpers
+
+start()
+	// Direct use from utils
+	integer sum = add(10, 5)
+	print(sum)
+
+	// Use from math_helpers
+	integer sq = square(4)
+	print(sq)
+
+	// Combined usage
+	integer result = multiply(sq, 2)
+	print(result)

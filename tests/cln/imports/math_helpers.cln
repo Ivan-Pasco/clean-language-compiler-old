@@ -1,0 +1,12 @@
+// math_helpers.cln - Math utilities that import from utils
+// Tests deeper import tree
+
+import:
+	utils
+
+functions:
+	integer square(integer n)
+		return multiply(n, n)
+
+	integer quadruple(integer n)
+		return double_value(double_value(n))

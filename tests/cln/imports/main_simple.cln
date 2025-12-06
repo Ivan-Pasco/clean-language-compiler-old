@@ -1,0 +1,9 @@
+// main_simple.cln - Simple two-file import test
+// Tests basic module import functionality
+
+import:
+	utils
+
+start()
+	integer result = add(5, 3)
+	print(result)

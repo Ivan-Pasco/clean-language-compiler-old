@@ -268,6 +268,41 @@ impl PluginRegistry {
             })
     }
 
+    /// Expand a framework block using the appropriate plugin (full version)
+    ///
+    /// Returns a PluginExpansion that can include start functions and other definitions.
+    pub fn expand_full(
+        &self,
+        block: &FrameworkBlock,
+    ) -> Result<super::PluginExpansion, PluginError> {
+        let handler =
+            self.handlers
+                .get(&block.name)
+                .ok_or_else(|| PluginError::UnknownBlockType {
+                    block_name: block.name.clone(),
+                    location: block.location.clone(),
+                })?;
+
+        // Validate first
+        handler
+            .validate(block)
+            .map_err(|e| PluginError::ValidationFailed {
+                plugin_name: handler.name().to_string(),
+                message: e.to_string(),
+                location: block.location.clone(),
+            })?;
+
+        // Then expand with full result
+        handler
+            .expand_full(block)
+            .map_err(|e| PluginError::ExpansionFailed {
+                plugin_name: handler.name().to_string(),
+                block_name: block.name.clone(),
+                message: e.to_string(),
+                location: block.location.clone(),
+            })
+    }
+
     /// Get list of registered plugin names
     pub fn registered_plugins(&self) -> &[String] {
         &self.registered_plugins

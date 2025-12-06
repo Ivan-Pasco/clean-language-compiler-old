@@ -1,0 +1,11 @@
+// main_deep.cln - Deep import tree test
+// Tests multi-level import resolution: main -> math_helpers -> utils
+
+import:
+	math_helpers
+
+start()
+	integer sq = square(5)
+	print(sq)
+	integer quad = quadruple(3)
+	print(quad)

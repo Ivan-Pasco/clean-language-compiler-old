@@ -1,0 +1,11 @@
+// utils.cln - Utility module for import testing
+
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+	integer multiply(integer a, integer b)
+		return a * b
+
+	integer double_value(integer n)
+		return n * 2

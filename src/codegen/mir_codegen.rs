@@ -4000,12 +4000,7 @@ impl MirCodeGenerator<'_> {
                 start_func_index,
             );
 
-            // Export memory so host functions can access it
-            self.wasm_generator.export_section.export(
-                "memory",
-                wasm_encoder::ExportKind::Memory,
-                0,
-            );
+            // Note: Memory export moved to finalize_module() for all modules
 
             // Update function tracking
             self.wasm_generator
@@ -4445,6 +4440,25 @@ impl MirCodeGenerator<'_> {
         // 4. Add memory section - clone it
         let memory_section = self.wasm_generator.memory_section.clone();
         module.section(&memory_section);
+
+        // CRITICAL FIX: Always export memory for WASM host interop
+        // Memory must be exported for plugins and any host that needs to read/write WASM memory
+        self.wasm_generator
+            .export_section
+            .export("memory", wasm_encoder::ExportKind::Memory, 0);
+
+        // Export all user-defined functions (from functions: block)
+        // These are needed for plugins and library modules
+        for (name, &index) in &self.wasm_generator.function_map {
+            // Skip internal functions (starting with __)
+            if !name.starts_with("__") && !name.starts_with("_") {
+                self.wasm_generator.export_section.export(
+                    name,
+                    wasm_encoder::ExportKind::Func,
+                    index,
+                );
+            }
+        }
 
         // 5. Add export section - clone it
         let export_section = self.wasm_generator.export_section.clone();

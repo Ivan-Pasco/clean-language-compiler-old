@@ -53,17 +53,20 @@ impl WasmPluginLoader {
         Ok(home.join(".cleen").join("plugins"))
     }
 
-    /// Load plugins required by import statements
+    /// Load plugins declared in configuration.cln
+    ///
+    /// Plugins are declared at the project level in configuration.cln, NOT imported
+    /// in source files. The `import:` statement is exclusively for Clean Language modules.
     ///
     /// # Arguments
-    /// * `imports` - List of plugin names from `import:` blocks (e.g., ["frame.web", "frame.data"])
+    /// * `plugin_names` - List of plugin names from configuration.cln (e.g., ["frame.web", "frame.data"])
     ///
     /// # Returns
     /// A PluginRegistry with all requested plugins loaded
-    pub fn load_plugins(&mut self, imports: &[String]) -> Result<PluginRegistry> {
+    pub fn load_plugins(&mut self, plugin_names: &[String]) -> Result<PluginRegistry> {
         let mut builder = PluginRegistry::builder();
 
-        for plugin_name in imports {
+        for plugin_name in plugin_names {
             let adapter = self.load_plugin(plugin_name)?;
             builder = builder.add(adapter);
         }
@@ -148,8 +151,14 @@ impl WasmPluginLoader {
     fn load_wasm_module(&mut self, path: &Path) -> Result<Module> {
         let path_str = path.to_string_lossy().to_string();
 
+        eprintln!(
+            "[Plugin Loader] Loading WASM module from: {}",
+            path.display()
+        );
+
         // Check cache first
         if let Some(module) = self.module_cache.get(&path_str) {
+            eprintln!("[Plugin Loader] Using cached module");
             return Ok(module.clone());
         }
 
@@ -157,8 +166,15 @@ impl WasmPluginLoader {
         let wasm_bytes = std::fs::read(path)
             .map_err(|e| anyhow!("Failed to read WASM file {}: {}", path.display(), e))?;
 
+        eprintln!("[Plugin Loader] WASM file size: {} bytes", wasm_bytes.len());
+
         let module = Module::new(&self.engine, &wasm_bytes)
             .map_err(|e| anyhow!("Failed to compile WASM module {}: {}", path.display(), e))?;
+
+        eprintln!(
+            "[Plugin Loader] Module compiled, exports count: {}",
+            module.exports().count()
+        );
 
         // Cache the compiled module
         self.module_cache.insert(path_str, module.clone());

@@ -40,6 +40,10 @@ fn main() -> Result<(), CompilerError> {
     }
 
     match args[1].as_str() {
+        "build" => {
+            let build_args = parse_build_args(&args[2..])?;
+            build_with_config(&build_args)
+        }
         "compile" => {
             let compile_args = parse_compile_args(&args[2..])?;
             compile_with_config(&compile_args)
@@ -105,6 +109,145 @@ struct RunConfig {
     runtime: RuntimeType,
     debug: bool,
     verbose: bool,
+}
+
+/// Configuration for build command (multi-file compilation)
+#[derive(Debug)]
+struct BuildConfig {
+    input_file: String,
+    output_file: String,
+    search_paths: Vec<std::path::PathBuf>,
+    optimization_level: u8,
+    debug: bool,
+    verbose: bool,
+}
+
+/// Parse build command arguments (for multi-file compilation)
+fn parse_build_args(args: &[String]) -> Result<BuildConfig, CompilerError> {
+    if args.is_empty() {
+        return Err(CompilerError::runtime_error(
+            "No input file specified".to_string(),
+            None,
+            None,
+        ));
+    }
+
+    let mut config = BuildConfig {
+        input_file: args[0].clone(),
+        output_file: String::new(),
+        search_paths: Vec::new(),
+        optimization_level: 2, // Default: -O2
+        debug: false,
+        verbose: false,
+    };
+
+    // Generate output filename if not specified
+    if args.len() > 1 && !args[1].starts_with('-') {
+        config.output_file = args[1].clone();
+    } else {
+        config.output_file = match Path::new(&config.input_file).file_stem() {
+            Some(stem) => format!("{stem}.wasm", stem = stem.to_string_lossy()),
+            None => format!("{}.wasm", config.input_file),
+        };
+    }
+
+    // Parse flags
+    let mut i = if config.output_file == *args.get(1).unwrap_or(&String::new()) {
+        2
+    } else {
+        1
+    };
+    while i < args.len() {
+        match args[i].as_str() {
+            "--include" | "-I" => {
+                if i + 1 < args.len() {
+                    config.search_paths.push(std::path::PathBuf::from(&args[i + 1]));
+                    i += 2;
+                } else {
+                    return Err(CompilerError::runtime_error(
+                        "Include path option requires a value".to_string(),
+                        None,
+                        None,
+                    ));
+                }
+            }
+            "-O0" => {
+                config.optimization_level = 0;
+                i += 1;
+            }
+            "-O1" => {
+                config.optimization_level = 1;
+                i += 1;
+            }
+            "-O2" => {
+                config.optimization_level = 2;
+                i += 1;
+            }
+            "-O3" => {
+                config.optimization_level = 3;
+                i += 1;
+            }
+            "--debug" | "-d" => {
+                config.debug = true;
+                i += 1;
+            }
+            "--verbose" | "-v" => {
+                config.verbose = true;
+                i += 1;
+            }
+            _ => {
+                return Err(CompilerError::runtime_error(
+                    format!("Unknown option: {}", args[i]),
+                    None,
+                    None,
+                ));
+            }
+        }
+    }
+
+    Ok(config)
+}
+
+/// Build with multi-file compilation
+fn build_with_config(config: &BuildConfig) -> Result<(), CompilerError> {
+    if config.verbose {
+        println!("🔨 Building {} → {}", config.input_file, config.output_file);
+        if !config.search_paths.is_empty() {
+            println!("   Search paths: {:?}", config.search_paths);
+        }
+    }
+
+    // Use multi-file compilation
+    let wasm_bytes = clean_language_compiler::compile_multi_file(
+        &config.input_file,
+        config.search_paths.clone(),
+        config.optimization_level,
+    )
+    .map_err(|errors| {
+        for error in &errors {
+            eprintln!("❌ Error: {}", error);
+        }
+        errors.into_iter().next().unwrap_or_else(|| {
+            CompilerError::runtime_error(
+                "Compilation failed with unknown error".to_string(),
+                None,
+                None,
+            )
+        })
+    })?;
+
+    // Write output
+    fs::write(&config.output_file, wasm_bytes).map_err(|e| {
+        CompilerError::io_error(format!("Failed to write output file: {e}"), None, None)
+    })?;
+
+    println!(
+        "✅ Build successful! Generated {} ({} bytes)",
+        config.output_file,
+        fs::metadata(&config.output_file).map(|m| m.len()).unwrap_or(0)
+    );
+
+    Ok(())
 }
 
 /// Parse compile command arguments
@@ -656,7 +799,8 @@ fn print_usage() {
     println!("    cln <COMMAND> [OPTIONS]");
     println!();
     println!("COMMANDS:");
-    println!("    compile <input> [output]    Compile Clean source to WebAssembly");
+    println!("    build <input> [output]      Build multi-file project (resolves imports)");
+    println!("    compile <input> [output]    Compile single Clean source to WebAssembly");
     println!("    run <input>                 Compile and run a Clean program");
     println!("    parse <input>               Parse and validate syntax only");
     println!("    check <input>               Type check without compilation");
@@ -664,6 +808,12 @@ fn print_usage() {
     println!("    runtime <subcommand>        Manage WebAssembly runtimes");
     println!("    version                     Show version information");
     println!("    help                        Show this help message");
+    println!();
+    println!("BUILD OPTIONS:");
+    println!("    --lib, -L <path>            Add library search path (can be repeated)");
+    println!("    -O0, -O1, -O2, -O3          Optimization level (default: -O2)");
+    println!("    --debug, -d                 Include debug information");
+    println!("    --verbose, -v               Verbose output");
     println!();
     println!("COMPILE/RUN OPTIONS:");
     println!("    --target, -t <target>       Target platform (web, nodejs, native, embedded, wasi, auto)");
@@ -694,6 +844,8 @@ fn print_usage() {
     println!("    runtime benchmark <file>    Benchmark runtimes with a test file");
     println!();
     println!("EXAMPLES:");
+    println!("    cln build main.cln                              # Build multi-file project");
+    println!("    cln build main.cln app.wasm -L ./lib            # Build with custom lib path");
     println!("    cln compile hello.cln                           # Basic compilation (default -O2)");
     println!("    cln compile hello.cln -O3                       # Aggressive optimization");
     println!("    cln compile hello.cln -O0 --debug               # Debug build, no optimization");

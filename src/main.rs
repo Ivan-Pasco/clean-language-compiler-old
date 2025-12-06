@@ -123,6 +123,27 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Build a multi-file Clean Language project (resolves imports)
+    Build {
+        /// Entry file to compile (main.cln)
+        input: String,
+
+        /// Output file for the WebAssembly binary
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// Library search paths (can be specified multiple times)
+        #[arg(short = 'L', long = "lib")]
+        lib_paths: Vec<PathBuf>,
+
+        /// Optimization level (0-3)
+        #[arg(short = 'O', long, default_value_t = 2)]
+        opt_level: u8,
+
+        /// Include debug information
+        #[arg(short, long)]
+        debug: bool,
+    },
     /// Compile a Clean Language file to WebAssembly
     Compile {
         /// Input file to compile
@@ -356,6 +377,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     match args.command {
+        Commands::Build {
+            input,
+            output,
+            lib_paths,
+            opt_level,
+            debug,
+        } => handle_build(input, output, lib_paths, opt_level, debug, &output_config).await?,
         Commands::Compile {
             input,
             output,
@@ -483,6 +511,63 @@ fn handle_runtime(
                 return Err(e.into());
             }
         }
+    }
+
+    Ok(())
+}
+
+async fn handle_build(
+    input: String,
+    output: Option<String>,
+    lib_paths: Vec<PathBuf>,
+    opt_level: u8,
+    debug: bool,
+    output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Determine output filename
+    let output_file = output.unwrap_or_else(|| {
+        Path::new(&input)
+            .file_stem()
+            .map(|s| format!("{}.wasm", s.to_string_lossy()))
+            .unwrap_or_else(|| "output.wasm".to_string())
+    });
+
+    if !output_config.quiet {
+        let opt_desc = match opt_level {
+            0 => "none (fastest compilation)",
+            1 => "light",
+            2 => "standard",
+            3 => "aggressive (speed + size)",
+            _ => "unknown",
+        };
+        let debug_mode = if debug { " [debug]" } else { "" };
+        println!(
+            "Building {input} -> {output_file} (optimization: -O{opt_level} {opt_desc}){debug_mode}"
+        );
+
+        if !lib_paths.is_empty() {
+            println!("Library paths: {:?}", lib_paths);
+        }
+    }
+
+    // Use the multi-file compiler
+    let wasm_binary = clean_language_compiler::compile_multi_file(&input, lib_paths, opt_level)
+        .map_err(|errors| {
+            // Report all errors
+            let error_messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+            output_config.report_errors(&errors, None);
+            format!(
+                "Build failed with {} error(s): {}",
+                errors.len(),
+                error_messages.join("; ")
+            )
+        })?;
+
+    // Write output
+    fs::write(&output_file, wasm_binary)?;
+
+    if !output_config.quiet {
+        println!("Build successful! Generated {output_file}");
     }
 
     Ok(())

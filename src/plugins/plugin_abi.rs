@@ -118,50 +118,6 @@ impl PluginAbi {
     }
 }
 
-/// JSON format for FrameworkBlock passed to plugins
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginFrameworkBlock {
-    pub name: String,
-    pub content: String,
-    pub attributes: Vec<PluginAttribute>,
-    pub location: Option<PluginSourceLocation>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginAttribute {
-    pub name: String,
-    pub value: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginSourceLocation {
-    pub file: Option<String>,
-    pub line: usize,
-    pub column: usize,
-}
-
-impl From<&crate::ast::FrameworkBlock> for PluginFrameworkBlock {
-    fn from(block: &crate::ast::FrameworkBlock) -> Self {
-        Self {
-            name: block.name.clone(),
-            content: block.content.clone(),
-            attributes: block
-                .attributes
-                .iter()
-                .map(|a| PluginAttribute {
-                    name: a.name.clone(),
-                    value: a.value.clone(),
-                })
-                .collect(),
-            location: block.location.as_ref().map(|loc| PluginSourceLocation {
-                file: Some(loc.file.clone()),
-                line: loc.line,
-                column: loc.column,
-            }),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

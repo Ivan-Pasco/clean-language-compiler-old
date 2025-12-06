@@ -15,6 +15,10 @@ pub struct PluginExpander<'a> {
     /// Track statistics for reporting
     blocks_expanded: usize,
     statements_generated: usize,
+    /// Pending start function from plugin expansion
+    pending_start: Option<Function>,
+    /// Pending functions to add to the program
+    pending_functions: Vec<Function>,
 }
 
 impl<'a> PluginExpander<'a> {
@@ -24,6 +28,8 @@ impl<'a> PluginExpander<'a> {
             registry,
             blocks_expanded: 0,
             statements_generated: 0,
+            pending_start: None,
+            pending_functions: Vec::new(),
         }
     }
 
@@ -39,14 +45,29 @@ impl<'a> PluginExpander<'a> {
     /// * `Ok(Program)` - The program with all framework blocks expanded
     /// * `Err(PluginError)` - If expansion fails
     pub fn expand_program(&mut self, mut program: Program) -> Result<Program, PluginError> {
-        // Expand top-level statements
-        program.statements = self.expand_statements(program.statements)?;
+        // Expand top-level statements using full expansion (which captures start functions)
+        program.statements = self.expand_statements_full(program.statements)?;
 
         // Expand statements in functions
         program.functions = self.expand_functions(program.functions)?;
 
         // Expand statements in classes
         program.classes = self.expand_classes(program.classes)?;
+
+        // Merge pending start function into program
+        if let Some(start_fn) = self.pending_start.take() {
+            if program.start_function.is_none() {
+                program.start_function = Some(start_fn);
+            } else {
+                // Merge: append plugin start function body to existing start function
+                if let Some(ref mut existing) = program.start_function {
+                    existing.body.extend(start_fn.body);
+                }
+            }
+        }
+
+        // Merge pending functions into program
+        program.functions.extend(self.pending_functions.drain(..));
 
         tracing::debug!(
             blocks_expanded = self.blocks_expanded,
@@ -55,6 +76,71 @@ impl<'a> PluginExpander<'a> {
         );
 
         Ok(program)
+    }
+
+    /// Expand framework blocks using full expansion (preserves start functions)
+    fn expand_statements_full(
+        &mut self,
+        statements: Vec<Statement>,
+    ) -> Result<Vec<Statement>, PluginError> {
+        let mut result = Vec::with_capacity(statements.len());
+
+        for stmt in statements {
+            match stmt {
+                Statement::FrameworkBlock {
+                    name,
+                    content,
+                    attributes,
+                    location,
+                } => {
+                    let block = FrameworkBlock {
+                        name: name.clone(),
+                        content,
+                        attributes,
+                        location: location.clone(),
+                    };
+
+                    if self.registry.handles(&name) {
+                        // Use expand_full to preserve start function
+                        let expansion = self.registry.expand_full(&block)?;
+                        self.blocks_expanded += 1;
+                        self.statements_generated += expansion.statements.len();
+
+                        // Capture start function if plugin generated one
+                        if let Some(start_fn) = expansion.start_function {
+                            if self.pending_start.is_none() {
+                                self.pending_start = Some(start_fn);
+                            } else {
+                                // Merge start functions
+                                if let Some(ref mut existing) = self.pending_start {
+                                    existing.body.extend(start_fn.body);
+                                }
+                            }
+                        }
+
+                        // Capture additional functions
+                        self.pending_functions.extend(expansion.functions);
+
+                        // Add expanded statements
+                        let expanded = self.expand_statements_full(expansion.statements)?;
+                        result.extend(expanded);
+                    } else {
+                        result.push(Statement::FrameworkBlock {
+                            name,
+                            content: block.content,
+                            attributes: block.attributes,
+                            location,
+                        });
+                    }
+                }
+                other => {
+                    // Use regular expansion for non-framework statements
+                    result.extend(self.expand_statements(vec![other])?);
+                }
+            }
+        }
+
+        Ok(result)
     }
 
     /// Expand framework blocks in a list of statements

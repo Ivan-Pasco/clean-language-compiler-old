@@ -47,6 +47,7 @@
 pub mod ast;
 pub mod builtins;
 pub mod codegen;
+pub mod compilation;
 pub mod debug;
 pub mod error;
 pub mod hir;
@@ -473,6 +474,154 @@ fn extract_imports(source: &str) -> Vec<String> {
     }
 
     imports
+}
+
+/// Compiles a multi-file Clean Language program from an entry file
+///
+/// This function supports programs with `import:` statements that reference
+/// other `.cln` files. It automatically discovers, loads, and compiles all
+/// transitively imported modules into a single WASM output.
+///
+/// # Arguments
+/// * `entry_path` - Path to the main/entry `.cln` file
+/// * `search_paths` - Additional paths to search for imported modules
+/// * `opt_level` - Optimization level (0-3)
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes containing all modules
+/// * `Err(Vec<CompilerError>)` - Compilation errors
+///
+/// # Example
+/// ```ignore
+/// // Given: main.cln imports utils.cln
+/// let wasm = compile_multi_file(
+///     Path::new("src/main.cln"),
+///     vec![PathBuf::from("src/"), PathBuf::from("lib/")],
+///     2
+/// )?;
+/// ```
+pub fn compile_multi_file<P: AsRef<std::path::Path>>(
+    entry_path: P,
+    search_paths: Vec<std::path::PathBuf>,
+    opt_level: u8,
+) -> Result<Vec<u8>, Vec<CompilerError>> {
+    use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
+    use crate::mir::lower_tast_to_mir_with_opt_level;
+    use crate::resolver::Resolver;
+    use crate::typechecker::TypeChecker;
+
+    tracing::info!(
+        entry = %entry_path.as_ref().display(),
+        opt_level = opt_level,
+        "Starting multi-file compilation"
+    );
+
+    // Step 1: Build the compilation unit (discovers and parses all modules)
+    let config = MultiFileCompilerConfig::default()
+        .with_search_paths(search_paths)
+        .with_opt_level(opt_level);
+    let compiler = MultiFileCompiler::with_config(config);
+    let unit = compiler.build_from_file(&entry_path)?;
+
+    tracing::info!(
+        modules = unit.module_count(),
+        "All modules discovered and parsed to HIR"
+    );
+
+    // Step 2: Merge all HIR programs into a single unified program
+    // The compilation order ensures dependencies come before dependents
+    let merged_hir = {
+        use crate::hir::HirProgram;
+
+        let mut all_functions = Vec::new();
+        let mut all_classes = Vec::new();
+        let mut start_function = None;
+        let mut all_imports = Vec::new();
+        let mut all_tests = Vec::new();
+        let mut root_location = None;
+
+        // Process modules in compilation order (dependencies first)
+        for module_id in &unit.compilation_order {
+            if let Some(module) = unit.get_module(*module_id) {
+                if let Some(hir) = &module.hir {
+                    // Collect functions (but only one start function)
+                    for func in &hir.functions {
+                        all_functions.push(func.clone());
+                    }
+
+                    // Collect classes
+                    for class in &hir.classes {
+                        all_classes.push(class.clone());
+                    }
+
+                    // Only the entry module's start function is used
+                    if module.is_entry {
+                        start_function = hir.start_function.clone();
+                        root_location = Some(hir.location.clone());
+                    }
+
+                    // Collect imports (for reference, they're already resolved)
+                    for import in &hir.imports {
+                        all_imports.push(import.clone());
+                    }
+
+                    // Collect tests (only from entry module for now)
+                    if module.is_entry {
+                        for test in &hir.tests {
+                            all_tests.push(test.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        let location = root_location.unwrap_or_else(|| crate::ast::SourceLocation {
+            file: entry_path.as_ref().to_string_lossy().to_string(),
+            line: 1,
+            column: 1,
+        });
+
+        tracing::info!(
+            functions = all_functions.len(),
+            classes = all_classes.len(),
+            "Merged HIR from all modules"
+        );
+
+        HirProgram {
+            functions: all_functions,
+            classes: all_classes,
+            start_function,
+            imports: all_imports,
+            tests: all_tests,
+            location,
+        }
+    };
+
+    // Stage 4: Resolution
+    tracing::debug!("Starting Stage 4: Resolution");
+    let resolution_result = Resolver::resolve(merged_hir)?;
+    let resolved_hir = resolution_result.resolved_hir;
+
+    // Stage 5: Type checking
+    tracing::debug!("Starting Stage 5: Type checking");
+    let type_result = TypeChecker::check(resolved_hir)?;
+
+    // Stage 6: TAST to MIR
+    tracing::debug!("Starting Stage 6: TAST to MIR");
+    let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, opt_level)?;
+
+    // Stage 7: WASM generation
+    tracing::debug!("Starting Stage 7: WASM generation");
+    use crate::codegen::mir_codegen::MirCodeGenerator;
+    let mut mir_codegen = MirCodeGenerator::default();
+    let codegen_result = mir_codegen.generate(mir_result.program)?;
+
+    tracing::info!(
+        bytes = codegen_result.wasm_bytes.len(),
+        "Multi-file compilation complete"
+    );
+
+    Ok(codegen_result.wasm_bytes)
 }
 
 /// Compile for testing without runtime imports
