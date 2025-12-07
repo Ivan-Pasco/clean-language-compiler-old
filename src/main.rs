@@ -232,6 +232,27 @@ enum Commands {
         #[arg(short, long)]
         debug: bool,
     },
+    /// Start a development HTTP server for a Clean Language web application
+    Serve {
+        /// Input file to serve (.cln source file)
+        input: String,
+
+        /// Port to listen on (default: 3000)
+        #[arg(short, long, default_value_t = 3000)]
+        port: u16,
+
+        /// Host to bind to (default: 0.0.0.0)
+        #[arg(long, default_value = "0.0.0.0")]
+        host: String,
+
+        /// Enable debug output
+        #[arg(short, long)]
+        debug: bool,
+
+        /// Watch for file changes and auto-reload
+        #[arg(short, long)]
+        watch: bool,
+    },
     /// Export compile options to JSON for IDE integration
     Options {
         /// Export compile options as JSON
@@ -437,6 +458,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Explain { code } => handle_explain(&code, &output_config)?,
         Commands::Runtime { detect, list } => handle_runtime(detect, list, &output_config)?,
+        Commands::Serve {
+            input,
+            port,
+            host,
+            debug,
+            watch,
+        } => handle_serve(input, port, host, debug, watch, &output_config).await?,
     }
 
     Ok(())
@@ -511,6 +539,107 @@ fn handle_runtime(
                 return Err(e.into());
             }
         }
+    }
+
+    Ok(())
+}
+
+async fn handle_serve(
+    input: String,
+    port: u16,
+    host: String,
+    debug: bool,
+    _watch: bool,
+    output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::process::Command;
+
+    let green = if output_config.use_colors {
+        "\x1b[32m"
+    } else {
+        ""
+    };
+    let cyan = if output_config.use_colors {
+        "\x1b[36m"
+    } else {
+        ""
+    };
+    let reset = if output_config.use_colors {
+        "\x1b[0m"
+    } else {
+        ""
+    };
+
+    // Step 1: Compile the input file to WASM
+    let wasm_output = format!("/tmp/cln-serve-{}.wasm", std::process::id());
+
+    if !output_config.quiet {
+        println!("{}Compiling{} {} to WASM...", cyan, reset, input);
+    }
+
+    // Compile with plugins enabled
+    let compile_result = handle_compile(
+        input.clone(),
+        wasm_output.clone(),
+        2,     // opt_level
+        false, // test
+        false, // include_tests
+        true,  // plugins enabled
+        output_config,
+    )
+    .await;
+
+    if let Err(e) = compile_result {
+        eprintln!("Compilation failed: {}", e);
+        return Err(e);
+    }
+
+    // Step 2: Find clean-server
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let server_paths = [
+        format!("{}/.cleen/server/1.0.0/clean-server", home),
+        "/usr/local/bin/clean-server".to_string(),
+    ];
+
+    let server_path = server_paths
+        .iter()
+        .find(|p| std::path::Path::new(p).exists());
+
+    let server_path = match server_path {
+        Some(p) => p.clone(),
+        None => {
+            eprintln!("Error: clean-server not found. Install it with:");
+            eprintln!("   cleen server install");
+            return Err("clean-server not found".into());
+        }
+    };
+
+    if !output_config.quiet {
+        println!(
+            "{}Starting server{} on http://{}:{}",
+            green, reset, host, port
+        );
+    }
+
+    // Step 3: Run clean-server with the compiled WASM
+    let mut cmd = Command::new(&server_path);
+    cmd.arg(&wasm_output)
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--host")
+        .arg(&host);
+
+    if debug {
+        cmd.arg("--verbose");
+    }
+
+    let status = cmd.status()?;
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&wasm_output);
+
+    if !status.success() {
+        return Err(format!("Server exited with status: {}", status).into());
     }
 
     Ok(())
