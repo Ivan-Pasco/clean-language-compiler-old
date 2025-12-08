@@ -350,15 +350,8 @@ impl StringClass {
     }
 
     // Implementation methods for complex string operations
-
-    fn generate_concat(&self) -> Vec<Instruction> {
-        vec![
-            // Ultra-simplified concat implementation - just return first string
-            // Parameters: str1_ptr, str2_ptr
-            // Returns: string pointer (just return first string for now)
-            Instruction::LocalGet(0), // Return first string ptr
-        ]
-    }
+    // NOTE: string.concat is now an IMPORTED runtime function (4 params: ptr1, len1, ptr2, len2)
+    // It's registered in builtin_generator.rs and implemented in wasmtime_runner.rs, NOT here.
 
     fn generate_substring(&self) -> Vec<Instruction> {
         // Simplified substring implementation - returns original string to maintain spec compliance
