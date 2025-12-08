@@ -1607,9 +1607,9 @@ impl MirCodeGenerator<'_> {
                             self.load_string_argument_for_print(arg)?;
                         }
                     }
-                    Some("string_concat") => {
-                        debug_mir!(": Matched string_concat");
-                        // CRITICAL FIX: string_concat expects 4 i32 arguments: (ptr1, len1, ptr2, len2) -> result_ptr
+                    Some("string.concat") | Some("string_concat") => {
+                        debug_mir!(": Matched string.concat");
+                        // string.concat expects 4 i32 arguments: (ptr1, len1, ptr2, len2) -> result_ptr
                         // This matches the runtime host function signature
                         // We need to expand StringTuple to (ptr, len) pairs
                         for arg in arguments {

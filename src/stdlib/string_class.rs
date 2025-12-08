@@ -86,14 +86,9 @@ impl StringClass {
             ],
         )?;
 
-        // String.concat(string a, string b) -> string
-        register_stdlib_function(
-            codegen,
-            "string.concat",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_concat(),
-        )?;
+        // NOTE: String.concat is now an IMPORTED runtime function (4 params: ptr1, len1, ptr2, len2)
+        // It's registered in builtin_generator.rs, NOT here as a stdlib function.
+        // The old 2-param stdlib version has been removed to use the runtime implementation.
 
         // String.substring(string text, integer start, integer end) -> string
         register_stdlib_function(

@@ -217,6 +217,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "http_decode_url", |_: i32, _: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "http_build_query", |_: i32, _: i32| -> i32 { 0 })?;
 
+    // HTTP server stub functions (not fully implemented)
+    linker.func_wrap(
+        "env",
+        "_http_route",
+        |_: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+    )?;
+    linker.func_wrap("env", "_http_listen", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "_req_param", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "_req_query", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "_req_body", || -> i32 { 0 })?;
+    linker.func_wrap("env", "_req_header", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "_req_method", || -> i32 { 0 })?;
+    linker.func_wrap("env", "_req_path", || -> i32 { 0 })?;
+
     // Conditional function imports - proper implementations
     linker.func_wrap(
         "env",
@@ -325,21 +339,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    // Add string_concat function: string_concat(ptr1: i32, len1: i32, ptr2: i32, len2: i32) -> i32
+    // Add string.concat function: string.concat(ptr1: i32, len1: i32, ptr2: i32, len2: i32) -> i32
+    // Takes two strings in (content_ptr, length) format and returns pointer to [len|content] structure
     linker.func_wrap(
         "env",
-        "string_concat",
+        "string.concat",
         |mut caller: Caller<'_, ()>, ptr1: i32, len1: i32, ptr2: i32, len2: i32| -> i32 {
-            eprintln!(
-                "🔥 string_concat called: ptr1={}, len1={}, ptr2={}, len2={}",
-                ptr1, len1, ptr2, len2
-            );
-
             // Get memory
             let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
                 mem
             } else {
-                eprintln!("❌ string_concat: Failed to get memory");
+                eprintln!("string.concat: Failed to get memory");
                 return 0; // Return null on failure
             };
 
@@ -349,17 +359,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .get(ptr1 as usize..(ptr1 + len1) as usize)
             {
                 match std::str::from_utf8(data) {
-                    Ok(s) => {
-                        eprintln!("✅ string_concat: str1 = '{}'", s);
-                        s.to_string()
-                    }
+                    Ok(s) => s.to_string(),
                     Err(e) => {
-                        eprintln!("❌ string_concat: str1 UTF-8 error: {}", e);
+                        eprintln!("string.concat: str1 UTF-8 error: {}", e);
                         return 0;
                     }
                 }
             } else {
-                eprintln!("❌ string_concat: str1 out of bounds");
+                eprintln!("string.concat: str1 out of bounds");
                 return 0;
             };
 
@@ -369,28 +376,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .get(ptr2 as usize..(ptr2 + len2) as usize)
             {
                 match std::str::from_utf8(data) {
-                    Ok(s) => {
-                        eprintln!("✅ string_concat: str2 = '{}'", s);
-                        s.to_string()
-                    }
+                    Ok(s) => s.to_string(),
                     Err(e) => {
-                        eprintln!("❌ string_concat: str2 UTF-8 error: {}", e);
+                        eprintln!("string.concat: str2 UTF-8 error: {}", e);
                         return 0;
                     }
                 }
             } else {
-                eprintln!("❌ string_concat: str2 out of bounds");
+                eprintln!("string.concat: str2 out of bounds");
                 return 0;
             };
 
             // Concatenate strings
             let result = str1 + &str2;
-            eprintln!("✅ string_concat: result = '{}'", result);
 
             // Allocate and return result
-            let result_ptr = allocate_string_in_memory(&memory, &mut caller, &result);
-            eprintln!("✅ string_concat: returning ptr = {}", result_ptr);
-            result_ptr
+            allocate_string_in_memory(&memory, &mut caller, &result)
         },
     )?;
 
@@ -504,7 +505,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     linker.func_wrap("env", "string.toUpperCase", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "string.toLowerCase", |_: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "string.concat", |_: i32, _: i32| -> i32 { 0 })?;
+    // string.concat is registered below with full 4-param implementation
 
     // Add string_split function: splits a string by delimiter and returns a list of strings
     linker.func_wrap(

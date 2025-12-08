@@ -222,7 +222,7 @@ impl MirBuilder {
         // Map them to existing WASM builtin functions
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1000), "string_concat".to_string());
+            .insert(SymbolId(1000), "string.concat".to_string());
         // pow_f64 and pow_i32 should map to the existing math.pow function
         mir_program
             .symbol_name_map
@@ -2076,8 +2076,8 @@ impl MirBuilder {
                         || matches!(right.expr_type, ConcreteType::Any));
 
                 if is_string_concat {
-                    // String concatenation uses runtime string_concat function
-                    // string_concat(str1_ptr, str1_len, str2_ptr, str2_len) -> (result_ptr, result_len)
+                    // String concatenation uses runtime string.concat function
+                    // string.concat(str1_ptr, str1_len, str2_ptr, str2_len) -> result_ptr
                     let left_id = self.build_expression(context, left)?;
                     let right_id = self.build_expression(context, right)?;
 
@@ -2182,8 +2182,8 @@ impl MirBuilder {
                         expression.location.clone(),
                     );
 
-                    // Generate call to string_concat runtime function
-                    // Use SymbolId(1000) as a fixed ID for string_concat built-in
+                    // Generate call to string.concat runtime function
+                    // Use SymbolId(1000) as a fixed ID for string.concat built-in
                     let instruction = MirInstruction {
                         dest: Some(result_id),
                         operation: MirOperation::Call {
@@ -4877,7 +4877,7 @@ impl MirBuilder {
                 panic!("BUG: Power operator should be handled in build_expression as runtime function call, not converted to MIR operator")
             }
             BinaryOperator::Concatenate => {
-                panic!("BUG: String concatenation should be handled in build_expression as string_concat call, not converted to MIR operator")
+                panic!("BUG: String concatenation should be handled in build_expression as string.concat call, not converted to MIR operator")
             }
         }
     }

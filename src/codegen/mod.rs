@@ -2822,11 +2822,34 @@ impl CodeGenerator {
                     return Ok(WasmType::I32);
                 }
 
-                // Build the result string by concatenating all parts
-                let mut result_on_stack = false;
+                // Helper to expand a string pointer on the stack to (content_ptr, len)
+                // String format: [4-byte length][content]
+                let expand_string_ptr = |instructions: &mut Vec<Instruction>, temp_local: u32| {
+                    // Stack has [string_ptr], store to temp
+                    instructions.push(Instruction::LocalSet(temp_local));
+                    // Push content_ptr (ptr + 4)
+                    instructions.push(Instruction::LocalGet(temp_local));
+                    instructions.push(Instruction::I32Const(4));
+                    instructions.push(Instruction::I32Add);
+                    // Push length (i32 load from ptr)
+                    instructions.push(Instruction::LocalGet(temp_local));
+                    instructions.push(Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+                    // Stack now has [content_ptr, len]
+                };
+
+                // Allocate temp locals for string expansion
+                let temp_local_1 = self.add_local(WasmType::I32);
+                let temp_local_2 = self.add_local(WasmType::I32);
+                let result_local = self.add_local(WasmType::I32);
+
+                let mut has_result = false;
 
                 for (i, part) in parts.iter().enumerate() {
-                    // Generate the string representation for this part
+                    // Generate the string pointer for this part
                     match part {
                         ast::StringPart::Text(text) => {
                             // Allocate string literal
@@ -2840,22 +2863,15 @@ impl CodeGenerator {
                             // Convert to string based on the expression type
                             match expr_type {
                                 WasmType::I32 => {
-                                    // Check if this is already a string (represented as I32 pointer)
-                                    // or if it's an integer that needs conversion
-                                    if self.is_string_type(expr) {
-                                        // Already a string pointer, no conversion needed
-                                    } else {
+                                    if !self.is_string_type(expr) {
                                         // Integer value, convert to string
-                                        // Call integer to string conversion function
                                         if let Some(int_to_string_index) =
                                             self.get_function_index("int_to_string")
                                         {
                                             instructions
                                                 .push(Instruction::Call(int_to_string_index));
                                         } else {
-                                            // Fallback: create a simple string representation
-                                            // For now, just convert to "0" as placeholder
-                                            instructions.push(Instruction::Drop); // Remove the integer
+                                            instructions.push(Instruction::Drop);
                                             let fallback_str = self.allocate_string("0")?;
                                             instructions
                                                 .push(Instruction::I32Const(fallback_str as i32));
@@ -2863,22 +2879,19 @@ impl CodeGenerator {
                                     }
                                 }
                                 WasmType::F64 => {
-                                    // Convert float to string
                                     if let Some(float_to_string_index) =
                                         self.get_function_index("float_to_string")
                                     {
                                         instructions.push(Instruction::Call(float_to_string_index));
                                     } else {
-                                        // Fallback: create a simple string representation
-                                        instructions.push(Instruction::Drop); // Remove the float
+                                        instructions.push(Instruction::Drop);
                                         let fallback_str = self.allocate_string("0.0")?;
                                         instructions
                                             .push(Instruction::I32Const(fallback_str as i32));
                                     }
                                 }
                                 _ => {
-                                    // For other types, convert to string representation
-                                    instructions.push(Instruction::Drop); // Remove the value
+                                    instructions.push(Instruction::Drop);
                                     let fallback_str = self.allocate_string("[object]")?;
                                     instructions.push(Instruction::I32Const(fallback_str as i32));
                                 }
@@ -2886,22 +2899,37 @@ impl CodeGenerator {
                         }
                     }
 
-                    // Now we have a string on the stack for this part
+                    // Now we have a string pointer on the stack for this part
                     if i == 0 {
-                        // First part - just keep it on the stack as the initial result
-                        result_on_stack = true;
+                        // First part - store as initial result
+                        instructions.push(Instruction::LocalSet(result_local));
+                        has_result = true;
                     } else {
-                        // Subsequent parts - concatenate with the previous result
-                        // Stack now has: [previous_result, current_part]
-                        // Call string concatenation function (takes 2 params, returns 1)
+                        // Subsequent parts - concatenate with result
+                        // Stack: [current_part_ptr]
+                        // Store current part to temp
+                        instructions.push(Instruction::LocalSet(temp_local_2));
+
+                        // Expand result to (content_ptr, len)
+                        instructions.push(Instruction::LocalGet(result_local));
+                        expand_string_ptr(instructions, temp_local_1);
+
+                        // Expand current part to (content_ptr, len)
+                        instructions.push(Instruction::LocalGet(temp_local_2));
+                        expand_string_ptr(instructions, temp_local_2);
+
+                        // Call string.concat(ptr1, len1, ptr2, len2) -> result_ptr
                         instructions.push(Instruction::Call(self.get_string_concat_index()?));
-                        // Stack now has: [concatenated_result]
+
+                        // Store result for next iteration
+                        instructions.push(Instruction::LocalSet(result_local));
                     }
                 }
 
-                // At this point, we should have exactly one string on the stack (the result)
-                if !result_on_stack {
-                    // Safety fallback - should never happen with non-empty parts
+                // Push final result to stack
+                if has_result {
+                    instructions.push(Instruction::LocalGet(result_local));
+                } else {
                     let empty_str = self.allocate_string("")?;
                     instructions.push(Instruction::I32Const(empty_str as i32));
                 }
@@ -3502,8 +3530,10 @@ impl CodeGenerator {
         // Special handling for string concatenation
         if let BinaryOperator::Add = op {
             if self.is_string_type(left) && self.is_string_type(right) {
-                let _left_type = self.generate_expression(left, instructions)?;
-                let _right_type = self.generate_expression(right, instructions)?;
+                // Expand each string to (content_ptr, length) format
+                // string.concat expects 4 args: (ptr1, len1, ptr2, len2)
+                self.expand_string_expression(left, instructions)?;
+                self.expand_string_expression(right, instructions)?;
 
                 // Call string concatenation function
                 if let Ok(concat_index) = self.get_string_concat_index() {
@@ -4157,6 +4187,37 @@ impl CodeGenerator {
 
     fn get_string_concat_index(&self) -> Result<u32, CompilerError> {
         self.get_function_index_or_error("string.concat")
+    }
+
+    /// Expand a string expression to (content_ptr, length) format for string.concat
+    /// String memory layout: [4-byte length][content]
+    /// This pushes (content_ptr, length) to the stack
+    pub fn expand_string_expression(
+        &mut self,
+        expr: &Expression,
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<(), CompilerError> {
+        // Generate the expression (pushes string pointer to stack)
+        self.generate_expression(expr, instructions)?;
+
+        // Store pointer in temp local
+        let temp_local = self.add_local(WasmType::I32);
+        instructions.push(Instruction::LocalSet(temp_local));
+
+        // Push content pointer (ptr + 4, skip length prefix)
+        instructions.push(Instruction::LocalGet(temp_local));
+        instructions.push(Instruction::I32Const(4));
+        instructions.push(Instruction::I32Add);
+
+        // Push length (load i32 from ptr)
+        instructions.push(Instruction::LocalGet(temp_local));
+        instructions.push(Instruction::I32Load(wasm_encoder::MemArg {
+            offset: 0,
+            align: 2, // 4-byte alignment
+            memory_index: 0,
+        }));
+
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -7587,11 +7648,12 @@ impl CodeGenerator {
         // For string literals, use direct data section placement
         if let Expression::Literal(Value::String(s)) = expr {
             // Get a reliable offset for this string in the data section
+            // data_offset points to [4-byte length][content]
             let data_offset = self.get_or_create_string_offset(s)?;
             let str_len = s.len() as i32;
 
-            // Push pointer to string content (direct data section offset)
-            instructions.push(Instruction::I32Const(data_offset as i32));
+            // Push pointer to string content (skip 4-byte length prefix)
+            instructions.push(Instruction::I32Const(data_offset as i32 + 4));
 
             // Push string length
             instructions.push(Instruction::I32Const(str_len));
@@ -7639,14 +7701,30 @@ impl CodeGenerator {
                     let needs_int_conversion = match expr {
                         Expression::Literal(Value::Integer(_)) => true,
                         Expression::Variable(_) => {
-                            // For variables, we need to assume integers need conversion
-                            // until we can access semantic type information
-                            // This is a heuristic-based approach for now
-                            true
+                            // For variables, check if it's a string type
+                            // If it's in variable_types as String, don't convert
+                            if let Expression::Variable(var_name) = expr {
+                                if let Some(var_type) = self.variable_types.get(var_name) {
+                                    matches!(var_type, crate::ast::Type::Integer)
+                                } else {
+                                    // Unknown variable - assume integer for safety
+                                    true
+                                }
+                            } else {
+                                true
+                            }
                         }
-                        Expression::Binary(_, _, _) => {
-                            // Binary expressions that return I32 are likely integer arithmetic
-                            true
+                        Expression::Binary(left, op, right) => {
+                            // Check if this is string concatenation
+                            if matches!(op, BinaryOperator::Add)
+                                && (self.is_string_type(left) || self.is_string_type(right))
+                            {
+                                // String concatenation returns a string pointer, not an integer
+                                false
+                            } else {
+                                // Other binary expressions that return I32 are likely integer arithmetic
+                                true
+                            }
                         }
                         _ => {
                             // For other expressions (like method calls), assume they return string pointers
@@ -8475,7 +8553,7 @@ impl CodeGenerator {
             .insert("string_to_float".to_string());
         self.function_count += 1;
 
-        // string_concat(str1_ptr: i32, str1_len: i32, str2_ptr: i32, str2_len: i32) -> i32
+        // string.concat(str1_ptr: i32, str1_len: i32, str2_ptr: i32, str2_len: i32) -> i32
         // Returns result_ptr (pointer to concatenated string)
         // Length can be calculated by the caller if needed
         let string_concat_type = self.type_manager.add_function_type_single(
@@ -8484,12 +8562,12 @@ impl CodeGenerator {
         )?;
         self.import_section.import(
             "env",
-            "string_concat",
+            "string.concat",
             wasm_encoder::EntityType::Function(string_concat_type),
         );
         self.function_map
-            .insert("string_concat".to_string(), self.function_count);
-        self.imported_functions.insert("string_concat".to_string());
+            .insert("string.concat".to_string(), self.function_count);
+        self.imported_functions.insert("string.concat".to_string());
         self.function_count += 1;
 
         Ok(())

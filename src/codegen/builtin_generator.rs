@@ -145,8 +145,8 @@ impl CodeGenerator {
     fn register_string_operations(&mut self) -> Result<(), CompilerError> {
         // String operations - require host functions due to memory management complexity
         self.register_import_function("env", "string_length", vec![ValType::I32], vec![ValType::I32])?;
-        // CRITICAL FIX: string_concat takes 4 args (ptr1, len1, ptr2, len2) matching host function
-        self.register_import_function("env", "string_concat", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        // string.concat takes 4 args (ptr1, len1, ptr2, len2) matching host function
+        self.register_import_function("env", "string.concat", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_substring", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_index_of", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_to_upper", vec![ValType::I32], vec![ValType::I32])?;
@@ -629,7 +629,7 @@ impl CodeGenerator {
 
         match method_name {
             "concat" => {
-                let func_index = self.get_function_index_or_error("string_concat")?;
+                let func_index = self.get_function_index_or_error("string.concat")?;
                 instructions.push(Instruction::Call(func_index));
                 Ok(WasmType::I32)
             },
@@ -729,7 +729,7 @@ impl CodeGenerator {
             },
             "join" => {
                 // For now, use a simple concatenation approach
-                let func_index = self.get_function_index_or_error("string_concat")?;
+                let func_index = self.get_function_index_or_error("string.concat")?;
                 instructions.push(Instruction::Call(func_index));
                 Ok(WasmType::I32)
             },

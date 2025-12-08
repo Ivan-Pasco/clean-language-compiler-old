@@ -1514,7 +1514,7 @@ impl CodeGenerator {
 
             // If this is not the first part, concatenate with the previous result
             if i > 0 {
-                let func_index = self.get_function_index_or_error("string_concat")?;
+                let func_index = self.get_function_index_or_error("string.concat")?;
                 instructions.push(Instruction::Call(func_index));
             }
         }

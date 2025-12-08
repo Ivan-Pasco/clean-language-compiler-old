@@ -254,10 +254,10 @@ impl WasmPluginAdapter {
             },
         )?;
 
-        // env.string_concat - Concatenate two strings (CRITICAL for plugins)
+        // env.string.concat - Concatenate two strings (CRITICAL for plugins)
         linker.func_wrap(
             "env",
-            "string_concat",
+            "string.concat",
             |mut caller: Caller<'_, PluginState>,
              str1_ptr: i32,
              str1_len: i32,

@@ -241,7 +241,7 @@ The compiler imports essential runtime functions:
 ("env", "print_string", FuncType::new([I32], [])),
 
 // String operations
-("env", "string_concat", FuncType::new([I32, I32], [I32])),
+("env", "string.concat", FuncType::new([I32, I32, I32, I32], [I32])),  // ptr1, len1, ptr2, len2 -> result_ptr
 ("env", "string_compare", FuncType::new([I32, I32], [I32])),
 
 // List operations

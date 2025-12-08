@@ -15,8 +15,10 @@ impl CodeGenerator {
         // Special handling for string concatenation
         if let BinaryOperator::Add = op {
             if self.is_string_type_new(left) && self.is_string_type_new(right) {
-                let _left_type = self.generate_expression(left, instructions)?;
-                let _right_type = self.generate_expression(right, instructions)?;
+                // Expand each string to (content_ptr, length) format
+                // string.concat expects 4 args: (ptr1, len1, ptr2, len2)
+                self.expand_string_expression(left, instructions)?;
+                self.expand_string_expression(right, instructions)?;
 
                 // Call string concatenation function
                 if let Ok(concat_index) = self.get_string_concat_index() {

@@ -450,11 +450,11 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
             )
         })?;
 
-    // string_concat(ptr1: i32, len1: i32, ptr2: i32, len2: i32) -> string_ptr: i32
+    // string.concat(ptr1: i32, len1: i32, ptr2: i32, len2: i32) -> string_ptr: i32
     linker
         .func_wrap(
             "env",
-            "string_concat",
+            "string.concat",
             |mut caller: Caller<'_, ()>, ptr1: i32, len1: i32, ptr2: i32, len2: i32| -> i32 {
                 let str1 = extract_string_from_memory(&mut caller, ptr1, len1);
                 let str2 = extract_string_from_memory(&mut caller, ptr2, len2);
@@ -464,7 +464,7 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create string_concat function: {e}"),
+                format!("Failed to create string.concat function: {e}"),
                 None,
                 None,
             )

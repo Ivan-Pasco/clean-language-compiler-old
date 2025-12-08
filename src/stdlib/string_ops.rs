@@ -241,14 +241,9 @@ impl StringOperations {
     }
 
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Register string operations - using simple version for now
-        register_stdlib_function(
-            codegen,
-            "string.concat",
-            &[WasmType::I32, WasmType::I32], // string1, string2
-            Some(WasmType::I32),             // result
-            self.generate_simple_string_concat(),
-        )?;
+        // NOTE: string.concat is now an IMPORTED runtime function (4 params: ptr1, len1, ptr2, len2)
+        // It's registered in builtin_generator.rs, NOT here as a stdlib function.
+        // The old 2-param stdlib version has been removed to use the runtime implementation.
 
         // Register string comparison function
         register_stdlib_function(

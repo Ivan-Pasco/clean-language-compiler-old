@@ -1576,14 +1576,12 @@ async fn handle_run(
     linker.func_wrap("env", "string.length", |_ptr: i32| -> i32 { 0 })?; // Stub
     linker.func_wrap("env", "string.toUpperCase", |ptr: i32| -> i32 { ptr })?; // Stub - return same pointer
     linker.func_wrap("env", "string.toLowerCase", |ptr: i32| -> i32 { ptr })?; // Stub - return same pointer
-    linker.func_wrap("env", "string.concat", |ptr1: i32, _ptr2: i32| -> i32 {
-        ptr1
-    })?; // Stub - return first pointer
+                                                                               // string.concat with 4-param signature: (ptr1, len1, ptr2, len2) -> result_ptr
     linker.func_wrap(
         "env",
-        "string_concat",
+        "string.concat",
         |ptr1: i32, _len1: i32, _ptr2: i32, _len2: i32| -> i32 { ptr1 },
-    )?; // Stub - return first pointer (4-param version)
+    )?; // Stub - return first pointer
 
     // BOOLEAN conversion methods
     linker.func_wrap("env", "boolean.toInteger", |value: i32| -> i32 {
