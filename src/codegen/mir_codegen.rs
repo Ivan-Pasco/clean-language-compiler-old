@@ -980,6 +980,7 @@ impl MirCodeGenerator<'_> {
     }
 
     /// Check if a path from start_block eventually reaches target_block
+    #[allow(dead_code)]
     fn path_reaches_block(
         &self,
         function: &MirFunction,
