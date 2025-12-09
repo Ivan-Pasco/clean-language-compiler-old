@@ -395,6 +395,14 @@ impl<'a> TypeInference<'a> {
             self.type_env.insert(symbol_id, ConcreteType::Namespace);
         }
 
+        // Add validator namespace to type environment
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("validator", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(symbol_id, ConcreteType::Namespace);
+        }
+
         // Add math namespace functions to type environment
         // These correspond to the namespace functions registered in symbol_table.rs
 
@@ -826,6 +834,112 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::Boolean),
+                    is_async: false,
+                },
+            );
+        }
+
+        // Validator namespace functions
+        // validator.create - creates validation rules (returns pointer to rules struct)
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("validator.create", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![],
+                    return_type: Box::new(ConcreteType::Integer), // Returns pointer
+                    is_async: false,
+                },
+            );
+        }
+
+        // validator.ok - creates success validation result
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("validator.ok", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::Integer],      // Value to wrap
+                    return_type: Box::new(ConcreteType::Integer), // Returns ValidationResult pointer
+                    is_async: false,
+                },
+            );
+        }
+
+        // validator.error - creates error validation result
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("validator.error", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::Integer], // Errors list pointer
+                    return_type: Box::new(ConcreteType::Integer), // Returns ValidationResult pointer
+                    is_async: false,
+                },
+            );
+        }
+
+        // validator.isOk - checks if result is success
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("validator.isOk", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::Integer], // ValidationResult pointer
+                    return_type: Box::new(ConcreteType::Boolean),
+                    is_async: false,
+                },
+            );
+        }
+
+        // validator.isError - checks if result is error
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("validator.isError", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::Integer], // ValidationResult pointer
+                    return_type: Box::new(ConcreteType::Boolean),
+                    is_async: false,
+                },
+            );
+        }
+
+        // validator.getValue - gets value from successful result
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("validator.getValue", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::Integer], // ValidationResult pointer
+                    return_type: Box::new(ConcreteType::Integer), // Returns the wrapped value
+                    is_async: false,
+                },
+            );
+        }
+
+        // validator.getErrors - gets errors from failed result
+        if let Some(symbol_id) = self
+            .symbol_table
+            .lookup_symbol_in_scope("validator.getErrors", crate::resolver::ScopeId(0))
+        {
+            self.type_env.insert(
+                symbol_id,
+                ConcreteType::Function {
+                    parameters: vec![ConcreteType::Integer], // ValidationResult pointer
+                    return_type: Box::new(ConcreteType::Integer), // Returns errors list pointer
                     is_async: false,
                 },
             );

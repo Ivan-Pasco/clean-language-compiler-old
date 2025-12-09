@@ -1,0 +1,33 @@
+// Basic validator tests
+// Tests the validator stdlib module
+
+start()
+	// Test 1: Create a simple validator with field rules
+	integer rules = validator.create()
+	printl("Created validator rules")
+
+	// Test 2: Create validation result with ok
+	integer result = validator.ok(42)
+	boolean isValid = validator.isOk(result)
+	if isValid
+		printl("validator.ok works correctly")
+	else
+		printl("ERROR: validator.ok failed")
+
+	// Test 3: Create validation result with error
+	integer errors = list.allocate(1)
+	integer errorResult = validator.error(errors)
+	boolean hasError = validator.isError(errorResult)
+	if hasError
+		printl("validator.isError works correctly")
+	else
+		printl("ERROR: validator.isError failed")
+
+	// Test 4: Check complementary functions
+	boolean okCheckOnError = validator.isOk(errorResult)
+	if okCheckOnError
+		printl("ERROR: validator.isOk should return false for error result")
+	else
+		printl("validator.isOk returns false for error result - correct")
+
+	printl("Validator basic tests complete")

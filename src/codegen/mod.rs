@@ -4509,6 +4509,21 @@ impl CodeGenerator {
         Ok(())
     }
 
+    /// Register validator operation functions (validator.create, validator.ok, validator.isOk, etc.)
+    pub fn register_validator_operations(&mut self) -> Result<(), CompilerError> {
+        use crate::stdlib::memory::MemoryManager;
+        use crate::stdlib::validator::ValidatorManager;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        // Create a MemoryManager and ValidatorManager instance
+        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
+        let validator_manager = ValidatorManager::new(memory_manager);
+        validator_manager.register_functions(self)?;
+
+        Ok(())
+    }
+
     /// Register numeric operation functions using WASM instructions from NumericOperations
     #[allow(dead_code)]
     fn register_numeric_operations(&mut self) -> Result<(), CompilerError> {

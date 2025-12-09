@@ -244,6 +244,13 @@ impl MirCodeGenerator<'_> {
                 .register_file_operations()
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: File operations registered");
+
+            // CRITICAL: Register validator operations (validator.create, validator.ok, etc.)
+            debug_mir!("DEBUG MIR: Registering validator operations");
+            self.wasm_generator
+                .register_validator_operations()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: Validator operations registered");
         }
 
         // Set up memory section

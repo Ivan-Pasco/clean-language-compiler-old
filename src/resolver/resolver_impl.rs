@@ -2299,6 +2299,63 @@ impl NameResolver {
             Some(HirType::String),
             builtin_location.clone(),
         );
+
+        // Validator namespace functions
+        // validator.create() -> Integer (pointer to validation rules)
+        self.register_builtin_fn(
+            "validator.create",
+            vec![],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.ok(value: Integer) -> Integer (ValidationResult pointer)
+        self.register_builtin_fn(
+            "validator.ok",
+            vec![HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.error(errors: Integer) -> Integer (ValidationResult pointer)
+        self.register_builtin_fn(
+            "validator.error",
+            vec![HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.isOk(result: Integer) -> Boolean
+        self.register_builtin_fn(
+            "validator.isOk",
+            vec![HirType::Integer],
+            Some(HirType::Boolean),
+            builtin_location.clone(),
+        );
+
+        // validator.isError(result: Integer) -> Boolean
+        self.register_builtin_fn(
+            "validator.isError",
+            vec![HirType::Integer],
+            Some(HirType::Boolean),
+            builtin_location.clone(),
+        );
+
+        // validator.getValue(result: Integer) -> Integer
+        self.register_builtin_fn(
+            "validator.getValue",
+            vec![HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.getErrors(result: Integer) -> Integer (errors list pointer)
+        self.register_builtin_fn(
+            "validator.getErrors",
+            vec![HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
     }
 
     /// Helper to register a single builtin function

@@ -1547,6 +1547,59 @@ impl GlobalSymbolTable {
             },
         );
         self.builtins.insert(input_namespace_id);
+
+        // Create validator namespace
+        let validator_functions = vec![
+            self.lookup_symbol("validator.create")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.createWithName")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.run").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.runField")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.validate")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.ok").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.error").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.isOk").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.isError")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.getValue")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.getErrors")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.getFirstError")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.field").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.required")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.optional")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.match").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.range").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.minLength")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.maxLength")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.custom")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("validator.message")
+                .unwrap_or(SymbolId(0)),
+        ];
+
+        let validator_namespace_id = self.create_symbol(
+            "validator".to_string(),
+            SymbolKind::Namespace {
+                functions: validator_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+            },
+        );
+        self.builtins.insert(validator_namespace_id);
     }
 }
 

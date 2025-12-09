@@ -40,6 +40,7 @@ pub mod string_advanced;
 pub mod string_class;
 pub mod string_interpolation;
 pub mod test_framework;
+pub mod validator;
 
 // New modular system exports
 pub use modular::{ModularStandardLibrary, StandardLibraryBuilder, StandardLibraryConfig};
@@ -80,6 +81,7 @@ pub use string_interpolation::StringInterpolationManager;
 pub use string_ops::{StringManager, StringOperations};
 pub use test_framework::TestFrameworkManager;
 pub use type_conv::TypeConvOperations;
+pub use validator::ValidatorManager;
 
 use crate::codegen::{CodeGenerator, HEAP_START};
 use crate::error::CompilerError;
@@ -142,6 +144,8 @@ pub struct StandardLibrary {
     #[allow(dead_code)]
     import_system: ImportSystemManager,
     #[allow(dead_code)]
+    validator: ValidatorManager,
+    #[allow(dead_code)]
     memory_manager: Rc<RefCell<MemoryManager>>,
     // REMOVED: console_ops and console_class - obsolete duplicate code
     // console_ops: ConsoleOperations,
@@ -189,6 +193,7 @@ impl StandardLibrary {
             console_input: ConsoleInputManager::new(memory_manager.clone()),
             async_programming: AsyncProgrammingManager::new(memory_manager.clone()),
             import_system: ImportSystemManager::new(memory_manager.clone()),
+            validator: ValidatorManager::new(memory_manager.clone()),
             memory_manager,
             // REMOVED: console_ops and console_class - obsolete duplicate code
             // console_ops: ConsoleOperations::new(HEAP_START),
@@ -231,6 +236,7 @@ impl StandardLibrary {
         // self.console_input.register_functions(codegen)?;
         self.async_programming.register_functions(codegen)?;
         self.import_system.register_functions(codegen)?;
+        self.validator.register_functions(codegen)?;
         // REMOVED: console_ops and console_class are obsolete duplicate code
         // They registered wrapper functions with 2 parameters (ptr, len) that conflicted
         // with the correct 1-parameter imports in builtin_generator.rs
