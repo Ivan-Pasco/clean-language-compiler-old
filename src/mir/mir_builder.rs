@@ -880,7 +880,7 @@ impl MirBuilder {
             TastStatement::Assignment {
                 target,
                 value,
-                location: _,
+                location,
             } => {
                 // Build value expression
                 let value_id = self.build_expression(context, value)?;
@@ -903,10 +903,40 @@ impl MirBuilder {
                             value_id
                         };
 
-                        // Update variable in current scope
-                        if let Some(current_scope) = context.scope_stack.last_mut() {
-                            current_scope.insert(name.clone(), final_value_id);
+                        // CRITICAL FIX: For re-assignment of existing variables, we need to emit
+                        // a Copy instruction to actually update the variable's value in the WASM local.
+                        // Look up the original ValueId for this variable and emit a Copy to it.
+                        let original_value_id = context
+                            .scope_stack
+                            .iter()
+                            .rev()
+                            .find_map(|scope| scope.get(name).copied());
+
+                        if let Some(orig_id) = original_value_id {
+                            // This is a re-assignment - emit Copy instruction to update the variable
+                            // Only if the value IDs are different (avoid self-copy)
+                            if orig_id != final_value_id {
+                                trace!(
+                                    var_name = %name,
+                                    orig_id = orig_id.0,
+                                    new_value_id = final_value_id.0,
+                                    "Emitting Copy for variable re-assignment"
+                                );
+                                let copy_instruction = MirInstruction {
+                                    dest: Some(orig_id),
+                                    operation: MirOperation::Copy {
+                                        source: MirOperand::Value(final_value_id),
+                                    },
+                                    location: location.clone(),
+                                };
+                                self.add_instruction(context, copy_instruction);
+                            }
                         }
+
+                        // Update variable in current scope (for SSA-style tracking)
+                        // Keep the original ValueId since we're copying to it
+                        // This ensures subsequent uses of 'name' still refer to the original local
+                        // (which now has the updated value)
                     }
                     TastExpressionKind::PropertyAccess {
                         object,
@@ -1441,6 +1471,7 @@ impl MirBuilder {
                 if let TastExpressionKind::Range {
                     start,
                     end,
+                    step,
                     inclusive,
                 } = &iterable.kind
                 {
@@ -1452,6 +1483,7 @@ impl MirBuilder {
                         iterator_name,
                         start,
                         end,
+                        step.as_deref(),
                         *inclusive,
                         body,
                         location,
@@ -1798,6 +1830,98 @@ impl MirBuilder {
                 );
 
                 // Switch to exit block (already pre-allocated)
+                self.current_block = Some(exit_block_id);
+            }
+
+            TastStatement::While {
+                condition,
+                body,
+                location,
+            } => {
+                // While loop structure:
+                // entry block -> header (condition check) -> body -> header
+                //                                        -> exit
+
+                // Pre-allocate ALL while loop blocks upfront to prevent block ID
+                // collisions when nested control flow creates its own blocks.
+                let header_block_id = BasicBlockId(context.function.blocks.len());
+                let body_block_id = BasicBlockId(context.function.blocks.len() + 1);
+                let exit_block_id = BasicBlockId(context.function.blocks.len() + 2);
+
+                // Pre-insert placeholder blocks to reserve their IDs
+                for (block_id, label) in [
+                    (header_block_id, "while_header"),
+                    (body_block_id, "while_body"),
+                    (exit_block_id, "while_exit"),
+                ] {
+                    context.function.blocks.insert(
+                        block_id,
+                        MirBasicBlock {
+                            id: block_id,
+                            label: Some(label.to_string()),
+                            instructions: Vec::new(),
+                            terminator: MirTerminator::Unreachable, // Will be replaced
+                            predecessors: HashSet::new(),
+                            successors: HashSet::new(),
+                            location: location.clone(),
+                        },
+                    );
+                }
+
+                // Jump from current (entry) block to header
+                self.set_block_terminator(
+                    context,
+                    MirTerminator::Jump {
+                        target: header_block_id,
+                    },
+                );
+
+                // Switch to header block (condition check)
+                self.current_block = Some(header_block_id);
+
+                // Build condition expression in header block
+                let condition_id = self.build_expression(context, condition)?;
+
+                // Conditional branch: if condition is true goto body, else goto exit
+                self.set_block_terminator(
+                    context,
+                    MirTerminator::Branch {
+                        condition: MirOperand::Value(condition_id),
+                        true_block: body_block_id,
+                        false_block: exit_block_id,
+                    },
+                );
+
+                // Switch to body block
+                self.current_block = Some(body_block_id);
+
+                // Process body statements
+                for stmt in &body.statements {
+                    self.build_statement(context, stmt)?;
+                }
+
+                // After body, check if we still have a current block (not terminated by return)
+                // If so, jump back to header for next iteration
+                if let Some(current) = self.current_block {
+                    // Check if the current block already has a non-placeholder terminator
+                    let has_terminator = context
+                        .function
+                        .blocks
+                        .get(&current)
+                        .map(|b| !matches!(b.terminator, MirTerminator::Unreachable))
+                        .unwrap_or(false);
+
+                    if !has_terminator {
+                        self.set_block_terminator(
+                            context,
+                            MirTerminator::Jump {
+                                target: header_block_id,
+                            },
+                        );
+                    }
+                }
+
+                // Switch to exit block for subsequent statements
                 self.current_block = Some(exit_block_id);
             }
 
@@ -3840,6 +3964,7 @@ impl MirBuilder {
             TastExpressionKind::Range {
                 start,
                 end,
+                step: _, // Step is handled in build_range_for_loop for iteration, not here for array creation
                 inclusive,
             } => {
                 // Generate a range as an array of integers from start to end
@@ -4154,12 +4279,14 @@ impl MirBuilder {
 
     /// Build optimized range-based for loop
     /// Generates a loop that iterates directly from start to end without creating an intermediate array
+    /// Supports custom step values for counting up or down
     fn build_range_for_loop(
         &mut self,
         context: &mut FunctionBuildContext,
         iterator_name: &str,
         start: &TastExpression,
         end: &TastExpression,
+        step: Option<&TastExpression>,
         inclusive: bool,
         body: &TastBlock,
         location: &SourceLocation,
@@ -4167,19 +4294,88 @@ impl MirBuilder {
         trace!(
             iterator_name = %iterator_name,
             inclusive = inclusive,
+            has_step = step.is_some(),
             "Building optimized range for loop"
         );
 
-        // Evaluate start and end expressions
+        // Evaluate start, end, and optionally step expressions
         let start_value_id = self.build_expression(context, start)?;
         let end_value_id = self.build_expression(context, end)?;
+        let step_value_id = if let Some(step_expr) = step {
+            self.build_expression(context, step_expr)?
+        } else {
+            // Default step is 1
+            let default_step_id = ValueId(context.function.next_value_id);
+            context.function.next_value_id += 1;
+            self.register_temp_local(context, default_step_id, MirType::I32, location.clone());
+            let default_step_instruction = MirInstruction {
+                dest: Some(default_step_id),
+                operation: MirOperation::Copy {
+                    source: MirOperand::Constant(MirConstant::Integer(1)),
+                },
+                location: location.clone(),
+            };
+            self.add_instruction(context, default_step_instruction);
+            default_step_id
+        };
 
-        // Create loop blocks with dedicated increment block
-        // CRITICAL: Only calculate header and body IDs now
-        // increment and exit IDs will be calculated AFTER processing body
-        // because body may create additional blocks (e.g., for IF statements)
+        // Determine if we're counting down (negative step)
+        // We'll detect this at runtime by checking if step < 0
+        let is_negative_step_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, is_negative_step_id, MirType::I32, location.clone());
+        let zero_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, zero_id, MirType::I32, location.clone());
+        let zero_instruction = MirInstruction {
+            dest: Some(zero_id),
+            operation: MirOperation::Copy {
+                source: MirOperand::Constant(MirConstant::Integer(0)),
+            },
+            location: location.clone(),
+        };
+        self.add_instruction(context, zero_instruction);
+        let is_negative_instruction = MirInstruction {
+            dest: Some(is_negative_step_id),
+            operation: MirOperation::BinaryOp {
+                op: MirBinaryOp::Lt, // step < 0
+                left: MirOperand::Value(step_value_id),
+                right: MirOperand::Value(zero_id),
+            },
+            location: location.clone(),
+        };
+        self.add_instruction(context, is_negative_instruction);
+
+        // CRITICAL FIX: Pre-allocate ALL loop blocks upfront to prevent block ID
+        // collisions when nested control flow (IF statements) creates its own blocks.
+        // This ensures the range loop's header, body, increment, and exit blocks have
+        // reserved IDs before any nested statements are processed.
         let header_block_id = BasicBlockId(context.function.blocks.len());
         let body_block_id = BasicBlockId(context.function.blocks.len() + 1);
+        let increment_block_id = BasicBlockId(context.function.blocks.len() + 2);
+        let exit_block_id = BasicBlockId(context.function.blocks.len() + 3);
+
+        // Pre-insert placeholder blocks to reserve their IDs
+        // This prevents nested IF statements from creating blocks with the same IDs
+        for (block_id, label) in [
+            (header_block_id, "range_for_header"),
+            (body_block_id, "range_for_body"),
+            (increment_block_id, "range_for_increment"),
+            (exit_block_id, "range_for_exit"),
+        ] {
+            context.function.blocks.insert(
+                block_id,
+                MirBasicBlock {
+                    id: block_id,
+                    label: Some(label.to_string()),
+                    instructions: Vec::new(),
+                    terminator: MirTerminator::Unreachable, // Will be replaced
+                    predecessors: HashSet::new(),
+                    successors: HashSet::new(),
+                    location: location.clone(),
+                },
+            );
+        }
 
         // Create iterator variable (this is the loop counter, starts at start value)
         let iterator_value_id = ValueId(context.function.next_value_id);
@@ -4248,19 +4444,7 @@ impl MirBuilder {
             },
         );
 
-        // Create header block (loop condition check)
-        context.function.blocks.insert(
-            header_block_id,
-            MirBasicBlock {
-                id: header_block_id,
-                label: Some("range_for_header".to_string()),
-                instructions: Vec::new(),
-                terminator: MirTerminator::Unreachable,
-                predecessors: HashSet::new(),
-                successors: HashSet::new(),
-                location: location.clone(),
-            },
-        );
+        // Switch to header block (already pre-allocated)
         self.current_block = Some(header_block_id);
 
         // SSA Phi node to merge iterator values
@@ -4273,44 +4457,72 @@ impl MirBuilder {
         };
         self.add_instruction(context, phi_instruction);
 
-        // Compare: iterator <= end (or < end if not inclusive)
-        let condition_value_id = ValueId(context.function.next_value_id);
-        context.function.next_value_id += 1;
-        self.register_temp_local(context, condition_value_id, MirType::I32, location.clone());
+        // Compare: For direction-aware comparison, we need to handle both positive and negative steps
+        // Positive step: iterator <= end (or < end if not inclusive)
+        // Negative step: iterator >= end (or > end if not inclusive)
+        //
+        // Runtime logic: condition = (is_negative_step AND (iter >= end)) OR (!is_negative_step AND (iter <= end))
+        // For simplicity, we generate both comparisons and select using the is_negative flag
 
-        let comparison_op = if inclusive {
+        // Positive comparison: iter <= end (or < end)
+        let pos_cond_value_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, pos_cond_value_id, MirType::I32, location.clone());
+        let pos_comparison_op = if inclusive {
             MirBinaryOp::Le
         } else {
             MirBinaryOp::Lt
         };
-
-        let compare_instruction = MirInstruction {
-            dest: Some(condition_value_id),
+        let pos_compare_instruction = MirInstruction {
+            dest: Some(pos_cond_value_id),
             operation: MirOperation::BinaryOp {
-                op: comparison_op,
+                op: pos_comparison_op,
                 left: MirOperand::Value(current_iterator_value_id),
                 right: MirOperand::Value(end_value_id),
             },
             location: location.clone(),
         };
-        self.add_instruction(context, compare_instruction);
+        self.add_instruction(context, pos_compare_instruction);
 
-        // NOTE: We'll set the header's terminator later after calculating exit_block_id
-        // For now, leave it as Unreachable
-
-        // Create body block
-        context.function.blocks.insert(
-            body_block_id,
-            MirBasicBlock {
-                id: body_block_id,
-                label: Some("range_for_body".to_string()),
-                instructions: Vec::new(),
-                terminator: MirTerminator::Unreachable,
-                predecessors: HashSet::new(),
-                successors: HashSet::new(),
-                location: location.clone(),
+        // Negative comparison: iter >= end (or > end)
+        let neg_cond_value_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, neg_cond_value_id, MirType::I32, location.clone());
+        let neg_comparison_op = if inclusive {
+            MirBinaryOp::Ge
+        } else {
+            MirBinaryOp::Gt
+        };
+        let neg_compare_instruction = MirInstruction {
+            dest: Some(neg_cond_value_id),
+            operation: MirOperation::BinaryOp {
+                op: neg_comparison_op,
+                left: MirOperand::Value(current_iterator_value_id),
+                right: MirOperand::Value(end_value_id),
             },
-        );
+            location: location.clone(),
+        };
+        self.add_instruction(context, neg_compare_instruction);
+
+        // Select condition based on step direction
+        // condition = is_negative ? neg_cond : pos_cond
+        let condition_value_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, condition_value_id, MirType::I32, location.clone());
+        let select_instruction = MirInstruction {
+            dest: Some(condition_value_id),
+            operation: MirOperation::Select {
+                condition: MirOperand::Value(is_negative_step_id),
+                true_value: MirOperand::Value(neg_cond_value_id),
+                false_value: MirOperand::Value(pos_cond_value_id),
+            },
+            location: location.clone(),
+        };
+        self.add_instruction(context, select_instruction);
+
+        // NOTE: We'll set the header's terminator later (exit_block_id is now pre-allocated)
+
+        // Switch to body block (already pre-allocated)
         self.current_block = Some(body_block_id);
 
         // Push a new scope for the loop body
@@ -4338,15 +4550,12 @@ impl MirBuilder {
         // Pop the loop body scope
         context.scope_stack.pop();
 
-        // CRITICAL FIX: Calculate increment and exit block IDs AFTER processing body
-        // Body may have created additional blocks (e.g., IF statement blocks)
-        let increment_block_id = BasicBlockId(context.function.blocks.len());
-        let exit_block_id = BasicBlockId(context.function.blocks.len() + 1);
+        // NOTE: increment_block_id and exit_block_id were pre-allocated at the start
+        // of this function to prevent block ID collisions with nested control flow.
         trace!(
             increment_block_id = ?increment_block_id,
             exit_block_id = ?exit_block_id,
-            blocks_len = context.function.blocks.len(),
-            "Calculated increment and exit block IDs"
+            "Using pre-allocated increment and exit block IDs"
         );
 
         // Now set the header block's terminator with the correct exit_block_id
@@ -4383,35 +4592,10 @@ impl MirBuilder {
             trace!("Current block already has terminator, skipping jump to increment");
         }
 
-        // Create increment block
-        context.function.blocks.insert(
-            increment_block_id,
-            MirBasicBlock {
-                id: increment_block_id,
-                label: Some("range_for_increment".to_string()),
-                instructions: Vec::new(),
-                terminator: MirTerminator::Unreachable,
-                predecessors: HashSet::new(),
-                successors: HashSet::new(),
-                location: location.clone(),
-            },
-        );
+        // Switch to increment block (already pre-allocated)
         self.current_block = Some(increment_block_id);
 
-        // Increment: iterator = iterator + 1
-        let one_value_id = ValueId(context.function.next_value_id);
-        context.function.next_value_id += 1;
-        self.register_temp_local(context, one_value_id, MirType::I32, location.clone());
-
-        let one_instruction = MirInstruction {
-            dest: Some(one_value_id),
-            operation: MirOperation::Copy {
-                source: MirOperand::Constant(MirConstant::Integer(1)),
-            },
-            location: location.clone(),
-        };
-        self.add_instruction(context, one_instruction);
-
+        // Increment: iterator = iterator + step (using the step value from earlier)
         // CRITICAL FIX: Write increment result to current_iterator_value_id
         // Since Phi nodes are NO-OPs in WASM, we must update the variable that
         // the condition check uses directly. Otherwise the loop counter never changes.
@@ -4420,7 +4604,7 @@ impl MirBuilder {
             operation: MirOperation::BinaryOp {
                 op: MirBinaryOp::Add,
                 left: MirOperand::Value(current_iterator_value_id),
-                right: MirOperand::Value(one_value_id),
+                right: MirOperand::Value(step_value_id),
             },
             location: location.clone(),
         };
@@ -4447,19 +4631,7 @@ impl MirBuilder {
             },
         );
 
-        // Create exit block
-        context.function.blocks.insert(
-            exit_block_id,
-            MirBasicBlock {
-                id: exit_block_id,
-                label: Some("range_for_exit".to_string()),
-                instructions: Vec::new(),
-                terminator: MirTerminator::Unreachable,
-                predecessors: HashSet::new(),
-                successors: HashSet::new(),
-                location: location.clone(),
-            },
-        );
+        // Switch to exit block (already pre-allocated)
         trace!(exit_block_id = ?exit_block_id, "Setting current_block to exit_block");
         self.current_block = Some(exit_block_id);
 

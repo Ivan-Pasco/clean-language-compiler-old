@@ -553,15 +553,16 @@ impl HirBuilder {
                 // Convert RangeIterate to For with a Range expression as the iterable
                 let hir_start = self.build_expression(start)?;
                 let hir_end = self.build_expression(end)?;
-
-                // Step parameter warning (not yet in language specification)
-                if step.is_some() {
-                    eprintln!("WARNING: Range iteration with step is not yet fully supported");
-                }
+                let hir_step = if let Some(s) = step {
+                    Some(Box::new(self.build_expression(s)?))
+                } else {
+                    None
+                };
 
                 let range_expr = HirExpression::Range {
                     start: Box::new(hir_start),
                     end: Box::new(hir_end),
+                    step: hir_step,
                     inclusive: true, // "iterate i in 0 to 10" is inclusive
                     location: location.clone().unwrap_or_default(),
                 };
@@ -571,6 +572,21 @@ impl HirBuilder {
                 Ok(HirStatement::For {
                     variable: iterator.clone(),
                     iterable: range_expr,
+                    body: hir_body,
+                    location: location.clone().unwrap_or_default(),
+                })
+            }
+
+            Statement::While {
+                condition,
+                body,
+                location,
+            } => {
+                let hir_condition = self.build_expression(condition)?;
+                let hir_body = self.build_block(body)?;
+
+                Ok(HirStatement::While {
+                    condition: hir_condition,
                     body: hir_body,
                     location: location.clone().unwrap_or_default(),
                 })
@@ -869,6 +885,7 @@ impl HirBuilder {
                 Ok(HirExpression::Range {
                     start: Box::new(hir_start),
                     end: Box::new(hir_end),
+                    step: None, // Expression::Range doesn't have step; it's in Statement::RangeIterate
                     inclusive: *inclusive,
                     location: location.clone(),
                 })

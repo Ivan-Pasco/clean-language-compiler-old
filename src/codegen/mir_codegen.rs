@@ -535,6 +535,7 @@ impl MirCodeGenerator<'_> {
             name = %function.name,
             "Starting code generation from entry block"
         );
+
         let mut generated_blocks = std::collections::HashSet::new();
         self.generate_structured_blocks(&function, entry_block_id, &mut generated_blocks)?;
         debug_mir!(
@@ -790,19 +791,74 @@ impl MirCodeGenerator<'_> {
         false
     }
 
-    /// Detects if a block is a loop header by checking for backedges.
-    /// A block is a loop header if a LATER block (higher ID) jumps back to it.
-    /// This is the key characteristic of loops in SSA form.
+    /// Detects if a block is a loop header by checking for backedges using DFS.
+    /// A block is a loop header if there's a cycle in the CFG that includes this block
+    /// as the target of a backedge. This is more robust than block ID ordering.
     fn is_loop_header(&self, function: &MirFunction, block_id: BasicBlockId) -> bool {
-        function.blocks.iter().any(|(source_id, source_block)| {
-            // Only consider blocks that come AFTER the current block (backedge)
-            if source_id.0 > block_id.0 {
-                // Check if this later block jumps back to our block
-                matches!(&source_block.terminator, MirTerminator::Jump { target } if *target == block_id)
-            } else {
-                false
+        // Build successors map for DFS traversal
+        let mut successors: std::collections::HashMap<BasicBlockId, Vec<BasicBlockId>> =
+            std::collections::HashMap::new();
+
+        for (id, block) in &function.blocks {
+            let succs = match &block.terminator {
+                MirTerminator::Jump { target } => vec![*target],
+                MirTerminator::Branch {
+                    true_block,
+                    false_block,
+                    ..
+                } => vec![*true_block, *false_block],
+                MirTerminator::Return { .. } | MirTerminator::Unreachable => vec![],
+            };
+            successors.insert(*id, succs);
+        }
+
+        // Find all back edges using DFS from entry block
+        let mut visited = std::collections::HashSet::new();
+        let mut on_stack = std::collections::HashSet::new();
+        let mut back_edges = Vec::new();
+
+        // Start DFS from entry block (block 0)
+        let entry_block = BasicBlockId(0);
+        if function.blocks.contains_key(&entry_block) {
+            self.find_back_edges_dfs_internal(
+                entry_block,
+                &successors,
+                &mut visited,
+                &mut on_stack,
+                &mut back_edges,
+            );
+        }
+
+        // Check if this block is the target (header) of any back edge
+        back_edges.iter().any(|(_tail, head)| *head == block_id)
+    }
+
+    /// Internal DFS helper for finding back edges
+    fn find_back_edges_dfs_internal(
+        &self,
+        block: BasicBlockId,
+        successors: &std::collections::HashMap<BasicBlockId, Vec<BasicBlockId>>,
+        visited: &mut std::collections::HashSet<BasicBlockId>,
+        on_stack: &mut std::collections::HashSet<BasicBlockId>,
+        back_edges: &mut Vec<(BasicBlockId, BasicBlockId)>,
+    ) {
+        visited.insert(block);
+        on_stack.insert(block);
+
+        if let Some(succs) = successors.get(&block) {
+            for &successor in succs {
+                if on_stack.contains(&successor) {
+                    // Back edge found: current block -> successor (which is already on stack)
+                    back_edges.push((block, successor));
+                } else if !visited.contains(&successor) {
+                    self.find_back_edges_dfs_internal(
+                        successor, successors, visited, on_stack, back_edges,
+                    );
+                }
             }
-        })
+        }
+
+        on_stack.remove(&block);
     }
 
     /// Check if a block is the exit continuation of any loop
@@ -886,6 +942,77 @@ impl MirCodeGenerator<'_> {
         }
 
         result
+    }
+
+    /// Find the block that eventually leads to the loop's increment/backedge.
+    /// This handles cases where the body contains nested control flow (if statements)
+    /// and needs to follow through to find what eventually jumps to increment.
+    fn find_loop_increment_block(
+        &self,
+        function: &MirFunction,
+        body_block_id: BasicBlockId,
+        header_block_id: BasicBlockId,
+    ) -> Option<BasicBlockId> {
+        // Look for a block that:
+        // 1. Jumps back to the header (backedge)
+        // 2. Has a block ID GREATER than the body_block_id (comes after in CFG order)
+        // 3. Is labeled as an increment block (for explicit for-loop increments)
+        //
+        // The second condition is crucial: the init block (block 0) also jumps to header,
+        // but it's not the increment block - it's the entry point.
+        for (block_id, block) in &function.blocks {
+            if let MirTerminator::Jump { target } = &block.terminator {
+                if *target == header_block_id
+                    && block_id.0 > body_block_id.0
+                    && block_id.0 > header_block_id.0
+                {
+                    // Found a block that jumps back to header - this is the increment block
+                    // Must be AFTER both the header and body in block ID order
+                    debug_mir!(
+                        "DEBUG find_loop_increment_block: Found increment block {:?} (label={:?}) that jumps to header {:?}",
+                        block_id, block.label, header_block_id
+                    );
+                    return Some(*block_id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Check if a path from start_block eventually reaches target_block
+    fn path_reaches_block(
+        &self,
+        function: &MirFunction,
+        start_block: BasicBlockId,
+        target_block: BasicBlockId,
+        visited: &mut std::collections::HashSet<BasicBlockId>,
+    ) -> bool {
+        if start_block == target_block {
+            return true;
+        }
+        if visited.contains(&start_block) {
+            return false;
+        }
+        visited.insert(start_block);
+
+        if let Some(block) = function.blocks.get(&start_block) {
+            match &block.terminator {
+                MirTerminator::Jump { target } => {
+                    self.path_reaches_block(function, *target, target_block, visited)
+                }
+                MirTerminator::Branch {
+                    true_block,
+                    false_block,
+                    ..
+                } => {
+                    self.path_reaches_block(function, *true_block, target_block, visited)
+                        || self.path_reaches_block(function, *false_block, target_block, visited)
+                }
+                MirTerminator::Return { .. } | MirTerminator::Unreachable => false,
+            }
+        } else {
+            false
+        }
     }
 
     /// Generate structured control flow for blocks
@@ -1163,32 +1290,35 @@ impl MirCodeGenerator<'_> {
                     // Mark the loop body as generated to prevent infinite recursion
                     self.generate_branch_block(function, *true_block, generated)?;
 
-                    // CRITICAL FIX: Check if body jumps to an increment block (for-loop structure)
-                    // If so, generate the increment block INSIDE the loop
-                    if let Some(body_block) = function.blocks.get(true_block) {
-                        if let MirTerminator::Jump {
-                            target: increment_target,
-                        } = &body_block.terminator
-                        {
-                            // Check if increment block jumps back to header
-                            if let Some(increment_block) = function.blocks.get(increment_target) {
-                                if matches!(&increment_block.terminator, MirTerminator::Jump { target } if *target == block_id)
-                                {
-                                    debug_mir!(
-                                        "DEBUG LOOP: Body block {:?} jumps to increment {:?}, which jumps back to header {:?}",
-                                        true_block, increment_target, block_id
-                                    );
+                    // CRITICAL FIX: Find and generate the increment block for for-loops
+                    // The body may contain nested control flow (if statements), so we can't just
+                    // check the body's direct terminator. Instead, find the increment block
+                    // by looking for any block that jumps back to the header.
+                    let increment_block_id =
+                        self.find_loop_increment_block(function, *true_block, block_id);
 
-                                    // Generate increment block instructions INSIDE the loop
-                                    for instruction in &increment_block.instructions {
-                                        self.generate_instruction(instruction)?;
-                                    }
-                                    generated.insert(*increment_target);
+                    if let Some(increment_id) = increment_block_id {
+                        if let Some(increment_block) = function.blocks.get(&increment_id) {
+                            debug_mir!(
+                                "DEBUG LOOP: Found increment block {:?} that jumps back to header {:?}",
+                                increment_id, block_id
+                            );
 
-                                    // Add br 0 to jump back to loop header
-                                    self.current_instructions.push(Instruction::Br(0));
-                                } else if *increment_target == block_id {
-                                    // Body jumps directly back to header (simple while loop)
+                            // Generate increment block instructions INSIDE the loop
+                            for instruction in &increment_block.instructions {
+                                self.generate_instruction(instruction)?;
+                            }
+                            generated.insert(increment_id);
+
+                            // Add br 0 to jump back to loop header
+                            self.current_instructions.push(Instruction::Br(0));
+                        }
+                    } else {
+                        // No separate increment block - check if body jumps directly back to header
+                        if let Some(body_block) = function.blocks.get(true_block) {
+                            if let MirTerminator::Jump { target } = &body_block.terminator {
+                                if *target == block_id {
+                                    // Simple while loop - body jumps directly back to header
                                     debug_mir!("DEBUG LOOP: Body block {:?} jumps directly back to header {:?}, adding br 0", true_block, block_id);
                                     self.current_instructions.push(Instruction::Br(0));
                                 }
@@ -2651,6 +2781,37 @@ impl MirCodeGenerator<'_> {
                     debug_mir!("Cast completed successfully, stored to {:?}", dest);
                 } else {
                     debug_mir!("No destination for Cast result");
+                }
+            }
+
+            MirOperation::Select {
+                condition,
+                true_value,
+                false_value,
+            } => {
+                debug_mir!(
+                    condition = ?condition,
+                    true_value = ?true_value,
+                    false_value = ?false_value,
+                    "Processing Select operation"
+                );
+
+                // WASM select instruction semantics:
+                // Pop: condition (i32), val2, val1 (in that order from stack top)
+                // Push: val1 if condition != 0, else val2
+                //
+                // So we push in order: true_value (val1), false_value (val2), condition
+                // Result: if condition is true (non-zero), true_value is returned
+                //         if condition is false (zero), false_value is returned
+                self.load_operand(true_value)?;
+                self.load_operand(false_value)?;
+                self.load_operand(condition)?;
+                self.current_instructions.push(Instruction::Select);
+
+                // Store result if there's a destination
+                if let Some(dest) = instruction.dest {
+                    self.store_to_local(dest)?;
+                    debug_mir!("Select completed, stored to {:?}", dest);
                 }
             }
 

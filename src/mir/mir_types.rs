@@ -262,6 +262,17 @@ pub enum MirOperation {
         /// The boxed any value
         value: MirOperand,
     },
+
+    /// Select instruction (ternary): result = condition ? true_value : false_value
+    /// Maps to WASM's `select` instruction
+    Select {
+        /// Condition (i32 boolean)
+        condition: MirOperand,
+        /// Value to use if condition is true (non-zero)
+        true_value: MirOperand,
+        /// Value to use if condition is false (zero)
+        false_value: MirOperand,
+    },
 }
 
 /// MIR terminator instructions (end basic blocks)

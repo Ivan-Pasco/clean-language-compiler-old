@@ -536,6 +536,16 @@ impl HirValidator {
                 context.pop_scope();
             }
 
+            HirStatement::While {
+                condition, body, ..
+            } => {
+                Self::validate_expression(context, condition);
+
+                context.push_scope();
+                Self::validate_block(context, body);
+                context.pop_scope();
+            }
+
             HirStatement::Print { expression, .. } => {
                 Self::validate_expression(context, expression);
             }

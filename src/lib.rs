@@ -624,6 +624,181 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
     Ok(codegen_result.wasm_bytes)
 }
 
+/// HTML-first compilation configuration
+///
+/// The HTML-first approach uses `.html.cln` files for pages that need
+/// Clean Language processing. Regular `.html` files are treated as static
+/// content and served as-is without processing.
+#[derive(Debug, Clone)]
+pub struct HtmlFirstConfig {
+    /// Path to HTML pages directory containing `.html.cln` files (e.g., "app/pages")
+    pub pages_dir: std::path::PathBuf,
+    /// Path to Clean components directory (e.g., "app/components")
+    pub components_dir: std::path::PathBuf,
+    /// Additional search paths for imports
+    pub search_paths: Vec<std::path::PathBuf>,
+    /// Optimization level (0-3)
+    pub opt_level: u8,
+}
+
+impl Default for HtmlFirstConfig {
+    fn default() -> Self {
+        Self {
+            pages_dir: std::path::PathBuf::from("app/pages"),
+            components_dir: std::path::PathBuf::from("app/components"),
+            search_paths: vec![
+                std::path::PathBuf::from("./"),
+                std::path::PathBuf::from("./lib/"),
+            ],
+            opt_level: 2,
+        }
+    }
+}
+
+/// Compile an HTML-first Frame application
+///
+/// This function:
+/// 1. Scans the pages directory for `.html.cln` files (processed pages)
+/// 2. Builds a component registry from Clean component files
+/// 3. Generates Clean code from HTML pages
+/// 4. Compiles the generated code to WebAssembly
+///
+/// Note: Only `.html.cln` files are processed. Regular `.html` files are
+/// treated as static content and are not compiled.
+///
+/// # Arguments
+/// * `project_dir` - Root directory of the Frame project
+/// * `config` - HTML-first compilation configuration
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
+/// * `Err(Vec<CompilerError>)` - Compilation errors
+pub fn compile_html_first<P: AsRef<std::path::Path>>(
+    project_dir: P,
+    config: HtmlFirstConfig,
+) -> Result<Vec<u8>, Vec<CompilerError>> {
+    use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
+
+    let project_dir = project_dir.as_ref();
+
+    tracing::info!(
+        project = %project_dir.display(),
+        "Starting HTML-first compilation"
+    );
+
+    // Create compiler with HTML configuration
+    let compiler_config = MultiFileCompilerConfig::default()
+        .with_search_paths(config.search_paths.clone())
+        .with_opt_level(config.opt_level)
+        .with_html_pages(true)
+        .with_html_pages_dir(&config.pages_dir)
+        .with_html_components_dir(&config.components_dir);
+
+    let compiler = MultiFileCompiler::with_config(compiler_config);
+
+    // Step 1: Discover HTML pages
+    let pages_path = project_dir.join(&config.pages_dir);
+    let pages = compiler.discover_html_pages(&pages_path)?;
+
+    tracing::info!(pages = pages.len(), "Discovered HTML pages");
+
+    if pages.is_empty() {
+        return Err(vec![CompilerError::io_error(
+            format!("No HTML pages found in {}", pages_path.display()),
+            Some("Create HTML files in the pages directory".to_string()),
+            None,
+        )]);
+    }
+
+    // Step 2: Build component registry
+    let components_path = project_dir.join(&config.components_dir);
+    let registry = compiler.build_component_registry(&components_path)?;
+
+    tracing::info!(
+        components = registry.components.len(),
+        "Built component registry"
+    );
+
+    // Step 3: Generate Clean code from HTML pages
+    let generated_clean = compiler.process_html_pages_to_clean(&pages, &registry)?;
+
+    tracing::debug!(
+        generated_lines = generated_clean.lines().count(),
+        "Generated Clean code from HTML"
+    );
+
+    // Step 4: Write generated code to temp file and compile
+    let temp_dir = std::env::temp_dir().join(format!(
+        "frame_html_first_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+
+    std::fs::create_dir_all(&temp_dir).map_err(|e| {
+        vec![CompilerError::io_error(
+            format!("Failed to create temp directory: {}", e),
+            None,
+            None,
+        )]
+    })?;
+
+    let generated_file = temp_dir.join("generated_app.cln");
+    std::fs::write(&generated_file, &generated_clean).map_err(|e| {
+        vec![CompilerError::io_error(
+            format!("Failed to write generated code: {}", e),
+            None,
+            None,
+        )]
+    })?;
+
+    // Include project dir and components dir in search paths
+    let mut search_paths = config.search_paths.clone();
+    search_paths.insert(0, project_dir.to_path_buf());
+    search_paths.push(components_path);
+    search_paths.push(temp_dir.clone());
+
+    // Compile the generated code
+    let result = compile_multi_file(&generated_file, search_paths, config.opt_level);
+
+    // Clean up temp directory
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    result
+}
+
+/// Get information about discovered HTML pages without compiling
+///
+/// Scans for `.html.cln` files (processed pages) in the given directory.
+/// Regular `.html` files are static and not included in the results.
+///
+/// Useful for build tools and debugging.
+pub fn discover_html_pages<P: AsRef<std::path::Path>>(
+    pages_dir: P,
+) -> Result<Vec<crate::compilation::HtmlPage>, Vec<CompilerError>> {
+    use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
+
+    let config = MultiFileCompilerConfig::default().with_html_pages(true);
+    let compiler = MultiFileCompiler::with_config(config);
+
+    compiler.discover_html_pages(pages_dir)
+}
+
+/// Build component registry from a components directory
+///
+/// Useful for build tools and debugging
+pub fn build_component_registry<P: AsRef<std::path::Path>>(
+    components_dir: P,
+) -> Result<crate::compilation::ComponentRegistry, Vec<CompilerError>> {
+    use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
+
+    let config = MultiFileCompilerConfig::default();
+    let compiler = MultiFileCompiler::with_config(config);
+
+    compiler.build_component_registry(components_dir)
+}
+
 /// Compile for testing without runtime imports
 pub fn compile_minimal(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
     use crate::lexer::specification_lexer::SpecificationLexer;

@@ -180,6 +180,13 @@ pub enum ResolvedHirStatement {
         location: SourceLocation,
     },
 
+    /// While loop with resolved condition and body
+    While {
+        condition: ResolvedHirExpression,
+        body: ResolvedHirBlock,
+        location: SourceLocation,
+    },
+
     /// Print statement with resolved expression
     Print {
         expression: ResolvedHirExpression,
@@ -332,6 +339,7 @@ pub enum ResolvedHirExpression {
     Range {
         start: Box<ResolvedHirExpression>,
         end: Box<ResolvedHirExpression>,
+        step: Option<Box<ResolvedHirExpression>>,
         inclusive: bool,
         location: SourceLocation,
     },

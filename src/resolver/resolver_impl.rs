@@ -794,6 +794,28 @@ impl NameResolver {
                 })
             }
 
+            HirStatement::While {
+                condition,
+                body,
+                location,
+            } => {
+                let resolved_condition = self.resolve_expression(condition)?;
+
+                // Create new scope for while body
+                let loop_scope = self.symbol_table.create_scope(None, ScopeType::Block);
+                self.symbol_table.enter_scope(loop_scope);
+
+                let resolved_body = self.resolve_block(body)?;
+
+                self.symbol_table.exit_scope();
+
+                Ok(ResolvedHirStatement::While {
+                    condition: resolved_condition,
+                    body: resolved_body,
+                    location: location.clone(),
+                })
+            }
+
             HirStatement::Print {
                 expression,
                 newline,
@@ -1790,16 +1812,23 @@ impl NameResolver {
             HirExpression::Range {
                 start,
                 end,
+                step,
                 inclusive,
                 location,
             } => {
                 // Resolve start and end expressions
                 let resolved_start = Box::new(self.resolve_expression(start)?);
                 let resolved_end = Box::new(self.resolve_expression(end)?);
+                let resolved_step = if let Some(s) = step {
+                    Some(Box::new(self.resolve_expression(s)?))
+                } else {
+                    None
+                };
 
                 Ok(ResolvedHirExpression::Range {
                     start: resolved_start,
                     end: resolved_end,
+                    step: resolved_step,
                     inclusive: *inclusive,
                     location: location.clone(),
                 })

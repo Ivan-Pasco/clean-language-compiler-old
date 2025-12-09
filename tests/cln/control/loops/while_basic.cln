@@ -1,0 +1,9 @@
+// Basic while loop test
+// Tests simple while loop with counter
+
+start()
+	integer count = 0
+	while count < 5
+		print(count.toString())
+		count = count + 1
+	print("Done")

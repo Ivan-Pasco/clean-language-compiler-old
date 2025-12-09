@@ -2108,6 +2108,7 @@ impl TokenParser {
         match self.current_kind() {
             TokenKind::Return => self.parse_return(),
             TokenKind::If => self.parse_if(),
+            TokenKind::While => self.parse_while(),
             TokenKind::For => self.parse_for(),
             TokenKind::Iterate => self.parse_iterate(),
             TokenKind::Later => self.parse_later_assignment(),
@@ -2687,6 +2688,24 @@ impl TokenParser {
         })
     }
 
+    /// Parse while statement: while condition
+    ///     body
+    fn parse_while(&mut self) -> Result<Statement, CompilerError> {
+        let while_token = self.expect(&TokenKind::While)?;
+        self.skip_whitespace();
+
+        let condition = self.parse_expression()?;
+        self.skip_whitespace();
+
+        let body = self.parse_block()?;
+
+        Ok(Statement::While {
+            condition,
+            body,
+            location: Some(while_token.location),
+        })
+    }
+
     fn parse_for(&mut self) -> Result<Statement, CompilerError> {
         // For is represented as Iterate in Clean Language
         let for_token = self.expect(&TokenKind::For)?;
@@ -2743,14 +2762,10 @@ impl TokenParser {
             self.skip_whitespace();
 
             // Check for optional "step" clause
-            let step = if let TokenKind::Identifier(id) = self.current_kind() {
-                if id == "step" {
-                    self.bump(); // consume "step"
-                    self.skip_whitespace();
-                    Some(self.parse_expression()?)
-                } else {
-                    None
-                }
+            let step = if self.check(&TokenKind::Step) {
+                self.bump(); // consume "step"
+                self.skip_whitespace();
+                Some(self.parse_expression()?)
             } else {
                 None
             };
@@ -2769,14 +2784,10 @@ impl TokenParser {
         } else {
             // Regular collection iteration: iterate item in collection
             // Check if there's an optional "step" clause (shouldn't be used with collections, but handle it)
-            let _step = if let TokenKind::Identifier(id) = self.current_kind() {
-                if id == "step" {
-                    self.bump(); // consume "step"
-                    self.skip_whitespace();
-                    Some(Box::new(self.parse_expression()?))
-                } else {
-                    None
-                }
+            let _step = if self.check(&TokenKind::Step) {
+                self.bump(); // consume "step"
+                self.skip_whitespace();
+                Some(Box::new(self.parse_expression()?))
             } else {
                 None
             };

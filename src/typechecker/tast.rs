@@ -127,6 +127,11 @@ pub enum TastStatement {
         body: TastBlock,
         location: SourceLocation,
     },
+    While {
+        condition: TastExpression,
+        body: TastBlock,
+        location: SourceLocation,
+    },
     Try {
         body: TastBlock,
         catch_clause: Option<TastCatchClause>,
@@ -255,6 +260,7 @@ pub enum TastExpressionKind {
     Range {
         start: Box<TastExpression>,
         end: Box<TastExpression>,
+        step: Option<Box<TastExpression>>,
         inclusive: bool,
     },
 }

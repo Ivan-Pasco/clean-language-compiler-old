@@ -198,7 +198,7 @@ and        class       constructor  else        error       false
 for        from        function     if          import      in
 iterate    not         onError      or          print       println
 return     start       step         test        tests       this
-to         true        is           returns     description
+to         true        is           returns     description while
 input      unit        private      constant    functions
 ```
 
@@ -1424,6 +1424,66 @@ iterate row in matrix
 iterate idx in 0 to 100 step 5
     print(idx)               // 0, 5, 10, …, 100
 ```
+
+#### While Loop
+
+The `while` loop executes a block of code repeatedly as long as a condition remains true. This is useful when you don't know in advance how many iterations are needed.
+
+**Syntax:**
+```clean
+while condition
+    // body - executed while condition is true
+```
+
+**Examples:**
+
+```clean
+// Basic counter loop
+integer count = 0
+while count < 5
+    print(count.toString())
+    count = count + 1
+// Prints: 0, 1, 2, 3, 4
+
+// Loop with boolean condition
+boolean running = true
+integer iterations = 0
+while running
+    iterations = iterations + 1
+    if iterations >= 3
+        running = false
+// Stops after 3 iterations
+
+// Nested while loops
+integer outer = 0
+while outer < 3
+    integer inner = 0
+    while inner < 2
+        print("outer: " + outer.toString() + ", inner: " + inner.toString())
+        inner = inner + 1
+    outer = outer + 1
+
+// While loop with if statement inside
+integer i = 0
+while i < 10
+    integer remainder = i % 2
+    if remainder == 0
+        print("Even: " + i.toString())
+    else
+        print("Odd: " + i.toString())
+    i = i + 1
+```
+
+**Rules:**
+- The condition must evaluate to a boolean value
+- The body is indented one level deeper than the `while` keyword
+- Variables modified in the loop body are properly updated each iteration
+- Infinite loops occur if the condition never becomes false (ensure loop variables are updated)
+
+**Important Notes:**
+- Clean Language does not currently support `break` or `continue` keywords
+- To exit a while loop early, modify the condition variable or use a boolean flag
+- The while loop is useful for input validation, processing until a condition is met, or when the number of iterations is unknown
 
 ## Error Handling
 

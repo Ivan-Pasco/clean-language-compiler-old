@@ -1,0 +1,12 @@
+// While loop with boolean variable condition
+// Tests using a boolean variable as the while condition
+
+start()
+	boolean keepGoing = true
+	integer counter = 0
+	while keepGoing
+		print("Iteration: " + counter.toString())
+		counter = counter + 1
+		if counter >= 3
+			keepGoing = false
+	print("Stopped after " + counter.toString() + " iterations")

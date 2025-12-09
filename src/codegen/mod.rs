@@ -846,6 +846,11 @@ impl CodeGenerator {
             } => {
                 self.generate_iterate_statement(iterator, collection, body, instructions)?;
             }
+            Statement::While {
+                condition, body, ..
+            } => {
+                self.generate_while_statement(condition, body, instructions)?;
+            }
             Statement::Test { name: _, body, .. } => {
                 self.generate_test_statement(body, instructions)?;
             }
@@ -8865,6 +8870,52 @@ impl CodeGenerator {
         instructions.push(Instruction::End);
 
         self.variable_map.remove(iterator);
+        Ok(())
+    }
+
+    /// Generate a while loop
+    /// Structure:
+    /// block  ;; exit block (label 1)
+    ///   loop  ;; loop header (label 0)
+    ///     condition
+    ///     br_if 1  ;; exit if condition is false
+    ///     body
+    ///     br 0     ;; jump back to loop header
+    ///   end
+    /// end
+    fn generate_while_statement(
+        &mut self,
+        condition: &Expression,
+        body: &[Statement],
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<(), CompilerError> {
+        // Create outer block for exit
+        instructions.push(Instruction::Block(BlockType::Empty));
+
+        // Create loop block for iteration
+        instructions.push(Instruction::Loop(BlockType::Empty));
+
+        // Evaluate condition
+        self.generate_expression(condition, instructions)?;
+
+        // If condition is false (0), branch to exit (label 1)
+        instructions.push(Instruction::I32Eqz);
+        instructions.push(Instruction::BrIf(1));
+
+        // Generate body statements
+        for stmt in body {
+            self.generate_statement(stmt, instructions)?;
+        }
+
+        // Branch back to loop header (label 0)
+        instructions.push(Instruction::Br(0));
+
+        // End loop block
+        instructions.push(Instruction::End);
+
+        // End exit block
+        instructions.push(Instruction::End);
+
         Ok(())
     }
 

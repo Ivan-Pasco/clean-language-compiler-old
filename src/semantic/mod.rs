@@ -2575,6 +2575,37 @@ impl SemanticAnalyzer {
                 Ok(())
             }
 
+            Statement::While {
+                condition,
+                body,
+                location,
+            } => {
+                // Check that condition is a boolean expression
+                let condition_type = self.check_expression(condition)?;
+                if !self.types_compatible(&condition_type, &Type::Boolean) {
+                    return Err(CompilerError::type_error(
+                        &format!(
+                            "While condition must be a boolean expression, found {:?}",
+                            condition_type
+                        ),
+                        Some("Use a boolean expression as the while condition".to_string()),
+                        location.clone(),
+                    ));
+                }
+
+                // Enter a new scope for the loop body
+                self.current_scope.enter();
+                self.loop_depth += 1;
+
+                for stmt in body {
+                    self.check_statement(stmt)?;
+                }
+
+                self.loop_depth -= 1;
+                self.current_scope.exit();
+                Ok(())
+            }
+
             Statement::Test {
                 name: _,
                 body,

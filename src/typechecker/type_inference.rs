@@ -1752,6 +1752,33 @@ impl<'a> TypeInference<'a> {
                 })
             }
 
+            ResolvedHirStatement::While {
+                condition,
+                body,
+                location,
+            } => {
+                // Infer condition type - must be boolean
+                let tast_condition = self.infer_expression(condition)?;
+
+                // Ensure condition is boolean
+                if tast_condition.expr_type != ConcreteType::Boolean {
+                    self.add_constraint(TypeConstraint::Equality {
+                        left: tast_condition.expr_type.clone(),
+                        right: ConcreteType::Boolean,
+                        location: location.clone(),
+                    });
+                }
+
+                // Infer body
+                let tast_body = self.infer_block(body)?;
+
+                Ok(TastStatement::While {
+                    condition: tast_condition,
+                    body: tast_body,
+                    location: location.clone(),
+                })
+            }
+
             ResolvedHirStatement::Assignment {
                 target,
                 value,
@@ -2605,12 +2632,18 @@ impl<'a> TypeInference<'a> {
             ResolvedHirExpression::Range {
                 start,
                 end,
+                step,
                 inclusive,
                 location,
             } => {
-                // Infer types for start and end
+                // Infer types for start, end, and optionally step
                 let tast_start = self.infer_expression(start)?;
                 let tast_end = self.infer_expression(end)?;
+                let tast_step = if let Some(s) = step {
+                    Some(Box::new(self.infer_expression(s)?))
+                } else {
+                    None
+                };
 
                 // Both start and end should be integers
                 // For now, we'll type the range as an Array<Integer>
@@ -2620,6 +2653,7 @@ impl<'a> TypeInference<'a> {
                     TastExpressionKind::Range {
                         start: Box::new(tast_start),
                         end: Box::new(tast_end),
+                        step: tast_step,
                         inclusive: *inclusive,
                     },
                     ConcreteType::Array(Box::new(ConcreteType::Integer)),
@@ -4147,6 +4181,7 @@ impl StatementLocation for ResolvedHirStatement {
             ResolvedHirStatement::If { location, .. } => location,
             ResolvedHirStatement::Assignment { location, .. } => location,
             ResolvedHirStatement::For { location, .. } => location,
+            ResolvedHirStatement::While { location, .. } => location,
             ResolvedHirStatement::Print { location, .. } => location,
             ResolvedHirStatement::LaterAssignment { location, .. } => location,
         }

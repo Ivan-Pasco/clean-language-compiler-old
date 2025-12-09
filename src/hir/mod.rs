@@ -197,6 +197,13 @@ pub enum HirStatement {
         location: SourceLocation,
     },
 
+    /// While loop
+    While {
+        condition: HirExpression,
+        body: HirBlock,
+        location: SourceLocation,
+    },
+
     /// Print statement
     Print {
         expression: HirExpression,
@@ -341,6 +348,7 @@ pub enum HirExpression {
     Range {
         start: Box<HirExpression>,
         end: Box<HirExpression>,
+        step: Option<Box<HirExpression>>,
         inclusive: bool,
         location: SourceLocation,
     },

@@ -10,7 +10,7 @@ use crate::hir::hir_builder::HirBuilder;
 use crate::hir::HirProgram;
 use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
 use crate::parser::SpecificationParser;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -25,6 +25,15 @@ pub struct MultiFileCompilerConfig {
 
     /// Whether to include debug information
     pub debug: bool,
+
+    /// Enable HTML-first page processing (Frame UI)
+    pub html_pages_enabled: bool,
+
+    /// Directory containing HTML pages (relative to project root)
+    pub html_pages_dir: Option<PathBuf>,
+
+    /// Directory containing Clean components for HTML pages
+    pub html_components_dir: Option<PathBuf>,
 }
 
 impl Default for MultiFileCompilerConfig {
@@ -38,6 +47,9 @@ impl Default for MultiFileCompilerConfig {
             ],
             opt_level: 2,
             debug: false,
+            html_pages_enabled: false,
+            html_pages_dir: None,
+            html_components_dir: None,
         }
     }
 }
@@ -64,6 +76,121 @@ impl MultiFileCompilerConfig {
     pub fn with_debug(mut self, debug: bool) -> Self {
         self.debug = debug;
         self
+    }
+
+    /// Enable HTML-first page processing
+    pub fn with_html_pages(mut self, enabled: bool) -> Self {
+        self.html_pages_enabled = enabled;
+        self
+    }
+
+    /// Set the HTML pages directory
+    pub fn with_html_pages_dir<P: AsRef<Path>>(mut self, path: P) -> Self {
+        self.html_pages_dir = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Set the HTML components directory
+    pub fn with_html_components_dir<P: AsRef<Path>>(mut self, path: P) -> Self {
+        self.html_components_dir = Some(path.as_ref().to_path_buf());
+        self
+    }
+}
+
+/// Represents an HTML page discovered during compilation
+///
+/// Pages use the `.html.cln` extension to indicate they should be processed
+/// by the Clean Language compiler. Regular `.html` files are static and
+/// served as-is without processing.
+#[derive(Debug, Clone)]
+pub struct HtmlPage {
+    /// File path to the HTML page (.html.cln file)
+    pub file_path: PathBuf,
+    /// Route path derived from file path (e.g., "/blog/[slug].html.cln" -> "/blog/:slug")
+    pub route_path: String,
+    /// Raw HTML content
+    pub html_content: String,
+    /// Page metadata (title, layout, etc.)
+    pub metadata: HtmlPageMetadata,
+}
+
+/// Metadata extracted from HTML page
+#[derive(Debug, Clone, Default)]
+pub struct HtmlPageMetadata {
+    /// Page title from <title> or page attribute
+    pub title: Option<String>,
+    /// Layout to use (default: "main")
+    pub layout: Option<String>,
+    /// Data block content if present
+    pub data_block: Option<String>,
+    /// Custom tags used in the page
+    pub custom_tags: Vec<String>,
+}
+
+/// Component registry mapping custom tags to Clean classes
+#[derive(Debug, Clone, Default)]
+pub struct ComponentRegistry {
+    /// Map from tag name to component info
+    pub components: HashMap<String, ComponentInfo>,
+}
+
+/// Information about a registered component
+#[derive(Debug, Clone)]
+pub struct ComponentInfo {
+    /// Class name in Clean code
+    pub class_name: String,
+    /// Source file path
+    pub file_path: PathBuf,
+    /// Props/attributes the component accepts
+    pub props: Vec<String>,
+    /// Whether the component supports client hydration
+    pub has_client_hydration: bool,
+}
+
+impl ComponentRegistry {
+    pub fn new() -> Self {
+        Self {
+            components: HashMap::new(),
+        }
+    }
+
+    /// Register a component
+    pub fn register(&mut self, tag_name: String, info: ComponentInfo) {
+        self.components.insert(tag_name, info);
+    }
+
+    /// Check if a tag is a registered component
+    pub fn has_component(&self, tag_name: &str) -> bool {
+        self.components.contains_key(tag_name)
+    }
+
+    /// Get component info by tag name
+    pub fn get(&self, tag_name: &str) -> Option<&ComponentInfo> {
+        self.components.get(tag_name)
+    }
+
+    /// Convert to JSON for plugin consumption
+    pub fn to_json(&self) -> String {
+        let mut json = String::from("{");
+        let mut first = true;
+        for (tag, info) in &self.components {
+            if !first {
+                json.push(',');
+            }
+            first = false;
+            json.push_str(&format!(
+                "\"{}\":{{\"class\":\"{}\",\"props\":[{}]}}",
+                tag,
+                info.class_name,
+                info.props
+                    .iter()
+                    .map(|p| format!("\"{}\"", p))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
+        }
+        json.push('}');
+        json
     }
 }
 
@@ -212,6 +339,9 @@ impl MultiFileCompiler {
             search_paths: vec![temp_dir.clone()],
             opt_level: self.config.opt_level,
             debug: self.config.debug,
+            html_pages_enabled: self.config.html_pages_enabled,
+            html_pages_dir: self.config.html_pages_dir.clone(),
+            html_components_dir: self.config.html_components_dir.clone(),
         };
 
         let compiler = MultiFileCompiler::with_config(config);
@@ -222,6 +352,600 @@ impl MultiFileCompiler {
 
         result
     }
+
+    // =========================================================================
+    // HTML-First Page Processing Methods
+    // =========================================================================
+
+    /// Discover HTML pages in the pages directory
+    pub fn discover_html_pages<P: AsRef<Path>>(
+        &self,
+        pages_dir: P,
+    ) -> Result<Vec<HtmlPage>, Vec<CompilerError>> {
+        let pages_dir = pages_dir.as_ref();
+        let mut pages = Vec::new();
+        let mut errors = Vec::new();
+
+        if !pages_dir.exists() {
+            return Ok(pages); // No pages directory, return empty
+        }
+
+        // Recursively scan for HTML files
+        match self.scan_html_files(pages_dir, pages_dir) {
+            Ok(found_pages) => pages = found_pages,
+            Err(e) => errors.push(e),
+        }
+
+        if errors.is_empty() {
+            Ok(pages)
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// Recursively scan directory for HTML files
+    fn scan_html_files(&self, dir: &Path, base_dir: &Path) -> Result<Vec<HtmlPage>, CompilerError> {
+        let mut pages = Vec::new();
+
+        let entries = fs::read_dir(dir).map_err(|e| {
+            CompilerError::io_error(
+                format!("Failed to read directory {}: {}", dir.display(), e),
+                None,
+                None,
+            )
+        })?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                CompilerError::io_error(format!("Failed to read entry: {}", e), None, None)
+            })?;
+
+            let path = entry.path();
+
+            if path.is_dir() {
+                // Recurse into subdirectories
+                let mut sub_pages = self.scan_html_files(&path, base_dir)?;
+                pages.append(&mut sub_pages);
+            } else if self.is_html_cln_file(&path) {
+                // Process .html.cln file (pages that need Clean Language processing)
+                // Regular .html files are static and not processed here
+                match self.process_html_file(&path, base_dir) {
+                    Ok(page) => pages.push(page),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to process .html.cln file {}: {:?}",
+                            path.display(),
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(pages)
+    }
+
+    /// Check if a file has the .html.cln extension
+    ///
+    /// Only .html.cln files are processed by the compiler.
+    /// Regular .html files are static and served as-is.
+    fn is_html_cln_file(&self, path: &Path) -> bool {
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        file_name.ends_with(".html.cln")
+    }
+
+    /// Process a single .html.cln file into an HtmlPage
+    fn process_html_file(
+        &self,
+        file_path: &Path,
+        base_dir: &Path,
+    ) -> Result<HtmlPage, CompilerError> {
+        let html_content = fs::read_to_string(file_path).map_err(|e| {
+            CompilerError::io_error(
+                format!("Failed to read HTML file {}: {}", file_path.display(), e),
+                None,
+                None,
+            )
+        })?;
+
+        // Derive route path from file path
+        let route_path = self.file_path_to_route(file_path, base_dir);
+
+        // Extract metadata from HTML content
+        let metadata = self.extract_html_metadata(&html_content);
+
+        Ok(HtmlPage {
+            file_path: file_path.to_path_buf(),
+            route_path,
+            html_content,
+            metadata,
+        })
+    }
+
+    /// Convert file path to route path
+    /// e.g., /pages/blog/[slug].html.cln -> /blog/:slug
+    fn file_path_to_route(&self, file_path: &Path, base_dir: &Path) -> String {
+        let relative = file_path.strip_prefix(base_dir).unwrap_or(file_path);
+
+        let mut route = String::from("/");
+
+        for component in relative.components() {
+            if let std::path::Component::Normal(name) = component {
+                let name_str = name.to_string_lossy();
+
+                // Skip index files at the route level
+                if name_str == "index.html.cln" {
+                    continue;
+                }
+
+                // Remove .html.cln extension (processed pages)
+                let name_str = name_str.trim_end_matches(".html.cln");
+
+                // Convert [param] to :param
+                let route_segment = if name_str.starts_with('[') && name_str.ends_with(']') {
+                    format!(":{}", &name_str[1..name_str.len() - 1])
+                } else {
+                    name_str.to_string()
+                };
+
+                if !route.ends_with('/') {
+                    route.push('/');
+                }
+                route.push_str(&route_segment);
+            }
+        }
+
+        // Normalize empty route to "/"
+        if route.is_empty() || route == "/" {
+            "/".to_string()
+        } else {
+            route
+        }
+    }
+
+    /// Extract metadata from HTML content
+    fn extract_html_metadata(&self, html: &str) -> HtmlPageMetadata {
+        let mut metadata = HtmlPageMetadata::default();
+
+        // Extract title from <title> tag
+        if let Some(start) = html.find("<title>") {
+            if let Some(end) = html[start..].find("</title>") {
+                let title_start = start + 7; // "<title>".len()
+                let title_end = start + end;
+                metadata.title = Some(html[title_start..title_end].trim().to_string());
+            }
+        }
+
+        // Extract page attributes from <page> tag if present
+        if let Some(start) = html.find("<page") {
+            if let Some(end) = html[start..].find('>') {
+                let tag_content = &html[start..start + end + 1];
+
+                // Extract layout attribute
+                if let Some(layout) = self.extract_attr_value(tag_content, "layout") {
+                    metadata.layout = Some(layout);
+                }
+
+                // Extract title attribute (overrides <title> tag)
+                if let Some(title) = self.extract_attr_value(tag_content, "title") {
+                    metadata.title = Some(title);
+                }
+            }
+        }
+
+        // Extract <data> block if present
+        if let Some(start) = html.find("<data>") {
+            if let Some(end) = html.find("</data>") {
+                let data_start = start + 6; // "<data>".len()
+                metadata.data_block = Some(html[data_start..end].trim().to_string());
+            }
+        }
+
+        // Find custom tags (tags with hyphens, following Web Components convention)
+        let mut custom_tags = HashSet::new();
+        let mut pos = 0;
+        while let Some(tag_start) = html[pos..].find('<') {
+            let tag_start = pos + tag_start;
+            if tag_start + 1 >= html.len() {
+                break;
+            }
+
+            // Skip closing tags, comments, doctype
+            let next_char = html.chars().nth(tag_start + 1).unwrap_or(' ');
+            if next_char == '/' || next_char == '!' || next_char == '?' {
+                pos = tag_start + 1;
+                continue;
+            }
+
+            // Find end of tag name
+            let tag_name_end = html[tag_start + 1..]
+                .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+                .map(|i| tag_start + 1 + i)
+                .unwrap_or(html.len());
+
+            let tag_name = &html[tag_start + 1..tag_name_end];
+
+            // Check if it's a custom tag (contains hyphen)
+            if tag_name.contains('-') && !tag_name.is_empty() {
+                custom_tags.insert(tag_name.to_lowercase());
+            }
+
+            pos = tag_name_end;
+        }
+
+        metadata.custom_tags = custom_tags.into_iter().collect();
+
+        metadata
+    }
+
+    /// Extract attribute value from an HTML tag string
+    fn extract_attr_value(&self, tag: &str, attr_name: &str) -> Option<String> {
+        let patterns = [format!("{}=\"", attr_name), format!("{}='", attr_name)];
+
+        for pattern in &patterns {
+            if let Some(start) = tag.find(pattern) {
+                let value_start = start + pattern.len();
+                let quote_char = tag.chars().nth(start + attr_name.len() + 1)?;
+                if let Some(end) = tag[value_start..].find(quote_char) {
+                    return Some(tag[value_start..value_start + end].to_string());
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Build component registry from Clean component files
+    pub fn build_component_registry<P: AsRef<Path>>(
+        &self,
+        components_dir: P,
+    ) -> Result<ComponentRegistry, Vec<CompilerError>> {
+        let components_dir = components_dir.as_ref();
+        let mut registry = ComponentRegistry::new();
+        let mut errors = Vec::new();
+
+        if !components_dir.exists() {
+            return Ok(registry); // No components directory
+        }
+
+        // Scan for .cln files
+        let entries = fs::read_dir(components_dir).map_err(|e| {
+            vec![CompilerError::io_error(
+                format!("Failed to read components directory: {}", e),
+                None,
+                None,
+            )]
+        })?;
+
+        for entry in entries {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(e) => {
+                    errors.push(CompilerError::io_error(
+                        format!("Failed to read entry: {}", e),
+                        None,
+                        None,
+                    ));
+                    continue;
+                }
+            };
+
+            let path = entry.path();
+            if path.extension().map_or(false, |ext| ext == "cln") {
+                match self.extract_component_info(&path) {
+                    Ok(Some(info)) => {
+                        // Derive tag name from class name (PascalCase -> kebab-case)
+                        let tag_name = self.class_name_to_tag(&info.class_name);
+                        registry.register(tag_name, info);
+                    }
+                    Ok(None) => {
+                        // File doesn't define a component
+                    }
+                    Err(e) => {
+                        errors.push(e);
+                    }
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(registry)
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// Extract component information from a Clean file
+    fn extract_component_info(
+        &self,
+        file_path: &Path,
+    ) -> Result<Option<ComponentInfo>, CompilerError> {
+        let source = fs::read_to_string(file_path).map_err(|e| {
+            CompilerError::io_error(
+                format!(
+                    "Failed to read component file {}: {}",
+                    file_path.display(),
+                    e
+                ),
+                None,
+                None,
+            )
+        })?;
+
+        // Look for class definition with _tag property (indicates a component)
+        // Pattern: class ClassName
+        let class_start = match source.find("class ") {
+            Some(pos) => pos,
+            None => return Ok(None),
+        };
+
+        // Extract class name
+        let after_class = &source[class_start + 6..];
+        let class_name_end = after_class
+            .find(|c: char| c.is_whitespace() || c == ':' || c == '\n')
+            .unwrap_or(after_class.len());
+        let class_name = after_class[..class_name_end].trim().to_string();
+
+        if class_name.is_empty() {
+            return Ok(None);
+        }
+
+        // Check if it has _tag property (indicates UI component)
+        let has_tag = source.contains("_tag =") || source.contains("_tag=");
+
+        // Check for client hydration support
+        let has_client_hydration =
+            source.contains("_hydration_mode") && !source.contains("_hydration_mode = \"off\"");
+
+        // Extract props (properties that don't start with _)
+        let mut props = Vec::new();
+        for line in source.lines() {
+            let trimmed = line.trim();
+            // Match property declarations: type name = value
+            if !trimmed.starts_with("//") && !trimmed.starts_with("_") {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let first = parts[0];
+                    // Check if it's a type declaration
+                    if matches!(first, "string" | "integer" | "number" | "boolean" | "any") {
+                        let prop_name = parts[1].trim_end_matches('=').trim();
+                        if !prop_name.starts_with('_') && !prop_name.is_empty() {
+                            props.push(prop_name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Only return if it looks like a UI component
+        if has_tag {
+            Ok(Some(ComponentInfo {
+                class_name,
+                file_path: file_path.to_path_buf(),
+                props,
+                has_client_hydration,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Convert PascalCase class name to kebab-case tag name
+    fn class_name_to_tag(&self, class_name: &str) -> String {
+        let mut result = String::new();
+        for (i, c) in class_name.chars().enumerate() {
+            if c.is_uppercase() {
+                if i > 0 {
+                    result.push('-');
+                }
+                result.push(c.to_ascii_lowercase());
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    }
+
+    /// Generate Clean code from HTML page using plugin
+    /// This method would call the frame.ui plugin's process_html function
+    pub fn generate_clean_from_html(
+        &self,
+        page: &HtmlPage,
+        registry: &ComponentRegistry,
+    ) -> Result<String, CompilerError> {
+        // Generate the class name from route path
+        let class_name = self.route_to_class_name(&page.route_path);
+
+        // Generate Clean code for the page
+        let mut code = String::new();
+
+        // Note: No import statements - generated code is self-contained
+
+        // Generate page class
+        code.push_str(&format!("class {}\n", class_name));
+        code.push_str(&format!("\tstring _path = \"{}\"\n", page.route_path));
+
+        if let Some(layout) = &page.metadata.layout {
+            code.push_str(&format!("\tstring _layout = \"{}\"\n", layout));
+        }
+
+        code.push_str("\n\tfunctions:\n");
+        code.push_str("\t\tstring render()\n");
+
+        // Convert HTML to render method body
+        let render_body = self.html_to_render_body(&page.html_content, registry);
+        code.push_str(&render_body);
+
+        Ok(code)
+    }
+
+    /// Convert route path to class name
+    fn route_to_class_name(&self, route: &str) -> String {
+        let mut name = String::new();
+        let mut capitalize_next = true;
+
+        for c in route.chars() {
+            if c == '/' || c == '-' || c == '_' {
+                capitalize_next = true;
+            } else if c == ':' {
+                // Parameter - skip the colon, capitalize the param name
+                capitalize_next = true;
+            } else if capitalize_next {
+                name.push(c.to_ascii_uppercase());
+                capitalize_next = false;
+            } else {
+                name.push(c);
+            }
+        }
+
+        if name.is_empty() {
+            "IndexPage".to_string()
+        } else {
+            format!("{}Page", name)
+        }
+    }
+
+    /// Convert HTML content to render method body
+    fn html_to_render_body(&self, html: &str, _registry: &ComponentRegistry) -> String {
+        let mut body = String::new();
+        body.push_str("\t\t\tstring html = \"\"\n");
+
+        // Simple HTML to string concatenation conversion
+        // Strip <page>, <data>, and doctype/html/head/body if present
+        let content = self.extract_page_body(html);
+
+        // Escape and add as string literals
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            // Escape quotes
+            let escaped = trimmed.replace('\\', "\\\\").replace('"', "\\\"");
+            body.push_str(&format!("\t\t\thtml = html + \"{}\"\n", escaped));
+        }
+
+        body.push_str("\t\t\treturn html\n");
+        body
+    }
+
+    /// Extract just the body content from HTML
+    fn extract_page_body(&self, html: &str) -> String {
+        // Try to find <body> content
+        if let Some(body_start) = html.find("<body") {
+            if let Some(body_tag_end) = html[body_start..].find('>') {
+                let content_start = body_start + body_tag_end + 1;
+                if let Some(body_end) = html.find("</body>") {
+                    return html[content_start..body_end].to_string();
+                }
+            }
+        }
+
+        // If no body tag, look for main content
+        if let Some(main_start) = html.find("<main") {
+            if let Some(main_tag_end) = html[main_start..].find('>') {
+                let content_start = main_start + main_tag_end + 1;
+                if let Some(main_end) = html.find("</main>") {
+                    return html[content_start..main_end].to_string();
+                }
+            }
+        }
+
+        // Return as-is, stripping page/data blocks
+        let mut result = html.to_string();
+
+        // Remove <page ...> tags
+        while let Some(start) = result.find("<page") {
+            if let Some(end) = result[start..].find('>') {
+                result = format!("{}{}", &result[..start], &result[start + end + 1..]);
+            } else {
+                break;
+            }
+        }
+
+        // Remove <data>...</data> blocks
+        while let Some(start) = result.find("<data>") {
+            if let Some(end) = result.find("</data>") {
+                result = format!("{}{}", &result[..start], &result[end + 7..]);
+            } else {
+                break;
+            }
+        }
+
+        result
+    }
+
+    /// Process HTML pages and generate combined Clean source
+    pub fn process_html_pages_to_clean(
+        &self,
+        pages: &[HtmlPage],
+        registry: &ComponentRegistry,
+    ) -> Result<String, Vec<CompilerError>> {
+        let mut combined = String::new();
+        let mut errors = Vec::new();
+
+        // Note: We don't add import statements here since frame.web is a plugin
+        // that gets expanded at compile time, not a module that gets imported.
+        // The generated code is self-contained.
+
+        // Generate page classes
+        for page in pages {
+            match self.generate_clean_from_html(page, registry) {
+                Ok(code) => {
+                    // Skip any import section
+                    let code_without_import = code
+                        .lines()
+                        .skip_while(|line| {
+                            line.starts_with("import")
+                                || (line.starts_with('\t')
+                                    && !line.contains("class")
+                                    && !line.contains("functions:"))
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    combined.push_str(&code_without_import);
+                    combined.push_str("\n\n");
+                }
+                Err(e) => errors.push(e),
+            }
+        }
+
+        // Generate route handlers
+        combined.push_str("// Route handlers\n");
+        combined.push_str("functions:\n");
+
+        for (i, page) in pages.iter().enumerate() {
+            let class_name = self.route_to_class_name(&page.route_path);
+            combined.push_str(&format!("\tstring __route_handler_{}()\n", i));
+            combined.push_str(&format!("\t\t{} page = {}()\n", class_name, class_name));
+            combined.push_str("\t\treturn page.render()\n\n");
+        }
+
+        // Generate start() with route registration
+        combined.push_str("start()\n");
+        combined.push_str("\tprintln(\"Starting HTML-first server...\")\n");
+        combined.push_str("\tinteger status = 0\n");
+
+        for (i, page) in pages.iter().enumerate() {
+            combined.push_str(&format!(
+                "\tstatus = _http_route(\"GET\", \"{}\", {})\n",
+                page.route_path, i
+            ));
+        }
+
+        combined.push_str("\tprintln(\"Routes registered\")\n");
+
+        if errors.is_empty() {
+            Ok(combined)
+        } else {
+            Err(errors)
+        }
+    }
+
+    // =========================================================================
+    // Original Module Discovery Methods
+    // =========================================================================
 
     /// Discover all imported modules starting from the entry module
     fn discover_modules(
@@ -601,5 +1325,196 @@ start()
             MultiFileCompiler::derive_module_name(Path::new("/complex/path/MyModule.cln")),
             "MyModule"
         );
+    }
+
+    // =========================================================================
+    // HTML-First Page Processing Tests
+    // =========================================================================
+
+    #[test]
+    fn test_file_path_to_route() {
+        let compiler = MultiFileCompiler::new();
+        let base = Path::new("/project/pages");
+
+        // Basic routes (using .html.cln extension for processed pages)
+        assert_eq!(
+            compiler.file_path_to_route(Path::new("/project/pages/index.html.cln"), base),
+            "/"
+        );
+        assert_eq!(
+            compiler.file_path_to_route(Path::new("/project/pages/about.html.cln"), base),
+            "/about"
+        );
+        assert_eq!(
+            compiler.file_path_to_route(Path::new("/project/pages/blog/index.html.cln"), base),
+            "/blog"
+        );
+
+        // Nested routes
+        assert_eq!(
+            compiler.file_path_to_route(Path::new("/project/pages/blog/post.html.cln"), base),
+            "/blog/post"
+        );
+
+        // Dynamic routes
+        assert_eq!(
+            compiler.file_path_to_route(Path::new("/project/pages/blog/[slug].html.cln"), base),
+            "/blog/:slug"
+        );
+        assert_eq!(
+            compiler.file_path_to_route(
+                Path::new("/project/pages/users/[id]/profile.html.cln"),
+                base
+            ),
+            "/users/:id/profile"
+        );
+    }
+
+    #[test]
+    fn test_is_html_cln_file() {
+        let compiler = MultiFileCompiler::new();
+
+        // Should match .html.cln files
+        assert!(compiler.is_html_cln_file(Path::new("/project/pages/index.html.cln")));
+        assert!(compiler.is_html_cln_file(Path::new("about.html.cln")));
+        assert!(compiler.is_html_cln_file(Path::new("/blog/[slug].html.cln")));
+
+        // Should NOT match regular .html files (static, not processed)
+        assert!(!compiler.is_html_cln_file(Path::new("/project/pages/index.html")));
+        assert!(!compiler.is_html_cln_file(Path::new("static.html")));
+
+        // Should NOT match other extensions
+        assert!(!compiler.is_html_cln_file(Path::new("main.cln")));
+        assert!(!compiler.is_html_cln_file(Path::new("style.css")));
+        assert!(!compiler.is_html_cln_file(Path::new("app.js")));
+    }
+
+    #[test]
+    fn test_route_to_class_name() {
+        let compiler = MultiFileCompiler::new();
+
+        assert_eq!(compiler.route_to_class_name("/"), "IndexPage");
+        assert_eq!(compiler.route_to_class_name("/about"), "AboutPage");
+        assert_eq!(compiler.route_to_class_name("/blog"), "BlogPage");
+        assert_eq!(compiler.route_to_class_name("/blog/posts"), "BlogPostsPage");
+        assert_eq!(compiler.route_to_class_name("/blog/:slug"), "BlogSlugPage");
+        assert_eq!(
+            compiler.route_to_class_name("/users/:id/profile"),
+            "UsersIdProfilePage"
+        );
+    }
+
+    #[test]
+    fn test_class_name_to_tag() {
+        let compiler = MultiFileCompiler::new();
+
+        assert_eq!(compiler.class_name_to_tag("StatCard"), "stat-card");
+        assert_eq!(compiler.class_name_to_tag("UserBadge"), "user-badge");
+        assert_eq!(compiler.class_name_to_tag("AppHeader"), "app-header");
+        assert_eq!(
+            compiler.class_name_to_tag("NewsletterForm"),
+            "newsletter-form"
+        );
+    }
+
+    #[test]
+    fn test_extract_html_metadata() {
+        let compiler = MultiFileCompiler::new();
+
+        // Basic metadata extraction
+        let html = r#"<page layout="main" title="Test Page"></page>
+<section>Content</section>
+<stat-card></stat-card>
+<user-badge></user-badge>"#;
+
+        let metadata = compiler.extract_html_metadata(html);
+        assert_eq!(metadata.layout, Some("main".to_string()));
+        assert_eq!(metadata.title, Some("Test Page".to_string()));
+        assert!(metadata.custom_tags.contains(&"stat-card".to_string()));
+        assert!(metadata.custom_tags.contains(&"user-badge".to_string()));
+
+        // Title from <title> tag
+        let html2 = r#"<html><head><title>Page Title</title></head><body></body></html>"#;
+        let metadata2 = compiler.extract_html_metadata(html2);
+        assert_eq!(metadata2.title, Some("Page Title".to_string()));
+
+        // Data block extraction
+        let html3 = r#"<data>
+posts = Post.findAll()
+</data>
+<section></section>"#;
+        let metadata3 = compiler.extract_html_metadata(html3);
+        assert!(metadata3.data_block.is_some());
+        assert!(metadata3.data_block.unwrap().contains("posts"));
+    }
+
+    #[test]
+    fn test_extract_attr_value() {
+        let compiler = MultiFileCompiler::new();
+
+        let tag = r#"<page layout="main" title="Test">"#;
+        assert_eq!(
+            compiler.extract_attr_value(tag, "layout"),
+            Some("main".to_string())
+        );
+        assert_eq!(
+            compiler.extract_attr_value(tag, "title"),
+            Some("Test".to_string())
+        );
+        assert_eq!(compiler.extract_attr_value(tag, "missing"), None);
+
+        // Single quotes
+        let tag2 = r#"<page layout='sidebar'>"#;
+        assert_eq!(
+            compiler.extract_attr_value(tag2, "layout"),
+            Some("sidebar".to_string())
+        );
+    }
+
+    #[test]
+    fn test_component_registry() {
+        let mut registry = ComponentRegistry::new();
+
+        registry.register(
+            "stat-card".to_string(),
+            ComponentInfo {
+                class_name: "StatCard".to_string(),
+                file_path: PathBuf::from("/components/StatCard.cln"),
+                props: vec!["label".to_string(), "value".to_string()],
+                has_client_hydration: false,
+            },
+        );
+
+        assert!(registry.has_component("stat-card"));
+        assert!(!registry.has_component("unknown-tag"));
+
+        let info = registry.get("stat-card").unwrap();
+        assert_eq!(info.class_name, "StatCard");
+        assert!(info.props.contains(&"label".to_string()));
+
+        // Test JSON serialization
+        let json = registry.to_json();
+        assert!(json.contains("stat-card"));
+        assert!(json.contains("StatCard"));
+    }
+
+    #[test]
+    fn test_html_to_render_body() {
+        let compiler = MultiFileCompiler::new();
+        let registry = ComponentRegistry::new();
+
+        let html = r#"<html>
+<body>
+<h1>Hello World</h1>
+<p>Test content</p>
+</body>
+</html>"#;
+
+        let body = compiler.html_to_render_body(html, &registry);
+
+        // Should generate string concatenation code
+        assert!(body.contains("string html = \"\""));
+        assert!(body.contains("return html"));
+        assert!(body.contains("<h1>Hello World</h1>"));
     }
 }

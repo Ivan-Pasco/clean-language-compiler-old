@@ -448,6 +448,13 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
+    // While loop
+    While {
+        condition: Expression,
+        body: Vec<Statement>,
+        location: Option<SourceLocation>,
+    },
+
     // Test
     Test {
         name: String,

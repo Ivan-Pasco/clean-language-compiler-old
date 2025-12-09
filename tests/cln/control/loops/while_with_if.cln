@@ -1,0 +1,12 @@
+// While loop with if statement test
+// Tests conditional logic inside while loop
+
+start()
+	integer count = 0
+	while count < 10
+		if count % 2 == 0
+			print("Even: " + count.toString())
+		else
+			print("Odd: " + count.toString())
+		count = count + 1
+	print("Finished")

@@ -177,12 +177,38 @@ impl MirOptimizer {
 pub struct ConstantFoldingPass {
     /// Constants discovered during analysis
     constant_values: HashMap<ValueId, MirConstant>,
+    /// Values that have multiple definitions (cannot be treated as constants)
+    multi_def_values: HashSet<ValueId>,
 }
 
 impl ConstantFoldingPass {
     pub fn new() -> Self {
         Self {
             constant_values: HashMap::new(),
+            multi_def_values: HashSet::new(),
+        }
+    }
+
+    /// Find all values that are assigned in multiple places (loop variables, phi values)
+    /// These cannot be safely constant-folded.
+    fn find_multi_def_values(&mut self, function: &MirFunction) {
+        let mut def_counts: HashMap<ValueId, usize> = HashMap::new();
+
+        // Count definitions for each value across all blocks
+        for block in function.blocks.values() {
+            for instruction in &block.instructions {
+                if let Some(dest) = instruction.dest {
+                    *def_counts.entry(dest).or_insert(0) += 1;
+                }
+            }
+        }
+
+        // Mark values with multiple definitions
+        self.multi_def_values.clear();
+        for (value_id, count) in def_counts {
+            if count > 1 {
+                self.multi_def_values.insert(value_id);
+            }
         }
     }
 
@@ -255,6 +281,11 @@ impl OptimizationPass for ConstantFoldingPass {
         let mut stats = PassStats::default();
         self.constant_values.clear();
 
+        // CRITICAL FIX: First, find all values that have multiple definitions
+        // (e.g., loop variables). These cannot be safely constant-folded because
+        // their value changes at runtime.
+        self.find_multi_def_values(function);
+
         // Track constants through the function
         for block in function.blocks.values_mut() {
             let _instructions_to_remove: Vec<usize> = Vec::new();
@@ -264,23 +295,31 @@ impl OptimizationPass for ConstantFoldingPass {
                     MirOperation::Copy {
                         source: MirOperand::Constant(constant),
                     } => {
-                        // Track this constant value
+                        // Track this constant value, but only if it's a single-def value
                         if let Some(dest) = instruction.dest {
-                            self.constant_values.insert(dest, constant.clone());
+                            // CRITICAL: Don't track constants for values with multiple definitions
+                            if !self.multi_def_values.contains(&dest) {
+                                self.constant_values.insert(dest, constant.clone());
+                            }
                         }
                     }
 
                     MirOperation::BinaryOp { op, left, right } => {
                         // Try to resolve operands to constants
+                        // CRITICAL: Only look up constants for single-def values
                         let left_const = match left {
                             MirOperand::Constant(c) => Some(c.clone()),
-                            MirOperand::Value(id) => self.constant_values.get(id).cloned(),
+                            MirOperand::Value(id) if !self.multi_def_values.contains(id) => {
+                                self.constant_values.get(id).cloned()
+                            }
                             _ => None,
                         };
 
                         let right_const = match right {
                             MirOperand::Constant(c) => Some(c.clone()),
-                            MirOperand::Value(id) => self.constant_values.get(id).cloned(),
+                            MirOperand::Value(id) if !self.multi_def_values.contains(id) => {
+                                self.constant_values.get(id).cloned()
+                            }
                             _ => None,
                         };
 
@@ -293,9 +332,11 @@ impl OptimizationPass for ConstantFoldingPass {
                                     source: MirOperand::Constant(result.clone()),
                                 };
 
-                                // Track the result constant
+                                // Track the result constant (if it's a single-def)
                                 if let Some(dest) = instruction.dest {
-                                    self.constant_values.insert(dest, result);
+                                    if !self.multi_def_values.contains(&dest) {
+                                        self.constant_values.insert(dest, result);
+                                    }
                                 }
 
                                 stats.constants_folded += 1;
@@ -305,9 +346,12 @@ impl OptimizationPass for ConstantFoldingPass {
 
                     MirOperation::UnaryOp { op, operand } => {
                         // Try to resolve operand to constant
+                        // CRITICAL: Only look up constants for single-def values
                         let operand_const = match operand {
                             MirOperand::Constant(c) => Some(c.clone()),
-                            MirOperand::Value(id) => self.constant_values.get(id).cloned(),
+                            MirOperand::Value(id) if !self.multi_def_values.contains(id) => {
+                                self.constant_values.get(id).cloned()
+                            }
                             _ => None,
                         };
 
@@ -319,9 +363,11 @@ impl OptimizationPass for ConstantFoldingPass {
                                     source: MirOperand::Constant(result.clone()),
                                 };
 
-                                // Track the result constant
+                                // Track the result constant (if it's a single-def)
                                 if let Some(dest) = instruction.dest {
-                                    self.constant_values.insert(dest, result);
+                                    if !self.multi_def_values.contains(&dest) {
+                                        self.constant_values.insert(dest, result);
+                                    }
                                 }
 
                                 stats.constants_folded += 1;
@@ -438,6 +484,15 @@ impl DeadCodeEliminationPass {
             }
             MirOperation::Store { .. } => {
                 // Store is handled separately in optimize_function
+            }
+            MirOperation::Select {
+                condition,
+                true_value,
+                false_value,
+            } => {
+                self.mark_operand_live(condition, function);
+                self.mark_operand_live(true_value, function);
+                self.mark_operand_live(false_value, function);
             }
         }
     }
