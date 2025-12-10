@@ -58,9 +58,8 @@ pub fn gen_int_to_string(malloc_func: u32) -> Vec<Instruction<'static>> {
         Instruction::I32Const(0),
         Instruction::I32LtS,
         Instruction::LocalSet(1), // is_negative
-        // Get absolute value
-        Instruction::LocalGet(0),
-        Instruction::LocalGet(1),
+        // Get absolute value: if is_negative then negate, else keep original
+        Instruction::LocalGet(1), // is_negative (condition for if)
         Instruction::If(BlockType::Result(ValType::I32)),
         Instruction::I32Const(0),
         Instruction::LocalGet(0),
