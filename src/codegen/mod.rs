@@ -260,6 +260,8 @@ impl CodeGenerator {
         codegen.register_http_imports()?;
         codegen.register_type_conversion_imports()?;
         codegen.register_method_style_imports()?;
+        // Register native memory operations (includes native int_to_string, bool_to_string, etc.)
+        codegen.register_memory_operations()?;
         // DUPLICATE REGISTRATION DISABLED: StandardLibrary approach used instead
         // codegen.register_stdlib_functions()?;
 
@@ -4629,6 +4631,110 @@ impl CodeGenerator {
             self.add_function_alias("native_bool_to_string", bts_idx);
         }
 
+        // NATIVE: string_to_int - parses decimal string to integer
+        // Parameters: str_ptr (i32)
+        // Returns: integer (i32)
+        let string_to_int_instructions = native_stdlib::type_conversions::gen_string_to_int();
+        self.register_function(
+            "__string_to_int",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            &string_to_int_instructions,
+        )?;
+        // Create aliases for different access patterns
+        if let Some(sti_idx) = self.get_function_index("__string_to_int") {
+            self.add_function_alias("string_to_int", sti_idx);
+            self.add_function_alias("native_string_to_int", sti_idx);
+        }
+
+        // NATIVE: list_get_i32 - get element from i32 list
+        // Parameters: list_ptr (i32), index (i32)
+        // Returns: element (i32)
+        let list_get_i32_instructions = native_stdlib::list_ops::gen_get_i32();
+        self.register_function(
+            "__list_get_i32",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &list_get_i32_instructions,
+        )?;
+        if let Some(lg_idx) = self.get_function_index("__list_get_i32") {
+            self.add_function_alias("list.get", lg_idx);
+            self.add_function_alias("array_get", lg_idx);
+        }
+
+        // NATIVE: list_set_i32 - set element in i32 list
+        // Parameters: list_ptr (i32), index (i32), value (i32)
+        // Returns: list_ptr (i32) for chaining
+        let list_set_i32_instructions = native_stdlib::list_ops::gen_set_i32();
+        self.register_function(
+            "__list_set_i32",
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &list_set_i32_instructions,
+        )?;
+        if let Some(ls_idx) = self.get_function_index("__list_set_i32") {
+            self.add_function_alias("list.set", ls_idx);
+            self.add_function_alias("array_set", ls_idx);
+        }
+
+        // NATIVE: list_pop_i32 - remove and return last element
+        // Parameters: list_ptr (i32)
+        // Returns: element (i32)
+        let list_pop_i32_instructions = native_stdlib::list_ops::gen_pop_i32();
+        self.register_function(
+            "__list_pop_i32",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            &list_pop_i32_instructions,
+        )?;
+        if let Some(lp_idx) = self.get_function_index("__list_pop_i32") {
+            self.add_function_alias("list.pop", lp_idx);
+            self.add_function_alias("array_pop", lp_idx);
+        }
+
+        // NATIVE: list_index_of_i32 - find index of element
+        // Parameters: list_ptr (i32), value (i32)
+        // Returns: index (i32) or -1 if not found
+        let list_index_of_i32_instructions = native_stdlib::list_ops::gen_index_of_i32();
+        let list_index_of_idx = self.register_function(
+            "__list_index_of_i32",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &list_index_of_i32_instructions,
+        )?;
+        self.add_function_alias("list.indexOf", list_index_of_idx);
+
+        // NATIVE: list_contains_i32 - check if list contains element
+        // Parameters: list_ptr (i32), value (i32)
+        // Returns: boolean (i32)
+        let list_contains_i32_instructions =
+            native_stdlib::list_ops::gen_contains_i32(list_index_of_idx);
+        self.register_function(
+            "__list_contains_i32",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &list_contains_i32_instructions,
+        )?;
+        if let Some(lc_idx) = self.get_function_index("__list_contains_i32") {
+            self.add_function_alias("list.contains", lc_idx);
+            self.add_function_alias("array_contains", lc_idx);
+        }
+
+        // NATIVE: list_push_i32 - add element to end of list (requires reallocation)
+        // Parameters: list_ptr (i32), value (i32)
+        // Returns: new_list_ptr (i32)
+        let list_push_i32_instructions = native_stdlib::list_ops::gen_push_i32(malloc_idx);
+        self.register_function(
+            "__list_push_i32",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &list_push_i32_instructions,
+        )?;
+        if let Some(lpu_idx) = self.get_function_index("__list_push_i32") {
+            self.add_function_alias("list.push", lpu_idx);
+            self.add_function_alias("array_push", lpu_idx);
+        }
+
         Ok(())
     }
 
@@ -8653,17 +8759,8 @@ impl CodeGenerator {
         self.imported_functions.insert("mem_release".to_string());
         self.function_count += 1;
 
-        // int_to_string(value: i32) -> i32 (returns string pointer)
-        let int_to_string_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
-            "env",
-            "int_to_string",
-            wasm_encoder::EntityType::Function(int_to_string_type),
-        );
-        self.function_map
-            .insert("int_to_string".to_string(), self.function_count);
-        self.imported_functions.insert("int_to_string".to_string());
-        self.function_count += 1;
+        // NOTE: int_to_string is now NATIVE (registered in register_memory_operations)
+        // The native implementation uses malloc to allocate strings and is fully standalone
 
         // float_to_string(value: f64) -> i32 (returns string pointer)
         let float_to_string_type = self.add_function_type(&[WasmType::F64], Some(WasmType::I32))?;
@@ -8682,31 +8779,14 @@ impl CodeGenerator {
             .insert("float_to_string".to_string());
         self.function_count += 1;
 
-        // bool_to_string(value: i32) -> i32 (returns string pointer)
-        let bool_to_string_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
-            "env",
-            "bool_to_string",
-            wasm_encoder::EntityType::Function(bool_to_string_type),
-        );
-        self.function_map
-            .insert("bool_to_string".to_string(), self.function_count);
-        self.imported_functions.insert("bool_to_string".to_string());
-        self.function_count += 1;
+        // NOTE: bool_to_string is now NATIVE (registered in register_memory_operations)
+        // The native implementation uses pre-allocated "true"/"false" strings from the string pool
 
-        // string_to_int(str_ptr: i32) -> i32 (returns parsed integer)
-        let string_to_int_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
-            "env",
-            "string_to_int",
-            wasm_encoder::EntityType::Function(string_to_int_type),
-        );
-        self.function_map
-            .insert("string_to_int".to_string(), self.function_count);
-        self.imported_functions.insert("string_to_int".to_string());
-        self.function_count += 1;
+        // NOTE: string_to_int is now NATIVE (registered in register_memory_operations)
+        // The native implementation parses decimal strings to integers
 
         // string_to_float(str_ptr: i32) -> f64 (returns parsed float)
+        // NOTE: float parsing is complex, keeping as import for accuracy
         let string_to_float_type = self.add_function_type(&[WasmType::I32], Some(WasmType::F64))?;
         self.import_section.import(
             "env",
