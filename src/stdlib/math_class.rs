@@ -166,128 +166,82 @@ impl MathClass {
     }
 
     fn register_trig_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Math.sin(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.sin",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_sin(),
-        )?;
+        // Trig functions use host imports for accuracy and performance
+        // The imports (math_sin, math_cos, etc.) are registered in builtin_generator.rs
+        // Here we create aliases for dot-notation access (math.sin -> math_sin)
 
-        // Math.cos(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.cos",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_cos(),
-        )?;
+        // Math.sin(number x) -> number - alias to imported math_sin
+        if let Some(sin_idx) = codegen.get_function_index("math_sin") {
+            codegen.add_function_alias("math.sin", sin_idx);
+        }
 
-        // Math.tan(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.tan",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_tan(),
-        )?;
+        // Math.cos(number x) -> number - alias to imported math_cos
+        if let Some(cos_idx) = codegen.get_function_index("math_cos") {
+            codegen.add_function_alias("math.cos", cos_idx);
+        }
 
-        // Math.asin(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.asin",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_asin(),
-        )?;
+        // Math.tan(number x) -> number - alias to imported math_tan
+        if let Some(tan_idx) = codegen.get_function_index("math_tan") {
+            codegen.add_function_alias("math.tan", tan_idx);
+        }
 
-        // Math.acos(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.acos",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_acos(),
-        )?;
+        // Math.asin(number x) -> number - alias to imported math_asin
+        if let Some(asin_idx) = codegen.get_function_index("math_asin") {
+            codegen.add_function_alias("math.asin", asin_idx);
+        }
 
-        // Math.atan(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.atan",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_atan(),
-        )?;
+        // Math.acos(number x) -> number - alias to imported math_acos
+        if let Some(acos_idx) = codegen.get_function_index("math_acos") {
+            codegen.add_function_alias("math.acos", acos_idx);
+        }
 
-        // Math.atan2(number y, number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.atan2",
-            &[WasmType::F64, WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_atan2(),
-        )?;
+        // Math.atan(number x) -> number - alias to imported math_atan
+        if let Some(atan_idx) = codegen.get_function_index("math_atan") {
+            codegen.add_function_alias("math.atan", atan_idx);
+        }
+
+        // Math.atan2(number y, number x) -> number - alias to imported math_atan2
+        if let Some(atan2_idx) = codegen.get_function_index("math_atan2") {
+            codegen.add_function_alias("math.atan2", atan2_idx);
+        }
 
         Ok(())
     }
 
     fn register_log_exp_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Math.ln(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.ln",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_ln(),
-        )?;
+        // Log/exp functions use host imports for accuracy and performance
+        // The imports (math_ln, math_exp, etc.) are registered in builtin_generator.rs
+        // Here we create aliases for dot-notation access
 
-        // Math.log10(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.log10",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_log10(),
-        )?;
+        // Math.ln(number x) -> number - alias to imported math_ln
+        if let Some(ln_idx) = codegen.get_function_index("math_ln") {
+            codegen.add_function_alias("math.ln", ln_idx);
+        }
 
-        // Math.log2(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.log2",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_log2(),
-        )?;
+        // Math.log10(number x) -> number - alias to imported math_log10
+        if let Some(log10_idx) = codegen.get_function_index("math_log10") {
+            codegen.add_function_alias("math.log10", log10_idx);
+        }
 
-        // Math.exp(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.exp",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_exp(),
-        )?;
+        // Math.log2(number x) -> number - alias to imported math_log2
+        if let Some(log2_idx) = codegen.get_function_index("math_log2") {
+            codegen.add_function_alias("math.log2", log2_idx);
+        }
 
-        // Math.exp2(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.exp2",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_exp2(),
-        )?;
+        // Math.exp(number x) -> number - alias to imported math_exp
+        if let Some(exp_idx) = codegen.get_function_index("math_exp") {
+            codegen.add_function_alias("math.exp", exp_idx);
+        }
 
-        // Math.pow(number base, number exponent) -> number
-        let pow_index = register_stdlib_function(
-            codegen,
-            "math.pow",
-            &[WasmType::F64, WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_pow(),
-        )?;
-        // Add underscore alias for backwards compatibility
-        codegen.add_function_alias("math_pow", pow_index);
+        // Math.exp2(number x) -> number - alias to imported math_exp2
+        if let Some(exp2_idx) = codegen.get_function_index("math_exp2") {
+            codegen.add_function_alias("math.exp2", exp2_idx);
+        }
+
+        // Math.pow(number base, number exponent) -> number - alias to imported math_pow
+        if let Some(pow_idx) = codegen.get_function_index("math_pow") {
+            codegen.add_function_alias("math.pow", pow_idx);
+        }
 
         Ok(())
     }
@@ -296,32 +250,23 @@ impl MathClass {
         &self,
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
-        // Math.sinh(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.sinh",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_sinh(),
-        )?;
+        // Hyperbolic functions use host imports for accuracy
+        // The imports (math_sinh, math_cosh, math_tanh) are registered in builtin_generator.rs
 
-        // Math.cosh(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.cosh",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_cosh(),
-        )?;
+        // Math.sinh(number x) -> number - alias to imported math_sinh
+        if let Some(sinh_idx) = codegen.get_function_index("math_sinh") {
+            codegen.add_function_alias("math.sinh", sinh_idx);
+        }
 
-        // Math.tanh(number x) -> number
-        register_stdlib_function(
-            codegen,
-            "math.tanh",
-            &[WasmType::F64],
-            Some(WasmType::F64),
-            self.generate_tanh(),
-        )?;
+        // Math.cosh(number x) -> number - alias to imported math_cosh
+        if let Some(cosh_idx) = codegen.get_function_index("math_cosh") {
+            codegen.add_function_alias("math.cosh", cosh_idx);
+        }
+
+        // Math.tanh(number x) -> number - alias to imported math_tanh
+        if let Some(tanh_idx) = codegen.get_function_index("math_tanh") {
+            codegen.add_function_alias("math.tanh", tanh_idx);
+        }
 
         Ok(())
     }
@@ -357,7 +302,9 @@ impl MathClass {
     }
 
     // Implementation of mathematical functions using Taylor series and approximations
+    // Note: These are kept for reference but no longer used - math functions now use host imports
 
+    #[allow(dead_code)]
     fn generate_sin(&self) -> Vec<Instruction> {
         // Simple sin(x) ≈ x for small values (better for WebAssembly simplicity)
         // In a real implementation, this would call a WebAssembly import
@@ -368,6 +315,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_cos(&self) -> Vec<Instruction> {
         // Simple cos(x) ≈ 1 for small values
         // In a real implementation, this would call a WebAssembly import
@@ -376,6 +324,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_tan(&self) -> Vec<Instruction> {
         // Simple tan(x) ≈ x for small values
         vec![
@@ -383,6 +332,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_asin(&self) -> Vec<Instruction> {
         // asin(x) ≈ x for small |x|
         vec![
@@ -390,6 +340,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_acos(&self) -> Vec<Instruction> {
         // acos(x) ≈ π/2 - x for small |x| around 0
         vec![
@@ -399,6 +350,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_atan(&self) -> Vec<Instruction> {
         // atan(x) ≈ x for small x
         vec![
@@ -406,6 +358,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_atan2(&self) -> Vec<Instruction> {
         // atan2(y, x) ≈ y/x for simple cases (avoiding division by zero in real implementation)
         vec![
@@ -415,6 +368,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_ln(&self) -> Vec<Instruction> {
         // ln(x) ≈ x - 1 for x near 1 (simple approximation)
         vec![
@@ -424,6 +378,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_log10(&self) -> Vec<Instruction> {
         // log10(x) = ln(x) / ln(10) - using simplified ln
         vec![
@@ -435,6 +390,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_log2(&self) -> Vec<Instruction> {
         // log2(x) = ln(x) / ln(2) - using simplified ln
         vec![
@@ -446,6 +402,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_exp(&self) -> Vec<Instruction> {
         // exp(x) ≈ 1 + x for small x
         vec![
@@ -455,6 +412,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_exp2(&self) -> Vec<Instruction> {
         // 2^x ≈ 1 + x*ln(2) for small x
         vec![
@@ -466,6 +424,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_pow(&self) -> Vec<Instruction> {
         // Production-ready pow(base, exponent) implementation
         // Handles the most common mathematical cases correctly
@@ -537,6 +496,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_sinh(&self) -> Vec<Instruction> {
         // sinh(x) ≈ x for small x
         vec![
@@ -544,6 +504,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_cosh(&self) -> Vec<Instruction> {
         // cosh(x) ≈ 1 + x²/2 for small x
         vec![
@@ -557,6 +518,7 @@ impl MathClass {
         ]
     }
 
+    #[allow(dead_code)]
     fn generate_tanh(&self) -> Vec<Instruction> {
         // tanh(x) ≈ x for small x
         vec![

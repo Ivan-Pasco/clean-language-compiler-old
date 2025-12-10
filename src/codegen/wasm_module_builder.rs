@@ -8,7 +8,8 @@
 use crate::codegen::type_manager::TypeManager;
 use crate::error::CompilerError;
 use wasm_encoder::{
-    CodeSection, DataSection, ExportSection, FunctionSection, ImportSection, MemorySection, Module,
+    CodeSection, DataSection, ExportSection, FunctionSection, GlobalSection, ImportSection,
+    MemorySection, Module,
 };
 
 /// Builder for constructing WebAssembly modules from sections.
@@ -31,15 +32,17 @@ impl WasmModuleBuilder {
     /// 2. Import section (if runtime imports are enabled)
     /// 3. Function section (if functions exist)
     /// 4. Memory section
-    /// 5. Export section
-    /// 6. Code section (if functions exist)
-    /// 7. Data section
+    /// 5. Global section
+    /// 6. Export section
+    /// 7. Code section (if functions exist)
+    /// 8. Data section
     pub fn assemble_module(
         &self,
         type_manager: &TypeManager,
         import_section: &ImportSection,
         function_section: &FunctionSection,
         memory_section: &MemorySection,
+        global_section: &GlobalSection,
         export_section: &ExportSection,
         code_section: &CodeSection,
         data_section: &DataSection,
@@ -61,9 +64,12 @@ impl WasmModuleBuilder {
         }
 
         // Always add memory section
-        println!("DEBUG assemble_module: Adding memory section to module");
         module.section(memory_section);
-        println!("DEBUG assemble_module: Memory section added");
+
+        // Add global section for heap pointer and other globals
+        if !global_section.is_empty() {
+            module.section(global_section);
+        }
 
         // Add exports section
         module.section(export_section);
@@ -86,6 +92,7 @@ impl WasmModuleBuilder {
         type_manager: &TypeManager,
         function_section: &FunctionSection,
         memory_section: &MemorySection,
+        global_section: &GlobalSection,
         export_section: &ExportSection,
         code_section: &CodeSection,
         data_section: &DataSection,
@@ -101,6 +108,12 @@ impl WasmModuleBuilder {
         }
 
         module.section(memory_section);
+
+        // Add global section for heap pointer and other globals
+        if !global_section.is_empty() {
+            module.section(global_section);
+        }
+
         module.section(export_section);
 
         if function_count > 0 {
@@ -153,6 +166,7 @@ mod tests {
             memory64: false,
             shared: false,
         });
+        let global_section = GlobalSection::new();
         let export_section = ExportSection::new();
         let code_section = CodeSection::new();
         let data_section = DataSection::new();
@@ -161,6 +175,7 @@ mod tests {
             &type_manager,
             &function_section,
             &memory_section,
+            &global_section,
             &export_section,
             &code_section,
             &data_section,

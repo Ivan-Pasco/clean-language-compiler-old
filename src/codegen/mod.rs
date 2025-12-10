@@ -2,8 +2,8 @@
 
 use tracing::{debug, trace};
 use wasm_encoder::{
-    BlockType, CodeSection, EntityType, ExportSection, Function, FunctionSection, ImportSection,
-    Instruction, MemArg, MemorySection, ValType,
+    BlockType, CodeSection, ConstExpr, EntityType, ExportSection, Function, FunctionSection,
+    GlobalSection, GlobalType, ImportSection, Instruction, MemArg, MemorySection, ValType,
 };
 
 use crate::ast::{
@@ -18,9 +18,11 @@ use std::collections::{HashMap, HashSet};
 // Declare the modules
 mod binary_operations;
 mod binaryen_optimizer;
+pub mod bridge_generator;
 mod instruction_generator;
 mod memory;
 pub mod mir_codegen;
+pub mod native_stdlib;
 pub mod optimizations;
 mod stdlib_generator;
 mod type_conversion;
@@ -63,6 +65,7 @@ pub struct CodeGenerator {
     export_section: ExportSection,
     code_section: CodeSection,
     memory_section: MemorySection,
+    global_section: GlobalSection,
 
     import_section: ImportSection,
     type_manager: TypeManager,
@@ -147,11 +150,23 @@ impl CodeGenerator {
         let _stdlib_type_manager = type_manager.clone();
         let _stdlib_instruction_generator = InstructionGenerator::new(type_manager.clone());
 
+        // Create global section with heap pointer global at index 0
+        // HEAP_PTR_GLOBAL (index 0) is a mutable i32 initialized to HEAP_START
+        let mut global_section = GlobalSection::new();
+        global_section.global(
+            GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+            },
+            &ConstExpr::i32_const(native_stdlib::HEAP_START as i32),
+        );
+
         Self {
             function_section: FunctionSection::new(),
             export_section: ExportSection::new(),
             code_section: CodeSection::new(),
             memory_section: MemorySection::new(),
+            global_section,
 
             import_section: ImportSection::new(),
             type_manager,
@@ -348,6 +363,7 @@ impl CodeGenerator {
             &self.import_section,
             &self.function_section,
             &self.memory_section,
+            &self.global_section,
             &self.export_section,
             &self.code_section,
             self.memory_utils.get_data_section(),
@@ -4524,6 +4540,98 @@ impl CodeGenerator {
         Ok(())
     }
 
+    /// Register native memory allocation operations for standalone WASM execution
+    /// These functions run entirely in WASM without host imports
+    pub fn register_memory_operations(&mut self) -> Result<(), CompilerError> {
+        // NATIVE: malloc - bump allocator for memory allocation
+        // Uses global 0 (HEAP_PTR_GLOBAL) as heap pointer
+        // Parameters: size (i32)
+        // Returns: pointer (i32) to allocated memory
+        let malloc_instructions = native_stdlib::memory::gen_malloc();
+        let malloc_idx = self.register_function(
+            "__malloc",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            &malloc_instructions,
+        )?;
+        // Create aliases for different access patterns
+        self.add_function_alias("malloc", malloc_idx);
+        self.add_function_alias("memory.alloc", malloc_idx);
+
+        // NATIVE: memcpy - byte-by-byte memory copy
+        // Parameters: dest (i32), src (i32), len (i32)
+        // Returns: void
+        let memcpy_instructions = native_stdlib::memory::gen_memcpy();
+        self.register_function(
+            "__memcpy",
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
+            None, // void return
+            &memcpy_instructions,
+        )?;
+        // Create aliases for different access patterns
+        if let Some(memcpy_idx) = self.get_function_index("__memcpy") {
+            self.add_function_alias("memcpy", memcpy_idx);
+            self.add_function_alias("memory.copy", memcpy_idx);
+        }
+
+        // NATIVE: string_concat - concatenates two strings using malloc
+        // Parameters: str1_ptr (i32), str2_ptr (i32)
+        // Returns: pointer (i32) to new concatenated string
+        let concat_instructions = native_stdlib::string_ops::gen_concat(malloc_idx);
+        self.register_function(
+            "__string_concat",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &concat_instructions,
+        )?;
+        // Create aliases for different access patterns
+        if let Some(concat_idx) = self.get_function_index("__string_concat") {
+            self.add_function_alias("string_concat", concat_idx);
+            self.add_function_alias("string.concat", concat_idx);
+            self.add_function_alias("native_string_concat", concat_idx);
+        }
+
+        // NATIVE: int_to_string - converts integer to string using malloc
+        // Parameters: value (i32)
+        // Returns: pointer (i32) to new string
+        let int_to_string_instructions =
+            native_stdlib::type_conversions::gen_int_to_string(malloc_idx);
+        self.register_function(
+            "__int_to_string",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            &int_to_string_instructions,
+        )?;
+        // Create aliases for different access patterns
+        if let Some(its_idx) = self.get_function_index("__int_to_string") {
+            self.add_function_alias("int_to_string", its_idx);
+            self.add_function_alias("integer_to_string", its_idx);
+            self.add_function_alias("native_int_to_string", its_idx);
+        }
+
+        // NATIVE: bool_to_string - returns pointer to pre-allocated "true" or "false" string
+        // Parameters: bool_value (i32, 0 or non-zero)
+        // Returns: pointer (i32) to "true" or "false" string
+        let true_ptr = self.add_string_to_pool("true");
+        let false_ptr = self.add_string_to_pool("false");
+        let bool_to_string_instructions =
+            native_stdlib::type_conversions::gen_bool_to_string(true_ptr, false_ptr);
+        self.register_function(
+            "__bool_to_string",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            &bool_to_string_instructions,
+        )?;
+        // Create aliases for different access patterns
+        if let Some(bts_idx) = self.get_function_index("__bool_to_string") {
+            self.add_function_alias("bool_to_string", bts_idx);
+            self.add_function_alias("boolean_to_string", bts_idx);
+            self.add_function_alias("native_bool_to_string", bts_idx);
+        }
+
+        Ok(())
+    }
+
     /// Register numeric operation functions using WASM instructions from NumericOperations
     #[allow(dead_code)]
     fn register_numeric_operations(&mut self) -> Result<(), CompilerError> {
@@ -4950,8 +5058,46 @@ impl CodeGenerator {
     #[allow(dead_code)]
     fn register_math_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::math_class::MathClass;
+        use crate::types::WasmType;
 
-        // Create a MathClass instance and register its functions
+        // FIRST: Register math imports that MathClass will alias
+        // These must be registered before MathClass tries to create aliases
+
+        // Core trig functions
+        self.register_import_function(
+            "env",
+            "math_pow",
+            &[WasmType::F64, WasmType::F64],
+            Some(WasmType::F64),
+        )?;
+        self.register_import_function("env", "math_sin", &[WasmType::F64], Some(WasmType::F64))?;
+        self.register_import_function("env", "math_cos", &[WasmType::F64], Some(WasmType::F64))?;
+        self.register_import_function("env", "math_tan", &[WasmType::F64], Some(WasmType::F64))?;
+
+        // Inverse trig functions
+        self.register_import_function("env", "math_asin", &[WasmType::F64], Some(WasmType::F64))?;
+        self.register_import_function("env", "math_acos", &[WasmType::F64], Some(WasmType::F64))?;
+        self.register_import_function("env", "math_atan", &[WasmType::F64], Some(WasmType::F64))?;
+        self.register_import_function(
+            "env",
+            "math_atan2",
+            &[WasmType::F64, WasmType::F64],
+            Some(WasmType::F64),
+        )?;
+
+        // Hyperbolic functions
+        self.register_import_function("env", "math_sinh", &[WasmType::F64], Some(WasmType::F64))?;
+        self.register_import_function("env", "math_cosh", &[WasmType::F64], Some(WasmType::F64))?;
+        self.register_import_function("env", "math_tanh", &[WasmType::F64], Some(WasmType::F64))?;
+
+        // Logarithmic and exponential functions
+        self.register_import_function("env", "math_ln", &[WasmType::F64], Some(WasmType::F64))?;
+        self.register_import_function("env", "math_log10", &[WasmType::F64], Some(WasmType::F64))?;
+        self.register_import_function("env", "math_log2", &[WasmType::F64], Some(WasmType::F64))?;
+        self.register_import_function("env", "math_exp", &[WasmType::F64], Some(WasmType::F64))?;
+        self.register_import_function("env", "math_exp2", &[WasmType::F64], Some(WasmType::F64))?;
+
+        // THEN: Create MathClass instance which creates aliases and native functions
         let math_class = MathClass::new();
         math_class.register_functions(self)?;
 

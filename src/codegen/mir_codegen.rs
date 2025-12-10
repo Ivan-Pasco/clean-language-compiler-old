@@ -251,6 +251,13 @@ impl MirCodeGenerator<'_> {
                 .register_validator_operations()
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: Validator operations registered");
+
+            // NATIVE: Register memory operations (malloc, memcpy) for standalone WASM execution
+            debug_mir!("DEBUG MIR: Registering native memory operations");
+            self.wasm_generator
+                .register_memory_operations()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: Native memory operations registered");
         }
 
         // Set up memory section
@@ -4646,6 +4653,13 @@ impl MirCodeGenerator<'_> {
         // 4. Add memory section - clone it
         let memory_section = self.wasm_generator.memory_section.clone();
         module.section(&memory_section);
+
+        // 4.5. Add global section for heap pointer and other globals
+        // This must come after Memory section and before Export section per WASM spec
+        let global_section = self.wasm_generator.global_section.clone();
+        if !global_section.is_empty() {
+            module.section(&global_section);
+        }
 
         // CRITICAL FIX: Always export memory for WASM host interop
         // Memory must be exported for plugins and any host that needs to read/write WASM memory

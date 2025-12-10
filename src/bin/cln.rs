@@ -11,6 +11,7 @@
 #![allow(clippy::manual_inspect)]
 #![allow(deprecated)]
 
+use clean_language_compiler::codegen::bridge_generator::{BridgeGenerator, BridgeTarget};
 use clean_language_compiler::error::CompilerError;
 use clean_language_compiler::parser::CleanParser;
 use clean_language_compiler::runtime::runtime_manager::RuntimeManager;
@@ -536,7 +537,39 @@ fn compile_with_config(config: &CompileConfig) -> Result<(), CompilerError> {
     }
 
     // Perform compilation (use existing compile_file for now)
-    compile_file(&config.input_file, &config.output_file)
+    compile_file(&config.input_file, &config.output_file)?;
+
+    // Generate bridge files based on target
+    let bridge_target = match config.target.to_lowercase().as_str() {
+        "browser" | "web" => Some(BridgeTarget::Browser),
+        "node" | "nodejs" => Some(BridgeTarget::Node),
+        "ios" | "macos" | "apple" => Some(BridgeTarget::iOS),
+        "android" => Some(BridgeTarget::Android),
+        "server" | "wasi" | "native" | "auto" => None, // Server/native targets don't need bridge files
+        _ => None,
+    };
+
+    if let Some(bridge_target) = bridge_target {
+        // Get output directory and wasm filename
+        let output_path = Path::new(&config.output_file);
+        let output_dir = output_path.parent().unwrap_or(Path::new("."));
+        let wasm_filename = output_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "output.wasm".to_string());
+
+        let generator = BridgeGenerator::new(bridge_target, output_dir, &wasm_filename);
+        let result = generator.generate()?;
+
+        if config.verbose || !result.generated_files.is_empty() {
+            println!("🌉 Generated {} bridge files:", bridge_target.name());
+            for file in &result.generated_files {
+                println!("   → {}", file.display());
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Run with enhanced configuration

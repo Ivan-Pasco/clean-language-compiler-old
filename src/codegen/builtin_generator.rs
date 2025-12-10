@@ -4,11 +4,13 @@ use wasm_encoder::{Instruction, ValType};
 use crate::error::CompilerError;
 use crate::types::WasmType;
 use super::CodeGenerator;
+use super::native_stdlib;
 
 impl CodeGenerator {
     /// Register all built-in standard library functions
     pub fn register_stdlib_functions(&mut self) -> Result<(), CompilerError> {
         // COMPLETE STANDARD LIBRARY: Enable all functions for full Clean Language support
+        self.register_memory_operations()?; // NATIVE: malloc, memcpy for standalone WASM
         self.register_math_operations()?; // Re-enabled for power operator support
         // REMOVED: self.register_console_operations() creates obsolete wrapper functions
         // Console imports (print, printl, input, input_integer, etc.) are registered separately in new()
@@ -60,7 +62,45 @@ impl CodeGenerator {
         
         // Register matrix functions
         matrix_manager.register_functions(self)?;
-        
+
+        Ok(())
+    }
+
+    /// Register native memory allocation operations for standalone WASM execution
+    pub fn register_memory_operations(&mut self) -> Result<(), CompilerError> {
+        // NATIVE: malloc - bump allocator for memory allocation
+        // Uses global 0 (HEAP_PTR_GLOBAL) as heap pointer
+        // Parameters: size (i32)
+        // Returns: pointer (i32) to allocated memory
+        let malloc_instructions = native_stdlib::memory::gen_malloc();
+        self.register_function(
+            "__malloc",
+            vec![ValType::I32],
+            vec![ValType::I32],
+            &malloc_instructions,
+        )?;
+        // Create alias for dot-notation access
+        if let Some(malloc_idx) = self.get_function_index("__malloc") {
+            self.add_function_alias("malloc", malloc_idx);
+            self.add_function_alias("memory.alloc", malloc_idx);
+        }
+
+        // NATIVE: memcpy - byte-by-byte memory copy
+        // Parameters: dest (i32), src (i32), len (i32)
+        // Returns: void
+        let memcpy_instructions = native_stdlib::memory::gen_memcpy();
+        self.register_function(
+            "__memcpy",
+            vec![ValType::I32, ValType::I32, ValType::I32],
+            vec![], // void return
+            &memcpy_instructions,
+        )?;
+        // Create alias for dot-notation access
+        if let Some(memcpy_idx) = self.get_function_index("__memcpy") {
+            self.add_function_alias("memcpy", memcpy_idx);
+            self.add_function_alias("memory.copy", memcpy_idx);
+        }
+
         Ok(())
     }
 
@@ -86,7 +126,25 @@ impl CodeGenerator {
         
         // Math.tan - trigonometric function
         self.register_import_function("env", "math_tan", vec![ValType::F64], vec![ValType::F64])?;
-        
+
+        // Inverse trigonometric functions - host imports
+        self.register_import_function("env", "math_asin", vec![ValType::F64], vec![ValType::F64])?;
+        self.register_import_function("env", "math_acos", vec![ValType::F64], vec![ValType::F64])?;
+        self.register_import_function("env", "math_atan", vec![ValType::F64], vec![ValType::F64])?;
+        self.register_import_function("env", "math_atan2", vec![ValType::F64, ValType::F64], vec![ValType::F64])?;
+
+        // Hyperbolic functions - host imports
+        self.register_import_function("env", "math_sinh", vec![ValType::F64], vec![ValType::F64])?;
+        self.register_import_function("env", "math_cosh", vec![ValType::F64], vec![ValType::F64])?;
+        self.register_import_function("env", "math_tanh", vec![ValType::F64], vec![ValType::F64])?;
+
+        // Logarithmic and exponential functions - host imports
+        self.register_import_function("env", "math_ln", vec![ValType::F64], vec![ValType::F64])?;
+        self.register_import_function("env", "math_log10", vec![ValType::F64], vec![ValType::F64])?;
+        self.register_import_function("env", "math_log2", vec![ValType::F64], vec![ValType::F64])?;
+        self.register_import_function("env", "math_exp", vec![ValType::F64], vec![ValType::F64])?;
+        self.register_import_function("env", "math_exp2", vec![ValType::F64], vec![ValType::F64])?;
+
         // Math.max - native implementation
         let max_instructions = vec![
             Instruction::LocalGet(0), // first value
@@ -143,8 +201,9 @@ impl CodeGenerator {
     }
 
     fn register_string_operations(&mut self) -> Result<(), CompilerError> {
-        // String operations - require host functions due to memory management complexity
-        self.register_import_function("env", "string_length", vec![ValType::I32], vec![ValType::I32])?;
+        // String length - native WASM implementation (no host function needed)
+        let string_length_instructions = native_stdlib::gen_string_length();
+        self.register_function("string_length", vec![ValType::I32], vec![ValType::I32], &string_length_instructions)?;
         // string.concat takes 4 args (ptr1, len1, ptr2, len2) matching host function
         self.register_import_function("env", "string.concat", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_substring", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
@@ -156,18 +215,39 @@ impl CodeGenerator {
         self.register_import_function("env", "string_split", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         // Register string.split to map directly to string_split runtime function
         self.register_import_function("env", "string.split", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string_starts_with", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string_ends_with", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string_contains", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        // Native string comparison functions
+        let starts_with_instructions = native_stdlib::string_ops::gen_starts_with();
+        self.register_function("string_starts_with", vec![ValType::I32, ValType::I32], vec![ValType::I32], &starts_with_instructions)?;
+
+        let ends_with_instructions = native_stdlib::string_ops::gen_ends_with();
+        self.register_function("string_ends_with", vec![ValType::I32, ValType::I32], vec![ValType::I32], &ends_with_instructions)?;
+
+        let index_of_instructions = native_stdlib::string_ops::gen_index_of();
+        let index_of_idx = self.register_function("string_index_of", vec![ValType::I32, ValType::I32], vec![ValType::I32], &index_of_instructions)?;
+
+        // string_contains uses string_index_of internally
+        let contains_instructions = native_stdlib::string_ops::gen_contains(index_of_idx);
+        self.register_function("string_contains", vec![ValType::I32, ValType::I32], vec![ValType::I32], &contains_instructions)?;
         self.register_import_function("env", "string_compare", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         
         // String namespace functions (static method style)
-        self.register_import_function("env", "string.length", vec![ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string.contains", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string.indexOf", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        // These are aliases to the native implementations registered above
+        if let Some(string_length_idx) = self.get_function_index("string_length") {
+            self.add_function_alias("string.length", string_length_idx);
+        }
+        if let Some(contains_idx) = self.get_function_index("string_contains") {
+            self.add_function_alias("string.contains", contains_idx);
+        }
+        if let Some(index_of_idx) = self.get_function_index("string_index_of") {
+            self.add_function_alias("string.indexOf", index_of_idx);
+        }
         self.register_import_function("env", "string.lastIndexOf", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string.startsWith", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string.endsWith", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        if let Some(starts_with_idx) = self.get_function_index("string_starts_with") {
+            self.add_function_alias("string.startsWith", starts_with_idx);
+        }
+        if let Some(ends_with_idx) = self.get_function_index("string_ends_with") {
+            self.add_function_alias("string.endsWith", ends_with_idx);
+        }
         self.register_import_function("env", "string.trim", vec![ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string.trimStart", vec![ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string.trimEnd", vec![ValType::I32], vec![ValType::I32])?;
@@ -184,10 +264,13 @@ impl CodeGenerator {
     }
 
     fn register_list_operations(&mut self) -> Result<(), CompilerError> {
+        // Array/List length - native WASM implementation (no host function needed)
+        let list_length_instructions = native_stdlib::gen_list_length();
+        self.register_function("array_length", vec![ValType::I32], vec![ValType::I32], &list_length_instructions)?;
+
         // Basic array operations - these require host functions for memory management
         self.register_import_function("env", "array_get", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "array_set", vec![ValType::I32, ValType::I32, ValType::I32], vec![])?;
-        self.register_import_function("env", "array_length", vec![ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "array_push", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "array_pop", vec![ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "array_slice", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
@@ -204,7 +287,10 @@ impl CodeGenerator {
         self.register_import_function("env", "list.allocate", vec![ValType::I32], vec![ValType::I32])?; // CRITICAL: needed for array literals
         self.register_import_function("env", "list.push", vec![ValType::I32, ValType::I32], vec![ValType::I32])?; // CRITICAL: needed for integer array literals
         self.register_import_function("env", "list.push_f64", vec![ValType::I32, ValType::F64], vec![ValType::I32])?; // CRITICAL: needed for float array literals
-        self.register_import_function("env", "list.length", vec![ValType::I32], vec![ValType::I32])?;
+        // list.length uses same native implementation as array_length (alias)
+        if let Some(array_length_idx) = self.get_function_index("array_length") {
+            self.add_function_alias("list.length", array_length_idx);
+        }
         self.register_import_function("env", "list.add", vec![ValType::I32, ValType::I32], vec![])?;
         self.register_import_function("env", "list.remove", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "list.contains", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;

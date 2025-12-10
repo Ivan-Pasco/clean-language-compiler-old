@@ -14,6 +14,7 @@
 #![allow(clippy::useless_asref)]
 
 use clap::{Parser, Subcommand};
+use clean_language_compiler::codegen::bridge_generator::{BridgeGenerator, BridgeTarget};
 use clean_language_compiler::debug::DebugUtils;
 use clean_language_compiler::error::{CompilerError, ErrorReporter};
 use clean_language_compiler::{
@@ -156,6 +157,10 @@ enum Commands {
         /// Optimization level (0-3)
         #[arg(short = 'l', long, default_value_t = 2)]
         opt_level: u8,
+
+        /// Target platform for bridge generation (browser, node, ios, android, server)
+        #[arg(short, long, default_value = "server")]
+        target: String,
 
         /// Run tests during compilation
         #[arg(long)]
@@ -409,6 +414,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             input,
             output,
             opt_level,
+            target,
             test,
             include_tests,
             plugins,
@@ -417,6 +423,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 input,
                 output,
                 opt_level,
+                target,
                 test,
                 include_tests,
                 plugins,
@@ -577,14 +584,15 @@ async fn handle_serve(
         println!("{}Compiling{} {} to WASM...", cyan, reset, input);
     }
 
-    // Compile with plugins enabled
+    // Compile with plugins enabled (server target for serve command)
     let compile_result = handle_compile(
         input.clone(),
         wasm_output.clone(),
-        2,     // opt_level
-        false, // test
-        false, // include_tests
-        true,  // plugins enabled
+        2,                    // opt_level
+        "server".to_string(), // target - no bridge needed for serve
+        false,                // test
+        false,                // include_tests
+        true,                 // plugins enabled
         output_config,
     )
     .await;
@@ -706,6 +714,7 @@ async fn handle_compile(
     input: String,
     output: String,
     opt_level: u8,
+    target: String,
     test: bool,
     _include_tests: bool,
     plugins: bool,
@@ -720,8 +729,13 @@ async fn handle_compile(
             _ => "unknown",
         };
         let plugin_mode = if plugins { " [plugins enabled]" } else { "" };
+        let target_info = if target != "server" {
+            format!(" [target: {}]", target)
+        } else {
+            String::new()
+        };
         println!(
-            "Compiling {input} to {output} (optimization: -O{opt_level} {opt_desc}){plugin_mode}"
+            "Compiling {input} to {output} (optimization: -O{opt_level} {opt_desc}){plugin_mode}{target_info}"
         );
     }
 
@@ -731,6 +745,7 @@ async fn handle_compile(
         source_len = source.len(),
         opt_level = opt_level,
         plugins = plugins,
+        target = %target,
         "Calling compile function"
     );
     tracing::trace!(source_content = %source, "Source code to compile");
@@ -767,11 +782,51 @@ async fn handle_compile(
         fs::create_dir_all(parent)?;
     }
 
-    fs::write(&output, wasm_binary)?;
+    fs::write(&output, &wasm_binary)?;
 
     println!("Successfully compiled to {output}");
 
-    // Tests handling would be implemented here if needed
+    // Generate bridge files based on target
+    let bridge_target = match target.to_lowercase().as_str() {
+        "browser" | "web" => Some(BridgeTarget::Browser),
+        "node" | "nodejs" => Some(BridgeTarget::Node),
+        "ios" | "macos" | "apple" => Some(BridgeTarget::iOS),
+        "android" => Some(BridgeTarget::Android),
+        "server" | "wasi" | "native" => None, // Server/native targets don't need bridge files
+        _ => {
+            if !output_config.quiet {
+                println!(
+                    "⚠️  Unknown target '{}', skipping bridge generation",
+                    target
+                );
+            }
+            None
+        }
+    };
+
+    if let Some(bridge_target) = bridge_target {
+        let output_path = Path::new(&output);
+        let output_dir = output_path.parent().unwrap_or(Path::new("."));
+        let wasm_filename = output_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "output.wasm".to_string());
+
+        let generator = BridgeGenerator::new(bridge_target, output_dir, &wasm_filename);
+        match generator.generate() {
+            Ok(result) => {
+                if !output_config.quiet && !result.generated_files.is_empty() {
+                    println!("Generated {} bridge files:", bridge_target.name());
+                    for file in &result.generated_files {
+                        println!("  → {}", file.display());
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("⚠️  Failed to generate bridge files: {}", e);
+            }
+        }
+    }
 
     Ok(())
 }
