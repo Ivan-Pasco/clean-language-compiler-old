@@ -2845,27 +2845,9 @@ impl CodeGenerator {
                     return Ok(WasmType::I32);
                 }
 
-                // Helper to expand a string pointer on the stack to (content_ptr, len)
-                // String format: [4-byte length][content]
-                let expand_string_ptr = |instructions: &mut Vec<Instruction>, temp_local: u32| {
-                    // Stack has [string_ptr], store to temp
-                    instructions.push(Instruction::LocalSet(temp_local));
-                    // Push content_ptr (ptr + 4)
-                    instructions.push(Instruction::LocalGet(temp_local));
-                    instructions.push(Instruction::I32Const(4));
-                    instructions.push(Instruction::I32Add);
-                    // Push length (i32 load from ptr)
-                    instructions.push(Instruction::LocalGet(temp_local));
-                    instructions.push(Instruction::I32Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 2,
-                        memory_index: 0,
-                    }));
-                    // Stack now has [content_ptr, len]
-                };
-
-                // Allocate temp locals for string expansion
-                let temp_local_1 = self.add_local(WasmType::I32);
+                // Allocate temp locals for string concatenation
+                // FIXED: Only need temp_local_2 for storing current part, result_local for accumulating result
+                // No longer expanding strings to (ptr, len) pairs - using length-prefixed pointers directly
                 let temp_local_2 = self.add_local(WasmType::I32);
                 let result_local = self.add_local(WasmType::I32);
 
@@ -2933,15 +2915,17 @@ impl CodeGenerator {
                         // Store current part to temp
                         instructions.push(Instruction::LocalSet(temp_local_2));
 
-                        // Expand result to (content_ptr, len)
+                        // FIXED: native string.concat expects 2 args: (str_ptr1, str_ptr2)
+                        // Each pointer points to a length-prefixed string: [4-byte len][content]
+                        // DO NOT expand to (content_ptr, len) pairs
+
+                        // Push first string pointer (result so far)
                         instructions.push(Instruction::LocalGet(result_local));
-                        expand_string_ptr(instructions, temp_local_1);
 
-                        // Expand current part to (content_ptr, len)
+                        // Push second string pointer (current part)
                         instructions.push(Instruction::LocalGet(temp_local_2));
-                        expand_string_ptr(instructions, temp_local_2);
 
-                        // Call string.concat(ptr1, len1, ptr2, len2) -> result_ptr
+                        // Call string.concat(ptr1, ptr2) -> result_ptr
                         instructions.push(Instruction::Call(self.get_string_concat_index()?));
 
                         // Store result for next iteration
@@ -3553,10 +3537,11 @@ impl CodeGenerator {
         // Special handling for string concatenation
         if let BinaryOperator::Add = op {
             if self.is_string_type(left) && self.is_string_type(right) {
-                // Expand each string to (content_ptr, length) format
-                // string.concat expects 4 args: (ptr1, len1, ptr2, len2)
-                self.expand_string_expression(left, instructions)?;
-                self.expand_string_expression(right, instructions)?;
+                // Generate string pointers for both operands
+                // string_concat expects 2 args: (string_ptr1, string_ptr2)
+                // Each pointer points to [4-byte length][data]
+                self.generate_expression(left, instructions)?;
+                self.generate_expression(right, instructions)?;
 
                 // Call string concatenation function
                 if let Ok(concat_index) = self.get_string_concat_index() {
@@ -4071,13 +4056,69 @@ impl CodeGenerator {
 
     fn is_string_type(&self, expr: &Expression) -> bool {
         match expr {
-            // Correct patterns
+            // String literals
             Expression::Literal(Value::String(_)) => true,
-            Expression::Variable(_name) => {
-                /* ... */
-                false
-            } // Needs type lookup
+            // String interpolations
             Expression::StringInterpolation(_) => true,
+            // Variables - look up their type
+            Expression::Variable(name) => {
+                if let Some(var_type) = self.variable_types.get(name) {
+                    matches!(var_type, ast::Type::String)
+                } else {
+                    false
+                }
+            }
+            // Method calls that return strings
+            Expression::MethodCall { object, method, .. } => {
+                // Common string methods
+                let string_returning_methods = [
+                    "toString",
+                    "trim",
+                    "trimStart",
+                    "trimEnd",
+                    "toLowerCase",
+                    "toUpperCase",
+                    "substring",
+                    "replace",
+                    "replaceAll",
+                    "charAt",
+                    "padStart",
+                    "padEnd",
+                    "concat",
+                ];
+                if string_returning_methods.contains(&method.as_str()) {
+                    return true;
+                }
+                // If calling a method on a string variable
+                if let Expression::Variable(obj_name) = object.as_ref() {
+                    if let Some(var_type) = self.variable_types.get(obj_name) {
+                        if matches!(var_type, ast::Type::String) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            // Binary operations that produce strings
+            Expression::Binary(left, op, right) => {
+                if matches!(op, ast::BinaryOperator::Add) {
+                    self.is_string_type(left) || self.is_string_type(right)
+                } else {
+                    false
+                }
+            }
+            // Function calls that return strings
+            Expression::Call(name, _) => {
+                let string_returning_fns = [
+                    "int_to_str",
+                    "number_to_str",
+                    "bool_to_str",
+                    "integer.toString",
+                    "number.toString",
+                    "boolean.toString",
+                ];
+                string_returning_fns.contains(&name.as_str())
+            }
             _ => false,
         }
     }
@@ -8799,13 +8840,12 @@ impl CodeGenerator {
             .insert("string_to_float".to_string());
         self.function_count += 1;
 
-        // string.concat(str1_ptr: i32, str1_len: i32, str2_ptr: i32, str2_len: i32) -> i32
-        // Returns result_ptr (pointer to concatenated string)
-        // Length can be calculated by the caller if needed
-        let string_concat_type = self.type_manager.add_function_type_single(
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-        )?;
+        // FIXED: string.concat(str1_ptr: i32, str2_ptr: i32) -> i32
+        // Each pointer points to a length-prefixed string: [4-byte len][content]
+        // Returns result_ptr (pointer to new length-prefixed concatenated string)
+        let string_concat_type = self
+            .type_manager
+            .add_function_type_single(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
         self.import_section.import(
             "env",
             "string.concat",

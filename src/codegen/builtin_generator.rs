@@ -204,8 +204,8 @@ impl CodeGenerator {
         // String length - native WASM implementation (no host function needed)
         let string_length_instructions = native_stdlib::gen_string_length();
         self.register_function("string_length", vec![ValType::I32], vec![ValType::I32], &string_length_instructions)?;
-        // string.concat takes 4 args (ptr1, len1, ptr2, len2) matching host function
-        self.register_import_function("env", "string.concat", vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        // FIXED: string.concat takes 2 args (ptr1, ptr2) - each is a length-prefixed string pointer
+        self.register_import_function("env", "string.concat", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_substring", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_index_of", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_to_upper", vec![ValType::I32], vec![ValType::I32])?;

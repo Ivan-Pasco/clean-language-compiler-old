@@ -15,10 +15,11 @@ impl CodeGenerator {
         // Special handling for string concatenation
         if let BinaryOperator::Add = op {
             if self.is_string_type_new(left) && self.is_string_type_new(right) {
-                // Expand each string to (content_ptr, length) format
-                // string.concat expects 4 args: (ptr1, len1, ptr2, len2)
-                self.expand_string_expression(left, instructions)?;
-                self.expand_string_expression(right, instructions)?;
+                // Generate string pointers for both operands
+                // native_string_concat expects 2 args: (string_ptr1, string_ptr2)
+                // Each string pointer points to [4-byte length][data]
+                self.generate_expression(left, instructions)?;
+                self.generate_expression(right, instructions)?;
 
                 // Call string concatenation function
                 if let Ok(concat_index) = self.get_string_concat_index() {
@@ -528,14 +529,72 @@ impl CodeGenerator {
     }
 
     pub fn is_string_type_new(&self, expr: &Expression) -> bool {
+        use crate::ast::Type;
         match expr {
-            // Correct patterns
+            // String literals
             Expression::Literal(Value::String(_)) => true,
-            Expression::Variable(_name) => {
-                /* ... */
-                false
-            } // Needs type lookup
+            // String interpolations
             Expression::StringInterpolation(_) => true,
+            // Variables - look up their type
+            Expression::Variable(name) => {
+                if let Some(var_type) = self.variable_types.get(name) {
+                    matches!(var_type, Type::String)
+                } else {
+                    false
+                }
+            }
+            // Method calls that return strings
+            Expression::MethodCall { object, method, .. } => {
+                // Common string methods
+                let string_returning_methods = [
+                    "toString",
+                    "trim",
+                    "trimStart",
+                    "trimEnd",
+                    "toLowerCase",
+                    "toUpperCase",
+                    "substring",
+                    "replace",
+                    "replaceAll",
+                    "charAt",
+                    "padStart",
+                    "padEnd",
+                    "concat",
+                ];
+                if string_returning_methods.contains(&method.as_str()) {
+                    return true;
+                }
+                // If calling a method on a string variable, check common string methods
+                if let Expression::Variable(obj_name) = object.as_ref() {
+                    if let Some(var_type) = self.variable_types.get(obj_name) {
+                        if matches!(var_type, Type::String) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            // Binary operations that concatenate strings
+            Expression::Binary(left, op, right) => {
+                if matches!(op, BinaryOperator::Add) {
+                    self.is_string_type_new(left) || self.is_string_type_new(right)
+                } else {
+                    false
+                }
+            }
+            // Function calls - check if they return strings
+            Expression::Call(name, _) => {
+                // Common functions that return strings
+                let string_returning_fns = [
+                    "int_to_str",
+                    "number_to_str",
+                    "bool_to_str",
+                    "integer.toString",
+                    "number.toString",
+                    "boolean.toString",
+                ];
+                string_returning_fns.contains(&name.as_str())
+            }
             _ => false,
         }
     }

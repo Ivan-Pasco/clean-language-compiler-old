@@ -241,9 +241,9 @@ impl StringOperations {
     }
 
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // NOTE: string.concat is now an IMPORTED runtime function (4 params: ptr1, len1, ptr2, len2)
+        // NOTE: string.concat is an IMPORTED runtime function (2 params: ptr1, ptr2)
+        // Each pointer points to a length-prefixed string: [4-byte len][content]
         // It's registered in builtin_generator.rs, NOT here as a stdlib function.
-        // The old 2-param stdlib version has been removed to use the runtime implementation.
 
         // Register string comparison function
         register_stdlib_function(
@@ -625,7 +625,8 @@ impl StringOperations {
         Ok(())
     }
 
-    // NOTE: string.concat is now an IMPORTED runtime function (4 params: ptr1, len1, ptr2, len2)
+    // NOTE: string.concat is an IMPORTED runtime function (2 params: ptr1, ptr2)
+    // Each pointer points to a length-prefixed string: [4-byte len][content]
     // It's registered in builtin_generator.rs and implemented in wasmtime_runner.rs, NOT here.
 
     fn generate_string_compare(&self) -> Vec<Instruction> {

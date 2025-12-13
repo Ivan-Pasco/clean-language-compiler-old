@@ -1752,13 +1752,13 @@ impl MirCodeGenerator<'_> {
                             self.load_string_argument_for_print(arg)?;
                         }
                     }
-                    Some("string.concat") | Some("string_concat") => {
+                    Some("string.concat") | Some("string_concat") | Some("native_string_concat") => {
                         debug_mir!(": Matched string.concat");
-                        // string.concat expects 4 i32 arguments: (ptr1, len1, ptr2, len2) -> result_ptr
-                        // This matches the runtime host function signature
-                        // We need to expand StringTuple to (ptr, len) pairs
+                        // FIXED: native_string_concat expects 2 i32 arguments: (str_ptr1, str_ptr2) -> result_ptr
+                        // Each pointer points to a string structure: [4-byte length][data bytes]
+                        // DO NOT expand to (ptr, len) pairs - just pass the struct pointers
                         for arg in arguments {
-                            self.load_string_argument_for_print(arg)?;
+                            self.load_string_pointer_only(arg)?;
                         }
                     }
                     Some("input")
@@ -4656,10 +4656,22 @@ impl MirCodeGenerator<'_> {
 
         // 4.5. Add global section for heap pointer and other globals
         // This must come after Memory section and before Export section per WASM spec
-        let global_section = self.wasm_generator.global_section.clone();
-        if !global_section.is_empty() {
-            module.section(&global_section);
-        }
+        // CRITICAL FIX: Set heap pointer to AFTER all string constants to avoid overwriting them
+        // The string_offset_counter tracks the next free address after all strings
+        let heap_start = {
+            let string_end = self.wasm_generator.string_offset_counter;
+            // Align to 8 bytes for safety
+            (string_end + 7) & !7
+        };
+        let mut global_section = wasm_encoder::GlobalSection::new();
+        global_section.global(
+            wasm_encoder::GlobalType {
+                val_type: wasm_encoder::ValType::I32,
+                mutable: true,
+            },
+            &wasm_encoder::ConstExpr::i32_const(heap_start as i32),
+        );
+        module.section(&global_section);
 
         // CRITICAL FIX: Always export memory for WASM host interop
         // Memory must be exported for plugins and any host that needs to read/write WASM memory

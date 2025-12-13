@@ -86,9 +86,9 @@ impl StringClass {
             ],
         )?;
 
-        // NOTE: String.concat is now an IMPORTED runtime function (4 params: ptr1, len1, ptr2, len2)
+        // NOTE: String.concat is an IMPORTED runtime function (2 params: ptr1, ptr2)
+        // Each pointer points to a length-prefixed string: [4-byte len][content]
         // It's registered in builtin_generator.rs, NOT here as a stdlib function.
-        // The old 2-param stdlib version has been removed to use the runtime implementation.
 
         // String.substring(string text, integer start, integer end) -> string
         register_stdlib_function(
@@ -350,7 +350,8 @@ impl StringClass {
     }
 
     // Implementation methods for complex string operations
-    // NOTE: string.concat is now an IMPORTED runtime function (4 params: ptr1, len1, ptr2, len2)
+    // NOTE: string.concat is an IMPORTED runtime function (2 params: ptr1, ptr2)
+    // Each pointer points to a length-prefixed string: [4-byte len][content]
     // It's registered in builtin_generator.rs and implemented in wasmtime_runner.rs, NOT here.
 
     fn generate_substring(&self) -> Vec<Instruction> {

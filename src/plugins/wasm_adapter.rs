@@ -254,16 +254,13 @@ impl WasmPluginAdapter {
             },
         )?;
 
-        // env.string.concat - Concatenate two strings (CRITICAL for plugins)
+        // FIXED: env.string.concat - Concatenate two length-prefixed strings
+        // Each pointer points to: [4-byte little-endian length][content bytes]
+        // Returns pointer to new length-prefixed concatenated string
         linker.func_wrap(
             "env",
             "string.concat",
-            |mut caller: Caller<'_, PluginState>,
-             str1_ptr: i32,
-             str1_len: i32,
-             str2_ptr: i32,
-             str2_len: i32|
-             -> i32 {
+            |mut caller: Caller<'_, PluginState>, str1_ptr: i32, str2_ptr: i32| -> i32 {
                 let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                     Some(m) => m,
                     None => return 0,
@@ -271,20 +268,40 @@ impl WasmPluginAdapter {
 
                 let data = memory.data(&caller);
 
-                // Read first string
-                let s1_start = str1_ptr as usize;
-                let s1_end = s1_start + str1_len as usize;
-                let s1 = if s1_end <= data.len() {
-                    data[s1_start..s1_end].to_vec()
+                // Read first string (length-prefixed)
+                let ptr1 = str1_ptr as usize;
+                if ptr1 + 4 > data.len() {
+                    return 0;
+                }
+                let len1 = u32::from_le_bytes([
+                    data[ptr1],
+                    data[ptr1 + 1],
+                    data[ptr1 + 2],
+                    data[ptr1 + 3],
+                ]) as usize;
+                let content1_start = ptr1 + 4;
+                let content1_end = content1_start + len1;
+                let s1 = if content1_end <= data.len() {
+                    data[content1_start..content1_end].to_vec()
                 } else {
                     Vec::new()
                 };
 
-                // Read second string
-                let s2_start = str2_ptr as usize;
-                let s2_end = s2_start + str2_len as usize;
-                let s2 = if s2_end <= data.len() {
-                    data[s2_start..s2_end].to_vec()
+                // Read second string (length-prefixed)
+                let ptr2 = str2_ptr as usize;
+                if ptr2 + 4 > data.len() {
+                    return 0;
+                }
+                let len2 = u32::from_le_bytes([
+                    data[ptr2],
+                    data[ptr2 + 1],
+                    data[ptr2 + 2],
+                    data[ptr2 + 3],
+                ]) as usize;
+                let content2_start = ptr2 + 4;
+                let content2_end = content2_start + len2;
+                let s2 = if content2_end <= data.len() {
+                    data[content2_start..content2_end].to_vec()
                 } else {
                     Vec::new()
                 };
@@ -294,7 +311,7 @@ impl WasmPluginAdapter {
                 result.extend(s2);
                 let result_len = result.len();
 
-                // Allocate and write result
+                // Allocate and write result (length-prefixed)
                 let state = caller.data_mut();
                 let ptr = state.allocate(4 + result_len);
 
@@ -764,6 +781,172 @@ impl WasmPluginAdapter {
         )?;
 
         // =========================================
+        // MATH NAMESPACE - Math operations
+        // Required by compiled WASM modules for stdlib functions
+        // =========================================
+
+        // math_pow - Power function (base^exp)
+        linker.func_wrap(
+            "env",
+            "math_pow",
+            |_: Caller<'_, PluginState>, base: f64, exp: f64| -> f64 { base.powf(exp) },
+        )?;
+
+        // math_sin - Sine
+        linker.func_wrap(
+            "env",
+            "math_sin",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.sin() },
+        )?;
+
+        // math_cos - Cosine
+        linker.func_wrap(
+            "env",
+            "math_cos",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.cos() },
+        )?;
+
+        // math_tan - Tangent
+        linker.func_wrap(
+            "env",
+            "math_tan",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.tan() },
+        )?;
+
+        // math_asin - Arc sine
+        linker.func_wrap(
+            "env",
+            "math_asin",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.asin() },
+        )?;
+
+        // math_acos - Arc cosine
+        linker.func_wrap(
+            "env",
+            "math_acos",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.acos() },
+        )?;
+
+        // math_atan - Arc tangent
+        linker.func_wrap(
+            "env",
+            "math_atan",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.atan() },
+        )?;
+
+        // math_atan2 - Arc tangent of y/x
+        linker.func_wrap(
+            "env",
+            "math_atan2",
+            |_: Caller<'_, PluginState>, y: f64, x: f64| -> f64 { y.atan2(x) },
+        )?;
+
+        // math_sinh - Hyperbolic sine
+        linker.func_wrap(
+            "env",
+            "math_sinh",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.sinh() },
+        )?;
+
+        // math_cosh - Hyperbolic cosine
+        linker.func_wrap(
+            "env",
+            "math_cosh",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.cosh() },
+        )?;
+
+        // math_tanh - Hyperbolic tangent
+        linker.func_wrap(
+            "env",
+            "math_tanh",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.tanh() },
+        )?;
+
+        // math_ln - Natural logarithm
+        linker.func_wrap(
+            "env",
+            "math_ln",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.ln() },
+        )?;
+
+        // math_log10 - Base-10 logarithm
+        linker.func_wrap(
+            "env",
+            "math_log10",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.log10() },
+        )?;
+
+        // math_log2 - Base-2 logarithm
+        linker.func_wrap(
+            "env",
+            "math_log2",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.log2() },
+        )?;
+
+        // math_exp - Exponential (e^x)
+        linker.func_wrap(
+            "env",
+            "math_exp",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.exp() },
+        )?;
+
+        // math_exp2 - 2^x
+        linker.func_wrap(
+            "env",
+            "math_exp2",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.exp2() },
+        )?;
+
+        // math_floor - Floor
+        linker.func_wrap(
+            "env",
+            "math_floor",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.floor() },
+        )?;
+
+        // math_ceil - Ceiling
+        linker.func_wrap(
+            "env",
+            "math_ceil",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.ceil() },
+        )?;
+
+        // math_round - Round
+        linker.func_wrap(
+            "env",
+            "math_round",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.round() },
+        )?;
+
+        // math_abs - Absolute value
+        linker.func_wrap(
+            "env",
+            "math_abs",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.abs() },
+        )?;
+
+        // math_sqrt - Square root
+        linker.func_wrap(
+            "env",
+            "math_sqrt",
+            |_: Caller<'_, PluginState>, x: f64| -> f64 { x.sqrt() },
+        )?;
+
+        // math_min - Minimum of two values
+        linker.func_wrap(
+            "env",
+            "math_min",
+            |_: Caller<'_, PluginState>, a: f64, b: f64| -> f64 { a.min(b) },
+        )?;
+
+        // math_max - Maximum of two values
+        linker.func_wrap(
+            "env",
+            "math_max",
+            |_: Caller<'_, PluginState>, a: f64, b: f64| -> f64 { a.max(b) },
+        )?;
+
+        // =========================================
         // Legacy host functions (for compatibility)
         // =========================================
 
@@ -832,6 +1015,23 @@ impl WasmPluginAdapter {
         let memory = instance
             .get_memory(&mut store, "memory")
             .ok_or_else(|| anyhow!("Plugin does not export memory"))?;
+
+        // Fix heap pointer: The plugin's global[0] is the heap pointer used by malloc.
+        // Some plugins have it initialized to 1024 but data section extends beyond that.
+        // We need to set it to a safe value after the data section to prevent corruption.
+        // Collect exported globals first, then check and fix
+        let globals: Vec<_> = instance
+            .exports(&mut store)
+            .filter_map(|e| e.into_global())
+            .collect();
+        for global in globals {
+            if let wasmtime::Val::I32(val) = global.get(&mut store) {
+                if val == 1024 {
+                    let _ = global.set(&mut store, wasmtime::Val::I32(8192));
+                    break;
+                }
+            }
+        }
 
         // Strip trailing colon from block name (e.g., "server:" -> "server")
         let block_name = block.name.trim_end_matches(':');
@@ -958,6 +1158,20 @@ impl WasmPluginAdapter {
         let memory = instance
             .get_memory(&mut store, "memory")
             .ok_or_else(|| anyhow!("Plugin does not export memory"))?;
+
+        // Fix heap pointer (same as in call_expand)
+        let globals: Vec<_> = instance
+            .exports(&mut store)
+            .filter_map(|e| e.into_global())
+            .collect();
+        for global in globals {
+            if let wasmtime::Val::I32(val) = global.get(&mut store) {
+                if val == 1024 {
+                    let _ = global.set(&mut store, wasmtime::Val::I32(8192));
+                    break;
+                }
+            }
+        }
 
         // Strip trailing colon from block name
         let block_name = block.name.trim_end_matches(':');
@@ -1097,10 +1311,8 @@ impl WasmPluginAdapter {
     /// Clean string memory layout (from the string pointer):
     /// - Offset 0: string length (u32)
     /// - Offset 4: string data bytes
-    /// - Offset 8: type_id (u32) - must be 3 for STRING_TYPE_ID
     ///
-    /// The string.length() function checks type_id at offset 8 to verify
-    /// it's a string before reading the length at offset 0.
+    /// This is the standard Clean Language string format used throughout the runtime.
     fn write_clean_string(
         &self,
         store: &mut Store<PluginState>,
@@ -1110,22 +1322,30 @@ impl WasmPluginAdapter {
         let bytes = s.as_bytes();
         let len = bytes.len();
 
-        // We need space for: length (4) + data (len) + padding to offset 8 + type_id (4)
-        // Layout: [length:4][data:len][padding:?][type_id:4]
-        // The type_id must be at offset 8 from the start
-        // So if len < 4, we need padding; if len >= 4, type_id goes at offset 4 + len (aligned to 8)
-        let type_id_offset = 8; // type_id is always at offset 8
-        let total_size = std::cmp::max(4 + len, type_id_offset) + 4; // At least offset 8 + 4 bytes for type_id
+        // Layout: [length:4][data:len]
+        // Align to 8 bytes for safety
+        let total_size = ((4 + len + 7) / 8) * 8;
 
         let ptr = store.data_mut().allocate(total_size);
 
         // Ensure memory is large enough
         let required_pages = ((ptr + total_size) / 65536) + 1;
         let current_pages = memory.size(&mut *store) as usize;
+
+        eprintln!(
+            "[Plugin Debug] write_clean_string: len={}, ptr={}, total_size={}, pages: {}->{}",
+            len, ptr, total_size, current_pages, required_pages
+        );
+
         if required_pages > current_pages {
             memory
                 .grow(&mut *store, (required_pages - current_pages) as u64)
                 .map_err(|e| anyhow!("Failed to grow memory: {}", e))?;
+            eprintln!(
+                "[Plugin Debug] Memory grown to {} pages ({} bytes)",
+                memory.size(&mut *store),
+                memory.data_size(&mut *store)
+            );
         }
 
         // Write length at offset 0 (4 bytes, little-endian)
@@ -1136,10 +1356,6 @@ impl WasmPluginAdapter {
         if !bytes.is_empty() {
             memory.write(&mut *store, ptr + 4, bytes)?;
         }
-
-        // Write type_id (STRING_TYPE_ID = 3) at offset 8
-        let type_id_bytes = 3u32.to_le_bytes();
-        memory.write(&mut *store, ptr + type_id_offset, &type_id_bytes)?;
 
         Ok(ptr as i32)
     }

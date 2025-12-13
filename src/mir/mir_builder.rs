@@ -3371,6 +3371,25 @@ impl MirBuilder {
                 } else if method_name == "toString" {
                     // toString always returns String
                     ConcreteType::String
+                } else if matches!(&receiver.expr_type, ConcreteType::String) {
+                    // CRITICAL FIX: String methods have known return types
+                    // Don't rely on expression.expr_type which may be Unknown
+                    match method_name.as_str() {
+                        // Methods that return String
+                        "substring" | "trim" | "trimStart" | "trimEnd" | "toUpperCase"
+                        | "toLowerCase" | "replace" | "replaceAll" | "padStart" | "padEnd"
+                        | "charAt" | "concat" | "split" => ConcreteType::String,
+                        // Methods that return Integer
+                        "length" | "size" | "indexOf" | "lastIndexOf" | "charCodeAt" => {
+                            ConcreteType::Integer
+                        }
+                        // Methods that return Boolean
+                        "contains" | "startsWith" | "endsWith" | "isEmpty" | "isBlank" => {
+                            ConcreteType::Boolean
+                        }
+                        // Default to expression type for unknown methods
+                        _ => expression.expr_type.clone(),
+                    }
                 } else if let ConcreteType::Class {
                     symbol_id: class_symbol,
                     ..

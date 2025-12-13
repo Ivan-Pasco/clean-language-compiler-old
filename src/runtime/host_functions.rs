@@ -450,14 +450,15 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
             )
         })?;
 
-    // string.concat(ptr1: i32, len1: i32, ptr2: i32, len2: i32) -> string_ptr: i32
+    // FIXED: string.concat(ptr1: i32, ptr2: i32) -> string_ptr: i32
+    // Each pointer points to a length-prefixed string: [4-byte little-endian len][content]
     linker
         .func_wrap(
             "env",
             "string.concat",
-            |mut caller: Caller<'_, ()>, ptr1: i32, len1: i32, ptr2: i32, len2: i32| -> i32 {
-                let str1 = extract_string_from_memory(&mut caller, ptr1, len1);
-                let str2 = extract_string_from_memory(&mut caller, ptr2, len2);
+            |mut caller: Caller<'_, ()>, ptr1: i32, ptr2: i32| -> i32 {
+                let str1 = extract_length_prefixed_string(&mut caller, ptr1);
+                let str2 = extract_length_prefixed_string(&mut caller, ptr2);
                 let result = str1 + &str2;
                 allocate_string_in_memory(&mut caller, &result)
             },
@@ -1886,6 +1887,32 @@ fn extract_string_from_memory(caller: &mut Caller<'_, ()>, ptr: i32, len: i32) -
                 if start + len <= data.len() {
                     if let Ok(s) = std::str::from_utf8(&data[start..start + len]) {
                         return s.to_string();
+                    }
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+/// Utility function to extract a length-prefixed string from WASM memory
+/// String format: [4-byte little-endian length][content bytes]
+fn extract_length_prefixed_string(caller: &mut Caller<'_, ()>, ptr: i32) -> String {
+    if let Some(memory) = caller.get_export("memory") {
+        if let Some(memory) = memory.into_memory() {
+            let data = memory.data(caller);
+            if ptr >= 0 {
+                let p = ptr as usize;
+                // Read 4-byte length prefix
+                if p + 4 <= data.len() {
+                    let len = u32::from_le_bytes([data[p], data[p + 1], data[p + 2], data[p + 3]])
+                        as usize;
+                    let content_start = p + 4;
+                    let content_end = content_start + len;
+                    if content_end <= data.len() {
+                        if let Ok(s) = std::str::from_utf8(&data[content_start..content_end]) {
+                            return s.to_string();
+                        }
                     }
                 }
             }

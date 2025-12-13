@@ -339,12 +339,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    // Add string.concat function: string.concat(ptr1: i32, len1: i32, ptr2: i32, len2: i32) -> i32
-    // Takes two strings in (content_ptr, length) format and returns pointer to [len|content] structure
+    // FIXED: string.concat(ptr1: i32, ptr2: i32) -> i32
+    // Each pointer points to a length-prefixed string: [4-byte little-endian len][content]
+    // Returns pointer to new length-prefixed concatenated string
     linker.func_wrap(
         "env",
         "string.concat",
-        |mut caller: Caller<'_, ()>, ptr1: i32, len1: i32, ptr2: i32, len2: i32| -> i32 {
+        |mut caller: Caller<'_, ()>, ptr1: i32, ptr2: i32| -> i32 {
             // Get memory
             let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
                 mem
@@ -353,12 +354,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return 0; // Return null on failure
             };
 
-            // Read first string
-            let str1 = if let Some(data) = memory
-                .data(&caller)
-                .get(ptr1 as usize..(ptr1 + len1) as usize)
-            {
-                match std::str::from_utf8(data) {
+            let data = memory.data(&caller);
+
+            // Read first string (length-prefixed)
+            let p1 = ptr1 as usize;
+            if p1 + 4 > data.len() {
+                eprintln!("string.concat: ptr1 out of bounds");
+                return 0;
+            }
+            let len1 =
+                u32::from_le_bytes([data[p1], data[p1 + 1], data[p1 + 2], data[p1 + 3]]) as usize;
+            let str1 = if p1 + 4 + len1 <= data.len() {
+                match std::str::from_utf8(&data[p1 + 4..p1 + 4 + len1]) {
                     Ok(s) => s.to_string(),
                     Err(e) => {
                         eprintln!("string.concat: str1 UTF-8 error: {}", e);
@@ -366,16 +373,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             } else {
-                eprintln!("string.concat: str1 out of bounds");
+                eprintln!("string.concat: str1 content out of bounds");
                 return 0;
             };
 
-            // Read second string
-            let str2 = if let Some(data) = memory
-                .data(&caller)
-                .get(ptr2 as usize..(ptr2 + len2) as usize)
-            {
-                match std::str::from_utf8(data) {
+            // Read second string (length-prefixed)
+            let p2 = ptr2 as usize;
+            if p2 + 4 > data.len() {
+                eprintln!("string.concat: ptr2 out of bounds");
+                return 0;
+            }
+            let len2 =
+                u32::from_le_bytes([data[p2], data[p2 + 1], data[p2 + 2], data[p2 + 3]]) as usize;
+            let str2 = if p2 + 4 + len2 <= data.len() {
+                match std::str::from_utf8(&data[p2 + 4..p2 + 4 + len2]) {
                     Ok(s) => s.to_string(),
                     Err(e) => {
                         eprintln!("string.concat: str2 UTF-8 error: {}", e);
@@ -383,7 +394,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             } else {
-                eprintln!("string.concat: str2 out of bounds");
+                eprintln!("string.concat: str2 content out of bounds");
                 return 0;
             };
 
@@ -505,7 +516,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     linker.func_wrap("env", "string.toUpperCase", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "string.toLowerCase", |_: i32| -> i32 { 0 })?;
-    // string.concat is registered below with full 4-param implementation
+    // string.concat is registered above with 2-param implementation (length-prefixed pointers)
 
     // Add string_split function: splits a string by delimiter and returns a list of strings
     linker.func_wrap(
