@@ -49,7 +49,9 @@ impl StdlibPlugin for ListPlugin {
     }
 
     fn register_functions(&self, _codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // TODO: Implement list functions
+        // List functions are registered by builtin_generator.rs:register_list_operations()
+        // This plugin provides metadata for IDE tooling and documentation
+        // Actual WASM code generation uses array imports (array_push, array_pop, etc.)
         Ok(())
     }
 

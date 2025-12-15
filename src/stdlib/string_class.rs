@@ -27,8 +27,10 @@ impl StringClass {
         // Case operations
         self.register_case_operations(codegen)?;
 
-        // Search and validation operations
-        self.register_search_operations(codegen)?;
+        // NOTE: Search operations (string.contains, string.indexOf, string.lastIndexOf)
+        // are registered by builtin_generator.rs with proper implementations.
+        // Do NOT call register_search_operations here - it has stub implementations.
+        // self.register_search_operations(codegen)?;
 
         // Text cleaning and formatting
         self.register_formatting_operations(codegen)?;

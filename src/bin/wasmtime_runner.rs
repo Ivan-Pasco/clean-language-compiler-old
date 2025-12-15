@@ -6,8 +6,13 @@ use std::fs;
 use std::sync::Mutex;
 use wasmtime::{Caller, Extern, Linker, Memory, Module, Result, Store};
 
-// Global allocator for dynamic string storage
+// Global allocator for dynamic string storage with scope-based arena management
 static NEXT_ALLOCATION_OFFSET: Mutex<usize> = Mutex::new(2048); // Start after static data
+
+// Scope marks for arena-style memory management
+// When entering a scope (loop, function), push current offset
+// When exiting scope, pop and reset - instant deallocation of all scope allocations
+static SCOPE_MARKS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 // Helper function to allocate memory for a string in WASM memory
 fn allocate_string_in_memory(
@@ -231,6 +236,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "_req_method", || -> i32 { 0 })?;
     linker.func_wrap("env", "_req_path", || -> i32 { 0 })?;
 
+    // Math function imports - proper implementations
+    linker.func_wrap("env", "math_pow", |base: f64, exp: f64| -> f64 {
+        base.powf(exp)
+    })?;
+    linker.func_wrap("env", "math.pow", |base: f64, exp: f64| -> f64 {
+        base.powf(exp)
+    })?;
+    linker.func_wrap("env", "math_sin", |x: f64| -> f64 { x.sin() })?;
+    linker.func_wrap("env", "math.sin", |x: f64| -> f64 { x.sin() })?;
+    linker.func_wrap("env", "math_cos", |x: f64| -> f64 { x.cos() })?;
+    linker.func_wrap("env", "math.cos", |x: f64| -> f64 { x.cos() })?;
+    linker.func_wrap("env", "math_tan", |x: f64| -> f64 { x.tan() })?;
+    linker.func_wrap("env", "math.tan", |x: f64| -> f64 { x.tan() })?;
+    linker.func_wrap("env", "math_asin", |x: f64| -> f64 { x.asin() })?;
+    linker.func_wrap("env", "math.asin", |x: f64| -> f64 { x.asin() })?;
+    linker.func_wrap("env", "math_acos", |x: f64| -> f64 { x.acos() })?;
+    linker.func_wrap("env", "math.acos", |x: f64| -> f64 { x.acos() })?;
+    linker.func_wrap("env", "math_atan", |x: f64| -> f64 { x.atan() })?;
+    linker.func_wrap("env", "math.atan", |x: f64| -> f64 { x.atan() })?;
+    linker.func_wrap("env", "math_atan2", |y: f64, x: f64| -> f64 { y.atan2(x) })?;
+    linker.func_wrap("env", "math.atan2", |y: f64, x: f64| -> f64 { y.atan2(x) })?;
+    linker.func_wrap("env", "math_sinh", |x: f64| -> f64 { x.sinh() })?;
+    linker.func_wrap("env", "math.sinh", |x: f64| -> f64 { x.sinh() })?;
+    linker.func_wrap("env", "math_cosh", |x: f64| -> f64 { x.cosh() })?;
+    linker.func_wrap("env", "math.cosh", |x: f64| -> f64 { x.cosh() })?;
+    linker.func_wrap("env", "math_tanh", |x: f64| -> f64 { x.tanh() })?;
+    linker.func_wrap("env", "math.tanh", |x: f64| -> f64 { x.tanh() })?;
+    linker.func_wrap("env", "math_ln", |x: f64| -> f64 { x.ln() })?;
+    linker.func_wrap("env", "math.ln", |x: f64| -> f64 { x.ln() })?;
+    linker.func_wrap("env", "math_log10", |x: f64| -> f64 { x.log10() })?;
+    linker.func_wrap("env", "math.log10", |x: f64| -> f64 { x.log10() })?;
+    linker.func_wrap("env", "math_log2", |x: f64| -> f64 { x.log2() })?;
+    linker.func_wrap("env", "math.log2", |x: f64| -> f64 { x.log2() })?;
+    linker.func_wrap("env", "math_exp", |x: f64| -> f64 { x.exp() })?;
+    linker.func_wrap("env", "math.exp", |x: f64| -> f64 { x.exp() })?;
+    linker.func_wrap("env", "math_exp2", |x: f64| -> f64 { x.exp2() })?;
+    linker.func_wrap("env", "math.exp2", |x: f64| -> f64 { x.exp2() })?;
+    linker.func_wrap("env", "math_sqrt", |x: f64| -> f64 { x.sqrt() })?;
+    linker.func_wrap("env", "math.sqrt", |x: f64| -> f64 { x.sqrt() })?;
+    linker.func_wrap("env", "math_floor", |x: f64| -> f64 { x.floor() })?;
+    linker.func_wrap("env", "math.floor", |x: f64| -> f64 { x.floor() })?;
+    linker.func_wrap("env", "math_ceil", |x: f64| -> f64 { x.ceil() })?;
+    linker.func_wrap("env", "math.ceil", |x: f64| -> f64 { x.ceil() })?;
+    linker.func_wrap("env", "math_round", |x: f64| -> f64 { x.round() })?;
+    linker.func_wrap("env", "math.round", |x: f64| -> f64 { x.round() })?;
+    linker.func_wrap("env", "math_abs", |x: f64| -> f64 { x.abs() })?;
+    linker.func_wrap("env", "math.abs", |x: f64| -> f64 { x.abs() })?;
+
     // Conditional function imports - proper implementations
     linker.func_wrap(
         "env",
@@ -406,6 +459,71 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
+    // FIXED: Also register string_concat (underscore version) for WASM imports that use underscore naming
+    linker.func_wrap(
+        "env",
+        "string_concat",
+        |mut caller: Caller<'_, ()>, ptr1: i32, ptr2: i32| -> i32 {
+            // Get memory
+            let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+                mem
+            } else {
+                eprintln!("string_concat: Failed to get memory");
+                return 0;
+            };
+
+            let data = memory.data(&caller);
+
+            // Read first string (length-prefixed)
+            let p1 = ptr1 as usize;
+            if p1 + 4 > data.len() {
+                eprintln!("string_concat: ptr1 out of bounds");
+                return 0;
+            }
+            let len1 =
+                u32::from_le_bytes([data[p1], data[p1 + 1], data[p1 + 2], data[p1 + 3]]) as usize;
+            let str1 = if p1 + 4 + len1 <= data.len() {
+                match std::str::from_utf8(&data[p1 + 4..p1 + 4 + len1]) {
+                    Ok(s) => s.to_string(),
+                    Err(e) => {
+                        eprintln!("string_concat: str1 UTF-8 error: {}", e);
+                        return 0;
+                    }
+                }
+            } else {
+                eprintln!("string_concat: str1 content out of bounds");
+                return 0;
+            };
+
+            // Read second string (length-prefixed)
+            let p2 = ptr2 as usize;
+            if p2 + 4 > data.len() {
+                eprintln!("string_concat: ptr2 out of bounds");
+                return 0;
+            }
+            let len2 =
+                u32::from_le_bytes([data[p2], data[p2 + 1], data[p2 + 2], data[p2 + 3]]) as usize;
+            let str2 = if p2 + 4 + len2 <= data.len() {
+                match std::str::from_utf8(&data[p2 + 4..p2 + 4 + len2]) {
+                    Ok(s) => s.to_string(),
+                    Err(e) => {
+                        eprintln!("string_concat: str2 UTF-8 error: {}", e);
+                        return 0;
+                    }
+                }
+            } else {
+                eprintln!("string_concat: str2 content out of bounds");
+                return 0;
+            };
+
+            // Concatenate strings
+            let result = str1 + &str2;
+
+            // Allocate and return result
+            allocate_string_in_memory(&memory, &mut caller, &result)
+        },
+    )?;
+
     linker.func_wrap("env", "string_to_int", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "string_to_float", |_: i32| -> f64 { 0.0 })?;
 
@@ -428,7 +546,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     linker.func_wrap("memory_runtime", "mem_release", |_ptr: i32| {
-        // Mock release - does nothing
+        // Mock release - does nothing (use scope-based release instead)
+    })?;
+
+    // Scope-based memory management for arena allocation
+    // Push a scope mark - saves current allocation offset for later reset
+    linker.func_wrap("memory_runtime", "mem_scope_push", || {
+        let next_offset = NEXT_ALLOCATION_OFFSET.lock().unwrap();
+        let mut scope_marks = SCOPE_MARKS.lock().unwrap();
+        scope_marks.push(*next_offset);
+    })?;
+
+    // Pop a scope mark - resets allocation offset to saved mark
+    // This instantly "frees" all memory allocated within the scope
+    linker.func_wrap("memory_runtime", "mem_scope_pop", || {
+        let mut scope_marks = SCOPE_MARKS.lock().unwrap();
+        if let Some(mark) = scope_marks.pop() {
+            let mut next_offset = NEXT_ALLOCATION_OFFSET.lock().unwrap();
+            *next_offset = mark;
+        }
     })?;
 
     // Add method-style function stubs

@@ -56,7 +56,9 @@ impl StdlibPlugin for StringPlugin {
     }
 
     fn register_functions(&self, _codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // TODO: Implement string functions
+        // String functions are registered by builtin_generator.rs:register_string_operations()
+        // This plugin provides metadata for IDE tooling and documentation
+        // Actual WASM code generation uses the string imports (string.concat, string_substring, etc.)
         Ok(())
     }
 

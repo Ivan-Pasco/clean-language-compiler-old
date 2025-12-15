@@ -12,10 +12,10 @@ class Vehicle
 		string getInfo()
 			return year.toString() + " " + make + " " + model
 
-		string start()
+		string startEngine()
 			return "Vehicle starting..."
 
-		string stop()
+		string stopEngine()
 			return "Vehicle stopping..."
 
 		integer getMaxSpeed()
@@ -31,13 +31,13 @@ class Car is Vehicle
 		isElectric = electric
 
 	functions:
-		string start()
+		string startEngine()
 			if isElectric
 				return make + " " + model + " starting silently (electric)"
 			else
 				return make + " " + model + " engine starting"
 
-		string stop()
+		string stopEngine()
 			return make + " " + model + " parking"
 
 		integer getMaxSpeed()
@@ -54,10 +54,10 @@ class Motorcycle is Vehicle
 		hasSidecar = sidecar
 
 	functions:
-		string start()
+		string startEngine()
 			return make + " " + model + " motorcycle roaring to life"
 
-		string stop()
+		string stopEngine()
 			return make + " " + model + " motorcycle stopping"
 
 		integer getMaxSpeed()
@@ -70,9 +70,9 @@ functions:
 	void demonstratePolymorphism(Vehicle vehicle)
 		print("=== Vehicle Demonstration ===")
 		print("Info: " + vehicle.getInfo())
-		print("Starting: " + vehicle.start())
+		print("Starting: " + vehicle.startEngine())
 		print("Max Speed: " + vehicle.getMaxSpeed().toString() + " km/h")
-		print("Stopping: " + vehicle.stop())
+		print("Stopping: " + vehicle.stopEngine())
 
 start()
 	print("Polymorphism Test - Vehicle System")

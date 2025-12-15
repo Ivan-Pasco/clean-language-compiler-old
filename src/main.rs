@@ -1406,6 +1406,11 @@ async fn handle_run(
     linker.func_wrap("memory_runtime", "mem_retain", |_ptr: i32| {})?;
     linker.func_wrap("memory_runtime", "mem_release", |_ptr: i32| {})?;
 
+    // Scope-based memory management (arena allocation)
+    // These are no-ops in main.rs - the real implementation is in wasmtime_runner
+    linker.func_wrap("memory_runtime", "mem_scope_push", || {})?;
+    linker.func_wrap("memory_runtime", "mem_scope_pop", || {})?;
+
     // Add type conversion functions
     let debug_copy = debug;
     linker.func_wrap(

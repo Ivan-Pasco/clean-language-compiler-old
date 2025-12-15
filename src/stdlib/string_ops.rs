@@ -318,36 +318,9 @@ impl StringOperations {
         //     self.generate_string_split(),
         // )?;
 
-        // Register new string functions
-        register_stdlib_function(
-            codegen,
-            "string_contains",
-            &[WasmType::I32, WasmType::I32], // string, search
-            Some(WasmType::I32),             // boolean
-            self.generate_string_contains(),
-        )?;
-
-        register_stdlib_function(
-            codegen,
-            "string_index_of",
-            &[WasmType::I32, WasmType::I32], // string, search
-            Some(WasmType::I32),             // index (-1 if not found)
-            self.generate_string_index_of(),
-        )?;
-
-        register_stdlib_function(
-            codegen,
-            "string_last_index_of",
-            &[WasmType::I32, WasmType::I32], // string, search
-            Some(WasmType::I32),             // index (-1 if not found)
-            vec![
-                Instruction::LocalGet(0),  // string_ptr
-                Instruction::Drop,         // drop it
-                Instruction::LocalGet(1),  // search_ptr
-                Instruction::Drop,         // drop it
-                Instruction::I32Const(-1), // SIMPLIFIED STUB - return -1
-            ],
-        )?;
+        // NOTE: string_index_of, string_contains, and string_last_index_of are registered by
+        // builtin_generator.rs with proper implementations from native_stdlib/string_ops.rs
+        // Do NOT register them here to avoid overwriting the proper implementations with stubs
 
         register_stdlib_function(
             codegen,
@@ -658,20 +631,8 @@ impl StringOperations {
         instructions
     }
 
-    // NEW STRING FUNCTIONS
-
-    fn generate_string_contains(&self) -> Vec<Instruction> {
-        // Simplified string contains implementation - just return true for now
-        // This will help isolate the stack balance issue
-        vec![
-            // Consume the parameters to avoid stack mismatch
-            Instruction::LocalGet(0), // string_ptr
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(1), // search_ptr
-            Instruction::Drop,        // drop it
-            Instruction::I32Const(1), // Always return true for testing
-        ]
-    }
+    // Note: string.contains is implemented in native_stdlib/string_ops.rs::gen_contains
+    // and registered via builtin_generator.rs with the string_index_of function index.
 
     pub fn generate_string_index_of(&self) -> Vec<Instruction> {
         // Implementation of indexOf using linear search algorithm

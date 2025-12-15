@@ -246,6 +246,13 @@ impl MirBuilder {
         mir_program
             .symbol_name_map
             .insert(SymbolId(1006), "list.size".to_string());
+        // CRITICAL: list.add (in-place modification) vs list_push (creates new list)
+        mir_program
+            .symbol_name_map
+            .insert(SymbolId(1007), "list.add".to_string());
+        mir_program
+            .symbol_name_map
+            .insert(SymbolId(1008), "list.add_f64".to_string());
 
         // CRITICAL FIX: Add common name variations for builtin functions
         // Check symbol_name_map for variations and add correct WASM names
@@ -1667,6 +1674,22 @@ impl MirBuilder {
                 // Switch to body block (already pre-allocated)
                 self.current_block = Some(body_block_id);
 
+                // MEMORY MANAGEMENT: Push scope mark at start of collection loop iteration
+                // This saves the current allocation offset so we can reset it at the end
+                // of each iteration, freeing all temporary allocations made in the loop body
+                let scope_push_instruction = MirInstruction {
+                    dest: None, // mem_scope_push has no return value
+                    operation: MirOperation::Call {
+                        function: MirOperand::NamedFunction {
+                            name: "mem_scope_push".to_string(),
+                            symbol_id: SymbolId(1010), // Special SymbolId for mem_scope_push
+                        },
+                        arguments: vec![],
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, scope_push_instruction);
+
                 // CRITICAL FIX: Get the address of the element, then LOAD the value
                 // GetElementPtr returns a pointer, not the value itself!
 
@@ -1731,6 +1754,22 @@ impl MirBuilder {
                         .unwrap_or(0),
                     "After processing iterate body statements"
                 );
+
+                // MEMORY MANAGEMENT: Pop scope mark at end of collection loop iteration
+                // This resets the allocation offset to where it was at the start of the iteration,
+                // freeing all temporary allocations made in the loop body
+                let scope_pop_instruction = MirInstruction {
+                    dest: None, // mem_scope_pop has no return value
+                    operation: MirOperation::Call {
+                        function: MirOperand::NamedFunction {
+                            name: "mem_scope_pop".to_string(),
+                            symbol_id: SymbolId(1011), // Special SymbolId for mem_scope_pop
+                        },
+                        arguments: vec![],
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, scope_pop_instruction);
 
                 // CRITICAL FIX: Check if body block already has a terminator
                 // (IF statements may have set one). If not, jump to increment block.
@@ -1895,10 +1934,42 @@ impl MirBuilder {
                 // Switch to body block
                 self.current_block = Some(body_block_id);
 
+                // MEMORY MANAGEMENT: Push scope mark at start of while loop iteration
+                // This saves the current allocation offset so we can reset it at the end
+                // of each iteration, freeing all temporary allocations made in the loop body
+                let scope_push_instruction = MirInstruction {
+                    dest: None, // mem_scope_push has no return value
+                    operation: MirOperation::Call {
+                        function: MirOperand::NamedFunction {
+                            name: "mem_scope_push".to_string(),
+                            symbol_id: SymbolId(1010), // Special SymbolId for mem_scope_push
+                        },
+                        arguments: vec![],
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, scope_push_instruction);
+
                 // Process body statements
                 for stmt in &body.statements {
                     self.build_statement(context, stmt)?;
                 }
+
+                // MEMORY MANAGEMENT: Pop scope mark at end of while loop iteration
+                // This resets the allocation offset to where it was at the start of the iteration,
+                // freeing all temporary allocations made in the loop body
+                let scope_pop_instruction = MirInstruction {
+                    dest: None, // mem_scope_pop has no return value
+                    operation: MirOperation::Call {
+                        function: MirOperand::NamedFunction {
+                            name: "mem_scope_pop".to_string(),
+                            symbol_id: SymbolId(1011), // Special SymbolId for mem_scope_pop
+                        },
+                        arguments: vec![],
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, scope_pop_instruction);
 
                 // After body, check if we still have a current block (not terminated by return)
                 // If so, jump back to header for next iteration
@@ -2791,7 +2862,9 @@ impl MirBuilder {
                 // to use the correct stdlib function indices
                 if let ConcreteType::Array(element_type) = &receiver.expr_type {
                     match method_name.as_str() {
-                        "add" | "push" => {
+                        "add" => {
+                            // CRITICAL: list.add modifies IN-PLACE and returns same list pointer
+                            // Use SymbolId(1007) for i32, SymbolId(1008) for f64
                             let result_id = ValueId(context.function.next_value_id);
                             context.function.next_value_id += 1;
 
@@ -2802,7 +2875,41 @@ impl MirBuilder {
                                 expression.location.clone(),
                             );
 
-                            // Use synthetic SymbolId for list push
+                            let add_symbol = match element_type.as_ref() {
+                                ConcreteType::Number => SymbolId(1008), // list.add_f64 (in-place)
+                                _ => SymbolId(1007),                    // list.add (in-place)
+                            };
+
+                            let mut args = vec![MirOperand::Value(receiver_id)];
+                            for arg in arguments {
+                                let arg_id = self.build_expression(context, arg)?;
+                                args.push(MirOperand::Value(arg_id));
+                            }
+
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::Function(add_symbol),
+                                    arguments: args,
+                                },
+                                location: expression.location.clone(),
+                            };
+                            self.add_instruction(context, instruction);
+                            return Ok(result_id);
+                        }
+                        "push" => {
+                            // list.push creates a NEW list and returns it
+                            // Use SymbolId(1004) for i32, SymbolId(1005) for f64
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32, // List pointer
+                                expression.location.clone(),
+                            );
+
                             let push_symbol = match element_type.as_ref() {
                                 ConcreteType::Number => SymbolId(1005), // list.push_f64
                                 _ => SymbolId(1004),                    // list_push
@@ -3202,13 +3309,24 @@ impl MirBuilder {
                             // Symbol table lookup returns wrong function index
                             (SymbolId(1006), vec![MirOperand::Value(receiver_id)])
                         }
-                        (ConcreteType::Array(element_type), "add" | "push") => {
-                            // CRITICAL FIX: Use synthetic SymbolId for list.push
-                            // The symbol table lookup returns wrong function index
-                            // Instead, use SymbolId(1004) for i32 or SymbolId(1005) for f64
+                        (ConcreteType::Array(element_type), "add") => {
+                            // CRITICAL: list.add modifies IN-PLACE - use SymbolId(1007/1008)
+                            let list_add_symbol = match element_type.as_ref() {
+                                ConcreteType::Number => SymbolId(1008), // list.add_f64 (in-place)
+                                _ => SymbolId(1007),                    // list.add (in-place)
+                            };
+                            let mut args = vec![MirOperand::Value(receiver_id)];
+                            for arg in arguments {
+                                let arg_id = self.build_expression(context, arg)?;
+                                args.push(MirOperand::Value(arg_id));
+                            }
+                            (list_add_symbol, args)
+                        }
+                        (ConcreteType::Array(element_type), "push") => {
+                            // list.push creates NEW list - use SymbolId(1004/1005)
                             let list_push_symbol = match element_type.as_ref() {
                                 ConcreteType::Number => SymbolId(1005), // list.push_f64
-                                _ => SymbolId(1004), // list.push (for integers, booleans, strings, objects)
+                                _ => SymbolId(1004),                    // list.push
                             };
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
@@ -4544,6 +4662,22 @@ impl MirBuilder {
         // Switch to body block (already pre-allocated)
         self.current_block = Some(body_block_id);
 
+        // MEMORY MANAGEMENT: Push scope mark at start of loop iteration
+        // This saves the current allocation offset so we can reset it at the end
+        // of each iteration, freeing all temporary allocations made in the loop body
+        let scope_push_instruction = MirInstruction {
+            dest: None, // mem_scope_push has no return value
+            operation: MirOperation::Call {
+                function: MirOperand::NamedFunction {
+                    name: "mem_scope_push".to_string(),
+                    symbol_id: SymbolId(1010), // Special SymbolId for mem_scope_push
+                },
+                arguments: vec![],
+            },
+            location: location.clone(),
+        };
+        self.add_instruction(context, scope_push_instruction);
+
         // Push a new scope for the loop body
         context.scope_stack.push(HashMap::new());
 
@@ -4568,6 +4702,22 @@ impl MirBuilder {
 
         // Pop the loop body scope
         context.scope_stack.pop();
+
+        // MEMORY MANAGEMENT: Pop scope mark at end of loop iteration
+        // This resets the allocation offset to where it was at the start of the iteration,
+        // freeing all temporary allocations made in the loop body (e.g., Rectangle objects)
+        let scope_pop_instruction = MirInstruction {
+            dest: None, // mem_scope_pop has no return value
+            operation: MirOperation::Call {
+                function: MirOperand::NamedFunction {
+                    name: "mem_scope_pop".to_string(),
+                    symbol_id: SymbolId(1011), // Special SymbolId for mem_scope_pop
+                },
+                arguments: vec![],
+            },
+            location: location.clone(),
+        };
+        self.add_instruction(context, scope_pop_instruction);
 
         // NOTE: increment_block_id and exit_block_id were pre-allocated at the start
         // of this function to prevent block ID collisions with nested control flow.

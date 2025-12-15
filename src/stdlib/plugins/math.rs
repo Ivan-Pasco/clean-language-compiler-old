@@ -434,45 +434,64 @@ impl MathPlugin {
             _ => WasmType::F64,
         };
 
-        // Note: WebAssembly doesn't have built-in trigonometric functions
-        // In a real implementation, these would call imported functions from the host
+        // Trigonometric functions require host imports (not available in native WASM)
+        // The imports math_sin, math_cos, etc. are registered by builtin_generator
+        // Here we create wrapper functions that call those imports
 
-        // Sine function (placeholder - would need host import)
-        crate::stdlib::register_stdlib_function(
-            codegen,
-            "sin",
-            &[float_type],
-            Some(float_type),
-            vec![
-                Instruction::LocalGet(0),
-                // Placeholder: return input unchanged
-                // In reality, this would call an imported sin function
-            ],
-        )?;
+        // Sine function - calls math_sin import
+        if let Some(sin_index) = codegen.get_function_index("math_sin") {
+            crate::stdlib::register_stdlib_function(
+                codegen,
+                "sin",
+                &[float_type],
+                Some(float_type),
+                vec![Instruction::LocalGet(0), Instruction::Call(sin_index)],
+            )?;
+        }
 
-        // Cosine function (placeholder)
-        crate::stdlib::register_stdlib_function(
-            codegen,
-            "cos",
-            &[float_type],
-            Some(float_type),
-            vec![
-                Instruction::LocalGet(0),
-                // Placeholder: return input unchanged
-            ],
-        )?;
+        // Cosine function - calls math_cos import
+        if let Some(cos_index) = codegen.get_function_index("math_cos") {
+            crate::stdlib::register_stdlib_function(
+                codegen,
+                "cos",
+                &[float_type],
+                Some(float_type),
+                vec![Instruction::LocalGet(0), Instruction::Call(cos_index)],
+            )?;
+        }
 
-        // Natural logarithm (placeholder)
-        crate::stdlib::register_stdlib_function(
-            codegen,
-            "log",
-            &[float_type],
-            Some(float_type),
-            vec![
-                Instruction::LocalGet(0),
-                // Placeholder: return input unchanged
-            ],
-        )?;
+        // Tangent function - calls math_tan import
+        if let Some(tan_index) = codegen.get_function_index("math_tan") {
+            crate::stdlib::register_stdlib_function(
+                codegen,
+                "tan",
+                &[float_type],
+                Some(float_type),
+                vec![Instruction::LocalGet(0), Instruction::Call(tan_index)],
+            )?;
+        }
+
+        // Natural logarithm - calls math_ln import
+        if let Some(ln_index) = codegen.get_function_index("math_ln") {
+            crate::stdlib::register_stdlib_function(
+                codegen,
+                "log",
+                &[float_type],
+                Some(float_type),
+                vec![Instruction::LocalGet(0), Instruction::Call(ln_index)],
+            )?;
+        }
+
+        // Exponential function - calls math_exp import
+        if let Some(exp_index) = codegen.get_function_index("math_exp") {
+            crate::stdlib::register_stdlib_function(
+                codegen,
+                "exp",
+                &[float_type],
+                Some(float_type),
+                vec![Instruction::LocalGet(0), Instruction::Call(exp_index)],
+            )?;
+        }
 
         Ok(())
     }

@@ -2,11 +2,15 @@
 //!
 //! Provides pure WASM bytecode implementations of list functions
 //! that operate on the standard Clean Language list format:
-//! [length: i32][elements: ...]
+//! [size: i32][capacity: i32][type_id: i32][padding: i32][elements...]
+//! (16-byte header, elements start at offset 16)
 
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
-use super::{LIST_DATA_OFFSET, LIST_ELEMENT_SIZE_F64, LIST_ELEMENT_SIZE_I32, LIST_LENGTH_OFFSET};
+use super::{
+    LIST_CAPACITY_OFFSET, LIST_DATA_OFFSET, LIST_ELEMENT_SIZE_F64, LIST_ELEMENT_SIZE_I32,
+    LIST_LENGTH_OFFSET, LIST_TYPE_ID_OFFSET,
+};
 
 /// Generate instructions for list.length
 pub fn gen_length() -> Vec<Instruction<'static>> {
@@ -189,6 +193,7 @@ pub fn gen_contains_i32(index_of_func: u32) -> Vec<Instruction<'static>> {
 /// Generate instructions for list.push (i32 elements, requires malloc)
 ///
 /// This creates a new list with the element appended.
+/// New list has 16-byte header: [size|capacity|type_id|padding|elements...]
 ///
 /// Parameters:
 ///   - local 0: list_ptr
@@ -210,27 +215,54 @@ pub fn gen_push_i32(malloc_func: u32) -> Vec<Instruction<'static>> {
             memory_index: 0,
         }),
         Instruction::LocalSet(2),
-        // Allocate new list: malloc(4 + (old_len + 1) * 4)
+        // Allocate new list: malloc(16 + (old_len + 1) * 4)
+        // 16-byte header + space for elements
         Instruction::LocalGet(2),
         Instruction::I32Const(1),
         Instruction::I32Add,
         Instruction::I32Const(LIST_ELEMENT_SIZE_I32 as i32),
         Instruction::I32Mul,
-        Instruction::I32Const(LIST_DATA_OFFSET as i32),
+        Instruction::I32Const(LIST_DATA_OFFSET as i32), // 16-byte header
         Instruction::I32Add,
         Instruction::Call(malloc_func),
         Instruction::LocalSet(3), // new_ptr
-        // Store new length (old_len + 1)
+        // Store new length (old_len + 1) at offset 0
         Instruction::LocalGet(3),
         Instruction::LocalGet(2),
         Instruction::I32Const(1),
         Instruction::I32Add,
         Instruction::I32Store(MemArg {
-            offset: 0,
+            offset: LIST_LENGTH_OFFSET as u64,
             align: 2,
             memory_index: 0,
         }),
-        // Copy old elements
+        // Copy capacity from old list (offset 4)
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: LIST_CAPACITY_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::I32Store(MemArg {
+            offset: LIST_CAPACITY_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Copy type_id from old list (offset 8)
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: LIST_TYPE_ID_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::I32Store(MemArg {
+            offset: LIST_TYPE_ID_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Copy old elements (from offset 16)
         Instruction::I32Const(0),
         Instruction::LocalSet(4), // i = 0
         Instruction::Block(BlockType::Empty),
@@ -240,7 +272,7 @@ pub fn gen_push_i32(malloc_func: u32) -> Vec<Instruction<'static>> {
         Instruction::LocalGet(2),
         Instruction::I32GeU,
         Instruction::BrIf(1),
-        // new_ptr[4 + i*4] = list_ptr[4 + i*4]
+        // new_ptr[16 + i*4] = list_ptr[16 + i*4]
         Instruction::LocalGet(3),
         Instruction::I32Const(LIST_DATA_OFFSET as i32),
         Instruction::I32Add,
@@ -273,7 +305,7 @@ pub fn gen_push_i32(malloc_func: u32) -> Vec<Instruction<'static>> {
         Instruction::Br(0),
         Instruction::End,
         Instruction::End,
-        // Store new element at index old_len
+        // Store new element at index old_len (offset 16 + old_len * 4)
         Instruction::LocalGet(3),
         Instruction::I32Const(LIST_DATA_OFFSET as i32),
         Instruction::I32Add,
@@ -351,11 +383,37 @@ pub fn gen_slice_i32(malloc_func: u32) -> Vec<Instruction<'static>> {
         Instruction::I32Add,
         Instruction::Call(malloc_func),
         Instruction::LocalSet(4),
-        // Store new length
+        // Store new length at offset 0
         Instruction::LocalGet(4),
         Instruction::LocalGet(3),
         Instruction::I32Store(MemArg {
-            offset: 0,
+            offset: LIST_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Copy capacity from source list at offset 4
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: LIST_CAPACITY_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::I32Store(MemArg {
+            offset: LIST_CAPACITY_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Copy type_id from source list at offset 8
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: LIST_TYPE_ID_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::I32Store(MemArg {
+            offset: LIST_TYPE_ID_OFFSET as u64,
             align: 2,
             memory_index: 0,
         }),
@@ -430,7 +488,7 @@ pub fn gen_reverse_i32(malloc_func: u32) -> Vec<Instruction<'static>> {
             memory_index: 0,
         }),
         Instruction::LocalSet(1),
-        // Allocate new list: malloc(4 + len * 4)
+        // Allocate new list: malloc(16 + len * 4) for 16-byte header
         Instruction::LocalGet(1),
         Instruction::I32Const(LIST_ELEMENT_SIZE_I32 as i32),
         Instruction::I32Mul,
@@ -438,11 +496,37 @@ pub fn gen_reverse_i32(malloc_func: u32) -> Vec<Instruction<'static>> {
         Instruction::I32Add,
         Instruction::Call(malloc_func),
         Instruction::LocalSet(2),
-        // Store length
+        // Store length at offset 0
         Instruction::LocalGet(2),
         Instruction::LocalGet(1),
         Instruction::I32Store(MemArg {
-            offset: 0,
+            offset: LIST_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Copy capacity from source list at offset 4
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: LIST_CAPACITY_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::I32Store(MemArg {
+            offset: LIST_CAPACITY_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Copy type_id from source list at offset 8
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: LIST_TYPE_ID_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::I32Store(MemArg {
+            offset: LIST_TYPE_ID_OFFSET as u64,
             align: 2,
             memory_index: 0,
         }),

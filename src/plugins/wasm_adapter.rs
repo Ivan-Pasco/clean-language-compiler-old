@@ -370,6 +370,20 @@ impl WasmPluginAdapter {
             |_: Caller<'_, PluginState>, _ptr: i32| {},
         )?;
 
+        // memory_runtime.mem_scope_push - Push scope mark for arena allocation (no-op in this impl)
+        linker.func_wrap(
+            "memory_runtime",
+            "mem_scope_push",
+            |_: Caller<'_, PluginState>| {},
+        )?;
+
+        // memory_runtime.mem_scope_pop - Pop scope mark for arena allocation (no-op in this impl)
+        linker.func_wrap(
+            "memory_runtime",
+            "mem_scope_pop",
+            |_: Caller<'_, PluginState>| {},
+        )?;
+
         // =========================================
         // HTTP NAMESPACE - Network operations (stubs)
         // =========================================

@@ -30,11 +30,20 @@ pub const ALIGNMENT: u32 = 8;
 pub const STRING_LENGTH_OFFSET: u32 = 0;
 pub const STRING_DATA_OFFSET: u32 = 4;
 
-/// List/Array memory layout:
-/// - Offset 0: length (i32, 4 bytes)
-/// - Offset 4: elements (i32 or f64 depending on type)
+/// List/Array memory layout (matches list_ops.rs and MIR codegen):
+/// - Offset 0: size (i32, 4 bytes)
+/// - Offset 4: capacity (i32, 4 bytes)
+/// - Offset 8: type_id (i32, 4 bytes)
+/// - Offset 12: padding (i32, 4 bytes)
+/// - Offset 16: elements (i32 or f64 depending on type)
+/// CRITICAL: This 16-byte header format MUST match:
+///   - list_ops.rs generate_list_allocate()
+///   - list_class.rs generate_push()
+///   - mir_codegen.rs GetElementPtr for list access (offset 16)
 pub const LIST_LENGTH_OFFSET: u32 = 0;
-pub const LIST_DATA_OFFSET: u32 = 4;
+pub const LIST_CAPACITY_OFFSET: u32 = 4;
+pub const LIST_TYPE_ID_OFFSET: u32 = 8;
+pub const LIST_DATA_OFFSET: u32 = 16; // Elements start after 16-byte header
 pub const LIST_ELEMENT_SIZE_I32: u32 = 4;
 pub const LIST_ELEMENT_SIZE_F64: u32 = 8;
 

@@ -56,7 +56,9 @@ impl StdlibPlugin for MemoryPlugin {
     }
 
     fn register_functions(&self, _codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // TODO: Implement memory management functions
+        // Memory management functions are registered by builtin_generator.rs:register_memory_operations()
+        // This plugin provides metadata for IDE tooling and documentation
+        // WASM memory is managed through the linear memory model with imports for alloc/free
         Ok(())
     }
 

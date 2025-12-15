@@ -8,6 +8,28 @@
  * A modern, type-safe programming language that compiles to WebAssembly
  */
 
+// =============================================================================
+// PRODUCTION QUALITY ENFORCEMENT
+// =============================================================================
+// These lints DENY patterns that indicate incomplete or placeholder code.
+// The Clean Language Compiler must be production-grade with no stubs.
+
+// CRITICAL: Deny any incomplete implementation markers
+#![deny(clippy::todo)]
+#![deny(clippy::unimplemented)]
+// Note: panic! is allowed in error paths where recovery is not possible
+// #![deny(clippy::panic)]
+
+// WARN on patterns that may indicate incomplete code
+// These are tracked for gradual improvement (356 unwrap calls currently in codebase)
+#![warn(clippy::unwrap_used)]
+#![warn(clippy::expect_used)]
+#![warn(clippy::dbg_macro)]
+#![warn(clippy::print_stdout)]
+#![warn(clippy::print_stderr)]
+// =============================================================================
+// PEDANTIC STYLE ALLOWANCES
+// =============================================================================
 // Allow clippy pedantic warnings for now - focusing on functionality over style
 #![allow(clippy::redundant_else)]
 #![allow(clippy::unnested_or_patterns)]

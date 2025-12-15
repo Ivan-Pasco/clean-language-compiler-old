@@ -571,27 +571,89 @@ impl TestHarness {
     }
 
     /// Execute with Node.js
+    ///
+    /// Note: Node.js execution requires external setup (node binary with WASM support).
+    /// The primary supported runtime is wasmtime. Use WasmRuntime::Wasmtime for testing.
     fn execute_with_node(&self, _wasm_bytes: &[u8], _inputs: &[String]) -> Result<ExecutionResult, CompilerError> {
-        // Placeholder implementation
-        Err(CompilerError::testing_error("Node.js execution not implemented", None, None))
+        Err(CompilerError::testing_error(
+            "Node.js runtime is not currently supported for testing",
+            Some("Use WasmRuntime::Wasmtime (the default) for WASM execution testing. \
+                  Node.js support requires external bridge setup and is intended for \
+                  browser/server deployment scenarios, not compiler testing.".to_string()),
+            None,
+        ))
     }
 
     /// Execute with browser simulation
+    ///
+    /// Note: Browser simulation requires a headless browser or DOM simulation library.
+    /// The primary supported runtime is wasmtime. Use WasmRuntime::Wasmtime for testing.
     fn execute_with_browser_sim(&self, _wasm_bytes: &[u8], _inputs: &[String]) -> Result<ExecutionResult, CompilerError> {
-        // Placeholder implementation
-        Err(CompilerError::testing_error("Browser simulation not implemented", None, None))
+        Err(CompilerError::testing_error(
+            "Browser simulation runtime is not currently supported for testing",
+            Some("Use WasmRuntime::Wasmtime (the default) for WASM execution testing. \
+                  Browser simulation is intended for web deployment testing and requires \
+                  external tooling (e.g., Playwright, Puppeteer) to be configured.".to_string()),
+            None,
+        ))
     }
 
     /// Execute with custom runtime
-    fn execute_with_custom(&self, _runtime: &str, _wasm_bytes: &[u8], _inputs: &[String]) -> Result<ExecutionResult, CompilerError> {
-        // Placeholder implementation
-        Err(CompilerError::testing_error("Custom runtime execution not implemented", None, None))
+    ///
+    /// Note: Custom runtime execution requires the runtime binary to be available in PATH.
+    /// The primary supported runtime is wasmtime. Use WasmRuntime::Wasmtime for testing.
+    fn execute_with_custom(&self, runtime: &str, _wasm_bytes: &[u8], _inputs: &[String]) -> Result<ExecutionResult, CompilerError> {
+        Err(CompilerError::testing_error(
+            &format!("Custom runtime '{}' is not currently supported for testing", runtime),
+            Some("Use WasmRuntime::Wasmtime (the default) for WASM execution testing. \
+                  Custom runtimes require specific configuration and bridge implementations \
+                  that are deployment-specific.".to_string()),
+            None,
+        ))
     }
 
-    /// Check if error matches category
-    fn error_matches_category(&self, _error: &CompilerError, _category: &crate::testing::ErrorCategory) -> bool {
-        // Placeholder implementation
-        false
+    /// Check if a compiler error matches the specified error category
+    ///
+    /// Maps CompilerError variants to test ErrorCategory for test assertions.
+    fn error_matches_category(&self, error: &CompilerError, category: &crate::testing::ErrorCategory) -> bool {
+        use crate::testing::ErrorCategory as TestCategory;
+
+        match (error, category) {
+            // Syntax errors match Syntax category
+            (CompilerError::Syntax { .. }, TestCategory::Syntax) => true,
+            (CompilerError::LexError(_), TestCategory::Syntax) => true,
+
+            // Type errors match Type category
+            (CompilerError::Type { .. }, TestCategory::Type) => true,
+
+            // Semantic errors - Module and some Validation errors are semantic
+            (CompilerError::Module { .. }, TestCategory::Semantic) => true,
+            (CompilerError::Validation { context }, TestCategory::Semantic) => {
+                // Validation errors related to symbol resolution are semantic
+                context.message.contains("undefined") ||
+                context.message.contains("not found") ||
+                context.message.contains("scope")
+            }
+
+            // Runtime errors match Runtime category
+            (CompilerError::Runtime { .. }, TestCategory::Runtime) => true,
+            (CompilerError::Memory { .. }, TestCategory::Runtime) => true,
+
+            // Internal errors - codegen, IO, and plugin errors are internal
+            (CompilerError::Codegen { .. }, TestCategory::Internal) => true,
+            (CompilerError::IO { .. }, TestCategory::Internal) => true,
+            (CompilerError::PluginError { .. }, TestCategory::Internal) => true,
+            (CompilerError::Testing { .. }, TestCategory::Internal) => true,
+
+            // Type mismatches in validation are Type errors
+            (CompilerError::Validation { context }, TestCategory::Type) => {
+                context.message.contains("type") ||
+                context.message.contains("mismatch")
+            }
+
+            // Default: no match
+            _ => false,
+        }
     }
 
     /// Estimate memory usage from WASM binary

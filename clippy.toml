@@ -1,0 +1,23 @@
+# Clippy configuration for Clean Language Compiler
+# Enforces production-grade code quality
+
+# Enforce maximum cognitive complexity for functions
+cognitive-complexity-threshold = 25
+
+# Type complexity threshold
+type-complexity-threshold = 250
+
+# Maximum number of lines for a single function
+too-many-lines-threshold = 100
+
+# Large enum variant difference threshold
+enum-variant-size-threshold = 200
+
+# Maximum number of arguments for a function
+too-many-arguments-threshold = 7
+
+# Maximum boolean fields in a struct
+max-struct-bools = 3
+
+# Array indexing threshold for potential panics
+array-size-threshold = 512000

@@ -275,8 +275,8 @@ impl CodeGenerator {
     /// Configure the memory section with standard settings
     fn setup_memory_section(&mut self) {
         self.memory_section.memory(wasm_encoder::MemoryType {
-            minimum: 1,
-            maximum: Some(16), // Limit to 16 pages (1MB) for safety
+            minimum: 16,       // 16 pages = 1MB initial memory
+            maximum: Some(64), // Limit to 64 pages (4MB) for safety
             memory64: false,
             shared: false,
         });
@@ -2216,60 +2216,129 @@ impl CodeGenerator {
 
                 // Check if this is a List method call
                 if let Expression::Variable(_) = object.as_ref() {
-                    // For now, handle List methods as no-ops that return appropriate values
+                    // Route List methods to proper import functions
                     match method.as_str() {
-                        "add" => {
-                            // List.add(item) - for now, just drop the arguments and return void
-                            // In a full implementation, this would add the item to the list
-                            return Ok(WasmType::I32); // Void is represented as I32 in some contexts
+                        "add" | "push" => {
+                            // List.add(item) / List.push(item) - calls array_push or list.push import
+                            // Stack: [list_ptr, item] -> [new_list_ptr]
+                            if let Some(push_index) = self
+                                .get_function_index("array_push")
+                                .or_else(|| self.get_function_index("list.push"))
+                            {
+                                instructions.push(Instruction::Call(push_index));
+                                return Ok(WasmType::I32);
+                            }
+                            return Err(CompilerError::codegen_error(
+                                "List.add requires array_push import - ensure bridge provides this function",
+                                None,
+                                None,
+                            ));
                         }
-                        "remove" => {
-                            // List.remove() - for now, return a dummy value
-                            // In a full implementation, this would remove and return an item
-                            instructions.push(Instruction::I32Const(0)); // Dummy return value
-                            return Ok(WasmType::I32);
+                        "remove" | "pop" => {
+                            // List.remove() / List.pop() - calls array_pop import
+                            // Stack: [list_ptr] -> [removed_item]
+                            if let Some(pop_index) = self
+                                .get_function_index("array_pop")
+                                .or_else(|| self.get_function_index("list.remove"))
+                            {
+                                instructions.push(Instruction::Call(pop_index));
+                                return Ok(WasmType::I32);
+                            }
+                            return Err(CompilerError::codegen_error(
+                                "List.remove requires array_pop import - ensure bridge provides this function",
+                                None,
+                                None,
+                            ));
                         }
-                        "size" => {
-                            // List.size() - call array.length function
-                            if let Some(length_index) = self.get_function_index("array.length") {
+                        "size" | "length" => {
+                            // List.size() / List.length() - calls array_length function
+                            if let Some(length_index) = self
+                                .get_function_index("array_length")
+                                .or_else(|| self.get_function_index("list.length"))
+                                .or_else(|| self.get_function_index("array.length"))
+                            {
                                 instructions.push(Instruction::Call(length_index));
                                 return Ok(WasmType::I32);
-                            } else {
-                                // Fallback if array.length not registered
-                                instructions.push(Instruction::I32Const(0));
-                                return Ok(WasmType::I32);
                             }
+                            return Err(CompilerError::codegen_error(
+                                "List.size requires array_length function",
+                                None,
+                                None,
+                            ));
                         }
                         "peek" => {
-                            // List.peek() - for now, return a dummy value
-                            instructions.push(Instruction::I32Const(0)); // Dummy return value
-                            return Ok(WasmType::I32);
+                            // List.peek() - get last element without removing
+                            // Implementation: get element at index (size - 1)
+                            // Stack: [list_ptr] -> duplicate -> get size -> subtract 1 -> get element
+                            if let Some(length_index) = self
+                                .get_function_index("array_length")
+                                .or_else(|| self.get_function_index("list.length"))
+                            {
+                                if let Some(get_index) = self
+                                    .get_function_index("array_get")
+                                    .or_else(|| self.get_function_index("list.get"))
+                                {
+                                    // Duplicate list pointer (need it twice: once for size, once for get)
+                                    instructions.push(Instruction::LocalGet(0)); // Re-get list_ptr
+                                    instructions.push(Instruction::Call(length_index)); // Get size
+                                    instructions.push(Instruction::I32Const(1));
+                                    instructions.push(Instruction::I32Sub); // size - 1
+                                                                            // Stack now: [list_ptr, last_index]
+                                    instructions.push(Instruction::Call(get_index));
+                                    return Ok(WasmType::I32);
+                                }
+                            }
+                            return Err(CompilerError::codegen_error(
+                                "List.peek requires array_length and array_get functions",
+                                None,
+                                None,
+                            ));
                         }
                         "contains" => {
-                            // List.contains(item) - for now, return false
-                            instructions.push(Instruction::I32Const(0)); // false
-                            return Ok(WasmType::I32);
+                            // List.contains(item) - calls array_contains import
+                            // Stack: [list_ptr, item] -> [0 or 1]
+                            if let Some(contains_index) = self
+                                .get_function_index("array_contains")
+                                .or_else(|| self.get_function_index("list.contains"))
+                            {
+                                instructions.push(Instruction::Call(contains_index));
+                                return Ok(WasmType::I32);
+                            }
+                            return Err(CompilerError::codegen_error(
+                                "List.contains requires array_contains import - ensure bridge provides this function",
+                                None,
+                                None,
+                            ));
                         }
                         "get" => {
-                            // List.get(index) - call array.get function
-                            if let Some(get_index) = self.get_function_index("array.get") {
+                            // List.get(index) - calls array_get import
+                            if let Some(get_index) = self
+                                .get_function_index("array_get")
+                                .or_else(|| self.get_function_index("list.get"))
+                            {
                                 instructions.push(Instruction::Call(get_index));
                                 return Ok(WasmType::I32);
-                            } else {
-                                // Fallback if array.get not registered
-                                instructions.push(Instruction::I32Const(0));
-                                return Ok(WasmType::I32);
                             }
+                            return Err(CompilerError::codegen_error(
+                                "List.get requires array_get import - ensure bridge provides this function",
+                                None,
+                                None,
+                            ));
                         }
                         "set" => {
-                            // List.set(index, value) - call array.set function
-                            if let Some(set_index) = self.get_function_index("array.set") {
+                            // List.set(index, value) - calls array_set import
+                            if let Some(set_index) = self
+                                .get_function_index("array_set")
+                                .or_else(|| self.get_function_index("list.set"))
+                            {
                                 instructions.push(Instruction::Call(set_index));
-                                return Ok(WasmType::I32); // Return success indicator
-                            } else {
-                                // Fallback - just consume the arguments
                                 return Ok(WasmType::I32);
                             }
+                            return Err(CompilerError::codegen_error(
+                                "List.set requires array_set import - ensure bridge provides this function",
+                                None,
+                                None,
+                            ));
                         }
                         _ => {
                             // Fall through to regular method handling
@@ -4634,6 +4703,33 @@ impl CodeGenerator {
             self.add_function_alias("native_string_concat", concat_idx);
         }
 
+        // NATIVE: string_index_of - finds substring in string
+        // Parameters: str_ptr (i32), search_ptr (i32)
+        // Returns: index (i32) or -1 if not found
+        let string_index_of_instructions = native_stdlib::string_ops::gen_index_of();
+        let string_index_of_idx = self.register_function(
+            "__string_index_of",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &string_index_of_instructions,
+        )?;
+        self.add_function_alias("string_index_of", string_index_of_idx);
+        self.add_function_alias("string.indexOf", string_index_of_idx);
+
+        // NATIVE: string_contains - checks if string contains substring
+        // Parameters: str_ptr (i32), search_ptr (i32)
+        // Returns: boolean (i32)
+        let string_contains_instructions =
+            native_stdlib::string_ops::gen_contains(string_index_of_idx);
+        let string_contains_idx = self.register_function(
+            "__string_contains",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &string_contains_instructions,
+        )?;
+        self.add_function_alias("string_contains", string_contains_idx);
+        self.add_function_alias("string.contains", string_contains_idx);
+
         // NATIVE: int_to_string - converts integer to string using malloc
         // Parameters: value (i32)
         // Returns: pointer (i32) to new string
@@ -6848,36 +6944,97 @@ impl CodeGenerator {
             "Http" => {
                 match method {
                     "get" => {
-                        // Generate the URL argument
-                        self.generate_expression(&arguments[0], instructions)?;
+                        // Generate the URL argument as string (ptr, len)
+                        self.generate_string_for_import(&arguments[0], instructions)?;
 
-                        // For now, just drop the argument and return a placeholder string pointer
-                        // In a real implementation, this would call http_get import with proper string handling
-                        instructions.push(Instruction::Drop); // Drop the URL argument for now
-                        instructions.push(Instruction::I32Const(0)); // Placeholder response string pointer
-                        Ok(Some(WasmType::I32)) // String is represented as I32 pointer
+                        // Call http_get import - requires bridge to provide implementation
+                        if let Some(http_get_index) =
+                            self.http_import_indices.get("http_get").copied()
+                        {
+                            instructions.push(Instruction::Call(http_get_index));
+                            Ok(Some(WasmType::I32)) // Returns string pointer to response
+                        } else {
+                            Err(CompilerError::codegen_error(
+                                "Http.get requires http_get import - ensure bridge provides this function",
+                                Some("HTTP operations are platform-dependent and require a bridge implementation".to_string()),
+                                None,
+                            ))
+                        }
                     }
-                    "post" | "put" | "patch" => {
-                        // Generate URL and body arguments
-                        self.generate_expression(&arguments[0], instructions)?;
-                        self.generate_expression(&arguments[1], instructions)?;
+                    "post" => {
+                        // Generate URL and body arguments as strings
+                        self.generate_string_for_import(&arguments[0], instructions)?;
+                        self.generate_string_for_import(&arguments[1], instructions)?;
 
-                        // For now, just drop both arguments and return a placeholder response
-                        // In a real implementation, this would call http_post/put/patch import with proper string handling
-                        instructions.push(Instruction::Drop); // Drop body argument
-                        instructions.push(Instruction::Drop); // Drop URL argument
-                        instructions.push(Instruction::I32Const(0)); // Placeholder response string pointer
-                        Ok(Some(WasmType::I32)) // String is represented as I32 pointer
+                        // Call http_post import
+                        if let Some(http_post_index) =
+                            self.http_import_indices.get("http_post").copied()
+                        {
+                            instructions.push(Instruction::Call(http_post_index));
+                            Ok(Some(WasmType::I32)) // Returns string pointer to response
+                        } else {
+                            Err(CompilerError::codegen_error(
+                                "Http.post requires http_post import - ensure bridge provides this function",
+                                Some("HTTP operations are platform-dependent and require a bridge implementation".to_string()),
+                                None,
+                            ))
+                        }
+                    }
+                    "put" => {
+                        // Generate URL and body arguments as strings
+                        self.generate_string_for_import(&arguments[0], instructions)?;
+                        self.generate_string_for_import(&arguments[1], instructions)?;
+
+                        // Call http_put import
+                        if let Some(http_put_index) =
+                            self.http_import_indices.get("http_put").copied()
+                        {
+                            instructions.push(Instruction::Call(http_put_index));
+                            Ok(Some(WasmType::I32)) // Returns string pointer to response
+                        } else {
+                            Err(CompilerError::codegen_error(
+                                "Http.put requires http_put import - ensure bridge provides this function",
+                                Some("HTTP operations are platform-dependent and require a bridge implementation".to_string()),
+                                None,
+                            ))
+                        }
+                    }
+                    "patch" => {
+                        // Generate URL and body arguments as strings
+                        self.generate_string_for_import(&arguments[0], instructions)?;
+                        self.generate_string_for_import(&arguments[1], instructions)?;
+
+                        // Call http_patch import
+                        if let Some(http_patch_index) =
+                            self.http_import_indices.get("http_patch").copied()
+                        {
+                            instructions.push(Instruction::Call(http_patch_index));
+                            Ok(Some(WasmType::I32)) // Returns string pointer to response
+                        } else {
+                            Err(CompilerError::codegen_error(
+                                "Http.patch requires http_patch import - ensure bridge provides this function",
+                                Some("HTTP operations are platform-dependent and require a bridge implementation".to_string()),
+                                None,
+                            ))
+                        }
                     }
                     "delete" => {
-                        // Generate the URL argument
-                        self.generate_expression(&arguments[0], instructions)?;
+                        // Generate the URL argument as string
+                        self.generate_string_for_import(&arguments[0], instructions)?;
 
-                        // For now, just drop the argument and return a placeholder response
-                        // In a real implementation, this would call http_delete import with proper string handling
-                        instructions.push(Instruction::Drop); // Drop the URL argument
-                        instructions.push(Instruction::I32Const(0)); // Placeholder response string pointer
-                        Ok(Some(WasmType::I32)) // String is represented as I32 pointer
+                        // Call http_delete import
+                        if let Some(http_delete_index) =
+                            self.http_import_indices.get("http_delete").copied()
+                        {
+                            instructions.push(Instruction::Call(http_delete_index));
+                            Ok(Some(WasmType::I32)) // Returns string pointer to response
+                        } else {
+                            Err(CompilerError::codegen_error(
+                                "Http.delete requires http_delete import - ensure bridge provides this function",
+                                Some("HTTP operations are platform-dependent and require a bridge implementation".to_string()),
+                                None,
+                            ))
+                        }
                     }
                     _ => Ok(None), // Method not found in Http
                 }
@@ -8798,6 +8955,32 @@ impl CodeGenerator {
         self.function_map
             .insert("mem_release".to_string(), self.function_count);
         self.imported_functions.insert("mem_release".to_string());
+        self.function_count += 1;
+
+        // mem_scope_push() -> void - Push current allocation offset as scope mark
+        // Used at the start of loops/blocks for arena-style memory management
+        let mem_scope_push_type = self.add_function_type(&[], None)?;
+        self.import_section.import(
+            "memory_runtime",
+            "mem_scope_push",
+            wasm_encoder::EntityType::Function(mem_scope_push_type),
+        );
+        self.function_map
+            .insert("mem_scope_push".to_string(), self.function_count);
+        self.imported_functions.insert("mem_scope_push".to_string());
+        self.function_count += 1;
+
+        // mem_scope_pop() -> void - Pop scope mark and reset allocation offset
+        // Used at the end of loops/blocks to free all allocations made in that scope
+        let mem_scope_pop_type = self.add_function_type(&[], None)?;
+        self.import_section.import(
+            "memory_runtime",
+            "mem_scope_pop",
+            wasm_encoder::EntityType::Function(mem_scope_pop_type),
+        );
+        self.function_map
+            .insert("mem_scope_pop".to_string(), self.function_count);
+        self.imported_functions.insert("mem_scope_pop".to_string());
         self.function_count += 1;
 
         // NOTE: int_to_string is now NATIVE (registered in register_memory_operations)

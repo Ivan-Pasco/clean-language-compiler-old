@@ -2477,6 +2477,7 @@ impl MirCodeGenerator<'_> {
                             Some("print") | Some("printl") | Some("println") => true,
                             Some("list.set") | Some("list.clear") => true,
                             Some("mem_release") | Some("mem_retain") => true,
+                            Some("mem_scope_push") | Some("mem_scope_pop") => true, // Scope-based memory management
                             _ => false,
                         };
 
@@ -4010,12 +4011,12 @@ impl MirCodeGenerator<'_> {
 
     /// Set up memory section
     fn setup_memory_section(&mut self) -> Result<(), CompilerError> {
-        debug_mir!("DEBUG MIR: Setting up memory section with 1 page minimum");
+        debug_mir!("DEBUG MIR: Setting up memory section with 16 pages (1MB) minimum");
         self.wasm_generator
             .memory_section
             .memory(wasm_encoder::MemoryType {
-                minimum: 1,
-                maximum: Some(16), // Limit to 16 pages (1MB) for safety
+                minimum: 16,       // 16 pages = 1MB initial memory
+                maximum: Some(64), // Limit to 64 pages (4MB) for safety
                 memory64: false,
                 shared: false,
             });

@@ -49,7 +49,9 @@ impl StdlibPlugin for ConsolePlugin {
     }
 
     fn register_functions(&self, _codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // TODO: Implement console functions
+        // Console functions are registered by builtin_generator.rs:register_console_operations()
+        // This plugin provides metadata for IDE tooling and documentation
+        // Actual WASM code generation uses the print/printl imports
         Ok(())
     }
 
