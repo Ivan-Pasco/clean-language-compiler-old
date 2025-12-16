@@ -252,12 +252,20 @@ impl MirCodeGenerator<'_> {
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: Validator operations registered");
 
-            // NATIVE: Register memory operations (malloc, memcpy) for standalone WASM execution
-            debug_mir!("DEBUG MIR: Registering native memory operations");
+            // NATIVE: Register memory operations (malloc, memcpy, string_last_index_of, etc.) for standalone WASM execution
+            // NOTE: This also registers string operations (indexOf, lastIndexOf, contains, etc.)
+            debug_mir!("DEBUG MIR: Registering native memory operations (includes string ops)");
             self.wasm_generator
                 .register_memory_operations()
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: Native memory operations registered");
+
+            // CRITICAL: Register native list operations (length, get, set, push, pop, etc.)
+            debug_mir!("DEBUG MIR: Registering native list operations");
+            self.wasm_generator
+                .register_list_operations()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: Native list operations registered");
         }
 
         // Set up memory section

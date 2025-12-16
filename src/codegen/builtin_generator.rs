@@ -228,8 +228,23 @@ impl CodeGenerator {
         // string_contains uses string_index_of internally
         let contains_instructions = native_stdlib::string_ops::gen_contains(index_of_idx);
         self.register_function("string_contains", vec![ValType::I32, ValType::I32], vec![ValType::I32], &contains_instructions)?;
+
+        // Native lastIndexOf implementation
+        let last_index_of_instructions = native_stdlib::string_ops::gen_last_index_of();
+        let last_index_of_idx = self.register_function_with_locals(
+            "string_last_index_of",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32], // 6 extra locals
+            &last_index_of_instructions,
+        )?;
+        tracing::debug!(
+            function_index = last_index_of_idx,
+            "Registered native string_last_index_of function"
+        );
+
         self.register_import_function("env", "string_compare", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        
+
         // String namespace functions (static method style)
         // These are aliases to the native implementations registered above
         if let Some(string_length_idx) = self.get_function_index("string_length") {
@@ -241,7 +256,9 @@ impl CodeGenerator {
         if let Some(index_of_idx) = self.get_function_index("string_index_of") {
             self.add_function_alias("string.indexOf", index_of_idx);
         }
-        self.register_import_function("env", "string.lastIndexOf", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        if let Some(last_index_of_idx) = self.get_function_index("string_last_index_of") {
+            self.add_function_alias("string.lastIndexOf", last_index_of_idx);
+        }
         if let Some(starts_with_idx) = self.get_function_index("string_starts_with") {
             self.add_function_alias("string.startsWith", starts_with_idx);
         }

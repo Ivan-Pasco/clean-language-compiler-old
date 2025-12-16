@@ -2357,11 +2357,14 @@ impl<'a> TypeInference<'a> {
                                         );
                                         Some(method_sym)
                                     } else {
-                                        tracing::warn!(
+                                        // NOTE: Built-in methods like integer.toString, boolean.toString, etc.
+                                        // are not registered in the symbol table - they're resolved at codegen time
+                                        // via the function_map. Using SymbolId(0) is expected for these methods.
+                                        tracing::debug!(
                                             type_name = %type_name,
                                             method = %method,
                                             builtin_name = %builtin_method_name,
-                                            "Built-in method not found - using SymbolId(0) fallback"
+                                            "Built-in method resolved at codegen time - using SymbolId(0)"
                                         );
                                         None
                                     }

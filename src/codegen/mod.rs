@@ -18,6 +18,9 @@ use std::collections::{HashMap, HashSet};
 // Declare the modules
 mod binary_operations;
 mod binaryen_optimizer;
+// NOTE: builtin_generator.rs contains additional impl blocks for CodeGenerator but is NOT
+// compiled as a module. The critical native functions (lastIndexOf, startsWith, etc.) are
+// registered via register_native_string_operations() below instead.
 pub mod bridge_generator;
 mod instruction_generator;
 mod memory;
@@ -4730,6 +4733,55 @@ impl CodeGenerator {
         self.add_function_alias("string_contains", string_contains_idx);
         self.add_function_alias("string.contains", string_contains_idx);
 
+        // NATIVE: string_last_index_of - finds last occurrence of substring in string
+        // Parameters: str_ptr (i32), search_ptr (i32)
+        // Returns: index (i32) or -1 if not found
+        let string_last_index_of_instructions = native_stdlib::string_ops::gen_last_index_of();
+        let string_last_index_of_idx = self.register_function_with_locals(
+            "__string_last_index_of",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &[
+                WasmType::I32,
+                WasmType::I32,
+                WasmType::I32,
+                WasmType::I32,
+                WasmType::I32,
+                WasmType::I32,
+            ], // 6 extra locals
+            &string_last_index_of_instructions,
+        )?;
+        self.add_function_alias("string_last_index_of", string_last_index_of_idx);
+        self.add_function_alias("string.lastIndexOf", string_last_index_of_idx);
+
+        // NATIVE: string_starts_with - checks if string starts with prefix
+        // Parameters: str_ptr (i32), prefix_ptr (i32)
+        // Returns: boolean (i32)
+        let string_starts_with_instructions = native_stdlib::string_ops::gen_starts_with();
+        let string_starts_with_idx = self.register_function_with_locals(
+            "__string_starts_with",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // 3 extra locals
+            &string_starts_with_instructions,
+        )?;
+        self.add_function_alias("string_starts_with", string_starts_with_idx);
+        self.add_function_alias("string.startsWith", string_starts_with_idx);
+
+        // NATIVE: string_ends_with - checks if string ends with suffix
+        // Parameters: str_ptr (i32), suffix_ptr (i32)
+        // Returns: boolean (i32)
+        let string_ends_with_instructions = native_stdlib::string_ops::gen_ends_with();
+        let string_ends_with_idx = self.register_function_with_locals(
+            "__string_ends_with",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32], // 4 extra locals
+            &string_ends_with_instructions,
+        )?;
+        self.add_function_alias("string_ends_with", string_ends_with_idx);
+        self.add_function_alias("string.endsWith", string_ends_with_idx);
+
         // NATIVE: int_to_string - converts integer to string using malloc
         // Parameters: value (i32)
         // Returns: pointer (i32) to new string
@@ -4961,8 +5013,10 @@ impl CodeGenerator {
     }
 
     /// Register string operation functions using WASM instructions from StringOperations
+    /// NOTE: This is the AST-based implementation. The native WASM implementation is in
+    /// builtin_generator.rs register_string_operations() which includes lastIndexOf, startsWith, etc.
     #[allow(dead_code)]
-    fn register_string_operations(&mut self) -> Result<(), CompilerError> {
+    fn register_string_operations_ast(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::string_ops::StringOperations;
 
         // Create a StringOperations instance and register its functions
@@ -5023,42 +5077,8 @@ impl CodeGenerator {
         self.prepare_function_type(&trim_end_function)?;
         self.generate_function(&trim_end_function)?;
 
-        // Register lastIndexOf
-        let last_index_of_function = ast::Function {
-            name: "string_last_index_of".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![
-                ast::Parameter {
-                    name: "s".to_string(),
-                    type_: ast::Type::String,
-                    default_value: None,
-                },
-                ast::Parameter {
-                    name: "search_string".to_string(),
-                    type_: ast::Type::String,
-                    default_value: None,
-                },
-            ],
-            return_type: ast::Type::Integer,
-            body: vec![ast::Statement::Return {
-                value: Some(ast::Expression::Call(
-                    "string_last_index_of_impl".to_string(),
-                    vec![
-                        ast::Expression::Variable("s".to_string()),
-                        ast::Expression::Variable("search_string".to_string()),
-                    ],
-                )),
-                location: None,
-            }],
-            description: Some("Returns the last index of a substring within a string.".to_string()),
-            syntax: ast::FunctionSyntax::Simple,
-            visibility: ast::Visibility::Public,
-            modifier: ast::FunctionModifier::None,
-            location: None,
-        };
-        self.prepare_function_type(&last_index_of_function)?;
-        self.generate_function(&last_index_of_function)?;
+        // NOTE: string_last_index_of is now implemented as a native WASM function
+        // in builtin_generator.rs using gen_last_index_of() - no AST wrapper needed
 
         // Register substring
         let substring_function = ast::Function {
