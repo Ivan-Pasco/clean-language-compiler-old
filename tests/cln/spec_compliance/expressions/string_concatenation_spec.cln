@@ -42,4 +42,23 @@ start()
 	string result = ("A" + "B") + ("C" + "D")
 	print("Expression concat: " + result)
 
+	// Test 9: Variable reassignment with concatenation (regression test for truncation bug)
+	string html = "<html>"
+	html = html + "<head>"
+	html = html + "</head>"
+	html = html + "<body>"
+	html = html + "</body>"
+	html = html + "</html>"
+	print("HTML reassignment: " + html)
+
+	// Test 10: Multiple reassignments in loop-like pattern
+	string builder = "["
+	builder = builder + "a"
+	builder = builder + ","
+	builder = builder + "b"
+	builder = builder + ","
+	builder = builder + "c"
+	builder = builder + "]"
+	print("Builder result: " + builder)
+
 	print("String concatenation test completed")

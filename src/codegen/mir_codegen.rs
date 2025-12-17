@@ -3075,45 +3075,14 @@ impl MirCodeGenerator<'_> {
                     });
                 }
             }
-            MirOperand::Value(value_id) => {
-                // Check if this value represents a string constant
-                if let Some(&string_index) = self.value_to_string_index.get(value_id) {
-                    // This value is a string constant - push pointer only
-                    if let Some(string_pool) = &self.string_pool {
-                        if let Some(string_content) = string_pool.get(string_index) {
-                            let data_offset = self
-                                .wasm_generator
-                                .get_or_create_string_offset(string_content)?;
-                            // Push pointer to string structure
-                            self.current_instructions
-                                .push(Instruction::I32Const(data_offset as i32));
-                        } else {
-                            return Err(CompilerError::Codegen {
-                                context: Box::new(crate::error::ErrorContext::new(
-                                    format!(
-                                        "String index {} not found in string pool",
-                                        string_index
-                                    ),
-                                    None,
-                                    crate::error::ErrorType::Codegen,
-                                    Some(crate::ast::SourceLocation::default()),
-                                )),
-                            });
-                        }
-                    } else {
-                        return Err(CompilerError::Codegen {
-                            context: Box::new(crate::error::ErrorContext::new(
-                                "String pool not initialized for input function call".to_string(),
-                                None,
-                                crate::error::ErrorType::Codegen,
-                                Some(crate::ast::SourceLocation::default()),
-                            )),
-                        });
-                    }
-                } else {
-                    // This is a string pointer value - just load it as-is
-                    self.load_operand(operand)?;
-                }
+            MirOperand::Value(_value_id) => {
+                // CRITICAL FIX: Always load values from their local variable, never use
+                // cached string constant offsets. The value_to_string_index mapping only
+                // records the INITIAL assignment - if the variable was reassigned (e.g.,
+                // html = html + "..."), we need to read the CURRENT value from the local.
+                // This fixes the string concatenation truncation bug where reassigned
+                // string variables would print their original value instead of the new one.
+                self.load_operand(operand)?;
             }
             _ => {
                 // For other operand types, just load normally
@@ -3190,110 +3159,51 @@ impl MirCodeGenerator<'_> {
             }
             MirOperand::Value(value_id) => {
                 debug_mir!(" LOAD_STRING: Processing Value({:?})", value_id);
-                // Check if this value represents a string constant
+                // CRITICAL FIX: Always load values from their local variable and expand
+                // to (content_ptr, length). Never use cached value_to_string_index mappings
+                // because the variable may have been reassigned (e.g., html = html + "...").
+                // The mapping only records the INITIAL assignment, not the current value.
+                // This fixes the string concatenation truncation bug.
                 tracing::trace!(
                     value_id = ?value_id.0,
-                    "Checking ValueId for string mapping"
+                    "Expanding string pointer for ValueId (always load from local)"
                 );
-                debug_mir!(
-                    "DEBUG LOAD_STRING: Checking value_to_string_index for ValueId({:?})",
-                    value_id.0
-                );
-                if let Some(&string_index) = self.value_to_string_index.get(value_id) {
-                    debug_mir!(" LOAD_STRING: Found string_index={}", string_index);
-                    tracing::trace!(
-                        value_id = ?value_id.0,
-                        string_index = string_index,
-                        "Found string mapping"
-                    );
-                    // This value is a string constant - expand to pointer + length
-                    if let Some(string_pool) = &self.string_pool {
-                        if let Some(string_content) = string_pool.get(string_index) {
-                            let data_offset = self
-                                .wasm_generator
-                                .get_or_create_string_offset(string_content)?;
-                            let str_len = string_content.len() as i32;
 
-                            // CRITICAL FIX: Skip 4-byte length prefix to get to content
-                            let content_offset = data_offset + 4;
+                // Load the string pointer from the local variable
+                debug_mir!(" LOAD_STRING: Loading operand to stack");
+                self.load_operand(operand)?;
 
-                            // Push pointer to string content
-                            self.current_instructions
-                                .push(Instruction::I32Const(content_offset as i32));
-                            // Push string length
-                            self.current_instructions
-                                .push(Instruction::I32Const(str_len));
-                        } else {
-                            return Err(CompilerError::Codegen {
-                                context: Box::new(crate::error::ErrorContext::new(
-                                    format!(
-                                        "String index {} not found in string pool",
-                                        string_index
-                                    ),
-                                    None,
-                                    crate::error::ErrorType::Codegen,
-                                    Some(crate::ast::SourceLocation::default()),
-                                )),
-                            });
-                        }
-                    } else {
-                        return Err(CompilerError::Codegen {
-                            context: Box::new(crate::error::ErrorContext::new(
-                                "String pool not initialized for print function call".to_string(),
-                                None,
-                                crate::error::ErrorType::Codegen,
-                                Some(crate::ast::SourceLocation::default()),
-                            )),
-                        });
-                    }
-                } else {
-                    debug_mir!(
-                        "DEBUG LOAD_STRING: No string_index found, expanding as string pointer"
-                    );
-                    // This is a string VALUE (from function return like .toString())
-                    // We need to expand from pointer to (pointer, length)
-                    tracing::trace!(
-                        value_id = ?value_id.0,
-                        "Expanding string pointer for ValueId"
-                    );
+                // Allocate a temporary local to hold the pointer
+                let temp_local = self.next_local_index;
+                debug_mir!(" LOAD_STRING: Allocated temp_local={}", temp_local);
+                self.next_local_index += 1;
+                // Track type: string pointers are i32
+                self.temp_local_types.insert(temp_local, ValType::I32);
 
-                    // Load the string pointer into a local variable
-                    debug_mir!(" LOAD_STRING: Loading operand to stack");
-                    self.load_operand(operand)?;
+                // Store pointer to temp local
+                debug_mir!(" LOAD_STRING: Storing pointer to temp_local");
+                self.current_instructions
+                    .push(Instruction::LocalSet(temp_local));
 
-                    // Allocate a temporary local to hold the pointer
-                    let temp_local = self.next_local_index;
-                    debug_mir!(" LOAD_STRING: Allocated temp_local={}", temp_local);
-                    self.next_local_index += 1;
-                    // Track type: string pointers are i32
-                    self.temp_local_types.insert(temp_local, ValType::I32);
+                // Calculate content pointer (ptr + 4, skipping length field)
+                debug_mir!(" LOAD_STRING: Calculating content_ptr = base_ptr + 4");
+                self.current_instructions
+                    .push(Instruction::LocalGet(temp_local));
+                self.current_instructions.push(Instruction::I32Const(4));
+                self.current_instructions.push(Instruction::I32Add);
 
-                    // Store pointer to temp local
-                    debug_mir!(" LOAD_STRING: Storing pointer to temp_local");
-                    self.current_instructions
-                        .push(Instruction::LocalSet(temp_local));
+                // Load length from memory at pointer location
+                debug_mir!(" LOAD_STRING: Loading length from base_ptr");
+                self.current_instructions
+                    .push(Instruction::LocalGet(temp_local));
+                self.current_instructions
+                    .push(Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 2, // 4-byte alignment for i32
+                        memory_index: 0,
+                    }));
 
-                    // Calculate content pointer (ptr + 4, skipping length field)
-                    debug_mir!(" LOAD_STRING: Calculating content_ptr = base_ptr + 4");
-                    self.current_instructions
-                        .push(Instruction::LocalGet(temp_local));
-                    self.current_instructions.push(Instruction::I32Const(4));
-                    self.current_instructions.push(Instruction::I32Add);
-
-                    // Load length from memory at pointer location
-                    debug_mir!(" LOAD_STRING: Loading length from base_ptr");
-                    self.current_instructions
-                        .push(Instruction::LocalGet(temp_local));
-                    self.current_instructions
-                        .push(Instruction::I32Load(wasm_encoder::MemArg {
-                            offset: 0,
-                            align: 2, // 4-byte alignment for i32
-                            memory_index: 0,
-                        }));
-
-                    debug_mir!(" LOAD_STRING: String pointer expansion completed - stack should have [content_ptr, length]");
-                    debug_mir!("DEBUG MIR: String pointer expansion completed");
-                }
+                debug_mir!(" LOAD_STRING: String pointer expansion completed - stack should have [content_ptr, length]");
             }
             _ => {
                 // CRITICAL FIX: For non-string operands, we need to convert them to strings first
