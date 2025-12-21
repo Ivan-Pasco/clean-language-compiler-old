@@ -78,6 +78,7 @@ pub enum BuiltinCategory {
     Http,      // HTTP operations
     Memory,    // memory management
     Condition, // conditional operations
+    Json,      // JSON operations  // BOOK: json-module
 }
 
 /// A builtin function definition
@@ -223,6 +224,7 @@ impl BuiltinRegistry {
         registry.register_logical_namespace();
         registry.register_file_namespace();
         registry.register_http_namespace();
+        registry.register_json_namespace(); // BOOK: json-module
 
         registry
     }
@@ -1139,6 +1141,44 @@ impl BuiltinRegistry {
         ]);
 
         self.namespaces.insert("http".to_string(), http_ns);
+    }
+
+    /// Register json namespace (json.textToData, json.dataToText, etc.)
+    /// BOOK: json-module - pure WASM JSON implementation
+    fn register_json_namespace(&mut self) {
+        let json_ns = BuiltinNamespace::new("json").with_functions(vec![
+            // Parse JSON text into data structure
+            // Returns i32 pointer to JSON value structure in memory
+            BuiltinFunction::new(
+                "textToData",
+                vec![BuiltinType::String],
+                BuiltinType::Integer, // Returns pointer to JSON value
+                BuiltinCategory::Json,
+            ),
+            // Parse JSON text, returns null (0) on error
+            BuiltinFunction::new(
+                "tryTextToData",
+                vec![BuiltinType::String],
+                BuiltinType::Integer, // Returns pointer or null (0)
+                BuiltinCategory::Json,
+            ),
+            // Convert data to JSON text
+            BuiltinFunction::new(
+                "dataToText",
+                vec![BuiltinType::Integer], // Takes pointer to JSON value
+                BuiltinType::String,
+                BuiltinCategory::Json,
+            ),
+            // Convert data to formatted JSON text
+            BuiltinFunction::new(
+                "prettyDataToText",
+                vec![BuiltinType::Integer], // Takes pointer to JSON value
+                BuiltinType::String,
+                BuiltinCategory::Json,
+            ),
+        ]);
+
+        self.namespaces.insert("json".to_string(), json_ns);
     }
 
     // ============== Query Methods ==============

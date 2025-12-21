@@ -1377,7 +1377,8 @@ impl<'a> SpecificationLexer<'a> {
         }
     }
 
-    /// Handle exclamation (!=)
+    /// Handle exclamation (! or !=)
+    // BOOK: required-operator - Standalone ! is the required assertion operator
     fn handle_exclamation(&mut self) -> Result<Token, LexError> {
         let start_location = self.current_location();
         self.advance(); // Skip '!'
@@ -1386,10 +1387,8 @@ impl<'a> SpecificationLexer<'a> {
             self.advance(); // Skip '='
             Ok(Token::simple(TokenKind::NotEqual, start_location))
         } else {
-            Err(LexError::InvalidCharacter {
-                char: '!',
-                location: start_location,
-            })
+            // BOOK: required-operator - Standalone ! is the required assertion operator
+            Ok(Token::simple(TokenKind::Bang, start_location))
         }
     }
 

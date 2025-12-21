@@ -2960,6 +2960,12 @@ impl SemanticAnalyzer {
                             ))
                         }
                     }
+                    // BOOK: required-operator - Postfix ! assertion for null check
+                    // Required operator returns the same type, just adds runtime null check
+                    UnaryOperator::Required => {
+                        // The required assertion returns the same type
+                        Ok(expr_type)
+                    }
                 }
             }
 
@@ -5121,7 +5127,8 @@ impl SemanticAnalyzer {
             | Type::String
             | Type::Boolean
             | Type::Void
-            | Type::Any => true,
+            | Type::Any
+            | Type::Null => true,
             Type::List(element_type) => self.is_valid_type(element_type),
             Type::Object(class_name) => self.class_table.contains_key(class_name),
             Type::Future(inner_type) => self.is_valid_type(inner_type),
@@ -5932,6 +5939,24 @@ impl SemanticAnalyzer {
                         Some("Use boolean types with not operator".to_string()),
                         None,
                     ))
+                }
+            }
+            // BOOK: null-coalescing - Default operator (null coalescing)
+            // Returns left if not null, otherwise returns right
+            BinaryOperator::Default => {
+                // Both operands should have compatible types
+                // Result type is the common type
+                if left_type == right_type {
+                    Ok(left_type)
+                } else if left_type == Type::Null {
+                    // null default value -> value type
+                    Ok(right_type)
+                } else if right_type == Type::Null {
+                    // value default null -> value type
+                    Ok(left_type)
+                } else {
+                    // Allow different types - use the non-null type
+                    Ok(left_type)
                 }
             }
         }

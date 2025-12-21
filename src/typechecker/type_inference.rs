@@ -2964,6 +2964,21 @@ impl<'a> TypeInference<'a> {
                 Ok(ConcreteType::Boolean)
             }
 
+            // BOOK: null-coalescing - NullCoalesce operator (a default b)
+            // Returns left if not null, otherwise returns right
+            // Both sides should have compatible types
+            HirBinaryOp::NullCoalesce => {
+                // Both operands should have the same type
+                self.add_constraint(TypeConstraint::Equality {
+                    left: left_type.clone(),
+                    right: right_type.clone(),
+                    location: location.clone(),
+                });
+
+                // Result type is the same as the operands
+                Ok(left_type.clone())
+            }
+
             HirBinaryOp::StringConcat => {
                 // String concatenation
                 self.add_constraint(TypeConstraint::Equality {
@@ -3831,6 +3846,12 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Boolean => Ok(ConcreteType::Boolean),
                 _ => Ok(ConcreteType::Unknown),
             },
+            // BOOK: required-operator - Postfix ! assertion for null check
+            // Required operator returns the same type, just adds runtime null check
+            HirUnaryOp::Required => {
+                // The required assertion returns the same type as the operand
+                Ok(operand_type.clone())
+            }
         }
     }
 
@@ -3839,6 +3860,8 @@ impl<'a> TypeInference<'a> {
         match op {
             HirUnaryOp::Negate => UnaryOperator::Negate,
             HirUnaryOp::Not => UnaryOperator::Not,
+            // BOOK: required-operator - Postfix ! assertion for null check
+            HirUnaryOp::Required => UnaryOperator::Required,
         }
     }
 
@@ -4086,6 +4109,8 @@ impl<'a> TypeInference<'a> {
             HirType::String => ConcreteType::String,
             HirType::Boolean => ConcreteType::Boolean,
             HirType::Void => ConcreteType::Null,
+            // BOOK: null-support - HirType::Null maps to ConcreteType::Null
+            HirType::Null => ConcreteType::Null,
             HirType::Integer8 => ConcreteType::Integer,
             HirType::Integer8u => ConcreteType::Integer,
             HirType::Integer16 => ConcreteType::Integer,
@@ -4187,6 +4212,8 @@ impl<'a> TypeInference<'a> {
             HirBinaryOp::IsNot => BinaryOperator::IsNot,
             HirBinaryOp::And => BinaryOperator::And,
             HirBinaryOp::Or => BinaryOperator::Or,
+            // BOOK: null-coalescing - Map NullCoalesce operator
+            HirBinaryOp::NullCoalesce => BinaryOperator::NullCoalesce,
             HirBinaryOp::StringConcat => BinaryOperator::Concatenate,
         }
     }

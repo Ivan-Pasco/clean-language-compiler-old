@@ -43,6 +43,11 @@ pub struct MirProgram {
     /// This includes both builtin functions (print, math.*, etc.) and user-defined functions
     /// Used by code generator to resolve function calls
     pub symbol_name_map: HashMap<SymbolId, String>,
+
+    /// Plugins used by this program, detected during AST parsing
+    /// Maps plugin name to whether it was explicitly imported or auto-detected
+    #[allow(dead_code)]
+    pub used_plugins: Vec<String>,
 }
 
 /// MIR function representation
@@ -466,6 +471,10 @@ pub enum MirUnaryOp {
 
     /// Bitwise complement
     BitNot,
+
+    // BOOK: required-operator - Postfix ! assertion for null check
+    /// Required assertion - asserts value is not null at runtime
+    Required,
 }
 
 /// Function attributes
@@ -553,7 +562,7 @@ impl MirType {
         match concrete_type {
             ConcreteType::Integer => MirType::I32, // CRITICAL FIX: Integers are i32 in WASM, not i64
             ConcreteType::Number => MirType::F64,
-            ConcreteType::String => MirType::I32, // CRITICAL FIX: Strings are i32 pointer to [len|content] structure in memory
+            ConcreteType::String => MirType::Ptr(Box::new(MirType::I8)), // Strings are i32 pointer to [len|content] - use Ptr(I8) for consistent type tracking with string literals
             ConcreteType::Boolean => MirType::Bool,
             ConcreteType::Null => MirType::Ptr(Box::new(MirType::Void)),
             ConcreteType::Undefined => MirType::Void,

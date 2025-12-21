@@ -456,6 +456,10 @@ pub enum BinaryOperator {
     And,
     Or,
 
+    // BOOK: null-coalescing - Null coalescing operator
+    // Usage: value default fallback (returns fallback if value is null)
+    NullCoalesce,
+
     // Bitwise
     BitwiseAnd,
     BitwiseOr,
@@ -478,6 +482,8 @@ pub enum UnaryOperator {
     PostIncrement,
     PreDecrement,
     PostDecrement,
+    // BOOK: required-operator - Postfix ! assertion for null check
+    Required,
 }
 
 /// Visibility modifiers

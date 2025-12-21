@@ -12,7 +12,7 @@
 use crate::ast::{
     BinaryOperator, Class, ConstantAssignment, Constructor, Expression, Field, Function,
     FunctionModifier, FunctionSyntax, ImportItem, Parameter, Program, SourceLocation, Statement,
-    TestCase, Type, Value, VariableAssignment, Visibility,
+    TestCase, Type, UnaryOperator, Value, VariableAssignment, Visibility,
 };
 use crate::error::CompilerError;
 use crate::lexer::specification_token::{Token, TokenKind, TokenStream};
@@ -2922,7 +2922,7 @@ impl TokenParser {
     // OnError has lowest precedence (below logical OR)
     // Supports chaining: a onError b onError c = (a onError b) onError c (left-associative)
     fn parse_on_error(&mut self) -> Result<Expression, CompilerError> {
-        let mut expr = self.parse_logical_or()?;
+        let mut expr = self.parse_default()?;
 
         // Support chained onError expressions with a while loop
         while self.check(&TokenKind::OnError) {
@@ -2939,7 +2939,7 @@ impl TokenParser {
             }
 
             // Otherwise, parse fallback expression
-            let fallback = self.parse_logical_or()?;
+            let fallback = self.parse_default()?;
             let location = self.current().location.clone();
 
             expr = Expression::OnError {
@@ -2947,6 +2947,22 @@ impl TokenParser {
                 fallback: Box::new(fallback),
                 location,
             };
+        }
+
+        Ok(expr)
+    }
+
+    // BOOK: null-coalescing - Parse default expressions: expr default fallback
+    // Default has precedence below onError but above logical OR
+    // Usage: value default fallback (returns fallback if value is null)
+    fn parse_default(&mut self) -> Result<Expression, CompilerError> {
+        let mut expr = self.parse_logical_or()?;
+
+        while self.check(&TokenKind::Default) {
+            let _op_token = self.bump();
+            self.skip_whitespace();
+            let right = self.parse_logical_or()?;
+            expr = Expression::Binary(Box::new(expr), BinaryOperator::Default, Box::new(right));
         }
 
         Ok(expr)
@@ -3204,6 +3220,12 @@ impl TokenParser {
 
                     expr = Expression::ListAccess(Box::new(expr), Box::new(index));
                 }
+                // BOOK: required-operator - Postfix ! assertion for null check
+                TokenKind::Bang => {
+                    // Required assertion: expr!
+                    self.bump(); // consume !
+                    expr = Expression::Unary(UnaryOperator::Required, Box::new(expr));
+                }
                 _ => break,
             }
         }
@@ -3244,6 +3266,11 @@ impl TokenParser {
             TokenKind::False => {
                 self.bump();
                 Ok(Expression::Literal(Value::Boolean(false)))
+            }
+            // BOOK: null-support - Null literal parsing
+            TokenKind::Null => {
+                self.bump();
+                Ok(Expression::Literal(Value::Null))
             }
             TokenKind::Identifier(_) => {
                 let name_token = self.expect_identifier()?;

@@ -12,6 +12,12 @@ impl CodeGenerator {
         right: &Expression,
         instructions: &mut Vec<Instruction>,
     ) -> Result<WasmType, CompilerError> {
+        // BOOK: null-coalescing - Default operator is handled in generate_binary_expression
+        // Should never reach this function - panic if it does
+        if matches!(op, BinaryOperator::Default) {
+            panic!("BUG: Default operator should be handled in generate_binary_expression, not generate_binary_operation_new");
+        }
+
         // Special handling for string concatenation
         if let BinaryOperator::Add = op {
             if self.is_string_type_new(left) && self.is_string_type_new(right) {
@@ -168,6 +174,10 @@ impl CodeGenerator {
                         instructions.push(Instruction::I32Ne);
                         Ok(WasmType::I32)
                     }
+                    // BOOK: null-coalescing - Default is handled before this match
+                    BinaryOperator::Default => {
+                        unreachable!("Default handled in generate_binary_expression")
+                    }
                 }
             }
 
@@ -256,6 +266,10 @@ impl CodeGenerator {
                     BinaryOperator::Not => {
                         instructions.push(Instruction::F64Ne);
                         Ok(WasmType::I32)
+                    }
+                    // BOOK: null-coalescing - Default is handled before this match
+                    BinaryOperator::Default => {
+                        unreachable!("Default handled in generate_binary_expression")
                     }
                 }
             }
@@ -391,6 +405,10 @@ impl CodeGenerator {
                     BinaryOperator::Not => {
                         instructions.push(Instruction::F32Ne);
                         Ok(WasmType::I32)
+                    }
+                    // BOOK: null-coalescing - Default is handled before this match
+                    BinaryOperator::Default => {
+                        unreachable!("Default handled in generate_binary_expression")
                     }
                 }
             }

@@ -920,6 +920,8 @@ impl HirBuilder {
             BinaryOperator::Not => HirBinaryOp::IsNot,
             BinaryOperator::And => HirBinaryOp::And,
             BinaryOperator::Or => HirBinaryOp::Or,
+            // BOOK: null-coalescing - Map Default operator to NullCoalesce
+            BinaryOperator::Default => HirBinaryOp::NullCoalesce,
         }
     }
 
@@ -928,6 +930,8 @@ impl HirBuilder {
         match op {
             UnaryOperator::Negate => HirUnaryOp::Negate,
             UnaryOperator::Not => HirUnaryOp::Not,
+            // BOOK: required-operator - Postfix ! assertion for null check
+            UnaryOperator::Required => HirUnaryOp::Required,
         }
     }
 

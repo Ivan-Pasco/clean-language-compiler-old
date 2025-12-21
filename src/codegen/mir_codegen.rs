@@ -266,6 +266,13 @@ impl MirCodeGenerator<'_> {
                 .register_list_operations()
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: Native list operations registered");
+
+            // BOOK: json-module - Register JSON operations (json.textToData, json.dataToText, etc.)
+            debug_mir!("DEBUG MIR: Registering JSON operations");
+            self.wasm_generator
+                .register_json_operations()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: JSON operations registered");
         }
 
         // Set up memory section
@@ -1535,14 +1542,60 @@ impl MirCodeGenerator<'_> {
             }
 
             MirOperation::UnaryOp { op, operand } => {
-                // Load operand and perform operation
-                self.load_operand(operand)?;
-                self.generate_unary_operation(op)?;
-                if let Some(dest) = instruction.dest {
-                    self.store_to_local(dest)?;
+                // BOOK: required-operator - Special handling for Required operator
+                // Required needs to check if value is null and trap if so
+                if matches!(op, MirUnaryOp::Required) {
+                    // Required assertion: value! traps if value is null
+                    self.load_operand(operand)?;
+
+                    if let Some(dest) = instruction.dest {
+                        // Use dest local to store value and perform null check
+                        if let Some(&local_index) = self.value_to_local.get(&dest) {
+                            // Store to local and keep on stack with tee
+                            self.current_instructions
+                                .push(Instruction::LocalTee(local_index));
+                            // Check if null (0)
+                            self.current_instructions.push(Instruction::I32Eqz);
+                            // If null, trap
+                            self.current_instructions
+                                .push(Instruction::If(wasm_encoder::BlockType::Empty));
+                            self.current_instructions.push(Instruction::Unreachable);
+                            self.current_instructions.push(Instruction::End);
+                            // Value is still in local, load it back for the result
+                            self.current_instructions
+                                .push(Instruction::LocalGet(local_index));
+                            // Store to dest (which is the same local)
+                            self.current_instructions
+                                .push(Instruction::LocalSet(local_index));
+                        } else {
+                            // No local mapping - just do the check and drop
+                            self.current_instructions.push(Instruction::I32Eqz);
+                            self.current_instructions
+                                .push(Instruction::If(wasm_encoder::BlockType::Empty));
+                            self.current_instructions.push(Instruction::Unreachable);
+                            self.current_instructions.push(Instruction::End);
+                        }
+                    } else {
+                        // No destination - just check and drop
+                        // Stack: [value]
+                        // Check if null
+                        self.current_instructions.push(Instruction::I32Eqz);
+                        self.current_instructions
+                            .push(Instruction::If(wasm_encoder::BlockType::Empty));
+                        self.current_instructions.push(Instruction::Unreachable);
+                        self.current_instructions.push(Instruction::End);
+                        // Value was consumed by the check, nothing to drop
+                    }
                 } else {
-                    // No destination - drop the result to avoid stack pollution
-                    self.current_instructions.push(Instruction::Drop);
+                    // Normal unary operation
+                    self.load_operand(operand)?;
+                    self.generate_unary_operation(op)?;
+                    if let Some(dest) = instruction.dest {
+                        self.store_to_local(dest)?;
+                    } else {
+                        // No destination - drop the result to avoid stack pollution
+                        self.current_instructions.push(Instruction::Drop);
+                    }
                 }
             }
 
@@ -3479,6 +3532,12 @@ impl MirCodeGenerator<'_> {
                 // Bitwise not: x ^ -1
                 self.current_instructions.push(Instruction::I32Const(-1));
                 self.current_instructions.push(Instruction::I32Xor);
+            }
+            // BOOK: required-operator - Required is handled specially in MirOperation::UnaryOp
+            MirUnaryOp::Required => {
+                // Required operator should be handled in UnaryOp match arm above
+                // This should never be reached - just leave value on stack unchanged
+                // (the check and trap happen in the special handling)
             }
         }
 

@@ -21,8 +21,9 @@ impl CodeGenerator {
         self.register_http_operations()?; // Needed for HTTP operations
         self.register_conditional_operations()?; // Needed for conditional operations
         
-        // Register StandardLibrary functions including matrix operations
-        // self.register_standard_library_functions()?;
+        // Register StandardLibrary functions including matrix operations and JSON
+        // BOOK: json-module - StandardLibrary includes JsonClass for JSON operations
+        self.register_standard_library_functions()?;
         
         Ok(())
     }

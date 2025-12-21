@@ -13,7 +13,8 @@ EMPTY_LINE_TRIVIA = _{ INDENT* ~ NEWLINE }
 TRIVIA = _{ LINE_TRIVIA | BLOCK_TRIVIA | EMPTY_LINE_TRIVIA }
 
 // Keywords and identifiers
-keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print") ~ !(ASCII_ALPHANUMERIC | "_") }
+// BOOK: null-support - Added null and default keywords for null handling
+keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "null" | "default" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print") ~ !(ASCII_ALPHANUMERIC | "_") }
 // Identifiers can start with letter or underscore (underscore prefix for internal/bridge functions)
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
@@ -31,6 +32,9 @@ float = @{ "-"? ~ ASCII_DIGIT+ ~ (
 )}
 number = _{ float | integer }
 boolean = { "true" | "false" }
+
+// BOOK: null-support - Null literal for representing absence of value
+null_literal = { "null" }
 
 // Advanced size specifiers for types
 size_specifier = { ":" ~ ASCII_DIGIT+ ~ ("u")? }
@@ -191,16 +195,20 @@ namespace_identifier = { identifier }
 static_class_name = { static_class_identifier ~ ("." ~ static_class_identifier)* }
 
 // Argument expression - bounded expression that allows arithmetic but stops at natural boundaries
-// Argument expressions now support full logical expressions including comparisons
-argument_expression = { argument_logical }
+// Argument expressions now support full logical expressions including comparisons and default operator
+// BOOK: null-coalescing - argument expressions support default operator
+argument_expression = { argument_default }
 
-// Argument expressions support logical, comparison, and arithmetic operations
+// Argument expressions support default, logical, comparison, and arithmetic operations
+argument_default = { argument_logical ~ (WHITESPACE* ~ default_op ~ WHITESPACE* ~ argument_logical)* }
 argument_logical = { argument_comparison ~ (WHITESPACE* ~ logical_op ~ WHITESPACE* ~ argument_comparison)* }
 argument_comparison = { argument_unary ~ (WHITESPACE* ~ comparison_op ~ WHITESPACE* ~ argument_unary)* }
 argument_unary = { (unary_op ~ WHITESPACE*)* ~ argument_additive }
 argument_additive = { argument_multiplicative ~ (WHITESPACE* ~ additive_op ~ WHITESPACE* ~ argument_multiplicative)* }
 argument_multiplicative = { argument_power ~ (WHITESPACE* ~ multiplicative_op ~ WHITESPACE* ~ argument_power)* }
-argument_power = { argument_primary ~ (WHITESPACE* ~ power_op ~ WHITESPACE* ~ argument_primary)* }
+// BOOK: required-operator - Power expression with postfix ! support
+argument_power = { argument_postfix_primary ~ (WHITESPACE* ~ power_op ~ WHITESPACE* ~ argument_postfix_primary)* }
+argument_postfix_primary = { argument_primary ~ required_op? }
 argument_primary = { primary }
 
 // Argument list pattern for comma-separated expressions
@@ -252,6 +260,7 @@ primary = {
     // Simple literals first - they can't partially match and fail
     number |
     boolean |
+    null_literal |  // BOOK: null-support - Null literal in primary expressions
     string |
     matrix_literal |
     list_literal |
@@ -315,8 +324,10 @@ on_error_expr = { base_expression ~ "onError" ~ base_expression }
 on_error_block = { base_expression ~ "onError" ~ ":" ~ indented_block }
 standalone_on_error = { "onError" ~ ":" ~ indented_block }
 
-// Expression with proper operator precedence (logical < comparison < arithmetic < unary)
+// Expression with proper operator precedence (default < logical < comparison < arithmetic < unary)
 // Now supports optional whitespace (spaces, newlines, and indentation) around operators for multi-line expressions
+// BOOK: null-coalescing - default has lowest precedence (a or b default c → (a or b) default c)
+default_expression = { logical_expression ~ (whitespace_around_op ~ default_op ~ whitespace_around_op ~ logical_expression)* }
 logical_expression = { comparison_expression ~ (whitespace_around_op ~ logical_op ~ whitespace_around_op ~ comparison_expression)* }
 comparison_expression = { unary_expression ~ (whitespace_around_op ~ comparison_op ~ whitespace_around_op ~ unary_expression)* }
 unary_expression = { (unary_op ~ WHITESPACE*)* ~ additive_expression }
@@ -324,7 +335,9 @@ unary_expression = { (unary_op ~ WHITESPACE*)* ~ additive_expression }
 // Arithmetic expressions with proper precedence: power > multiplicative > additive
 additive_expression = { multiplicative_expression ~ (whitespace_around_op ~ additive_op ~ whitespace_around_op ~ multiplicative_expression)* }
 multiplicative_expression = { power_expression ~ (whitespace_around_op ~ multiplicative_op ~ whitespace_around_op ~ power_expression)* }
-power_expression = { primary ~ (whitespace_around_op ~ power_op ~ whitespace_around_op ~ primary)* }
+// BOOK: required-operator - Power expression with postfix ! support
+power_expression = { postfix_primary ~ (whitespace_around_op ~ power_op ~ whitespace_around_op ~ postfix_primary)* }
+postfix_primary = { primary ~ required_op? }
 
 // Whitespace handling for operators - supports spaces only within single line expressions
 // Removed NEWLINE and INDENT to prevent consuming next statement's indentation
@@ -332,22 +345,28 @@ whitespace_around_op = _{ " "* }
 
 // Multiline expression rules for use within parentheses
 multiline_whitespace_around_op = _{ (WHITESPACE | NEWLINE | INDENT)* }
+// BOOK: null-coalescing - default has lowest precedence in multiline expressions too
+multiline_default_expression = { multiline_logical_expression ~ (multiline_whitespace_around_op ~ default_op ~ multiline_whitespace_around_op ~ multiline_logical_expression)* }
 multiline_logical_expression = { multiline_comparison_expression ~ (multiline_whitespace_around_op ~ logical_op ~ multiline_whitespace_around_op ~ multiline_comparison_expression)* }
 multiline_comparison_expression = { multiline_unary_expression ~ (multiline_whitespace_around_op ~ comparison_op ~ multiline_whitespace_around_op ~ multiline_unary_expression)* }
 multiline_unary_expression = { (unary_op ~ (WHITESPACE | NEWLINE | INDENT)*)* ~ multiline_additive_expression }
 multiline_additive_expression = { multiline_multiplicative_expression ~ (multiline_whitespace_around_op ~ additive_op ~ multiline_whitespace_around_op ~ multiline_multiplicative_expression)* }
 multiline_multiplicative_expression = { multiline_power_expression ~ (multiline_whitespace_around_op ~ multiplicative_op ~ multiline_whitespace_around_op ~ multiline_power_expression)* }
-multiline_power_expression = { multiline_primary ~ (multiline_whitespace_around_op ~ power_op ~ multiline_whitespace_around_op ~ multiline_primary)* }
+// BOOK: required-operator - Multiline power expression with postfix ! support
+multiline_power_expression = { multiline_postfix_primary ~ (multiline_whitespace_around_op ~ power_op ~ multiline_whitespace_around_op ~ multiline_postfix_primary)* }
+multiline_postfix_primary = { multiline_primary ~ required_op? }
 multiline_primary = { primary }
 
 // Legacy arithmetic_expression for backward compatibility
 arithmetic_expression = { additive_expression }
-base_expression = { conditional_expr | logical_expression }
+// BOOK: null-coalescing - base_expression uses default_expression for null handling support
+base_expression = { conditional_expr | default_expression }
 expression = { on_error_block | on_error_expr | base_expression }
 
-// Parenthesized expression - uses logical expressions to support comparisons and logical ops
+// Parenthesized expression - uses default expressions to support null-coalescing, comparisons and logical ops
 // Fixed: Support multiline expressions within parentheses with flexible indentation
-parenthesized_expr = { (WHITESPACE | NEWLINE | INDENT)* ~ multiline_logical_expression ~ (WHITESPACE | NEWLINE | INDENT)* }
+// BOOK: null-coalescing - parenthesized expressions now support default operator
+parenthesized_expr = { (WHITESPACE | NEWLINE | INDENT)* ~ multiline_default_expression ~ (WHITESPACE | NEWLINE | INDENT)* }
 
 // Operators with proper precedence levels
 // For keyword operators, use word boundaries to prevent matching inside identifiers
@@ -355,10 +374,16 @@ parenthesized_expr = { (WHITESPACE | NEWLINE | INDENT)* ~ multiline_logical_expr
 logical_op_and = @{ "and" ~ !(ASCII_ALPHANUMERIC | "_") }
 logical_op_or = @{ "or" ~ !(ASCII_ALPHANUMERIC | "_") }
 logical_op = { logical_op_and | logical_op_or }
+
+// BOOK: null-coalescing - Default operator for null handling
+// Usage: value default fallback (returns fallback if value is null)
+default_op = @{ "default" ~ !(ASCII_ALPHANUMERIC | "_") }
 comparison_op_is = @{ "is" ~ !(ASCII_ALPHANUMERIC | "_") }
 comparison_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" | comparison_op_is }
 unary_op_not = @{ "not" ~ !(ASCII_ALPHANUMERIC | "_") }
 unary_op = { unary_op_not | "-" }
+// BOOK: required-operator - Postfix ! asserts value is not null
+required_op = { "!" }
 additive_op = { "+" | "-" }
 multiplicative_op = { "*" | "/" | "%" }
 power_op = { "^" }
@@ -378,18 +403,23 @@ pairs_literal = { "{" ~ (pair_element ~ ("," ~ " "* ~ pair_element)*)? ~ "}" }
 pair_element = { (string | identifier | decimal_integer) ~ " "* ~ ":" ~ " "* ~ single_line_expression }
 
 // Single-line expressions for variable declarations (no newlines/indentation)
-single_line_expression = { single_line_logical_expression }
+// BOOK: null-coalescing - single-line expressions now support default operator
+single_line_expression = { single_line_default_expression }
+single_line_default_expression = { single_line_logical_expression ~ (" "* ~ default_op ~ " "* ~ single_line_logical_expression)* }
 single_line_logical_expression = { single_line_comparison_expression ~ (" "* ~ logical_op ~ " "* ~ single_line_comparison_expression)* }
 single_line_comparison_expression = { single_line_unary_expression ~ (" "* ~ comparison_op ~ " "* ~ single_line_unary_expression)* }
 single_line_unary_expression = { (unary_op ~ " "*)* ~ single_line_additive_expression }
 single_line_additive_expression = { single_line_multiplicative_expression ~ (" "* ~ additive_op ~ " "* ~ single_line_multiplicative_expression)* }
 single_line_multiplicative_expression = { single_line_power_expression ~ (" "* ~ multiplicative_op ~ " "* ~ single_line_power_expression)* }
-single_line_power_expression = { single_line_primary ~ (" "* ~ power_op ~ " "* ~ single_line_primary)* }
+// BOOK: required-operator - Single-line power expression with postfix ! support
+single_line_power_expression = { single_line_postfix_primary ~ (" "* ~ power_op ~ " "* ~ single_line_postfix_primary)* }
+single_line_postfix_primary = { single_line_primary ~ required_op? }
 
 // Single-line primary expression (no newlines/indentation)
 single_line_primary = {
     number |
     boolean |
+    null_literal |  // BOOK: null-support - Null literal in single-line expressions
     string |
     matrix_literal |
     list_literal |

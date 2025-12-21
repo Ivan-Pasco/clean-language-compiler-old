@@ -2102,7 +2102,7 @@ impl CodeGenerator {
                 if let Expression::PropertyAccess {
                     object: nested_object,
                     property,
-                    location: _,
+                    ..
                 } = object.as_ref()
                 {
                     if let Expression::Variable(base_name) = nested_object.as_ref() {
@@ -3606,6 +3606,11 @@ impl CodeGenerator {
         right: &Expression,
         instructions: &mut Vec<Instruction>,
     ) -> Result<WasmType, CompilerError> {
+        // BOOK: null-coalescing - Handle default operator specially
+        if let BinaryOperator::Default = op {
+            return self.generate_default_operation(left, right, instructions);
+        }
+
         // Special handling for string concatenation
         if let BinaryOperator::Add = op {
             if self.is_string_type(left) && self.is_string_type(right) {
@@ -3720,6 +3725,8 @@ impl CodeGenerator {
                     ast::BinaryOperator::Or => { instructions.push(Instruction::I32Or); Ok(WasmType::I32) },
                     ast::BinaryOperator::Is => { instructions.push(Instruction::I32Eq); Ok(WasmType::I32) },
                     ast::BinaryOperator::Not => { instructions.push(Instruction::I32Ne); Ok(WasmType::I32) },
+                    // BOOK: null-coalescing - Default is handled before this match
+                    ast::BinaryOperator::Default => unreachable!("Default handled in generate_binary_expression"),
                 }
             },
 
@@ -3762,6 +3769,8 @@ impl CodeGenerator {
                     ast::BinaryOperator::Or => { instructions.push(Instruction::I64Or); Ok(WasmType::I64) },
                     ast::BinaryOperator::Is => { instructions.push(Instruction::I64Eq); Ok(WasmType::I32) },
                     ast::BinaryOperator::Not => { instructions.push(Instruction::I64Ne); Ok(WasmType::I32) },
+                    // BOOK: null-coalescing - Default is handled before this match
+                    ast::BinaryOperator::Default => unreachable!("Default handled in generate_binary_expression"),
                 }
             },
 
@@ -3842,6 +3851,8 @@ impl CodeGenerator {
                         instructions.push(Instruction::F64Ne);
                         Ok(WasmType::I32)
                     },
+                    // BOOK: null-coalescing - Default is handled before this match
+                    ast::BinaryOperator::Default => unreachable!("Default handled in generate_binary_expression"),
                 }
             },
 
@@ -3971,6 +3982,8 @@ impl CodeGenerator {
                         instructions.push(Instruction::F32Ne);
                         Ok(WasmType::I32)
                     },
+                    // BOOK: null-coalescing - Default is handled before this match
+                    ast::BinaryOperator::Default => unreachable!("Default handled in generate_binary_expression"),
                 }
             },
 
@@ -4126,6 +4139,47 @@ impl CodeGenerator {
         }
     }
 
+    // BOOK: null-coalescing - Generate code for default operator (null coalescing)
+    // Semantics: `a default b` returns a if a is not null (not 0), otherwise returns b
+    fn generate_default_operation(
+        &mut self,
+        left: &Expression,
+        right: &Expression,
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<WasmType, CompilerError> {
+        // Generate left expression and store in temp local
+        let left_type = self.generate_expression(left, instructions)?;
+        let left_local = self.add_local(left_type);
+        instructions.push(Instruction::LocalSet(left_local));
+
+        // Generate right expression (fallback value)
+        let right_type = self.generate_expression(right, instructions)?;
+
+        // Now stack has: [right_value]
+        // We need to push: left_value, condition, then select
+        // select(val1, val2, cond) returns val1 if cond != 0, else val2
+        // Stack order for select: [val2, val1, cond]
+        // We want: return left if (left != 0), else return right
+        // So: val1 = left, val2 = right, cond = (left != 0)
+
+        // Stack currently: [right_value]
+        // Push left_value (this is val1)
+        instructions.push(Instruction::LocalGet(left_local));
+
+        // Push condition (left != 0)
+        instructions.push(Instruction::LocalGet(left_local));
+        instructions.push(Instruction::I32Const(0));
+        instructions.push(Instruction::I32Ne);
+
+        // Stack now: [right_value, left_value, condition]
+        // select will return left_value if condition != 0, else right_value
+        instructions.push(Instruction::Select);
+
+        // Return type is the type of the values (they should match)
+        // For now, we return the left type; type checking should ensure compatibility
+        Ok(left_type)
+    }
+
     fn is_string_type(&self, expr: &Expression) -> bool {
         match expr {
             // String literals
@@ -4237,6 +4291,63 @@ impl CodeGenerator {
                         None,
                         None,
                     )),
+                }
+            }
+            // BOOK: required-operator - Postfix ! assertion for null check
+            // Usage: value! (asserts value is not null, fails at runtime if null)
+            UnaryOperator::Required => {
+                // Required operator: assert value is not null
+                // For i32 (reference types), null is represented as 0
+                // For f64, null would be represented as 0.0 (though less common)
+                match operand_type {
+                    WasmType::I32 => {
+                        // Stack: [value]
+                        // Check if value is null (0)
+                        // If null, trap with unreachable
+                        // Otherwise, return the value
+
+                        // We need to duplicate the value for the check
+                        // value! → if (value == 0) unreachable else value
+                        // Use a local to store the value, check it, then push it back
+
+                        // Get a temp local for the value
+                        let temp_local = self.add_local(WasmType::I32);
+
+                        // Store value in temp
+                        instructions.push(Instruction::LocalSet(temp_local));
+
+                        // Load and check for null
+                        instructions.push(Instruction::LocalGet(temp_local));
+                        instructions.push(Instruction::I32Eqz);
+                        instructions.push(Instruction::If(wasm_encoder::BlockType::Empty));
+                        instructions.push(Instruction::Unreachable);
+                        instructions.push(Instruction::End);
+
+                        // Push the non-null value back
+                        instructions.push(Instruction::LocalGet(temp_local));
+
+                        Ok(WasmType::I32)
+                    }
+                    WasmType::F64 => {
+                        // For f64, check if value is 0.0
+                        let temp_local = self.add_local(WasmType::F64);
+
+                        instructions.push(Instruction::LocalSet(temp_local));
+                        instructions.push(Instruction::LocalGet(temp_local));
+                        instructions.push(Instruction::F64Const(0.0));
+                        instructions.push(Instruction::F64Eq);
+                        instructions.push(Instruction::If(wasm_encoder::BlockType::Empty));
+                        instructions.push(Instruction::Unreachable);
+                        instructions.push(Instruction::End);
+
+                        instructions.push(Instruction::LocalGet(temp_local));
+
+                        Ok(WasmType::F64)
+                    }
+                    _ => {
+                        // For other types, just pass through (they can't be null)
+                        Ok(operand_type)
+                    }
                 }
             }
         }
@@ -4651,6 +4762,27 @@ impl CodeGenerator {
         let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
         let validator_manager = ValidatorManager::new(memory_manager);
         validator_manager.register_functions(self)?;
+
+        Ok(())
+    }
+
+    /// Register JSON operations for parsing and stringifying JSON
+    /// BOOK: json-module - pure WASM JSON implementation
+    pub fn register_json_operations(&mut self) -> Result<(), CompilerError> {
+        use crate::stdlib::JsonClass;
+
+        tracing::debug!(
+            function_count = self.function_count,
+            "Registering JSON operations"
+        );
+
+        let json_class = JsonClass::new();
+        json_class.register_functions(self)?;
+
+        tracing::debug!(
+            function_count = self.function_count,
+            "JSON operations registered successfully"
+        );
 
         Ok(())
     }

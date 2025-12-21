@@ -64,6 +64,8 @@ pub enum TokenKind {
     Private,     // private
     Constant,    // constant
     Functions,   // functions
+    Null,        // null  // BOOK: null-support - Null literal keyword
+    Default,     // default  // BOOK: null-coalescing - Null coalescing operator keyword
 
     // Operators (§5.1 - Binary and Unary operators from specification)
     Plus,     // +
@@ -95,6 +97,8 @@ pub enum TokenKind {
     Dot,          // .
     Colon,        // :
     Semicolon,    // ;
+    // BOOK: required-operator - Postfix ! assertion for null check
+    Bang, // ! (required assertion)
 
     // Range operators (§9.2 - Range expressions)
     Range,          // .. for ranges like 1..10
@@ -177,6 +181,8 @@ impl fmt::Display for TokenKind {
             TokenKind::Private => write!(f, "private"),
             TokenKind::Constant => write!(f, "constant"),
             TokenKind::Functions => write!(f, "functions"),
+            TokenKind::Null => write!(f, "null"),
+            TokenKind::Default => write!(f, "default"),
 
             // Operators
             TokenKind::Plus => write!(f, "+"),
@@ -204,6 +210,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Dot => write!(f, "."),
             TokenKind::Colon => write!(f, ":"),
             TokenKind::Semicolon => write!(f, ";"),
+            TokenKind::Bang => write!(f, "!"),
             TokenKind::Range => write!(f, ".."),
             TokenKind::RangeInclusive => write!(f, "..="),
 
@@ -377,6 +384,8 @@ impl Keywords {
             "private" => Some(TokenKind::Private),
             "constant" => Some(TokenKind::Constant),
             "functions" => Some(TokenKind::Functions),
+            "null" => Some(TokenKind::Null), // BOOK: null-support
+            "default" => Some(TokenKind::Default), // BOOK: null-coalescing
             _ => None,
         }
     }
@@ -409,6 +418,8 @@ impl TokenKind {
             TokenKind::Else => "else".to_string(),
             TokenKind::Error => "error".to_string(),
             TokenKind::Functions => "functions".to_string(),
+            TokenKind::Null => "null".to_string(),
+            TokenKind::Default => "default".to_string(),
             TokenKind::If => "if".to_string(),
             TokenKind::Import => "import".to_string(),
             TokenKind::In => "in".to_string(),

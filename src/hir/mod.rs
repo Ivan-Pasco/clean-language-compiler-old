@@ -57,6 +57,8 @@ pub enum HirType {
     String,
     Boolean,
     Void,
+    // BOOK: null-support - Null type for representing absence of value
+    Null,
 
     /// Precision types (from lexer precision modifiers)
     Integer8,
@@ -398,6 +400,10 @@ pub enum HirBinaryOp {
     And,
     Or,
 
+    // BOOK: null-coalescing - Null coalescing operator
+    // Usage: value default fallback (returns fallback if value is null)
+    NullCoalesce,
+
     // String operations (desugared)
     StringConcat,
 }
@@ -407,6 +413,8 @@ pub enum HirBinaryOp {
 pub enum HirUnaryOp {
     Negate, // -x
     Not,    // not x
+    // BOOK: required-operator - Postfix ! assertion for null check
+    Required, // x! (asserts x is not null, fails at runtime if null)
 }
 
 impl HirExpression {
@@ -480,7 +488,8 @@ impl HirType {
             Value::Number(_) => HirType::Number,
             Value::String(_) => HirType::String,
             Value::Boolean(_) => HirType::Boolean,
-            Value::Null => HirType::Void, // Null uses void type semantics
+            // BOOK: null-support - Null value maps to Null type
+            Value::Null => HirType::Null,
             Value::Void => HirType::Void,
             Value::Integer8(_) => HirType::Integer8,
             Value::Integer8u(_) => HirType::Integer8u,

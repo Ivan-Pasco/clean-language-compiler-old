@@ -625,6 +625,14 @@ impl ConstraintGenerator {
                 );
                 Ok(ConstraintType::Concrete(Type::Boolean))
             }
+
+            // BOOK: required-operator - Postfix ! assertion for null check
+            // The required operator doesn't change the type, just asserts non-null at runtime
+            UnaryOperator::Required => {
+                // Required assertion: x! returns the same type as x
+                // It just adds a runtime null check
+                Ok(operand_type)
+            }
         }
     }
 

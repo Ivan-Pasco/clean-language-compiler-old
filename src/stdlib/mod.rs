@@ -26,6 +26,7 @@ pub mod file_class;
 pub mod http_advanced;
 pub mod http_class;
 pub mod import_system;
+pub mod json_class; // BOOK: json-module
 pub mod list_advanced;
 pub mod list_behavior;
 pub mod list_class;
@@ -61,6 +62,7 @@ pub use file_class::FileClass;
 pub use http_advanced::HttpAdvancedManager;
 pub use http_class::HttpClass;
 pub use import_system::ImportSystemManager;
+pub use json_class::JsonClass; // BOOK: json-module
 pub use list_advanced::ListAdvancedManager;
 pub use list_behavior::ListBehaviorManager;
 pub use list_class::ListClass;
@@ -105,6 +107,8 @@ pub struct StandardLibrary {
     file_class: FileClass,
     #[allow(dead_code)]
     http_class: HttpClass,
+    #[allow(dead_code)]
+    json_class: JsonClass, // BOOK: json-module
     #[allow(dead_code)]
     list_behavior: ListBehaviorManager,
     #[allow(dead_code)]
@@ -174,6 +178,7 @@ impl StandardLibrary {
             list_class: ListClass::new(),
             file_class: FileClass::new(),
             http_class: HttpClass::new(),
+            json_class: JsonClass::new(), // BOOK: json-module
             list_behavior: ListBehaviorManager::new(memory_manager.clone()),
             method_style: MethodStyleManager::new(memory_manager.clone()),
             conditional: ConditionalManager::new(memory_manager.clone()),
@@ -212,6 +217,7 @@ impl StandardLibrary {
         self.list_class.register_functions(codegen)?;
         self.file_class.register_functions(codegen)?;
         self.http_class.register_functions(codegen)?;
+        self.json_class.register_functions(codegen)?; // BOOK: json-module - pure WASM JSON
         self.list_behavior.register_functions(codegen)?;
         self.method_style.register_functions(codegen)?;
         self.conditional.register_functions(codegen)?;

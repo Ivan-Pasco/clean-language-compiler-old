@@ -1,0 +1,6 @@
+// Test: Null literal support
+// BOOK: null-support - Basic null literal test
+
+start()
+	value = null
+	print("Null value created successfully")

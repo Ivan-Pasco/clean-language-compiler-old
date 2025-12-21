@@ -157,6 +157,22 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::base_expression => {
             parse_base_expression(pair)
         }
+        // BOOK: null-coalescing - Handle default expression for null-coalescing
+        Rule::default_expression => {
+            parse_default_expression(pair)
+        }
+        // BOOK: null-coalescing - Handle multiline default expression
+        Rule::multiline_default_expression => {
+            parse_multiline_default_expression(pair)
+        }
+        // BOOK: null-coalescing - Handle single-line default expression
+        Rule::single_line_default_expression => {
+            parse_single_line_default_expression(pair)
+        }
+        // BOOK: null-coalescing - Handle argument default expression
+        Rule::argument_default => {
+            parse_argument_default(pair)
+        }
         Rule::logical_expression => {
             parse_logical_expression(pair)
         }
@@ -294,27 +310,82 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
 pub fn parse_base_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     if let Some(item) = pair.into_inner().next() {
         match item.as_rule() {
+            // BOOK: null-coalescing - base_expression now uses default_expression
+            Rule::default_expression => {
+                return parse_default_expression(item);
+            }
             Rule::logical_expression => {
                 return parse_logical_expression(item);
             }
             Rule::conditional_expr => {
                 return parse_conditional_expression(item);
             }
-            _ => {
-                return Err(CompilerError::parse_error(
-                    format!("Unexpected rule in base expression: {:?}", item.as_rule()),
-                    Some(convert_to_ast_location(&get_location(&item))),
-                    Some("Expected logical expression or conditional expression".to_string()),
-                ))
-            }
+            _ => return Err(CompilerError::parse_error(
+                format!("Unexpected rule in base expression: {:?}", item.as_rule()),
+                Some(convert_to_ast_location(&get_location(&item))),
+                Some(
+                    "Expected default expression, logical expression, or conditional expression"
+                        .to_string(),
+                ),
+            )),
         }
     }
 
     Err(CompilerError::parse_error(
         "Empty base expression".to_string(),
         None,
-        Some("Base expression must contain a logical or conditional expression".to_string()),
+        Some(
+            "Base expression must contain a default, logical, or conditional expression"
+                .to_string(),
+        ),
     ))
+}
+
+// BOOK: null-coalescing - Parse default expressions (value default fallback)
+pub fn parse_default_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut expr_stack = Vec::new();
+    let mut op_stack = Vec::new();
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::logical_expression => {
+                expr_stack.push(parse_logical_expression(item)?);
+            }
+            Rule::default_op => {
+                op_stack.push(BinaryOperator::Default);
+            }
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!(
+                        "Unexpected rule in default expression: {:?}",
+                        item.as_rule()
+                    ),
+                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some("Expected logical expression or default operator".to_string()),
+                ))
+            }
+        }
+    }
+
+    // Build the expression tree from the stacks
+    if expr_stack.is_empty() {
+        return Err(CompilerError::parse_error(
+            "Empty default expression".to_string(),
+            None,
+            Some("Default expression must contain at least one logical expression".to_string()),
+        ));
+    }
+
+    let mut result = expr_stack.remove(0);
+    let mut i = 0;
+
+    while i < op_stack.len() && !expr_stack.is_empty() {
+        let right = expr_stack.remove(0);
+        result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
+        i += 1;
+    }
+
+    Ok(result)
 }
 
 pub fn parse_logical_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
@@ -625,13 +696,51 @@ pub fn parse_multiplicative_expression(pair: Pair<Rule>) -> Result<Expression, C
     Ok(result)
 }
 
+// BOOK: required-operator - Parse postfix primary (primary with optional !)
+pub fn parse_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut result: Option<Expression> = None;
+    let mut has_required = false;
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::primary => {
+                result = Some(parse_primary(item)?);
+            }
+            Rule::required_op => {
+                has_required = true;
+            }
+            _ => {}
+        }
+    }
+
+    let expr = result.ok_or_else(|| {
+        CompilerError::parse_error(
+            "Empty postfix primary expression".to_string(),
+            None,
+            Some("Expected a primary expression".to_string()),
+        )
+    })?;
+
+    // If there's a required operator, wrap in Unary(Required)
+    if has_required {
+        Ok(Expression::Unary(UnaryOperator::Required, Box::new(expr)))
+    } else {
+        Ok(expr)
+    }
+}
+
 pub fn parse_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let mut expr_stack = Vec::new();
     let mut op_stack = Vec::new();
 
     for item in pair.into_inner() {
         match item.as_rule() {
+            // BOOK: required-operator - Handle postfix_primary for ! support
+            Rule::postfix_primary => {
+                expr_stack.push(parse_postfix_primary(item)?);
+            }
             Rule::primary => {
+                // Fallback for backward compatibility
                 expr_stack.push(parse_primary(item)?);
             }
             Rule::power_op => {
@@ -725,6 +834,8 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
             };
             Ok(Expression::Literal(Value::Boolean(value)))
         }
+        // BOOK: null-support - Parse null literal
+        Rule::null_literal => Ok(Expression::Literal(Value::Null)),
         Rule::string => parse_string(inner),
         Rule::list_literal => parse_list_literal(inner),
         Rule::matrix_literal => parse_matrix_literal(inner),
@@ -761,8 +872,16 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::parenthesized_expr => {
             // Handle parenthesized expressions: (parenthesized_expr)
             let inner_expr = inner.into_inner().next().unwrap();
-            // parenthesized_expr contains multiline_logical_expression per grammar
-            parse_multiline_logical_expression(inner_expr)
+            // BOOK: null-coalescing - parenthesized_expr now contains multiline_default_expression
+            match inner_expr.as_rule() {
+                Rule::multiline_default_expression => {
+                    parse_multiline_default_expression(inner_expr)
+                }
+                Rule::multiline_logical_expression => {
+                    parse_multiline_logical_expression(inner_expr)
+                }
+                _ => parse_multiline_logical_expression(inner_expr), // fallback for compatibility
+            }
         }
         Rule::conditional_expr => {
             // Handle conditional expressions: if condition then value else value
@@ -1039,6 +1158,8 @@ pub fn parse_list_element(pair: Pair<Rule>) -> Result<Expression, CompilerError>
             };
             Ok(Expression::Literal(Value::Boolean(value)))
         }
+        // BOOK: null-support - Parse null literal
+        Rule::null_literal => Ok(Expression::Literal(Value::Null)),
         Rule::string => parse_string(inner),
         Rule::identifier | Rule::base_identifier => {
             let identifier = inner.as_str();
@@ -1366,6 +1487,8 @@ pub fn parse_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
                 | Rule::octal_integer
                 | Rule::float => parse_number_literal(first)?,
                 Rule::boolean => Expression::Literal(Value::Boolean(first.as_str() == "true")),
+                // BOOK: null-support - Parse null literal in method call base
+                Rule::null_literal => Expression::Literal(Value::Null),
                 Rule::logical_expression => parse_expression(first)?, // Handle parenthesized expressions
                 Rule::additive_expression => parse_additive_expression(first)?, // Handle parenthesized additive expressions
                 _ => {
@@ -1911,17 +2034,19 @@ pub fn parse_start_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
 }
 
 pub fn parse_argument_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
-    // argument_expression now contains argument_logical (supports full logical expressions)
+    // BOOK: null-coalescing - argument_expression now contains argument_default
     let location = get_location(&pair);
     let inner = pair.into_inner().next().ok_or_else(|| {
         CompilerError::parse_error(
             "Empty argument expression".to_string(),
             Some(convert_to_ast_location(&location)),
-            Some("Argument expression should contain an argument_logical".to_string()),
+            Some("Argument expression should contain an argument_default".to_string()),
         )
     })?;
 
     match inner.as_rule() {
+        // BOOK: null-coalescing - argument_expression now uses argument_default
+        Rule::argument_default => parse_argument_default(inner),
         Rule::argument_logical => parse_argument_logical(inner),
         _ => {
             let location = get_location(&inner);
@@ -1931,13 +2056,37 @@ pub fn parse_argument_expression(pair: Pair<Rule>) -> Result<Expression, Compile
                     inner.as_rule()
                 ),
                 Some(convert_to_ast_location(&location)),
-                Some("Expected argument_logical".to_string()),
+                Some("Expected argument_default or argument_logical".to_string()),
             ))
         }
     }
 }
 
-// Argument-specific expression parsing functions (supports logical, comparison, arithmetic)
+// Argument-specific expression parsing functions (supports default, logical, comparison, arithmetic)
+
+// BOOK: null-coalescing - Parse argument default expressions (value default fallback)
+pub fn parse_argument_default(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let location = get_location(&pair);
+    let mut pairs = pair.into_inner();
+    let first = pairs.next().unwrap();
+
+    let mut left = parse_argument_logical(first)?;
+
+    while let (Some(op_pair), Some(right_pair)) = (pairs.next(), pairs.next()) {
+        if op_pair.as_rule() != Rule::default_op {
+            return Err(CompilerError::parse_error(
+                format!("Expected default operator, got {:?}", op_pair.as_rule()),
+                Some(convert_to_ast_location(&location)),
+                Some("Expected 'default' operator".to_string()),
+            ));
+        }
+        let right = parse_argument_logical(right_pair)?;
+        left = Expression::Binary(Box::new(left), BinaryOperator::Default, Box::new(right));
+    }
+
+    Ok(left)
+}
+
 pub fn parse_argument_logical(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let location = get_location(&pair);
     let mut pairs = pair.into_inner();
@@ -2060,11 +2209,21 @@ pub fn parse_argument_power(pair: Pair<Rule>) -> Result<Expression, CompilerErro
     let mut pairs = pair.into_inner();
     let first = pairs.next().unwrap();
 
-    let mut left = parse_argument_primary(first)?;
+    // BOOK: required-operator - Handle argument_postfix_primary (primary with optional !)
+    let mut left = match first.as_rule() {
+        Rule::argument_postfix_primary => parse_argument_postfix_primary(first)?,
+        Rule::argument_primary => parse_argument_primary(first)?,
+        _ => parse_argument_primary(first)?,
+    };
 
     while let (Some(op_pair), Some(right_pair)) = (pairs.next(), pairs.next()) {
         let op = op_pair.as_str();
-        let right = parse_argument_primary(right_pair)?;
+        // Handle both argument_postfix_primary and argument_primary
+        let right = match right_pair.as_rule() {
+            Rule::argument_postfix_primary => parse_argument_postfix_primary(right_pair)?,
+            Rule::argument_primary => parse_argument_primary(right_pair)?,
+            _ => parse_argument_primary(right_pair)?,
+        };
 
         let binary_op = match op {
             "^" => BinaryOperator::Power,
@@ -2080,6 +2239,39 @@ pub fn parse_argument_power(pair: Pair<Rule>) -> Result<Expression, CompilerErro
     }
 
     Ok(left)
+}
+
+// BOOK: required-operator - Parse argument postfix primary (primary with optional !)
+pub fn parse_argument_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut result: Option<Expression> = None;
+    let mut has_required = false;
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::argument_primary => {
+                result = Some(parse_argument_primary(item)?);
+            }
+            Rule::required_op => {
+                has_required = true;
+            }
+            _ => {}
+        }
+    }
+
+    let expr = result.ok_or_else(|| {
+        CompilerError::parse_error(
+            "Empty argument postfix primary expression".to_string(),
+            None,
+            Some("Expected an argument primary expression".to_string()),
+        )
+    })?;
+
+    // If there's a required operator, wrap in Unary(Required)
+    if has_required {
+        Ok(Expression::Unary(UnaryOperator::Required, Box::new(expr)))
+    } else {
+        Ok(expr)
+    }
 }
 
 pub fn parse_argument_unary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
@@ -2162,6 +2354,8 @@ pub fn parse_single_line_expression(pair: Pair<Rule>) -> Result<Expression, Comp
     })?;
 
     match inner.as_rule() {
+        // BOOK: null-coalescing - single_line_expression now uses single_line_default_expression
+        Rule::single_line_default_expression => parse_single_line_default_expression(inner),
         Rule::single_line_logical_expression => parse_single_line_logical_expression(inner),
         _ => Err(CompilerError::parse_error(
             format!(
@@ -2215,6 +2409,52 @@ pub fn parse_single_line_logical_expression(pair: Pair<Rule>) -> Result<Expressi
     if expr_stack.is_empty() {
         return Err(CompilerError::parse_error(
             "Empty logical expression".to_string(),
+            None,
+            None,
+        ));
+    }
+
+    let mut result = expr_stack.remove(0);
+    for (i, op) in op_stack.into_iter().enumerate() {
+        if i < expr_stack.len() {
+            let right = expr_stack.remove(0);
+            result = Expression::Binary(Box::new(result), op, Box::new(right));
+        }
+    }
+
+    Ok(result)
+}
+
+// BOOK: null-coalescing - Parse single-line default expressions (value default fallback)
+pub fn parse_single_line_default_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut expr_stack = Vec::new();
+    let mut op_stack = Vec::new();
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::single_line_logical_expression => {
+                expr_stack.push(parse_single_line_logical_expression(item)?);
+            }
+            Rule::default_op => {
+                op_stack.push(BinaryOperator::Default);
+            }
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!(
+                        "Unexpected rule in single_line_default_expression: {:?}",
+                        item.as_rule()
+                    ),
+                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some("Expected logical expression or default operator".to_string()),
+                ))
+            }
+        }
+    }
+
+    // Build the expression tree from left to right
+    if expr_stack.is_empty() {
+        return Err(CompilerError::parse_error(
+            "Empty default expression".to_string(),
             None,
             None,
         ));
@@ -2463,6 +2703,39 @@ pub fn parse_single_line_multiplicative_expression(
     Ok(result)
 }
 
+// BOOK: required-operator - Parse single-line postfix primary (primary with optional !)
+pub fn parse_single_line_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut result: Option<Expression> = None;
+    let mut has_required = false;
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::single_line_primary => {
+                result = Some(parse_single_line_primary(item)?);
+            }
+            Rule::required_op => {
+                has_required = true;
+            }
+            _ => {}
+        }
+    }
+
+    let expr = result.ok_or_else(|| {
+        CompilerError::parse_error(
+            "Empty postfix primary expression".to_string(),
+            None,
+            Some("Expected a primary expression".to_string()),
+        )
+    })?;
+
+    // If there's a required operator, wrap in Unary(Required)
+    if has_required {
+        Ok(Expression::Unary(UnaryOperator::Required, Box::new(expr)))
+    } else {
+        Ok(expr)
+    }
+}
+
 /// Parse single-line power expressions (exponentiation without newlines)
 pub fn parse_single_line_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let mut expr_stack = Vec::new();
@@ -2470,7 +2743,12 @@ pub fn parse_single_line_power_expression(pair: Pair<Rule>) -> Result<Expression
 
     for item in pair.into_inner() {
         match item.as_rule() {
+            // BOOK: required-operator - Handle single_line_postfix_primary for ! support
+            Rule::single_line_postfix_primary => {
+                expr_stack.push(parse_single_line_postfix_primary(item)?);
+            }
             Rule::single_line_primary => {
+                // Fallback for backward compatibility
                 expr_stack.push(parse_single_line_primary(item)?);
             }
             Rule::power_op => {
@@ -2527,6 +2805,47 @@ pub fn parse_single_line_primary(pair: Pair<Rule>) -> Result<Expression, Compile
 }
 
 // parse_argument_term function removed - now using single_line_expression in argument_expression
+
+// BOOK: null-coalescing - Parse multiline default expressions (value default fallback)
+pub fn parse_multiline_default_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut expr_stack = Vec::new();
+    let mut op_stack = Vec::new();
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::multiline_logical_expression => {
+                expr_stack.push(parse_multiline_logical_expression(item)?);
+            }
+            Rule::default_op => {
+                op_stack.push(BinaryOperator::Default);
+            }
+            _ => {} // Skip whitespace/newlines
+        }
+    }
+
+    // Build the expression tree (left-associative)
+    if expr_stack.is_empty() {
+        return Err(CompilerError::parse_error(
+            "Empty multiline default expression".to_string(),
+            None,
+            Some(
+                "Multiline default expression must contain at least one logical expression"
+                    .to_string(),
+            ),
+        ));
+    }
+
+    let mut result = expr_stack.remove(0);
+    let mut i = 0;
+
+    while i < op_stack.len() && i < expr_stack.len() {
+        let right = expr_stack.remove(0);
+        result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
+        i += 1;
+    }
+
+    Ok(result)
+}
 
 /// Parse multiline logical expression (supports expressions with whitespace/newlines)
 pub fn parse_multiline_logical_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
@@ -2794,12 +3113,16 @@ pub fn parse_multiline_multiplicative_expression(
 }
 
 /// Parse multiline power expression
+// BOOK: required-operator - Multiline power expression with postfix ! support
 pub fn parse_multiline_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let mut expr_stack = Vec::new();
     let mut op_stack = Vec::new();
 
     for item in pair.into_inner() {
         match item.as_rule() {
+            Rule::multiline_postfix_primary => {
+                expr_stack.push(parse_multiline_postfix_primary(item)?);
+            }
             Rule::multiline_primary => {
                 expr_stack.push(parse_multiline_primary(item)?);
             }
@@ -2843,6 +3166,39 @@ pub fn parse_multiline_power_expression(pair: Pair<Rule>) -> Result<Expression, 
     Ok(result)
 }
 
+// BOOK: required-operator - Parse multiline postfix primary (primary with optional !)
+pub fn parse_multiline_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let mut result: Option<Expression> = None;
+    let mut has_required = false;
+
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::multiline_primary => {
+                result = Some(parse_multiline_primary(item)?);
+            }
+            Rule::required_op => {
+                has_required = true;
+            }
+            _ => {}
+        }
+    }
+
+    let expr = result.ok_or_else(|| {
+        CompilerError::parse_error(
+            "Empty multiline postfix primary expression".to_string(),
+            None,
+            Some("Expected a multiline primary expression".to_string()),
+        )
+    })?;
+
+    // If there's a required operator, wrap in Unary(Required)
+    if has_required {
+        Ok(Expression::Unary(UnaryOperator::Required, Box::new(expr)))
+    } else {
+        Ok(expr)
+    }
+}
+
 /// Parse multiline primary expression
 pub fn parse_multiline_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     // multiline_primary just wraps a primary expression
@@ -2854,4 +3210,346 @@ pub fn parse_multiline_primary(pair: Pair<Rule>) -> Result<Expression, CompilerE
         )
     })?;
     parse_primary(inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::CleanParser;
+    use pest::Parser;
+
+    #[test]
+    fn test_null_literal_parsing() {
+        // Test that "null" is parsed as null_literal rule
+        let result = CleanParser::parse(Rule::null_literal, "null");
+        assert!(
+            result.is_ok(),
+            "null should parse as null_literal: {:?}",
+            result.err()
+        );
+
+        let pairs: Vec<_> = result.unwrap().collect();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].as_rule(), Rule::null_literal);
+        assert_eq!(pairs[0].as_str(), "null");
+    }
+
+    #[test]
+    fn test_null_in_primary() {
+        // Test that "null" is matched in primary rule
+        let result = CleanParser::parse(Rule::primary, "null");
+        assert!(
+            result.is_ok(),
+            "null should parse in primary: {:?}",
+            result.err()
+        );
+
+        let mut pairs = result.unwrap();
+        let primary = pairs.next().unwrap();
+        assert_eq!(primary.as_rule(), Rule::primary);
+
+        // The inner rule should be null_literal
+        let inner = primary.into_inner().next().unwrap();
+        assert_eq!(
+            inner.as_rule(),
+            Rule::null_literal,
+            "Expected null_literal, got {:?}",
+            inner.as_rule()
+        );
+    }
+
+    #[test]
+    fn test_null_not_identifier() {
+        // Test that "null" is NOT parsed as an identifier
+        let result = CleanParser::parse(Rule::identifier, "null");
+        assert!(result.is_err(), "null should NOT parse as identifier");
+    }
+
+    #[test]
+    fn test_null_expression_parsing() {
+        // Test that "null" becomes Expression::Literal(Value::Null)
+        let result = CleanParser::parse(Rule::expression, "null");
+        assert!(
+            result.is_ok(),
+            "null should parse as expression: {:?}",
+            result.err()
+        );
+
+        let mut pairs = result.unwrap();
+        let expr_pair = pairs.next().unwrap();
+        let expr = parse_expression(expr_pair).expect("Should parse expression");
+
+        match expr {
+            Expression::Literal(Value::Null) => {
+                // Success!
+            }
+            Expression::Variable(name) => {
+                panic!(
+                    "null was parsed as Variable('{}') instead of Literal(Null)",
+                    name
+                );
+            }
+            other => {
+                panic!("null was parsed as {:?} instead of Literal(Null)", other);
+            }
+        }
+    }
+
+    #[test]
+    fn test_null_in_argument() {
+        // Test that "null" parses correctly when used as a function argument
+        let result = CleanParser::parse(Rule::argument_expression, "null");
+        assert!(
+            result.is_ok(),
+            "null should parse as argument_expression: {:?}",
+            result.err()
+        );
+
+        let mut pairs = result.unwrap();
+        let expr_pair = pairs.next().unwrap();
+        let expr = parse_argument_expression(expr_pair).expect("Should parse argument");
+
+        match expr {
+            Expression::Literal(Value::Null) => {
+                // Success!
+            }
+            Expression::Variable(name) => {
+                panic!(
+                    "null in argument was parsed as Variable('{}') instead of Literal(Null)",
+                    name
+                );
+            }
+            other => {
+                panic!(
+                    "null in argument was parsed as {:?} instead of Literal(Null)",
+                    other
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_null_full_program() {
+        // Test parsing a full program with null
+        let program_src = r#"start()
+	print(null)"#;
+
+        let result = CleanParser::parse_program(program_src);
+        assert!(
+            result.is_ok(),
+            "Program with null should parse: {:?}",
+            result.err()
+        );
+
+        let program = result.unwrap();
+        eprintln!("Program: {:?}", program);
+        // Check that the program has a start function with print(null)
+        // Note: start() is in start_function, not functions
+        assert!(
+            program.start_function.is_some(),
+            "Program should have start function"
+        );
+        let start_fn = program.start_function.unwrap();
+        assert!(!start_fn.body.is_empty(), "Start function should have body");
+    }
+
+    #[test]
+    fn test_null_print_statement() {
+        // Test parsing just the print statement
+        let stmt = "print(null)";
+        let result = CleanParser::parse(Rule::print_parenthesized_stmt, stmt);
+        assert!(
+            result.is_ok(),
+            "print(null) should parse: {:?}",
+            result.err()
+        );
+
+        let mut pairs = result.unwrap();
+        let stmt_pair = pairs.next().unwrap();
+
+        // Walk through the tree
+        for inner in stmt_pair.into_inner() {
+            for inner2 in inner.into_inner() {
+                for inner3 in inner2.clone().into_inner() {
+                    eprintln!(
+                        "      Inner3: {:?} = '{}'",
+                        inner3.as_rule(),
+                        inner3.as_str()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_null_parse_and_convert() {
+        use crate::parser::statement_parser::parse_statement;
+
+        // Parse a statement with null
+        let stmt = "print(null)";
+        let result = CleanParser::parse(Rule::statement, stmt);
+        assert!(result.is_ok(), "statement should parse: {:?}", result.err());
+
+        let mut pairs = result.unwrap();
+        let stmt_pair = pairs.next().unwrap();
+
+        // Convert to AST
+        let ast_stmt = parse_statement(stmt_pair);
+        assert!(
+            ast_stmt.is_ok(),
+            "Statement parsing should succeed: {:?}",
+            ast_stmt.err()
+        );
+
+        let stmt = ast_stmt.unwrap();
+        eprintln!("Parsed AST statement: {:?}", stmt);
+
+        // Check that the expression is Literal(Null)
+        if let crate::ast::Statement::Print { expression, .. } = stmt {
+            match expression {
+                Expression::Literal(Value::Null) => {
+                    // Success!
+                }
+                Expression::Variable(name) => {
+                    panic!(
+                        "null was parsed as Variable('{}') instead of Literal(Null)",
+                        name
+                    );
+                }
+                other => {
+                    panic!("null was parsed as {:?} instead of Literal(Null)", other);
+                }
+            }
+        } else {
+            panic!("Expected Print statement, got {:?}", stmt);
+        }
+    }
+
+    #[test]
+    fn test_null_compile_pipeline() {
+        // Test the full compilation pipeline with null
+        let source = r#"start()
+	print(null)"#;
+
+        // Parse
+        let program = CleanParser::parse_program(source);
+        assert!(program.is_ok(), "Program should parse: {:?}", program.err());
+        let program = program.unwrap();
+        eprintln!("AST Program: {:?}", program);
+
+        // Build HIR - build_hir takes owned Program
+        let mut hir_builder = crate::hir::hir_builder::HirBuilder::new();
+        let hir_result = hir_builder.build_hir(program);
+        assert!(
+            hir_result.is_ok(),
+            "HIR should build: {:?}",
+            hir_result.err()
+        );
+        let hir_result = hir_result.unwrap();
+        eprintln!("HIR: {:?}", hir_result);
+
+        // Check that null is in the HIR as a literal
+        // start_function is a separate field in HirProgram
+        if let Some(start_fn) = &hir_result.hir.start_function {
+            eprintln!("Start function body: {:?}", start_fn.body.statements);
+            if let Some(crate::hir::HirStatement::Print { expression, .. }) =
+                start_fn.body.statements.first()
+            {
+                match expression {
+                    crate::hir::HirExpression::Literal { value, .. } => {
+                        assert!(
+                            matches!(value, Value::Null),
+                            "Expected Value::Null, got {:?}",
+                            value
+                        );
+                        eprintln!("SUCCESS: null is correctly in HIR as Literal(Null)");
+                    }
+                    crate::hir::HirExpression::Variable { name, .. } => {
+                        panic!("null was converted to HirExpression::Variable('{}') instead of Literal(Null)", name);
+                    }
+                    other => {
+                        panic!("null was converted to {:?} instead of Literal(Null)", other);
+                    }
+                }
+            } else {
+                panic!(
+                    "Expected Print statement in start function, got {:?}",
+                    start_fn.body.statements
+                );
+            }
+        } else {
+            panic!("Expected start function in HirProgram");
+        }
+    }
+
+    #[test]
+    fn test_default_operator_in_argument() {
+        // BOOK: null-coalescing - Test that default operator parses in argument context
+        // Test: 42 default 10 should parse as a binary expression with Default operator
+        let result = CleanParser::parse(Rule::argument_expression, "42 default 10");
+        eprintln!("Parse result for '42 default 10': {:?}", result);
+
+        if result.is_err() {
+            // Print the full error for debugging
+            eprintln!("Parse error: {}", result.as_ref().unwrap_err());
+
+            // Also try parsing argument_default directly
+            let default_result = CleanParser::parse(Rule::argument_default, "42 default 10");
+            eprintln!(
+                "Parse result for argument_default rule: {:?}",
+                default_result
+            );
+
+            // And try logical
+            let logical_result = CleanParser::parse(Rule::argument_logical, "42 default 10");
+            eprintln!(
+                "Parse result for argument_logical rule: {:?}",
+                logical_result
+            );
+        }
+
+        assert!(
+            result.is_ok(),
+            "42 default 10 should parse as argument_expression: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_default_op_rule() {
+        // Test the default_op rule directly
+        let result = CleanParser::parse(Rule::default_op, "default");
+        eprintln!("Parse result for 'default' as default_op: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "default should parse as default_op: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_default_in_print_statement() {
+        // BOOK: null-coalescing - Test that default operator works inside print()
+        // This is the real issue - print(42 default 10) fails
+        let stmt = "print(42 default 10)";
+        let result = CleanParser::parse(Rule::print_parenthesized_stmt, stmt);
+        eprintln!("Parse result for 'print(42 default 10)': {:?}", result);
+
+        if result.is_err() {
+            eprintln!("Parse error: {}", result.as_ref().unwrap_err());
+
+            // Try just the argument_list part
+            let arg_result = CleanParser::parse(Rule::argument_list, "42 default 10");
+            eprintln!(
+                "Parse result for argument_list '42 default 10': {:?}",
+                arg_result
+            );
+        }
+
+        assert!(
+            result.is_ok(),
+            "print(42 default 10) should parse: {:?}",
+            result.err()
+        );
+    }
 }

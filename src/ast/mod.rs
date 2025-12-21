@@ -69,6 +69,8 @@ pub enum Type {
     Number,  // Default number (floating point)
     String,
     Void,
+    // BOOK: null-support - Null type for representing absence of value
+    Null,
 
     // Advanced sized types
     IntegerSized { bits: u8, unsigned: bool },
@@ -117,12 +119,19 @@ pub enum BinaryOperator {
     // Logical
     And,
     Or,
+
+    // BOOK: null-coalescing - Default operator for null handling
+    // Usage: value default fallback (returns fallback if value is null)
+    Default,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum UnaryOperator {
     Negate,
     Not,
+    // BOOK: required-operator - Postfix ! assertion for null check
+    // Usage: value! (asserts value is not null, fails at runtime if null)
+    Required,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -721,6 +730,8 @@ impl fmt::Display for Type {
             Type::Number => f.write_str("number"),
             Type::String => f.write_str("string"),
             Type::Void => f.write_str("void"),
+            // BOOK: null-support - Display null type
+            Type::Null => f.write_str("null"),
             Type::IntegerSized { bits, unsigned } => {
                 if *unsigned {
                     write!(f, "integer:{bits}u")

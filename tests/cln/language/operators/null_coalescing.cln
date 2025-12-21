@@ -1,0 +1,38 @@
+// Spec Section: Null Value Support
+// Tests: Null coalescing with 'default' operator
+// Category: operators
+// Dependencies: none
+// Expected: PASS
+// BOOK: null-coalescing - Tests for the default operator
+
+start()
+	// Test 1: null default value returns fallback
+	integer test1 = null default 42
+	print(test1)
+
+	// Test 2: non-null default value returns original
+	integer test2 = 10 default 42
+	print(test2)
+
+	// Test 3: zero is NOT null (different from JavaScript)
+	integer test3 = 0 default 42
+	print(test3)
+
+	// Test 4: empty string is NOT null
+	string test4 = "" default "fallback"
+	print(test4)
+
+	// Test 5: chained defaults
+	integer test5 = null default null default 100
+	print(test5)
+
+	// Test 6: default with expression
+	integer x = null
+	integer test6 = x default 5 + 3
+	print(test6)
+
+	// Test 7: boolean false is NOT null
+	boolean test7 = false default true
+	print(test7)
+
+	print("All null coalescing tests completed")

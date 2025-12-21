@@ -181,6 +181,11 @@ impl CodeGenerator {
         right: &Expression,
         instructions: &mut Vec<Instruction>
     ) -> Result<WasmType, CompilerError> {
+        // BOOK: null-coalescing - Handle default operator specially (needs stack rearrangement)
+        if let BinaryOperator::Default = operator {
+            return self.generate_default_operation(left, right, instructions);
+        }
+
         let left_type = self.generate_expression(left, instructions)?;
         let right_type = self.generate_expression(right, instructions)?;
 
@@ -201,6 +206,7 @@ impl CodeGenerator {
             BinaryOperator::Power => self.generate_power_operation(left_type, right_type, instructions),
             BinaryOperator::Is => self.generate_is_operation(left_type, right_type, instructions),
             BinaryOperator::Not => self.generate_not_operation(left_type, right_type, instructions),
+            BinaryOperator::Default => unreachable!(), // Handled above
         }
     }
 
@@ -498,6 +504,47 @@ impl CodeGenerator {
     ) -> Result<WasmType, CompilerError> {
         instructions.push(Instruction::I32Or);
         Ok(WasmType::I32)
+    }
+
+    // BOOK: null-coalescing - Generate code for default operator (null coalescing)
+    // Semantics: `a default b` returns a if a is not null (not 0), otherwise returns b
+    fn generate_default_operation(
+        &mut self,
+        left: &Expression,
+        right: &Expression,
+        instructions: &mut Vec<Instruction>
+    ) -> Result<WasmType, CompilerError> {
+        // Generate left expression and store in temp local
+        let left_type = self.generate_expression(left, instructions)?;
+        let left_local = self.add_local(left_type);
+        instructions.push(Instruction::LocalSet(left_local));
+
+        // Generate right expression (fallback value)
+        let right_type = self.generate_expression(right, instructions)?;
+
+        // Now stack has: [right_value]
+        // We need to push: left_value, condition, then select
+        // select(val1, val2, cond) returns val1 if cond != 0, else val2
+        // Stack order for select: [val2, val1, cond]
+        // We want: return left if (left != 0), else return right
+        // So: val1 = left, val2 = right, cond = (left != 0)
+
+        // Stack currently: [right_value]
+        // Push left_value (this is val1)
+        instructions.push(Instruction::LocalGet(left_local));
+
+        // Push condition (left != 0)
+        instructions.push(Instruction::LocalGet(left_local));
+        instructions.push(Instruction::I32Const(0));
+        instructions.push(Instruction::I32Ne);
+
+        // Stack now: [right_value, left_value, condition]
+        // select will return left_value if condition != 0, else right_value
+        instructions.push(Instruction::Select);
+
+        // Return type is the type of the values (they should match)
+        // For now, we return the left type; type checking should ensure compatibility
+        Ok(left_type)
     }
 
     fn generate_modulo_operation(
@@ -1086,7 +1133,7 @@ impl CodeGenerator {
         &mut self,
         object: &Expression,
         property: &str,
-        _instructions: &mut Vec<Instruction>
+        instructions: &mut Vec<Instruction>
     ) -> Result<WasmType, CompilerError> {
         // Check if this is a namespace property access like compare.integer, conditional.string, etc.
         if let Expression::Variable(namespace_name) = object {
@@ -1117,6 +1164,7 @@ impl CodeGenerator {
         index: &Expression,
         instructions: &mut Vec<Instruction>
     ) -> Result<WasmType, CompilerError> {
+        // Normal array access
         // Generate the array expression (should yield array pointer)
         let array_type = self.generate_expression(array, instructions)?;
 

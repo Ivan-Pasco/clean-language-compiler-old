@@ -1093,6 +1093,20 @@ impl GlobalSymbolTable {
             ),
             ("file.exists", vec![HirType::String], HirType::Boolean),
             ("file.delete", vec![HirType::String], HirType::Boolean),
+            // JSON namespace functions  // BOOK: json-module
+            // JSON values are represented as i32 pointers at WASM level
+            ("json.textToData", vec![HirType::String], HirType::Integer),
+            (
+                "json.tryTextToData",
+                vec![HirType::String],
+                HirType::Integer,
+            ),
+            ("json.dataToText", vec![HirType::Integer], HirType::String),
+            (
+                "json.prettyDataToText",
+                vec![HirType::Integer],
+                HirType::String,
+            ),
             // Comparison namespace functions (compare.integer.*, compare.number.*)
             (
                 "compare.integer_equal",
@@ -1433,6 +1447,30 @@ impl GlobalSymbolTable {
             },
         );
         self.builtins.insert(file_namespace_id);
+
+        // Create json namespace  // BOOK: json-module
+        let json_functions = vec![
+            self.lookup_symbol("json.textToData").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("json.tryTextToData")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("json.dataToText").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("json.prettyDataToText")
+                .unwrap_or(SymbolId(0)),
+        ];
+
+        let json_namespace_id = self.create_symbol(
+            "json".to_string(),
+            SymbolKind::Namespace {
+                functions: json_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+            },
+        );
+        self.builtins.insert(json_namespace_id);
 
         // Create compare namespace (compare.integer.*, compare.number.*)
         let compare_functions = vec![

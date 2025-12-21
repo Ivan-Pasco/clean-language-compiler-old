@@ -1,0 +1,32 @@
+// BOOK: required-operator - Test cases for postfix ! assertion operator
+// The ! operator asserts that a value is not null and returns it
+// If the value is null, it will trap at runtime
+
+start()
+	// Test 1: Required on non-null value (should pass)
+	integer value1 = 42
+	integer result1 = value1!
+	print(result1)  // Should print 42
+
+	// Test 2: Required on string (should pass)
+	string msg = "Hello"
+	string result2 = msg!
+	print(result2)  // Should print Hello
+
+	// Test 3: Required with default fallback
+	// First use default to get non-null, then assert it
+	integer maybeNull = null
+	integer safeValue = maybeNull default 100
+	integer result3 = safeValue!  // Safe because default gives non-null
+	print(result3)  // Should print 100
+
+	// Test 4: Chained with other expressions
+	integer x = 5
+	integer y = x! + 10
+	print(y)  // Should print 15
+
+	// Test 5: Required on null would trap (commented out to avoid crash)
+	// integer nullValue = null
+	// integer crash = nullValue!  // This would trap
+
+	print("All required assertion tests completed")

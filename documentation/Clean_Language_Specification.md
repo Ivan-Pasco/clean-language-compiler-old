@@ -194,12 +194,13 @@ $name       // Special characters not allowed
 Reserved keywords in Clean Language:
 
 ```
-and        class       constructor  else        error       false
-for        from        function     if          import      in
-iterate    not         onError      or          print       println
-return     start       step         test        tests       this
-to         true        is           returns     description while
-input      unit        private      constant    functions
+and        class       constructor  default     else        error
+false      for         from         function    if          import
+in         iterate     not          null        onError     or
+print      println     return       start       step        test
+tests      this        to           true        is          returns
+description while      input        unit        private     constant
+functions
 ```
 
 ### Literals
@@ -250,6 +251,21 @@ message = "User {user.name} is {user.age} years old"
 true
 false
 ```
+
+#### Null Literal
+
+The `null` value represents the absence of a value. It is distinct from `0`, `false`, or empty string `""`.
+
+```clean
+null        // The null value
+```
+
+**Null Semantics:**
+- `null` is its own type that is compatible with any nullable context
+- `null == null` is `true`
+- `null == anything_else` is `false` (except for another null)
+- Use the `default` operator to provide fallback values for null
+- Use the `!` operator to assert a value is not null
 
 #### List Literals
 ```clean
@@ -662,15 +678,17 @@ constant:
 From highest to lowest precedence:
 
 1. **Primary** - `()`, function calls, method calls, property access
-2. **Unary** - `not`, `-` (unary minus)
-3. **Exponentiation** - `^` (right-associative)
-4. **Multiplicative** - `*`, `/`, `%`
-5. **Additive** - `+`, `-`
-6. **Comparison** - `<`, `>`, `<=`, `>=`
-7. **Equality** - `==`, `!=`, `is`, `not`
-8. **Logical AND** - `and`
-9. **Logical OR** - `or`
-10. **Assignment** - `=`
+2. **Postfix** - `!` (required assertion)
+3. **Unary** - `not`, `-` (unary minus)
+4. **Exponentiation** - `^` (right-associative)
+5. **Multiplicative** - `*`, `/`, `%`
+6. **Additive** - `+`, `-`
+7. **Comparison** - `<`, `>`, `<=`, `>=`
+8. **Equality** - `==`, `!=`, `is`, `not`
+9. **Logical AND** - `and`
+10. **Logical OR** - `or`
+11. **Null-Coalescing** - `default`
+12. **Assignment** - `=`
 
 ### Multi-Line Expressions
 
@@ -774,6 +792,71 @@ a or b      // Logical OR
 a not b     // Logical NOT (binary, equivalent to !=)
 // Note: Unary not operator not yet implemented
 ```
+
+### Null-Handling Operators
+
+Clean Language provides two operators for working with potentially null values:
+
+#### Default Operator (`default`)
+
+The `default` operator provides a fallback value when the left operand is `null`. This is also known as null-coalescing.
+
+```clean
+value default fallback    // Returns value if not null, otherwise fallback
+```
+
+**Important:** The `default` operator only checks for `null`, not for "falsy" values like `0`, `false`, or `""`.
+
+```clean
+// Null-coalescing with 'default':
+null default "x"           // Returns "x" (left is null)
+"y" default "x"            // Returns "y" (left is not null)
+
+// 'default' only coalesces null, NOT falsy values:
+false default true         // Returns false (false is NOT null)
+0 default 10               // Returns 0 (0 is NOT null)
+"" default "fallback"      // Returns "" (empty string is NOT null)
+
+// Boolean logic with 'or' remains unchanged:
+false or true              // Returns true (traditional boolean OR)
+true or false              // Returns true
+```
+
+**Use Cases:**
+```clean
+// Provide default values for optional data
+string username = userData.name default "Guest"
+integer count = config.maxItems default 100
+number price = product.price default 0.0
+
+// Chain multiple defaults
+string value = primary default secondary default "final fallback"
+```
+
+#### Required Assertion Operator (`!`)
+
+The `!` (required) operator asserts that a value is not null. If the value is null, it causes a runtime error.
+
+```clean
+value!    // Asserts value is not null, returns value or fails
+```
+
+**Usage:**
+```clean
+// Assert that a value exists
+string name = maybeNull!    // Fails if maybeNull is null
+
+// Use when you're certain a value is not null
+integer count = list.find(item)!
+
+// Combine with method calls
+string upper = getText()!.toUpperCase()
+```
+
+**When to Use:**
+- Use `!` when you're confident a value is not null and want to express that intent
+- Use `default` when you want to provide a fallback instead of failing
+- Prefer `default` for user-facing code; use `!` for internal assertions
 
 ### Matrix Operations
 
@@ -2327,6 +2410,139 @@ functions:
         string weather = http.get("https://api.weather.com/current?city=London")
 ```
 
+### JSON Module
+
+The json module provides functions for parsing JSON text into Clean Language data structures and serializing data back to JSON text. This is essential for working with web APIs, configuration files, and data exchange.
+
+```clean
+// Core operations
+json.textToData(text), json.dataToText(data)
+json.tryTextToData(text), json.prettyDataToText(data)
+```
+
+#### Parsing JSON
+
+```clean
+functions:
+    // Parse JSON text into Clean Language data
+    any textToData(string jsonText)
+        // Parses a JSON string and returns the corresponding Clean value
+        // Throws an error if the JSON is invalid
+        // JSON types map to Clean types:
+        //   - JSON object → pairs<string, any>
+        //   - JSON array → list<any>
+        //   - JSON string → string
+        //   - JSON number → number
+        //   - JSON boolean → boolean
+        //   - JSON null → null
+
+    any tryTextToData(string jsonText)
+        // Attempts to parse JSON, returns null on failure
+        // Useful when you want to handle invalid JSON gracefully
+        // Does not throw errors for malformed JSON
+```
+
+#### Serializing to JSON
+
+```clean
+functions:
+    // Convert Clean Language data to JSON text
+    string dataToText(any data)
+        // Converts a Clean value to a compact JSON string
+        // Supports: strings, numbers, booleans, null, lists, pairs
+        // Example output: {"name":"Alice","age":25}
+
+    string prettyDataToText(any data)
+        // Converts a Clean value to a formatted, readable JSON string
+        // Adds indentation and line breaks for human readability
+        // Example output:
+        // {
+        //   "name": "Alice",
+        //   "age": 25
+        // }
+```
+
+#### Usage Examples
+
+```clean
+start()
+    // Parse JSON from an API response
+    string apiResponse = http.get("https://api.example.com/user/123")
+    any userData = json.textToData(apiResponse)
+
+    // Access parsed data (userData is a pairs<string, any>)
+    string name = userData["name"] default "Unknown"
+    integer age = userData["age"] default 0
+
+    // Safe parsing with tryTextToData
+    string maybeJson = getUserInput()
+    any parsed = json.tryTextToData(maybeJson)
+    if parsed == null
+        print("Invalid JSON provided")
+    else
+        print("Successfully parsed JSON")
+
+    // Create data and serialize to JSON
+    pairs<string, any> user = {}
+    user["name"] = "Bob"
+    user["email"] = "bob@example.com"
+    user["active"] = true
+
+    string jsonString = json.dataToText(user)
+    // Result: {"name":"Bob","email":"bob@example.com","active":true}
+
+    // Pretty-print for debugging or config files
+    string prettyJson = json.prettyDataToText(user)
+    // Result:
+    // {
+    //   "name": "Bob",
+    //   "email": "bob@example.com",
+    //   "active": true
+    // }
+
+    // Working with JSON arrays
+    list<any> items = [1, 2, 3, "four", true, null]
+    string arrayJson = json.dataToText(items)
+    // Result: [1,2,3,"four",true,null]
+
+    // Nested structures
+    pairs<string, any> config = {}
+    config["database"] = {}
+    config["database"]["host"] = "localhost"
+    config["database"]["port"] = 5432
+    config["features"] = ["auth", "logging", "caching"]
+
+    file.write("config.json", json.prettyDataToText(config))
+```
+
+#### JSON Type Mapping
+
+| JSON Type | Clean Type | Example |
+|-----------|------------|---------|
+| object | `pairs<string, any>` | `{"key": "value"}` → `pairs` |
+| array | `list<any>` | `[1, 2, 3]` → `list<any>` |
+| string | `string` | `"hello"` → `"hello"` |
+| number | `number` | `3.14` → `3.14` |
+| boolean | `boolean` | `true` → `true` |
+| null | `null` | `null` → `null` |
+
+#### Error Handling
+
+```clean
+start()
+    // textToData throws on invalid JSON
+    string badJson = "{ invalid json }"
+    any data = json.textToData(badJson) onError null
+
+    // Or use tryTextToData for null-based error handling
+    any safeData = json.tryTextToData(badJson)
+    if safeData == null
+        print("JSON parsing failed")
+
+    // Use default operator for fallback values
+    any result = json.tryTextToData(maybeJson) default {}
+```
+
 ## Method-Style Syntax
 
 Clean Language uses method-style syntax as the primary pattern for object operations. This makes your code more readable and intuitive by allowing you to call functions directly on values.
@@ -2545,7 +2761,7 @@ The following modules are built into the language and don't need to be imported 
 | `list` | List operations |
 | `file` | File I/O operations |
 | `http` | HTTP client functions |
-| `json` | JSON parsing and serialization |
+| `json` | JSON parsing (`textToData`) and serialization (`dataToText`) |
 | `console` | Console I/O |
 
 Built-in modules are automatically available when imported:
