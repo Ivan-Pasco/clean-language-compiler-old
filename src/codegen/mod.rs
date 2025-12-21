@@ -4153,7 +4153,7 @@ impl CodeGenerator {
         instructions.push(Instruction::LocalSet(left_local));
 
         // Generate right expression (fallback value)
-        let right_type = self.generate_expression(right, instructions)?;
+        let _right_type = self.generate_expression(right, instructions)?;
 
         // Now stack has: [right_value]
         // We need to push: left_value, condition, then select
