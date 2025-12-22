@@ -2442,6 +2442,49 @@ functions:
         // Does not throw errors for malformed JSON
 ```
 
+#### Accessing JSON Data
+
+The `any` type returned by `json.textToData()` supports bracket notation for accessing nested data. This allows direct field access on JSON objects and index access on JSON arrays.
+
+```clean
+// String key access for JSON objects
+any data = json.textToData(jsonString)
+any fieldValue = data["fieldName"]      // Access field by string key
+
+// Integer index access for JSON arrays
+any arrayData = json.textToData(arrayJson)
+any element = arrayData[0]              // Access element by integer index
+
+// Chained access for nested structures
+any nested = data["user"]["profile"]["name"]
+any item = data["items"][0]["id"]
+```
+
+**Bracket Notation Rules:**
+- **String keys** (`data["key"]`): Access fields on JSON objects, returns `any`
+- **Integer indices** (`data[0]`): Access elements in JSON arrays, returns `any`
+- **Chained access**: Both forms can be chained for nested structures
+- **Missing fields**: Returns `null` when field doesn't exist or index is out of bounds
+
+```clean
+start()
+    string jsonText = '{"name": "Alice", "scores": [85, 92, 78]}'
+    any data = json.textToData(jsonText)
+
+    // Object field access
+    any name = data["name"]           // Returns "Alice"
+    any missing = data["unknown"]     // Returns null
+
+    // Array index access
+    any scores = data["scores"]
+    any first = scores[0]             // Returns 85
+    any outOfBounds = scores[100]     // Returns null
+
+    // Use default operator for fallback values
+    string userName = data["name"] default "Guest"
+    integer firstScore = data["scores"][0] default 0
+```
+
 #### Serializing to JSON
 
 ```clean

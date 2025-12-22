@@ -494,6 +494,14 @@ impl DeadCodeEliminationPass {
                 self.mark_operand_live(true_value, function);
                 self.mark_operand_live(false_value, function);
             }
+            MirOperation::AnyGetField { object, key } => {
+                self.mark_operand_live(object, function);
+                self.mark_operand_live(key, function);
+            }
+            MirOperation::AnyGetIndex { array, index } => {
+                self.mark_operand_live(array, function);
+                self.mark_operand_live(index, function);
+            }
         }
     }
 

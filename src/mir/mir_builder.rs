@@ -3865,63 +3865,116 @@ impl MirBuilder {
                 let array_id = self.build_expression(context, array)?;
                 let index_id = self.build_expression(context, index)?;
 
-                // Use GetElementPtr for array access
-                let result_id = ValueId(context.function.next_value_id);
-                context.function.next_value_id += 1;
+                // Check if this is Any type access (JSON object/array access)
+                match &array.expr_type {
+                    ConcreteType::Any => {
+                        // For Any type, generate AnyGetField or AnyGetIndex based on index type
+                        let result_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
 
-                // CRITICAL FIX: Register the pointer result as a local
-                // GetElementPtr returns a pointer to the array element
-                self.register_temp_local(
-                    context,
-                    result_id,
-                    MirType::Ptr(Box::new(MirType::I32)), // Pointer to element
-                    expression.location.clone(),
-                );
+                        // Result is also Any type (i32 pointer)
+                        self.register_temp_local(
+                            context,
+                            result_id,
+                            MirType::Any,
+                            expression.location.clone(),
+                        );
 
-                let instruction = MirInstruction {
-                    dest: Some(result_id),
-                    operation: MirOperation::GetElementPtr {
-                        base: MirOperand::Value(array_id),
-                        indices: vec![MirOperand::Value(index_id)],
-                        is_array: true, // Array access, needs 16-byte header offset
-                    },
-                    location: expression.location.clone(),
-                };
+                        let operation = match &index.expr_type {
+                            ConcreteType::String => {
+                                // String key: object field access
+                                MirOperation::AnyGetField {
+                                    object: MirOperand::Value(array_id),
+                                    key: MirOperand::Value(index_id),
+                                }
+                            }
+                            ConcreteType::Integer => {
+                                // Integer index: array element access
+                                MirOperation::AnyGetIndex {
+                                    array: MirOperand::Value(array_id),
+                                    index: MirOperand::Value(index_id),
+                                }
+                            }
+                            _ => {
+                                // Fallback to integer index for other types
+                                MirOperation::AnyGetIndex {
+                                    array: MirOperand::Value(array_id),
+                                    index: MirOperand::Value(index_id),
+                                }
+                            }
+                        };
 
-                self.add_instruction(context, instruction);
+                        let instruction = MirInstruction {
+                            dest: Some(result_id),
+                            operation,
+                            location: expression.location.clone(),
+                        };
 
-                // Load the value from the array element pointer
-                let load_result_id = ValueId(context.function.next_value_id);
-                context.function.next_value_id += 1;
-
-                // CRITICAL FIX: Register the loaded value as a local
-                // Determine the type from the array expression type
-                let element_type = match &array.expr_type {
-                    ConcreteType::Array(elem_type) => self.convert_concrete_type(elem_type),
-                    ConcreteType::Matrix(elem_type) => {
-                        // Matrix is 2D array, so element is 1D array
-                        MirType::Ptr(Box::new(self.convert_concrete_type(elem_type)))
+                        self.add_instruction(context, instruction);
+                        Ok(result_id)
                     }
-                    _ => MirType::I32, // Default fallback
-                };
 
-                self.register_temp_local(
-                    context,
-                    load_result_id,
-                    element_type,
-                    expression.location.clone(),
-                );
+                    // Regular array/matrix access uses GetElementPtr
+                    _ => {
+                        // Use GetElementPtr for array access
+                        let result_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
 
-                let load_instruction = MirInstruction {
-                    dest: Some(load_result_id),
-                    operation: MirOperation::Load {
-                        source: MirOperand::Value(result_id),
-                    },
-                    location: expression.location.clone(),
-                };
+                        // CRITICAL FIX: Register the pointer result as a local
+                        // GetElementPtr returns a pointer to the array element
+                        self.register_temp_local(
+                            context,
+                            result_id,
+                            MirType::Ptr(Box::new(MirType::I32)), // Pointer to element
+                            expression.location.clone(),
+                        );
 
-                self.add_instruction(context, load_instruction);
-                Ok(load_result_id)
+                        let instruction = MirInstruction {
+                            dest: Some(result_id),
+                            operation: MirOperation::GetElementPtr {
+                                base: MirOperand::Value(array_id),
+                                indices: vec![MirOperand::Value(index_id)],
+                                is_array: true, // Array access, needs 16-byte header offset
+                            },
+                            location: expression.location.clone(),
+                        };
+
+                        self.add_instruction(context, instruction);
+
+                        // Load the value from the array element pointer
+                        let load_result_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+
+                        // CRITICAL FIX: Register the loaded value as a local
+                        // Determine the type from the array expression type
+                        let element_type = match &array.expr_type {
+                            ConcreteType::Array(elem_type) => self.convert_concrete_type(elem_type),
+                            ConcreteType::Matrix(elem_type) => {
+                                // Matrix is 2D array, so element is 1D array
+                                MirType::Ptr(Box::new(self.convert_concrete_type(elem_type)))
+                            }
+                            _ => MirType::I32, // Default fallback
+                        };
+
+                        self.register_temp_local(
+                            context,
+                            load_result_id,
+                            element_type,
+                            expression.location.clone(),
+                        );
+
+                        let load_instruction = MirInstruction {
+                            dest: Some(load_result_id),
+                            operation: MirOperation::Load {
+                                source: MirOperand::Value(result_id),
+                            },
+                            location: expression.location.clone(),
+                        };
+
+                        self.add_instruction(context, load_instruction);
+                        Ok(load_result_id)
+                    }
+                }
             }
 
             TastExpressionKind::OnError {

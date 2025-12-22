@@ -2247,29 +2247,72 @@ impl<'a> TypeInference<'a> {
                 let tast_array = self.infer_expression(array)?;
                 let tast_index = self.infer_expression(index)?;
 
-                // Verify index type is integer
-                if !matches!(tast_index.expr_type, ConcreteType::Integer) {
-                    self.errors.push(CompilerError::type_error(
-                        &format!(
-                            "Array index must be integer, found {:?}",
-                            tast_index.expr_type
-                        ),
-                        None,
-                        Some(location.clone()),
-                    ));
-                }
-
-                // Extract element type from array or matrix type
+                // Extract element type based on array type and index type
                 let element_type = match &tast_array.expr_type {
-                    ConcreteType::Array(element_type) => (**element_type).clone(),
+                    // Any type supports both string (object access) and integer (array access)
+                    ConcreteType::Any => match &tast_index.expr_type {
+                        ConcreteType::String | ConcreteType::Integer => ConcreteType::Any,
+                        other => {
+                            self.errors.push(CompilerError::type_error(
+                                    &format!(
+                                        "Any type index must be string (for object access) or integer (for array access), found {:?}",
+                                        other
+                                    ),
+                                    Some("Use data[\"field\"] for object access or data[0] for array access".to_string()),
+                                    Some(location.clone()),
+                                ));
+                            ConcreteType::Any
+                        }
+                    },
+                    // Array requires integer index
+                    ConcreteType::Array(element_type) => {
+                        if !matches!(tast_index.expr_type, ConcreteType::Integer) {
+                            self.errors.push(CompilerError::type_error(
+                                &format!(
+                                    "Array index must be integer, found {:?}",
+                                    tast_index.expr_type
+                                ),
+                                None,
+                                Some(location.clone()),
+                            ));
+                        }
+                        (**element_type).clone()
+                    }
                     // Matrix indexing: matrix<T>[i] returns Array<T>
                     ConcreteType::Matrix(element_type) => {
+                        if !matches!(tast_index.expr_type, ConcreteType::Integer) {
+                            self.errors.push(CompilerError::type_error(
+                                &format!(
+                                    "Matrix index must be integer, found {:?}",
+                                    tast_index.expr_type
+                                ),
+                                None,
+                                Some(location.clone()),
+                            ));
+                        }
                         ConcreteType::Array(Box::new((**element_type).clone()))
+                    }
+                    // Pairs type supports string key access
+                    ConcreteType::Pairs(_, value_type) => {
+                        if !matches!(tast_index.expr_type, ConcreteType::String) {
+                            self.errors.push(CompilerError::type_error(
+                                &format!(
+                                    "Pairs key must be string, found {:?}",
+                                    tast_index.expr_type
+                                ),
+                                Some("Use pairs[\"key\"] for pairs access".to_string()),
+                                Some(location.clone()),
+                            ));
+                        }
+                        (**value_type).clone()
                     }
                     other_type => {
                         self.errors.push(CompilerError::type_error(
-                            &format!("Cannot index into non-array type: {:?}", other_type),
-                            None,
+                            &format!("Cannot index into type: {:?}", other_type),
+                            Some(
+                                "Bracket access is only supported on Array, Pairs, or Any types"
+                                    .to_string(),
+                            ),
                             Some(location.clone()),
                         ));
                         ConcreteType::Unknown
@@ -4189,6 +4232,10 @@ impl<'a> TypeInference<'a> {
                 // Type inference placeholders are handled by the constraint solver
                 // For now, return Unknown and let constraint solver handle it
                 ConcreteType::Unknown
+            }
+            HirType::Any => {
+                // Any type - dynamically typed boxed value with runtime type tag
+                ConcreteType::Any
             }
         }
     }

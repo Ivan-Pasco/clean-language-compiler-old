@@ -39,7 +39,7 @@ impl BuiltinType {
                 crate::hir::HirType::Pairs(Box::new(k.to_hir_type()), Box::new(v.to_hir_type()))
             }
             BuiltinType::Namespace => crate::hir::HirType::Void, // Namespace is a special case
-            BuiltinType::Any => crate::hir::HirType::Number,     // Default to Number for Any
+            BuiltinType::Any => crate::hir::HirType::Any,        // Dynamic type for JSON values
         }
     }
 
@@ -1148,31 +1148,31 @@ impl BuiltinRegistry {
     fn register_json_namespace(&mut self) {
         let json_ns = BuiltinNamespace::new("json").with_functions(vec![
             // Parse JSON text into data structure
-            // Returns i32 pointer to JSON value structure in memory
+            // Returns Any type that supports bracket notation access
             BuiltinFunction::new(
                 "textToData",
                 vec![BuiltinType::String],
-                BuiltinType::Integer, // Returns pointer to JSON value
+                BuiltinType::Any, // Returns Any for dynamic JSON access
                 BuiltinCategory::Json,
             ),
             // Parse JSON text, returns null (0) on error
             BuiltinFunction::new(
                 "tryTextToData",
                 vec![BuiltinType::String],
-                BuiltinType::Integer, // Returns pointer or null (0)
+                BuiltinType::Any, // Returns Any or null (0) on error
                 BuiltinCategory::Json,
             ),
             // Convert data to JSON text
             BuiltinFunction::new(
                 "dataToText",
-                vec![BuiltinType::Integer], // Takes pointer to JSON value
+                vec![BuiltinType::Any], // Takes Any (JSON value)
                 BuiltinType::String,
                 BuiltinCategory::Json,
             ),
             // Convert data to formatted JSON text
             BuiltinFunction::new(
                 "prettyDataToText",
-                vec![BuiltinType::Integer], // Takes pointer to JSON value
+                vec![BuiltinType::Any], // Takes Any (JSON value)
                 BuiltinType::String,
                 BuiltinCategory::Json,
             ),

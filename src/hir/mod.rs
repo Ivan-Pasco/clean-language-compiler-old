@@ -88,6 +88,10 @@ pub enum HirType {
         id: usize,
         location: SourceLocation,
     },
+
+    /// Dynamic type for JSON values and runtime-typed data
+    /// Supports bracket notation with string keys (object access) or integer indices (array access)
+    Any,
 }
 
 /// HIR Class - normalized class representation

@@ -3963,19 +3963,43 @@ impl SemanticAnalyzer {
                 let array_type = self.check_expression(array)?;
                 let index_type = self.check_expression(index)?;
 
-                if index_type != Type::Integer {
-                    return Err(CompilerError::type_error(
-                        "List index must be an integer".to_string(),
-                        Some("Use integer values for array indexing".to_string()),
-                        None,
-                    ));
-                }
-
-                match array_type {
-                    Type::List(element_type) => Ok(*element_type),
+                match &array_type {
+                    // Any type supports both string (object access) and integer (array access)
+                    Type::Any => {
+                        match &index_type {
+                            Type::String | Type::Integer => Ok(Type::Any),
+                            _ => Err(CompilerError::type_error(
+                                format!("Any type index must be string (for object access) or integer (for array access), found {:?}", index_type),
+                                Some("Use data[\"field\"] for object access or data[0] for array access".to_string()),
+                                None,
+                            )),
+                        }
+                    }
+                    // List type requires integer index
+                    Type::List(element_type) => {
+                        if index_type != Type::Integer {
+                            return Err(CompilerError::type_error(
+                                "List index must be an integer".to_string(),
+                                Some("Use integer values for array indexing".to_string()),
+                                None,
+                            ));
+                        }
+                        Ok(*element_type.clone())
+                    }
+                    // Pairs type supports string key access
+                    Type::Pairs(_, value_type) => {
+                        if index_type != Type::String {
+                            return Err(CompilerError::type_error(
+                                "Pairs key must be a string".to_string(),
+                                Some("Use pairs[\"key\"] for pairs access".to_string()),
+                                None,
+                            ));
+                        }
+                        Ok(*value_type.clone())
+                    }
                     _ => Err(CompilerError::type_error(
-                        "List access can only be used on lists".to_string(),
-                        None,
+                        format!("Cannot index into type {:?}", array_type),
+                        Some("Bracket access is only supported on List, Pairs, or Any types".to_string()),
                         None,
                     )),
                 }

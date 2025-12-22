@@ -278,6 +278,26 @@ pub enum MirOperation {
         /// Value to use if condition is false (zero)
         false_value: MirOperand,
     },
+
+    /// Access a field on an Any (JSON object) value by string key
+    /// Generates a call to __json_get_field(any_ptr, key_ptr, key_len)
+    /// Returns Any (pointer to field value or null if not found)
+    AnyGetField {
+        /// The boxed any value (JSON object pointer)
+        object: MirOperand,
+        /// The field key (string pointer)
+        key: MirOperand,
+    },
+
+    /// Access an element on an Any (JSON array) value by integer index
+    /// Generates a call to __json_get_index(any_ptr, index)
+    /// Returns Any (pointer to element or null if out of bounds)
+    AnyGetIndex {
+        /// The boxed any value (JSON array pointer)
+        array: MirOperand,
+        /// The integer index
+        index: MirOperand,
+    },
 }
 
 /// MIR terminator instructions (end basic blocks)

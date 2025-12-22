@@ -2788,6 +2788,49 @@ impl MirCodeGenerator<'_> {
                 }
             }
 
+            MirOperation::AnyGetField { object, key } => {
+                debug_mir!(?object, ?key, "Processing AnyGetField (JSON object access)");
+
+                // Load the JSON object pointer (Any type)
+                self.load_operand(object)?;
+
+                // Load the key string (ptr, len pair)
+                self.load_operand(key)?;
+
+                // Call __json_get_field(any_ptr: i32, key_ptr: i32, key_len: i32) -> i32
+                // The key operand should be a string which is (ptr, len) on stack
+                let json_get_field_idx = self.get_or_register_json_get_field()?;
+                self.current_instructions
+                    .push(Instruction::Call(json_get_field_idx));
+
+                // Store result (Any pointer to field value or null) if there's a destination
+                if let Some(dest) = instruction.dest {
+                    self.store_to_local(dest)?;
+                    debug_mir!("AnyGetField completed successfully");
+                }
+            }
+
+            MirOperation::AnyGetIndex { array, index } => {
+                debug_mir!(?array, ?index, "Processing AnyGetIndex (JSON array access)");
+
+                // Load the JSON array pointer (Any type)
+                self.load_operand(array)?;
+
+                // Load the integer index
+                self.load_operand(index)?;
+
+                // Call __json_get_index(any_ptr: i32, index: i32) -> i32
+                let json_get_index_idx = self.get_or_register_json_get_index()?;
+                self.current_instructions
+                    .push(Instruction::Call(json_get_index_idx));
+
+                // Store result (Any pointer to element or null) if there's a destination
+                if let Some(dest) = instruction.dest {
+                    self.store_to_local(dest)?;
+                    debug_mir!("AnyGetIndex completed successfully");
+                }
+            }
+
             MirOperation::Alloca { size, alignment: _ } => {
                 debug_mir!(size = ?size, "Processing Alloca - converting to mem_alloc call");
 
@@ -4630,6 +4673,48 @@ impl MirCodeGenerator<'_> {
 
         debug_mir!("any.toString() dispatch complete");
         Ok(())
+    }
+
+    /// Get or register the __json_get_field function index
+    /// Returns the function index for accessing JSON object fields by string key
+    fn get_or_register_json_get_field(&mut self) -> Result<u32, CompilerError> {
+        // First check if it's already registered
+        if let Some(&idx) = self.wasm_generator.function_map.get("__json_get_field") {
+            return Ok(idx);
+        }
+
+        // The function should have been registered by JsonClass::register_access_operations
+        // If not found, return an error
+        Err(CompilerError::Codegen {
+            context: Box::new(crate::error::ErrorContext::new(
+                "__json_get_field function not found. Ensure JSON module is properly initialized."
+                    .to_string(),
+                None,
+                crate::error::ErrorType::Codegen,
+                None,
+            )),
+        })
+    }
+
+    /// Get or register the __json_get_index function index
+    /// Returns the function index for accessing JSON array elements by integer index
+    fn get_or_register_json_get_index(&mut self) -> Result<u32, CompilerError> {
+        // First check if it's already registered
+        if let Some(&idx) = self.wasm_generator.function_map.get("__json_get_index") {
+            return Ok(idx);
+        }
+
+        // The function should have been registered by JsonClass::register_access_operations
+        // If not found, return an error
+        Err(CompilerError::Codegen {
+            context: Box::new(crate::error::ErrorContext::new(
+                "__json_get_index function not found. Ensure JSON module is properly initialized."
+                    .to_string(),
+                None,
+                crate::error::ErrorType::Codegen,
+                None,
+            )),
+        })
     }
 
     /// Finalize WASM module and return bytecode

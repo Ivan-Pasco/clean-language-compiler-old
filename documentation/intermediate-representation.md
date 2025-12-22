@@ -360,6 +360,7 @@ pub enum Type {
     Class(ClassId),
     DataType(DataTypeId),
     Tuple(Vec<Type>),
+    Any,      // Dynamic type for JSON values and runtime-typed data
     Never,    // For functions that never return
     Unit,     // For void/empty return
 }
@@ -381,6 +382,52 @@ pub enum IntType {
 pub enum FloatType {
     F32, F64,
 }
+```
+
+### 4. Dynamic Type Operations
+
+The `Any` type supports dynamic access operations for JSON values and runtime-typed data. These operations are represented as specific MIR operations that are lowered to runtime function calls.
+
+```rust
+#[derive(Debug, Clone)]
+pub enum MirOperation {
+    // ... other operations ...
+
+    /// Access a field on an Any (JSON object) value by string key
+    /// Generates a call to __json_get_field runtime function
+    AnyGetField {
+        object: MirOperand,  // The Any value (JSON object pointer)
+        key: MirOperand,     // String key for field access
+    },
+
+    /// Access an element on an Any (JSON array) value by integer index
+    /// Generates a call to __json_get_index runtime function
+    AnyGetIndex {
+        array: MirOperand,   // The Any value (JSON array pointer)
+        index: MirOperand,   // Integer index for array access
+    },
+}
+```
+
+**Dynamic Access Semantics:**
+- `AnyGetField`: Accesses a field by string key, returns `Any` (or null if field doesn't exist)
+- `AnyGetIndex`: Accesses an element by integer index, returns `Any` (or null if out of bounds)
+- Both operations handle null input gracefully, returning null
+- Chained access is supported through successive operations
+
+**Code Generation:**
+```rust
+// AnyGetField generates:
+//   1. Load object operand (i32 pointer)
+//   2. Load key operand (i32 string pointer)
+//   3. Call __json_get_field(object, key) -> i32
+//   4. Store result
+
+// AnyGetIndex generates:
+//   1. Load array operand (i32 pointer)
+//   2. Load index operand (i32)
+//   3. Call __json_get_index(array, index) -> i32
+//   4. Store result
 ```
 
 ## Low-Level Intermediate Representation (LIR)
