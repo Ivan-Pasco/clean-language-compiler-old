@@ -4017,6 +4017,14 @@ impl<'a> TypeInference<'a> {
                 ))
             }
 
+            // BOOK: safe-access - Any type supports arbitrary field access
+            // Any type (dynamic/JSON objects) allows access to any field name
+            // The result is also Any type since we don't know the actual field type at compile time
+            ConcreteType::Any => {
+                // Use a placeholder symbol ID for dynamic field access
+                Ok((ConcreteType::Any, SymbolId(0)))
+            }
+
             _ => Err(CompilerError::type_error(
                 &format!(
                     "Type {:?} does not have field '{}'",

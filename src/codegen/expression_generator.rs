@@ -1142,20 +1142,69 @@ impl CodeGenerator {
                 // We don't need to generate any actual code here, just return a valid type
                 // The actual function call will be handled by the method call expression
                 Ok(WasmType::I32) // Function reference
+            } else if self.is_any_type_variable(namespace_name) {
+                // Property access on Any type (JSON object)
+                // Generate: __json_get_field(any_ptr, key_ptr, key_len)
+                self.generate_any_property_access(object, property, instructions)
             } else {
                 Err(CompilerError::codegen_error(
-                    format!("Property access '{}' not supported on non-namespace object", property),
+                    format!("Property access '{}' not supported on variable '{}' (not namespace or any type)", property, namespace_name),
                     None,
                     None
                 ))
             }
+        } else if let Expression::PropertyAccess { .. } = object {
+            // Chained property access on Any type (e.g., data.section.subsection)
+            // The inner property access result should be Any type
+            self.generate_any_property_access(object, property, instructions)
+        } else if let Expression::IndexAccess(..) | Expression::ListAccess(..) = object {
+            // Index access on Any type (e.g., data.items[0].name)
+            self.generate_any_property_access(object, property, instructions)
+        } else if let Expression::FunctionCall { .. } = object {
+            // Function call that returns Any type (e.g., json.textToData(text).field)
+            self.generate_any_property_access(object, property, instructions)
         } else {
             Err(CompilerError::codegen_error(
-                "Property access not yet implemented for complex objects".to_string(),
+                format!("Property access '{}' not supported for this object type", property),
                 None,
                 None
             ))
         }
+    }
+
+    /// Check if a variable is of type Any (dynamic/JSON type)
+    fn is_any_type_variable(&self, name: &str) -> bool {
+        if let Some(var_type) = self.variable_types.get(name) {
+            matches!(var_type, Type::Any)
+        } else {
+            false
+        }
+    }
+
+    /// Generate property access on Any type (JSON object)
+    /// Translates data.field into __json_get_field(data, "field", field_len)
+    fn generate_any_property_access(
+        &mut self,
+        object: &Expression,
+        property: &str,
+        instructions: &mut Vec<Instruction>
+    ) -> Result<WasmType, CompilerError> {
+        // 1. Generate the object expression (puts any_ptr on stack)
+        self.generate_expression(object, instructions)?;
+
+        // 2. Add property name to string pool and push pointer
+        let key_ptr = self.add_string_to_pool(property);
+        instructions.push(Instruction::I32Const(key_ptr as i32));
+
+        // 3. Push property name length
+        let key_len = property.len() as i32;
+        instructions.push(Instruction::I32Const(key_len));
+
+        // 4. Call __json_get_field(any_ptr, key_ptr, key_len) -> any_ptr
+        let func_index = self.get_function_index_or_error("__json_get_field")?;
+        instructions.push(Instruction::Call(func_index));
+
+        Ok(WasmType::I32) // Returns Any pointer
     }
 
     fn generate_array_access_expression(

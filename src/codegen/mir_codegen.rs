@@ -11,7 +11,7 @@ use crate::mir::mir_types::{
     MirOperand, MirOperation, MirProgram, MirTerminator, MirType, MirUnaryOp, ValueId,
 };
 use crate::resolver::SymbolId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use wasm_encoder::{BlockType, Function as WasmFunction, Instruction, ValType};
 
 // Conditional debug macro for MIR code generation using tracing
@@ -195,9 +195,20 @@ impl MirCodeGenerator<'_> {
             debug_mir!("DEBUG MIR: Type conversion imports registered");
 
             // CRITICAL: Register HTTP imports (http_get, http_post, etc.)
-            debug_mir!("DEBUG MIR: Registering HTTP imports");
+            // Collect function names that plugins will handle with expand_strings wrappers
+            // These need to be skipped here since the plugin will register them with __raw suffix
+            let skip_http_functions: HashSet<String> = self
+                .bridge_functions
+                .iter()
+                .filter(|f| f.expand_strings && f.params.iter().any(|p| p == "string"))
+                .map(|f| f.name.clone())
+                .collect();
+            debug_mir!(
+                "DEBUG MIR: Registering HTTP imports (skipping {} for plugin expand_strings)",
+                skip_http_functions.len()
+            );
             self.wasm_generator
-                .register_http_imports()
+                .register_http_imports(&skip_http_functions)
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: HTTP imports registered");
 
@@ -216,6 +227,18 @@ impl MirCodeGenerator<'_> {
                 .register_string_split_import()
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: string.split import registered");
+
+            // CRITICAL: Register plugin bridge functions as WASM imports BEFORE any internal functions
+            // These are declared in plugin.toml [bridge] sections
+            // MUST be registered here because WASM requires all imports before internal functions
+            if !self.bridge_functions.is_empty() {
+                debug_mir!(
+                    "DEBUG MIR: Registering {} plugin bridge function imports",
+                    self.bridge_functions.len()
+                );
+                self.register_plugin_bridge_imports().map_err(|e| vec![e])?;
+                debug_mir!("DEBUG MIR: Plugin bridge function imports registered");
+            }
 
             // CRITICAL: Register math operations (abs, max, min, sqrt, pow, etc.)
             debug_mir!("DEBUG MIR: Registering math operation imports");
@@ -287,17 +310,6 @@ impl MirCodeGenerator<'_> {
                 .register_json_operations()
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: JSON operations registered");
-
-            // CRITICAL: Register plugin bridge functions as WASM imports
-            // These are declared in plugin.toml [bridge] sections
-            if !self.bridge_functions.is_empty() {
-                debug_mir!(
-                    "DEBUG MIR: Registering {} plugin bridge function imports",
-                    self.bridge_functions.len()
-                );
-                self.register_plugin_bridge_imports().map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: Plugin bridge function imports registered");
-            }
         }
 
         // Set up memory section
@@ -2794,11 +2806,11 @@ impl MirCodeGenerator<'_> {
                 // Load the JSON object pointer (Any type)
                 self.load_operand(object)?;
 
-                // Load the key string (ptr, len pair)
-                self.load_operand(key)?;
+                // Load the key string and expand to (content_ptr, len) format
+                // __json_get_field expects: (any_ptr: i32, key_ptr: i32, key_len: i32)
+                self.load_string_argument_for_print(key)?;
 
                 // Call __json_get_field(any_ptr: i32, key_ptr: i32, key_len: i32) -> i32
-                // The key operand should be a string which is (ptr, len) on stack
                 let json_get_field_idx = self.get_or_register_json_get_field()?;
                 self.current_instructions
                     .push(Instruction::Call(json_get_field_idx));
@@ -4801,51 +4813,144 @@ impl MirCodeGenerator<'_> {
     ///
     /// Bridge functions from plugin.toml [bridge] sections are registered as WASM imports
     /// so the runtime can provide their implementations.
+    ///
+    /// For functions with `expand_strings=true`, we:
+    /// 1. Register the raw import with expanded signature (strings as ptr,len pairs)
+    /// 2. Create a wrapper function that transforms Clean Language strings to ptr,len pairs
     fn register_plugin_bridge_imports(&mut self) -> Result<(), CompilerError> {
         use crate::builtins::registry::BuiltinType;
         use crate::types::WasmType;
+        use wasm_encoder::{Instruction, MemArg};
 
         for func in &self.bridge_functions.clone() {
-            // Convert parameter types to WASM types
-            let mut wasm_params = Vec::new();
-            for param_type in func.get_param_types() {
-                // If expand_strings is true, each string param becomes (ptr, len)
-                if func.expand_strings && matches!(param_type, BuiltinType::String) {
-                    wasm_params.push(WasmType::I32); // ptr
-                    wasm_params.push(WasmType::I32); // len
-                } else {
-                    wasm_params.push(Self::builtin_type_to_wasm_type(&param_type));
-                }
-            }
-
-            // Convert return type to WASM type
-            let wasm_return = {
-                let ret = func.get_return_type();
-                match ret {
-                    BuiltinType::Void => None,
-                    _ => Some(Self::builtin_type_to_wasm_type(&ret)),
-                }
-            };
-
-            // Get the module from the bridge function (defaults to "env")
+            let param_types = func.get_param_types();
+            let return_type = func.get_return_type();
             let module = &func.module;
 
-            tracing::debug!(
-                name = %func.name,
-                module = %module,
-                params = ?wasm_params,
-                returns = ?wasm_return,
-                expand_strings = func.expand_strings,
-                "Registering plugin bridge function as WASM import"
-            );
+            // Check if any string params need expansion
+            let needs_wrapper =
+                func.expand_strings && param_types.iter().any(|t| matches!(t, BuiltinType::String));
 
-            // Register the import
-            self.wasm_generator.register_import_function(
-                module,
-                &func.name,
-                &wasm_params,
-                wasm_return,
-            )?;
+            if needs_wrapper {
+                // For expand_strings=true: register raw import and create wrapper
+
+                // 1. Build expanded signature for raw import
+                let mut raw_wasm_params = Vec::new();
+                for param_type in &param_types {
+                    if matches!(param_type, BuiltinType::String) {
+                        raw_wasm_params.push(WasmType::I32); // ptr (content start)
+                        raw_wasm_params.push(WasmType::I32); // len
+                    } else {
+                        raw_wasm_params.push(Self::builtin_type_to_wasm_type(param_type));
+                    }
+                }
+
+                let wasm_return = match &return_type {
+                    BuiltinType::Void => None,
+                    _ => Some(Self::builtin_type_to_wasm_type(&return_type)),
+                };
+
+                // Register raw import with __raw suffix
+                let raw_name = format!("{}__raw", func.name);
+                tracing::debug!(
+                    name = %raw_name,
+                    module = %module,
+                    params = ?raw_wasm_params,
+                    returns = ?wasm_return,
+                    "Registering raw plugin bridge import (expand_strings)"
+                );
+
+                let raw_func_index = self.wasm_generator.register_import_function(
+                    module,
+                    &raw_name,
+                    &raw_wasm_params,
+                    wasm_return,
+                )?;
+
+                // 2. Create wrapper function with Clean Language signature
+                // Wrapper takes strings as i32 pointers and expands them to (ptr+4, len)
+                let wrapper_params: Vec<WasmType> = param_types
+                    .iter()
+                    .map(|t| Self::builtin_type_to_wasm_type(t))
+                    .collect();
+
+                // Build wrapper instructions
+                let mut wrapper_instructions = Vec::new();
+                let mut local_idx = 0u32;
+
+                for param_type in param_types.iter() {
+                    if matches!(param_type, BuiltinType::String) {
+                        // For strings: expand to (ptr+4, len)
+                        // Clean strings are length-prefixed: [4-byte len][content]
+                        // ptr+4 = content start, load from ptr = length
+
+                        // Push content pointer (ptr + 4)
+                        wrapper_instructions.push(Instruction::LocalGet(local_idx));
+                        wrapper_instructions.push(Instruction::I32Const(4));
+                        wrapper_instructions.push(Instruction::I32Add);
+
+                        // Push length (load i32 from ptr)
+                        wrapper_instructions.push(Instruction::LocalGet(local_idx));
+                        wrapper_instructions.push(Instruction::I32Load(MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }));
+
+                        local_idx += 1;
+                    } else {
+                        // Non-string: pass through
+                        wrapper_instructions.push(Instruction::LocalGet(local_idx));
+                        local_idx += 1;
+                    }
+                }
+
+                // Call the raw import
+                wrapper_instructions.push(Instruction::Call(raw_func_index));
+                // Note: register_function adds End instruction automatically
+
+                // Register wrapper function
+                tracing::debug!(
+                    name = %func.name,
+                    params = ?wrapper_params,
+                    returns = ?wasm_return,
+                    raw_func_index = raw_func_index,
+                    "Registering wrapper function for expand_strings bridge"
+                );
+
+                self.wasm_generator.register_function(
+                    &func.name,
+                    &wrapper_params,
+                    wasm_return,
+                    &wrapper_instructions,
+                )?;
+            } else {
+                // No expansion needed: register import directly
+                let wasm_params: Vec<WasmType> = param_types
+                    .iter()
+                    .map(|t| Self::builtin_type_to_wasm_type(t))
+                    .collect();
+
+                let wasm_return = match &return_type {
+                    BuiltinType::Void => None,
+                    _ => Some(Self::builtin_type_to_wasm_type(&return_type)),
+                };
+
+                tracing::debug!(
+                    name = %func.name,
+                    module = %module,
+                    params = ?wasm_params,
+                    returns = ?wasm_return,
+                    "Registering plugin bridge function as direct WASM import"
+                );
+
+                self.wasm_generator.register_import_function(
+                    module,
+                    &func.name,
+                    &wasm_params,
+                    wasm_return,
+                )?;
+            }
         }
 
         Ok(())

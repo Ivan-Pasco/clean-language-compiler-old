@@ -260,7 +260,7 @@ impl CodeGenerator {
         codegen.register_print_imports()?;
         codegen.register_console_imports()?;
         codegen.register_file_imports()?;
-        codegen.register_http_imports()?;
+        codegen.register_http_imports(&HashSet::new())?;
         codegen.register_type_conversion_imports()?;
         codegen.register_method_style_imports()?;
         // Register native memory operations (includes native int_to_string, bool_to_string, etc.)
@@ -8526,9 +8526,14 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Register HTTP client import functions (legacy - not used by MirCodeGenerator)
-    #[allow(dead_code)]
-    fn register_http_imports(&mut self) -> Result<(), CompilerError> {
+    /// Register HTTP client import functions
+    ///
+    /// `skip_functions` contains function names that should NOT be registered as imports
+    /// because they will be handled by plugin bridge functions with expand_strings wrappers.
+    pub fn register_http_imports(
+        &mut self,
+        skip_functions: &HashSet<String>,
+    ) -> Result<(), CompilerError> {
         // Basic HTTP methods
 
         // http_get(urlPtr: i32, urlLen: i32) -> i32 (returns string pointer)
@@ -8833,28 +8838,31 @@ impl CodeGenerator {
         // =========================================
 
         // _http_route(methodPtr: i32, methodLen: i32, pathPtr: i32, pathLen: i32, handlerIdx: i32) -> i32
-        let route_type = self.add_function_type(
-            &[
-                WasmType::I32,
-                WasmType::I32,
-                WasmType::I32,
-                WasmType::I32,
-                WasmType::I32,
-            ],
-            Some(WasmType::I32),
-        )?;
-        self.import_section.import(
-            "env",
-            "_http_route",
-            wasm_encoder::EntityType::Function(route_type),
-        );
-        let route_index = self.function_count;
-        self.http_import_indices
-            .insert("_http_route".to_string(), route_index);
-        // Also add to function_map for MIR codegen lookup
-        self.function_map
-            .insert("_http_route".to_string(), route_index);
-        self.function_count += 1;
+        // Skip if plugin bridge will handle this function with expand_strings wrapper
+        if !skip_functions.contains("_http_route") {
+            let route_type = self.add_function_type(
+                &[
+                    WasmType::I32,
+                    WasmType::I32,
+                    WasmType::I32,
+                    WasmType::I32,
+                    WasmType::I32,
+                ],
+                Some(WasmType::I32),
+            )?;
+            self.import_section.import(
+                "env",
+                "_http_route",
+                wasm_encoder::EntityType::Function(route_type),
+            );
+            let route_index = self.function_count;
+            self.http_import_indices
+                .insert("_http_route".to_string(), route_index);
+            // Also add to function_map for MIR codegen lookup
+            self.function_map
+                .insert("_http_route".to_string(), route_index);
+            self.function_count += 1;
+        }
 
         // _http_listen(port: i32) -> i32
         let listen_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;

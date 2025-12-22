@@ -2444,45 +2444,65 @@ functions:
 
 #### Accessing JSON Data
 
-The `any` type returned by `json.textToData()` supports bracket notation for accessing nested data. This allows direct field access on JSON objects and index access on JSON arrays.
+The `any` type returned by `json.textToData()` supports both dot notation and bracket notation for accessing nested data. **Dot notation is preferred** for its readability; use bracket notation only when dot notation cannot be used (dynamic keys, computed indices).
 
 ```clean
-// String key access for JSON objects
+// Preferred: Dot notation for field access
 any data = json.textToData(jsonString)
-any fieldValue = data["fieldName"]      // Access field by string key
+any fieldValue = data.fieldName         // Access field using dot notation
 
-// Integer index access for JSON arrays
+// Bracket notation for dynamic keys or indices
 any arrayData = json.textToData(arrayJson)
-any element = arrayData[0]              // Access element by integer index
+any element = arrayData[0]              // Array element by integer index
+any dynamicKey = data[keyVariable]      // Dynamic key from variable
 
 // Chained access for nested structures
-any nested = data["user"]["profile"]["name"]
-any item = data["items"][0]["id"]
+any nested = data.user.profile.name     // Preferred: dot notation chain
+any item = data.items[0].id             // Mixed: dot notation with array index
 ```
 
-**Bracket Notation Rules:**
-- **String keys** (`data["key"]`): Access fields on JSON objects, returns `any`
-- **Integer indices** (`data[0]`): Access elements in JSON arrays, returns `any`
-- **Chained access**: Both forms can be chained for nested structures
+**Dot Notation on `any` Type:**
+
+Clean Language automatically converts dot notation on `any` type values to the equivalent bracket access. This enables clean, intuitive code when working with JSON objects:
+
+```clean
+// These are equivalent:
+any name = data.name                    // Preferred - more readable
+any name = data["name"]                 // Bracket notation - verbose
+
+// Nested access:
+any city = data.user.address.city       // Preferred
+any city = data["user"]["address"]["city"]  // Bracket notation
+```
+
+**Access Notation Guidelines:**
+- **Dot notation** (`data.field`): Preferred for known field names, returns `any`
+- **String keys** (`data["key"]`): Use for dynamic/computed keys, returns `any`
+- **Integer indices** (`data[0]`): Use for array element access, returns `any`
+- **Mixed access**: Combine dot and bracket notation as needed (`data.items[0].name`)
 - **Missing fields**: Returns `null` when field doesn't exist or index is out of bounds
 
 ```clean
 start()
-    string jsonText = '{"name": "Alice", "scores": [85, 92, 78]}'
+    string jsonText = '{"name": "Alice", "scores": [85, 92, 78], "profile": {"city": "NYC"}}'
     any data = json.textToData(jsonText)
 
-    // Object field access
-    any name = data["name"]           // Returns "Alice"
-    any missing = data["unknown"]     // Returns null
+    // Preferred: Dot notation for object fields
+    any name = data.name              // Returns "Alice"
+    any city = data.profile.city      // Returns "NYC"
+    any missing = data.unknown        // Returns null
 
-    // Array index access
-    any scores = data["scores"]
+    // Bracket notation for array access
+    any scores = data.scores
     any first = scores[0]             // Returns 85
     any outOfBounds = scores[100]     // Returns null
 
+    // Mixed notation for complex structures
+    any firstScore = data.scores[0]   // Returns 85
+
     // Use default operator for fallback values
-    string userName = data["name"] default "Guest"
-    integer firstScore = data["scores"][0] default 0
+    string userName = data.name default "Guest"
+    integer firstScore = data.scores[0] default 0
 ```
 
 #### Serializing to JSON
