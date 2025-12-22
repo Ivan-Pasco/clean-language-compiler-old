@@ -1359,6 +1359,58 @@ impl SemanticAnalyzer {
         // All method-style function types registered
     }
 
+    /// Register plugin bridge functions that are provided by the runtime
+    ///
+    /// Bridge functions are declared in plugin.toml [bridge] sections and are
+    /// expected to be provided by the runtime (e.g., _db_query, _db_execute).
+    ///
+    /// # Arguments
+    /// * `bridge_functions` - List of bridge functions from loaded plugins
+    pub fn register_plugin_bridge_functions(
+        &mut self,
+        bridge_functions: &[crate::plugins::BridgeFunction],
+    ) {
+        use crate::builtins::registry::BuiltinType;
+
+        // Helper to convert BuiltinType to AST Type
+        fn builtin_to_ast_type(bt: &BuiltinType) -> Type {
+            match bt {
+                BuiltinType::Integer => Type::Integer,
+                BuiltinType::Number => Type::Number,
+                BuiltinType::String => Type::String,
+                BuiltinType::Boolean => Type::Boolean,
+                BuiltinType::Void => Type::Void,
+                BuiltinType::List(inner) => Type::List(Box::new(builtin_to_ast_type(inner))),
+                BuiltinType::Matrix(inner) => Type::Matrix(Box::new(builtin_to_ast_type(inner))),
+                BuiltinType::Pairs(k, v) => Type::Pairs(
+                    Box::new(builtin_to_ast_type(k)),
+                    Box::new(builtin_to_ast_type(v)),
+                ),
+                BuiltinType::Namespace => Type::Void, // Namespace doesn't have AST equivalent
+                BuiltinType::Any => Type::Any,
+            }
+        }
+
+        for func in bridge_functions {
+            // Convert bridge function types to AST types
+            let param_types: Vec<Type> = func
+                .get_param_types()
+                .iter()
+                .map(builtin_to_ast_type)
+                .collect();
+            let return_type: Type = builtin_to_ast_type(&func.get_return_type());
+
+            tracing::debug!(
+                "Registering plugin bridge function: {} with {} params",
+                func.name,
+                param_types.len()
+            );
+
+            // Register using the standard register_builtin method
+            self.register_builtin(&func.name, param_types, return_type);
+        }
+    }
+
     pub fn analyze(&mut self, program: &Program) -> Result<Program, CompilerError> {
         // Debug output removed for cleaner logs
 

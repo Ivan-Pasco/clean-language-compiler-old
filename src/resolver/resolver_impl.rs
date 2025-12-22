@@ -2378,6 +2378,101 @@ impl NameResolver {
         // Mark the symbol as builtin so it gets registered in the type environment
         self.symbol_table.mark_as_builtin(symbol_id);
     }
+
+    /// Resolve names in a HIR program with plugin bridge functions
+    ///
+    /// This allows plugins to declare bridge functions in their plugin.toml
+    /// that will be recognized by the compiler during name resolution.
+    pub fn resolve_with_bridge_functions(
+        hir: HirProgram,
+        bridge_functions: &[crate::plugins::BridgeFunction],
+    ) -> Result<ResolutionResult, Vec<CompilerError>> {
+        let mut resolver = Self::new();
+
+        // Register plugin bridge functions before resolving
+        resolver.register_plugin_bridge_functions(bridge_functions);
+
+        match resolver.resolve_program(hir) {
+            Ok(resolved_hir) => Ok(ResolutionResult {
+                resolved_hir,
+                warnings: resolver.warnings,
+            }),
+            Err(_) => Err(resolver.errors),
+        }
+    }
+
+    /// Register plugin bridge functions as builtins
+    ///
+    /// Bridge functions are declared in plugin.toml and provide runtime
+    /// functionality that the compiler needs to recognize during name resolution.
+    fn register_plugin_bridge_functions(
+        &mut self,
+        bridge_functions: &[crate::plugins::BridgeFunction],
+    ) {
+        use crate::builtins::registry::BuiltinType;
+
+        let builtin_location = SourceLocation {
+            line: 0,
+            column: 0,
+            file: "<plugin-bridge>".to_string(),
+        };
+
+        for func in bridge_functions {
+            // Convert BuiltinType to HirType for parameters
+            let parameters: Vec<HirType> = func
+                .get_param_types()
+                .iter()
+                .map(|bt| Self::builtin_type_to_hir_type(bt))
+                .collect();
+
+            // Convert return type
+            let return_type = {
+                let ret = func.get_return_type();
+                match ret {
+                    BuiltinType::Void => None,
+                    _ => Some(Self::builtin_type_to_hir_type(&ret)),
+                }
+            };
+
+            tracing::debug!(
+                name = %func.name,
+                params = ?parameters,
+                returns = ?return_type,
+                "Registering plugin bridge function in resolver"
+            );
+
+            self.register_builtin_fn(
+                &func.name,
+                parameters,
+                return_type,
+                builtin_location.clone(),
+            );
+        }
+    }
+
+    /// Convert BuiltinType to HirType
+    fn builtin_type_to_hir_type(bt: &crate::builtins::registry::BuiltinType) -> HirType {
+        use crate::builtins::registry::BuiltinType;
+        match bt {
+            BuiltinType::Integer => HirType::Integer,
+            BuiltinType::Number => HirType::Number,
+            BuiltinType::String => HirType::String,
+            BuiltinType::Boolean => HirType::Boolean,
+            BuiltinType::Void => HirType::Void,
+            BuiltinType::List(inner) => {
+                HirType::List(Box::new(Self::builtin_type_to_hir_type(inner)))
+            }
+            BuiltinType::Matrix(inner) => {
+                HirType::Matrix(Box::new(Self::builtin_type_to_hir_type(inner)))
+            }
+            BuiltinType::Pairs(k, v) => HirType::Pairs(
+                Box::new(Self::builtin_type_to_hir_type(k)),
+                Box::new(Self::builtin_type_to_hir_type(v)),
+            ),
+            BuiltinType::Namespace => HirType::Integer, // Namespace is internal, use Integer as placeholder
+            BuiltinType::Any => HirType::Integer,       // Any type defaults to Integer for codegen
+        }
+    }
 }
 
 impl Default for NameResolver {

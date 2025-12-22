@@ -333,7 +333,19 @@ pub fn compile_with_plugins_and_opt_level(
         functions = hir_result.hir.functions.len(),
         "Starting Stage 4: Resolver"
     );
-    let resolution_result = Resolver::resolve(hir_result.hir)?;
+
+    // Get bridge functions from plugin registry for name resolution
+    let bridge_functions = registry.bridge_functions();
+    tracing::debug!(
+        bridge_function_count = bridge_functions.len(),
+        "Registering plugin bridge functions in resolver"
+    );
+
+    let resolution_result = if bridge_functions.is_empty() {
+        Resolver::resolve(hir_result.hir)?
+    } else {
+        Resolver::resolve_with_bridge_functions(hir_result.hir, bridge_functions)?
+    };
     let resolved_hir = resolution_result.resolved_hir;
     tracing::debug!(
         functions = resolved_hir.functions.len(),
@@ -357,6 +369,16 @@ pub fn compile_with_plugins_and_opt_level(
     tracing::debug!("Starting Stage 7: WASM generation");
     use crate::codegen::mir_codegen::MirCodeGenerator;
     let mut mir_codegen = MirCodeGenerator::default();
+
+    // Pass plugin bridge functions to the code generator for WASM import generation
+    if !bridge_functions.is_empty() {
+        tracing::debug!(
+            bridge_function_count = bridge_functions.len(),
+            "Passing bridge functions to MIR code generator"
+        );
+        mir_codegen.set_bridge_functions(bridge_functions.to_vec());
+    }
+
     let codegen_result = mir_codegen
         .generate(mir_result.program)
         .map_err(|errors| errors)?;

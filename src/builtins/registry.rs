@@ -1327,6 +1327,32 @@ impl BuiltinRegistry {
         })
     }
 
+    // ============== Plugin Bridge Functions ==============
+
+    /// Register bridge functions from a plugin manifest
+    /// These functions are defined in plugin.toml [bridge] section
+    pub fn register_plugin_bridge_functions(
+        &mut self,
+        bridge: &crate::plugins::plugin_abi::PluginBridge,
+    ) {
+        for func in &bridge.functions {
+            let builtin = func.to_builtin_function();
+            tracing::debug!(
+                "Registering plugin bridge function: {} with {} params, returns {:?}",
+                builtin.name,
+                builtin.parameters.len(),
+                builtin.return_type
+            );
+            self.functions.insert(builtin.name.clone(), builtin);
+        }
+    }
+
+    /// Register a single bridge function
+    pub fn register_bridge_function(&mut self, func: &crate::plugins::plugin_abi::BridgeFunction) {
+        let builtin = func.to_builtin_function();
+        self.functions.insert(builtin.name.clone(), builtin);
+    }
+
     // ============== Statistics ==============
 
     /// Get count of all registered items

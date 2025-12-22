@@ -13,6 +13,9 @@ pub struct PluginManifest {
     pub handles: PluginHandles,
     #[serde(default)]
     pub exports: PluginExports,
+    /// Bridge functions that the plugin expects the runtime to provide
+    #[serde(default)]
+    pub bridge: PluginBridge,
 }
 
 /// Basic plugin information
@@ -83,6 +86,76 @@ impl Default for PluginExports {
 
 fn default_expand() -> String {
     "expand".to_string()
+}
+
+/// Bridge function declaration from plugin.toml
+/// Defines a function that the plugin expects the runtime to provide
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeFunction {
+    /// Function name (e.g., "_db_query")
+    pub name: String,
+    /// Parameter types as strings: "string", "integer", "number", "boolean", "void"
+    pub params: Vec<String>,
+    /// Return type as string
+    pub returns: String,
+    /// WASM import module name (defaults to "env")
+    #[serde(default = "default_bridge_module")]
+    pub module: String,
+    /// Optional description
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Whether string parameters should be expanded to (ptr, len) pairs at WASM level
+    #[serde(default)]
+    pub expand_strings: bool,
+}
+
+fn default_bridge_module() -> String {
+    "env".to_string()
+}
+
+/// Bridge section in plugin.toml
+/// Contains all functions that the runtime must provide
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginBridge {
+    #[serde(default)]
+    pub functions: Vec<BridgeFunction>,
+}
+
+impl BridgeFunction {
+    /// Convert a string type from plugin.toml to BuiltinType
+    pub fn parse_type(type_str: &str) -> crate::builtins::registry::BuiltinType {
+        use crate::builtins::registry::BuiltinType;
+        match type_str.to_lowercase().as_str() {
+            "string" => BuiltinType::String,
+            "integer" | "int" | "i32" => BuiltinType::Integer,
+            "number" | "float" | "f64" => BuiltinType::Number,
+            "boolean" | "bool" => BuiltinType::Boolean,
+            "void" | "" => BuiltinType::Void,
+            _ => BuiltinType::Any, // Default to Any for unknown types
+        }
+    }
+
+    /// Get parameter types as BuiltinTypes
+    pub fn get_param_types(&self) -> Vec<crate::builtins::registry::BuiltinType> {
+        self.params.iter().map(|p| Self::parse_type(p)).collect()
+    }
+
+    /// Get return type as BuiltinType
+    pub fn get_return_type(&self) -> crate::builtins::registry::BuiltinType {
+        Self::parse_type(&self.returns)
+    }
+
+    /// Convert to BuiltinFunction for registry registration
+    pub fn to_builtin_function(&self) -> crate::builtins::registry::BuiltinFunction {
+        use crate::builtins::registry::{BuiltinCategory, BuiltinFunction};
+        BuiltinFunction::new(
+            &self.name,
+            self.get_param_types(),
+            self.get_return_type(),
+            BuiltinCategory::Http, // Use Http category for plugin bridge functions
+        )
+        .with_wasm_import(&self.module, &self.name)
+    }
 }
 
 /// Plugin ABI version
@@ -173,5 +246,54 @@ mod tests {
 
         let missing = vec!["memory".to_string()];
         assert!(PluginAbi::validate_module(&missing).is_err());
+    }
+
+    #[test]
+    fn test_manifest_with_bridge() {
+        let toml_str = r#"
+            [plugin]
+            name = "frame.data"
+            version = "1.0.0"
+
+            [handles]
+            blocks = ["model", "query"]
+
+            [bridge]
+            functions = [
+                { name = "_db_query", params = ["string", "string"], returns = "string", expand_strings = true },
+                { name = "_db_execute", params = ["string", "string"], returns = "integer", expand_strings = true },
+                { name = "_db_begin", params = [], returns = "string" },
+            ]
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(manifest.plugin.name, "frame.data");
+        assert_eq!(manifest.bridge.functions.len(), 3);
+
+        let query_fn = &manifest.bridge.functions[0];
+        assert_eq!(query_fn.name, "_db_query");
+        assert_eq!(query_fn.params, vec!["string", "string"]);
+        assert_eq!(query_fn.returns, "string");
+        assert!(query_fn.expand_strings);
+        assert_eq!(query_fn.module, "env"); // Default module
+
+        let begin_fn = &manifest.bridge.functions[2];
+        assert_eq!(begin_fn.name, "_db_begin");
+        assert!(begin_fn.params.is_empty());
+        assert!(!begin_fn.expand_strings); // Default is false
+    }
+
+    #[test]
+    fn test_bridge_function_type_parsing() {
+        use crate::builtins::registry::BuiltinType;
+
+        assert_eq!(BridgeFunction::parse_type("string"), BuiltinType::String);
+        assert_eq!(BridgeFunction::parse_type("integer"), BuiltinType::Integer);
+        assert_eq!(BridgeFunction::parse_type("number"), BuiltinType::Number);
+        assert_eq!(BridgeFunction::parse_type("boolean"), BuiltinType::Boolean);
+        assert_eq!(BridgeFunction::parse_type("void"), BuiltinType::Void);
+        assert_eq!(BridgeFunction::parse_type("i32"), BuiltinType::Integer);
+        assert_eq!(BridgeFunction::parse_type("f64"), BuiltinType::Number);
     }
 }

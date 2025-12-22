@@ -62,12 +62,35 @@ impl WasmPluginLoader {
     /// * `plugin_names` - List of plugin names from configuration.cln (e.g., ["frame.web", "frame.data"])
     ///
     /// # Returns
-    /// A PluginRegistry with all requested plugins loaded
+    /// A PluginRegistry with all requested plugins loaded, including bridge functions
     pub fn load_plugins(&mut self, plugin_names: &[String]) -> Result<PluginRegistry> {
         let mut builder = PluginRegistry::builder();
 
         for plugin_name in plugin_names {
-            let adapter = self.load_plugin(plugin_name)?;
+            // Find plugin directory and load manifest first
+            let plugin_dir = self.find_plugin_dir(plugin_name)?;
+            let manifest_path = plugin_dir.join("plugin.toml");
+            let manifest = self.load_manifest(&manifest_path)?;
+
+            // Add bridge functions from the manifest
+            if !manifest.bridge.functions.is_empty() {
+                tracing::info!(
+                    plugin = plugin_name,
+                    bridge_function_count = manifest.bridge.functions.len(),
+                    "Loading bridge functions from plugin"
+                );
+                builder = builder.add_bridge_functions(&manifest.bridge);
+            }
+
+            // Load the plugin adapter
+            let wasm_path = plugin_dir.join("plugin.wasm");
+            let module = self.load_wasm_module(&wasm_path)?;
+            let adapter = WasmPluginAdapter::new(
+                plugin_name.to_string(),
+                manifest,
+                module,
+                self.engine.clone(),
+            )?;
             builder = builder.add(adapter);
         }
 

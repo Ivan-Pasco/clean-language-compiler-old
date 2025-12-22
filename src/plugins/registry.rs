@@ -11,6 +11,7 @@ use super::{
     PluginLspContext,
 };
 use crate::ast::{SourceLocation, Statement};
+use crate::plugins::plugin_abi::BridgeFunction;
 
 /// Error type for plugin operations
 #[derive(Debug, Clone)]
@@ -145,6 +146,9 @@ pub struct PluginRegistry {
     handlers: HashMap<String, Arc<dyn FrameworkPlugin>>,
     /// Track plugin names for debugging
     registered_plugins: Vec<String>,
+    /// Bridge functions from all loaded plugins
+    /// These are functions that plugins expect the runtime to provide (e.g., _db_query)
+    bridge_functions: Vec<BridgeFunction>,
 }
 
 impl Default for PluginRegistry {
@@ -165,6 +169,7 @@ impl PluginRegistry {
         Self {
             handlers: HashMap::new(),
             registered_plugins: Vec::new(),
+            bridge_functions: Vec::new(),
         }
     }
 
@@ -321,6 +326,34 @@ impl PluginRegistry {
     /// Get the number of registered handlers
     pub fn handler_count(&self) -> usize {
         self.handlers.len()
+    }
+
+    /// Get all bridge functions from loaded plugins
+    ///
+    /// Bridge functions are runtime-provided functions declared in plugin.toml [bridge] sections.
+    /// These functions (e.g., _db_query, _db_execute) need to be registered with the compiler
+    /// so that code calling them can be type-checked and compiled correctly.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let registry = loader.load_plugins(&["frame.data"])?;
+    /// for func in registry.bridge_functions() {
+    ///     // Register _db_query, _db_execute, etc.
+    ///     builtin_registry.register_bridge_function(func);
+    /// }
+    /// ```
+    pub fn bridge_functions(&self) -> &[BridgeFunction] {
+        &self.bridge_functions
+    }
+
+    /// Check if a function name is a bridge function
+    pub fn is_bridge_function(&self, name: &str) -> bool {
+        self.bridge_functions.iter().any(|f| f.name == name)
+    }
+
+    /// Get a bridge function by name
+    pub fn get_bridge_function(&self, name: &str) -> Option<&BridgeFunction> {
+        self.bridge_functions.iter().find(|f| f.name == name)
     }
 
     // ========================================================================
@@ -517,6 +550,7 @@ impl fmt::Debug for PluginRegistry {
 /// ```
 pub struct PluginRegistryBuilder {
     plugins: Vec<Arc<dyn FrameworkPlugin>>,
+    bridge_functions: Vec<BridgeFunction>,
 }
 
 impl PluginRegistryBuilder {
@@ -524,6 +558,7 @@ impl PluginRegistryBuilder {
     pub fn new() -> Self {
         Self {
             plugins: Vec::new(),
+            bridge_functions: Vec::new(),
         }
     }
 
@@ -550,6 +585,35 @@ impl PluginRegistryBuilder {
     /// Self for method chaining
     pub fn add_arc(mut self, plugin: Arc<dyn FrameworkPlugin>) -> Self {
         self.plugins.push(plugin);
+        self
+    }
+
+    /// Add bridge functions from a plugin manifest
+    ///
+    /// Bridge functions are runtime-provided functions declared in plugin.toml [bridge] sections.
+    ///
+    /// # Arguments
+    /// * `bridge` - The bridge section from a plugin manifest
+    ///
+    /// # Returns
+    /// Self for method chaining
+    pub fn add_bridge_functions(
+        mut self,
+        bridge: &crate::plugins::plugin_abi::PluginBridge,
+    ) -> Self {
+        self.bridge_functions.extend(bridge.functions.clone());
+        self
+    }
+
+    /// Add a single bridge function
+    ///
+    /// # Arguments
+    /// * `func` - The bridge function to add
+    ///
+    /// # Returns
+    /// Self for method chaining
+    pub fn add_bridge_function(mut self, func: BridgeFunction) -> Self {
+        self.bridge_functions.push(func);
         self
     }
 
@@ -601,6 +665,7 @@ impl PluginRegistryBuilder {
         Ok(PluginRegistry {
             handlers,
             registered_plugins,
+            bridge_functions: self.bridge_functions,
         })
     }
 }
@@ -684,5 +749,51 @@ mod tests {
 
         let result = registry.expand(&block);
         assert!(matches!(result, Err(PluginError::UnknownBlockType { .. })));
+    }
+
+    #[test]
+    fn test_bridge_function_registration() {
+        use crate::plugins::plugin_abi::{BridgeFunction, PluginBridge};
+
+        // Create bridge functions like they would come from plugin.toml
+        let bridge = PluginBridge {
+            functions: vec![
+                BridgeFunction {
+                    name: "_db_query".to_string(),
+                    params: vec!["string".to_string(), "string".to_string()],
+                    returns: "string".to_string(),
+                    module: "env".to_string(),
+                    description: Some("Execute SELECT query".to_string()),
+                    expand_strings: true,
+                },
+                BridgeFunction {
+                    name: "_db_execute".to_string(),
+                    params: vec!["string".to_string(), "string".to_string()],
+                    returns: "integer".to_string(),
+                    module: "env".to_string(),
+                    description: Some("Execute INSERT/UPDATE/DELETE".to_string()),
+                    expand_strings: true,
+                },
+            ],
+        };
+
+        // Build registry with bridge functions
+        let registry = PluginRegistryBuilder::new()
+            .add_bridge_functions(&bridge)
+            .build()
+            .expect("Failed to build registry");
+
+        // Verify bridge functions are registered
+        assert_eq!(registry.bridge_functions().len(), 2);
+        assert!(registry.is_bridge_function("_db_query"));
+        assert!(registry.is_bridge_function("_db_execute"));
+        assert!(!registry.is_bridge_function("_unknown"));
+
+        // Verify the function properties
+        let db_query = registry.get_bridge_function("_db_query").unwrap();
+        assert_eq!(db_query.name, "_db_query");
+        assert_eq!(db_query.params.len(), 2);
+        assert_eq!(db_query.returns, "string");
+        assert!(db_query.expand_strings);
     }
 }

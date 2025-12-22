@@ -66,6 +66,10 @@ pub struct MirCodeGenerator<'a> {
     /// CRITICAL FIX: Track types of temporary locals created during codegen
     /// Maps local index -> WASM type for temporaries (e.g., string expansion temps)
     temp_local_types: HashMap<u32, ValType>,
+
+    /// Plugin bridge functions to register as WASM imports
+    /// These come from plugin.toml [bridge] sections
+    bridge_functions: Vec<crate::plugins::BridgeFunction>,
 }
 
 /// Result of MIR code generation
@@ -115,6 +119,7 @@ impl MirCodeGenerator<'_> {
             function_signatures: HashMap::new(),
             value_to_type: HashMap::new(),
             temp_local_types: HashMap::new(),
+            bridge_functions: Vec::new(),
         }
     }
 
@@ -135,7 +140,16 @@ impl MirCodeGenerator<'_> {
             function_signatures: HashMap::new(),
             value_to_type: HashMap::new(),
             temp_local_types: HashMap::new(),
+            bridge_functions: Vec::new(),
         }
+    }
+
+    /// Set plugin bridge functions to be registered as WASM imports
+    ///
+    /// Bridge functions are declared in plugin.toml [bridge] sections and
+    /// need to be registered as WASM imports before code generation.
+    pub fn set_bridge_functions(&mut self, bridge_functions: Vec<crate::plugins::BridgeFunction>) {
+        self.bridge_functions = bridge_functions;
     }
 
     /// Generate WASM from MIR program
@@ -273,6 +287,17 @@ impl MirCodeGenerator<'_> {
                 .register_json_operations()
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: JSON operations registered");
+
+            // CRITICAL: Register plugin bridge functions as WASM imports
+            // These are declared in plugin.toml [bridge] sections
+            if !self.bridge_functions.is_empty() {
+                debug_mir!(
+                    "DEBUG MIR: Registering {} plugin bridge function imports",
+                    self.bridge_functions.len()
+                );
+                self.register_plugin_bridge_imports().map_err(|e| vec![e])?;
+                debug_mir!("DEBUG MIR: Plugin bridge function imports registered");
+            }
         }
 
         // Set up memory section
@@ -4685,6 +4710,81 @@ impl MirCodeGenerator<'_> {
         module.section(data_section);
 
         Ok(module.finish())
+    }
+
+    /// Register plugin bridge functions as WASM imports
+    ///
+    /// Bridge functions from plugin.toml [bridge] sections are registered as WASM imports
+    /// so the runtime can provide their implementations.
+    fn register_plugin_bridge_imports(&mut self) -> Result<(), CompilerError> {
+        use crate::builtins::registry::BuiltinType;
+        use crate::types::WasmType;
+
+        for func in &self.bridge_functions.clone() {
+            // Convert parameter types to WASM types
+            let mut wasm_params = Vec::new();
+            for param_type in func.get_param_types() {
+                // If expand_strings is true, each string param becomes (ptr, len)
+                if func.expand_strings && matches!(param_type, BuiltinType::String) {
+                    wasm_params.push(WasmType::I32); // ptr
+                    wasm_params.push(WasmType::I32); // len
+                } else {
+                    wasm_params.push(Self::builtin_type_to_wasm_type(&param_type));
+                }
+            }
+
+            // Convert return type to WASM type
+            let wasm_return = {
+                let ret = func.get_return_type();
+                match ret {
+                    BuiltinType::Void => None,
+                    _ => Some(Self::builtin_type_to_wasm_type(&ret)),
+                }
+            };
+
+            // Get the module from the bridge function (defaults to "env")
+            let module = &func.module;
+
+            tracing::debug!(
+                name = %func.name,
+                module = %module,
+                params = ?wasm_params,
+                returns = ?wasm_return,
+                expand_strings = func.expand_strings,
+                "Registering plugin bridge function as WASM import"
+            );
+
+            // Register the import
+            self.wasm_generator.register_import_function(
+                module,
+                &func.name,
+                &wasm_params,
+                wasm_return,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Convert BuiltinType to WASM type
+    fn builtin_type_to_wasm_type(
+        bt: &crate::builtins::registry::BuiltinType,
+    ) -> crate::types::WasmType {
+        use crate::builtins::registry::BuiltinType;
+        use crate::types::WasmType;
+
+        match bt {
+            BuiltinType::Integer => WasmType::I32,
+            BuiltinType::Number => WasmType::F64,
+            BuiltinType::String => WasmType::I32, // String pointer
+            BuiltinType::Boolean => WasmType::I32,
+            BuiltinType::Void => WasmType::I32, // Fallback, shouldn't be used
+            BuiltinType::List(_) => WasmType::I32, // List pointer
+            BuiltinType::Matrix(_) => WasmType::I32, // Matrix pointer
+            BuiltinType::Pairs(_, _) => WasmType::I32, // Pairs pointer
+            BuiltinType::Namespace => WasmType::I32, // Namespace as i32
+            BuiltinType::Any => WasmType::I32,  // Any as i32 pointer
+        }
     }
 }
 
