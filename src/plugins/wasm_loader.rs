@@ -99,23 +99,6 @@ impl WasmPluginLoader {
             .map_err(|e| anyhow!("Failed to build plugin registry: {}", e))
     }
 
-    /// Load a single plugin by name
-    fn load_plugin(&mut self, name: &str) -> Result<WasmPluginAdapter> {
-        // Find the plugin directory
-        let plugin_dir = self.find_plugin_dir(name)?;
-
-        // Load manifest
-        let manifest_path = plugin_dir.join("plugin.toml");
-        let manifest = self.load_manifest(&manifest_path)?;
-
-        // Load WASM module
-        let wasm_path = plugin_dir.join("plugin.wasm");
-        let module = self.load_wasm_module(&wasm_path)?;
-
-        // Create adapter
-        WasmPluginAdapter::new(name.to_string(), manifest, module, self.engine.clone())
-    }
-
     /// Find the plugin directory, using the latest version if not specified
     fn find_plugin_dir(&self, name: &str) -> Result<PathBuf> {
         let plugin_base = self.plugins_dir.join(name);
