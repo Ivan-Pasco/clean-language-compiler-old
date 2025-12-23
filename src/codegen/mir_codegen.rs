@@ -1775,6 +1775,9 @@ impl MirCodeGenerator<'_> {
                     "Processing Call operation"
                 );
 
+                // Flag to track if print calls were already emitted (for multi-arg print)
+                let mut call_already_emitted = false;
+
                 // Get function signature to determine parameter types
                 let (mut function_name, function_signature, symbol_id_opt) = match function {
                     MirOperand::Function(symbol_id) => {
@@ -1844,11 +1847,33 @@ impl MirCodeGenerator<'_> {
                 match function_name.as_deref() {
                     Some("print") | Some("printl") | Some("println") => {
                         debug_mir!(": Matched print function, loading {} arguments", arguments.len());
-                        // Print functions need string arguments expanded to (content_ptr, length)
+                        // CRITICAL FIX: For multi-argument print, we must call print ONCE PER ARGUMENT
+                        // The print function takes (content_ptr, length) - only 2 params
+                        // So print("Value:", x) should emit TWO print calls, not one
+
+                        // Get the print function index once
+                        let print_func_name = function_name.as_deref().unwrap_or("print");
+                        let print_idx = *self.wasm_generator.function_map.get(print_func_name)
+                            .ok_or_else(|| CompilerError::Codegen {
+                                context: Box::new(crate::error::ErrorContext::new(
+                                    format!("Print function '{}' not found in function map", print_func_name),
+                                    None,
+                                    crate::error::ErrorType::Codegen,
+                                    Some(instruction.location.clone()),
+                                )),
+                            })?;
+
                         for (i, arg) in arguments.iter().enumerate() {
                             debug_mir!(": Loading print arg[{}]: {:?}", i, arg);
+                            // Load this argument's (content_ptr, length) onto stack
                             self.load_string_argument_for_print(arg)?;
+                            // Call print immediately for this argument
+                            self.current_instructions.push(Instruction::Call(print_idx));
+                            debug_mir!(": Called print for arg[{}]", i);
                         }
+
+                        // Mark that we've already emitted the print calls
+                        call_already_emitted = true;
                     }
                     Some("string.concat") | Some("string_concat") | Some("native_string_concat") => {
                         debug_mir!(": Matched string.concat");
@@ -2115,63 +2140,89 @@ impl MirCodeGenerator<'_> {
                     }
                 }
 
-                // Generate function call
-                match function {
-                    MirOperand::Function(symbol_id) => {
-                        // CRITICAL FIX: Try direct SymbolId -> index lookup first
-                        // This avoids name collisions for constructors/methods with same names
-                        if let Some(&function_index) = self.symbol_to_function_index.get(symbol_id)
-                        {
-                            debug_mir!(
-                                "DEBUG DIRECT LOOKUP: SymbolId({}) -> WASM index {} (DIRECT)",
-                                symbol_id.0,
-                                function_index
-                            );
-                            tracing::trace!(
-                                symbol_id = symbol_id.0,
-                                index = function_index,
-                                "Calling function at WASM index (direct lookup)"
-                            );
-                            self.current_instructions
-                                .push(Instruction::Call(function_index));
-                        } else if let Some(function_name) =
-                            self.get_function_name_by_symbol(*symbol_id)
-                        {
-                            // Fallback to name-based lookup for built-in functions
-                            debug_mir!(
-                                "DEBUG LOOKUP: Looking up function '{}' in function_map",
-                                function_name
-                            );
-
-                            // Try direct lookup first
-                            let function_index = if let Some(&idx) =
-                                self.wasm_generator.function_map.get(&function_name)
+                // Generate function call (skip if already emitted for multi-arg print)
+                if !call_already_emitted {
+                    match function {
+                        MirOperand::Function(symbol_id) => {
+                            // CRITICAL FIX: Try direct SymbolId -> index lookup first
+                            // This avoids name collisions for constructors/methods with same names
+                            if let Some(&function_index) =
+                                self.symbol_to_function_index.get(symbol_id)
                             {
-                                Some(idx)
-                            } else {
-                                // CRITICAL FIX: Try underscore/dot conversion first
-                                // "math_round" -> "math.round" or vice versa
-                                let alt_name = if function_name.contains('_') {
-                                    function_name.replace('_', ".")
-                                } else if function_name.contains('.') {
-                                    function_name.replace('.', "_")
-                                } else {
-                                    String::new()
-                                };
+                                debug_mir!(
+                                    "DEBUG DIRECT LOOKUP: SymbolId({}) -> WASM index {} (DIRECT)",
+                                    symbol_id.0,
+                                    function_index
+                                );
+                                tracing::trace!(
+                                    symbol_id = symbol_id.0,
+                                    index = function_index,
+                                    "Calling function at WASM index (direct lookup)"
+                                );
+                                self.current_instructions
+                                    .push(Instruction::Call(function_index));
+                            } else if let Some(function_name) =
+                                self.get_function_name_by_symbol(*symbol_id)
+                            {
+                                // Fallback to name-based lookup for built-in functions
+                                debug_mir!(
+                                    "DEBUG LOOKUP: Looking up function '{}' in function_map",
+                                    function_name
+                                );
 
-                                if !alt_name.is_empty() {
-                                    if let Some(&idx) =
-                                        self.wasm_generator.function_map.get(&alt_name)
-                                    {
-                                        debug_mir!(
-                                            "DEBUG LOOKUP FALLBACK: Found '{}' as '{}'",
-                                            function_name,
-                                            alt_name
-                                        );
-                                        Some(idx)
+                                // Try direct lookup first
+                                let function_index = if let Some(&idx) =
+                                    self.wasm_generator.function_map.get(&function_name)
+                                {
+                                    Some(idx)
+                                } else {
+                                    // CRITICAL FIX: Try underscore/dot conversion first
+                                    // "math_round" -> "math.round" or vice versa
+                                    let alt_name = if function_name.contains('_') {
+                                        function_name.replace('_', ".")
+                                    } else if function_name.contains('.') {
+                                        function_name.replace('.', "_")
+                                    } else {
+                                        String::new()
+                                    };
+
+                                    if !alt_name.is_empty() {
+                                        if let Some(&idx) =
+                                            self.wasm_generator.function_map.get(&alt_name)
+                                        {
+                                            debug_mir!(
+                                                "DEBUG LOOKUP FALLBACK: Found '{}' as '{}'",
+                                                function_name,
+                                                alt_name
+                                            );
+                                            Some(idx)
+                                        } else {
+                                            // Try namespace-prefixed variants for builtin functions
+                                            // If "min" is not found, try "math.min", "string.min", etc.
+                                            let namespaces = [
+                                                "math",
+                                                "string",
+                                                "list",
+                                                "file",
+                                                "http",
+                                                "compare",
+                                                "conditional",
+                                            ];
+                                            namespaces.iter().find_map(|ns| {
+                                                let qualified_name =
+                                                    format!("{}.{}", ns, function_name);
+                                                debug_mir!(
+                                                    "DEBUG LOOKUP FALLBACK: Trying '{}'",
+                                                    qualified_name
+                                                );
+                                                self.wasm_generator
+                                                    .function_map
+                                                    .get(&qualified_name)
+                                                    .copied()
+                                            })
+                                        }
                                     } else {
                                         // Try namespace-prefixed variants for builtin functions
-                                        // If "min" is not found, try "math.min", "string.min", etc.
                                         let namespaces = [
                                             "math",
                                             "string",
@@ -2194,51 +2245,28 @@ impl MirCodeGenerator<'_> {
                                                 .copied()
                                         })
                                     }
-                                } else {
-                                    // Try namespace-prefixed variants for builtin functions
-                                    let namespaces = [
-                                        "math",
-                                        "string",
-                                        "list",
-                                        "file",
-                                        "http",
-                                        "compare",
-                                        "conditional",
-                                    ];
-                                    namespaces.iter().find_map(|ns| {
-                                        let qualified_name = format!("{}.{}", ns, function_name);
-                                        debug_mir!(
-                                            "DEBUG LOOKUP FALLBACK: Trying '{}'",
-                                            qualified_name
-                                        );
-                                        self.wasm_generator
-                                            .function_map
-                                            .get(&qualified_name)
-                                            .copied()
-                                    })
-                                }
-                            };
+                                };
 
-                            if let Some(function_index) = function_index {
-                                tracing::trace!(
-                                    name = %function_name,
-                                    index = function_index,
-                                    "Calling function at WASM index"
-                                );
-                                self.current_instructions
-                                    .push(Instruction::Call(function_index));
-                            } else {
-                                // CRITICAL FIX: No more silent fallbacks to index 0
-                                // Return a proper error when function is not found in function_map
-                                debug_mir!(
-                                    "DEBUG LOOKUP: Function '{}' not found in function_map!",
-                                    function_name
-                                );
-                                debug_mir!(
-                                    "DEBUG LOOKUP: function_map keys: {:?}",
-                                    self.wasm_generator.function_map.keys().collect::<Vec<_>>()
-                                );
-                                return Err(CompilerError::Codegen {
+                                if let Some(function_index) = function_index {
+                                    tracing::trace!(
+                                        name = %function_name,
+                                        index = function_index,
+                                        "Calling function at WASM index"
+                                    );
+                                    self.current_instructions
+                                        .push(Instruction::Call(function_index));
+                                } else {
+                                    // CRITICAL FIX: No more silent fallbacks to index 0
+                                    // Return a proper error when function is not found in function_map
+                                    debug_mir!(
+                                        "DEBUG LOOKUP: Function '{}' not found in function_map!",
+                                        function_name
+                                    );
+                                    debug_mir!(
+                                        "DEBUG LOOKUP: function_map keys: {:?}",
+                                        self.wasm_generator.function_map.keys().collect::<Vec<_>>()
+                                    );
+                                    return Err(CompilerError::Codegen {
                                     context: Box::new(crate::error::ErrorContext::new(
                                         format!(
                                             "Function '{}' (SymbolId({})) not found in function map during code generation",
@@ -2249,11 +2277,11 @@ impl MirCodeGenerator<'_> {
                                         Some(instruction.location.clone()),
                                     )),
                                 });
-                            }
-                        } else {
-                            // CRITICAL FIX: No more silent fallbacks to index 0
-                            // Return a proper error when symbol ID cannot be resolved to a function name
-                            return Err(CompilerError::Codegen {
+                                }
+                            } else {
+                                // CRITICAL FIX: No more silent fallbacks to index 0
+                                // Return a proper error when symbol ID cannot be resolved to a function name
+                                return Err(CompilerError::Codegen {
                                 context: Box::new(crate::error::ErrorContext::new(
                                     format!(
                                         "Cannot resolve SymbolId({}) to function name during code generation",
@@ -2264,66 +2292,77 @@ impl MirCodeGenerator<'_> {
                                     Some(instruction.location.clone()),
                                 )),
                             });
+                            }
                         }
-                    }
-                    MirOperand::NamedFunction { name, symbol_id: _ } => {
-                        // CRITICAL FIX: Handle namespace functions (math.*, string.*) by looking up by name
-                        debug_mir!(
-                            "DEBUG NAMED FUNCTION: Looking up function '{}' in function_map",
-                            name
-                        );
+                        MirOperand::NamedFunction { name, symbol_id: _ } => {
+                            // CRITICAL FIX: Handle namespace functions (math.*, string.*) by looking up by name
+                            debug_mir!(
+                                "DEBUG NAMED FUNCTION: Looking up function '{}' in function_map",
+                                name
+                            );
 
-                        // Try direct lookup first
-                        let function_index =
-                            if let Some(&idx) = self.wasm_generator.function_map.get(name) {
-                                Some(idx)
-                            } else {
-                                // CRITICAL FIX: Try underscore/dot conversion
-                                // "input.integer" -> "input_integer" or vice versa
-                                let alt_name = if name.contains('.') {
-                                    name.replace('.', "_")
-                                } else if name.contains('_') {
-                                    name.replace('_', ".")
+                            // Try direct lookup first
+                            let function_index =
+                                if let Some(&idx) = self.wasm_generator.function_map.get(name) {
+                                    Some(idx)
                                 } else {
-                                    String::new()
-                                };
+                                    // CRITICAL FIX: Try underscore/dot conversion
+                                    // "input.integer" -> "input_integer" or vice versa
+                                    let alt_name = if name.contains('.') {
+                                        name.replace('.', "_")
+                                    } else if name.contains('_') {
+                                        name.replace('_', ".")
+                                    } else {
+                                        String::new()
+                                    };
 
-                                if !alt_name.is_empty() {
-                                    debug_mir!(
+                                    if !alt_name.is_empty() {
+                                        debug_mir!(
                                         "DEBUG NAMED FUNCTION FALLBACK: Trying alternate name '{}'",
                                         alt_name
                                     );
-                                    self.wasm_generator.function_map.get(&alt_name).copied()
-                                } else {
-                                    None
-                                }
-                            };
+                                        self.wasm_generator.function_map.get(&alt_name).copied()
+                                    } else {
+                                        None
+                                    }
+                                };
 
-                        if let Some(idx) = function_index {
-                            debug_mir!(
-                                "DEBUG NAMED FUNCTION CALL: Calling '{}' at WASM index {}",
-                                name,
-                                idx
-                            );
-                            tracing::trace!(
-                                name = %name,
-                                index = idx,
-                                "Calling named function at WASM index"
-                            );
-                            self.current_instructions.push(Instruction::Call(idx));
-                        } else {
-                            // CRITICAL FIX: Return a proper error when named function is not found
-                            debug_mir!(
+                            if let Some(idx) = function_index {
+                                debug_mir!(
+                                    "DEBUG NAMED FUNCTION CALL: Calling '{}' at WASM index {}",
+                                    name,
+                                    idx
+                                );
+                                tracing::trace!(
+                                    name = %name,
+                                    index = idx,
+                                    "Calling named function at WASM index"
+                                );
+                                self.current_instructions.push(Instruction::Call(idx));
+                            } else {
+                                // CRITICAL FIX: Return a proper error when named function is not found
+                                debug_mir!(
                                 "DEBUG NAMED FUNCTION: Function '{}' not found in function_map!",
                                 name
                             );
-                            debug_mir!(
-                                "DEBUG NAMED FUNCTION: Available functions: {:?}",
-                                self.wasm_generator.function_map.keys().collect::<Vec<_>>()
-                            );
+                                debug_mir!(
+                                    "DEBUG NAMED FUNCTION: Available functions: {:?}",
+                                    self.wasm_generator.function_map.keys().collect::<Vec<_>>()
+                                );
+                                return Err(CompilerError::Codegen {
+                                    context: Box::new(crate::error::ErrorContext::new(
+                                        format!("Function '{}' not found in function map", name),
+                                        None,
+                                        crate::error::ErrorType::Codegen,
+                                        Some(instruction.location.clone()),
+                                    )),
+                                });
+                            }
+                        }
+                        _ => {
                             return Err(CompilerError::Codegen {
                                 context: Box::new(crate::error::ErrorContext::new(
-                                    format!("Function '{}' not found in function map", name),
+                                    "Indirect function calls not yet supported",
                                     None,
                                     crate::error::ErrorType::Codegen,
                                     Some(instruction.location.clone()),
@@ -2331,17 +2370,7 @@ impl MirCodeGenerator<'_> {
                             });
                         }
                     }
-                    _ => {
-                        return Err(CompilerError::Codegen {
-                            context: Box::new(crate::error::ErrorContext::new(
-                                "Indirect function calls not yet supported",
-                                None,
-                                crate::error::ErrorType::Codegen,
-                                Some(instruction.location.clone()),
-                            )),
-                        });
-                    }
-                }
+                } // End of if !call_already_emitted
 
                 // CRITICAL FIX: Handle return values based on function signature
                 debug_mir!(" CALL: Call operation completed");
@@ -3292,57 +3321,272 @@ impl MirCodeGenerator<'_> {
             }
             MirOperand::Value(value_id) => {
                 debug_mir!(" LOAD_STRING: Processing Value({:?})", value_id);
-                // CRITICAL FIX: Always load values from their local variable and expand
-                // to (content_ptr, length). Never use cached value_to_string_index mappings
-                // because the variable may have been reassigned (e.g., html = html + "...").
-                // The mapping only records the INITIAL assignment, not the current value.
-                // This fixes the string concatenation truncation bug.
-                tracing::trace!(
-                    value_id = ?value_id.0,
-                    "Expanding string pointer for ValueId (always load from local)"
-                );
 
-                // Load the string pointer from the local variable
-                debug_mir!(" LOAD_STRING: Loading operand to stack");
-                self.load_operand(operand)?;
+                // Check the value type to determine if we need type conversion
+                let value_type = self.get_value_type(*value_id);
+                debug_mir!(" LOAD_STRING: Value type is {:?}", value_type);
 
-                // Allocate a temporary local to hold the pointer
-                let temp_local = self.next_local_index;
-                debug_mir!(" LOAD_STRING: Allocated temp_local={}", temp_local);
-                self.next_local_index += 1;
-                // Track type: string pointers are i32
-                self.temp_local_types.insert(temp_local, ValType::I32);
+                // CRITICAL FIX: For non-string values, we must convert to string first
+                // F64 (number type) -> float_to_string
+                // I32 (integer type) -> int_to_string
+                // Bool (boolean type) -> bool_to_string
+                // Otherwise it's a string pointer -> expand normally
 
-                // Store pointer to temp local
-                debug_mir!(" LOAD_STRING: Storing pointer to temp_local");
-                self.current_instructions
-                    .push(Instruction::LocalSet(temp_local));
+                if matches!(value_type, Some(MirType::F64)) {
+                    debug_mir!(
+                        " LOAD_STRING: Value is f64, converting to string via float_to_string"
+                    );
+                    // Load the f64 value
+                    self.load_operand(operand)?;
+                    // Get float_to_string function index
+                    let float_to_string_idx = *self
+                        .wasm_generator
+                        .function_map
+                        .get("float_to_string")
+                        .ok_or_else(|| CompilerError::Codegen {
+                            context: Box::new(crate::error::ErrorContext::new(
+                                "float_to_string function not found for print".to_string(),
+                                None,
+                                crate::error::ErrorType::Codegen,
+                                None,
+                            )),
+                        })?;
+                    // Call float_to_string(f64) -> i32 (string pointer)
+                    self.current_instructions
+                        .push(Instruction::Call(float_to_string_idx));
 
-                // Calculate content pointer (ptr + 4, skipping length field)
-                debug_mir!(" LOAD_STRING: Calculating content_ptr = base_ptr + 4");
-                self.current_instructions
-                    .push(Instruction::LocalGet(temp_local));
-                self.current_instructions.push(Instruction::I32Const(4));
-                self.current_instructions.push(Instruction::I32Add);
+                    // Now we have a string pointer on the stack, expand it
+                    let temp_local = self.next_local_index;
+                    self.next_local_index += 1;
+                    self.temp_local_types.insert(temp_local, ValType::I32);
+                    self.current_instructions
+                        .push(Instruction::LocalSet(temp_local));
 
-                // Load length from memory at pointer location
-                debug_mir!(" LOAD_STRING: Loading length from base_ptr");
-                self.current_instructions
-                    .push(Instruction::LocalGet(temp_local));
-                self.current_instructions
-                    .push(Instruction::I32Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 2, // 4-byte alignment for i32
-                        memory_index: 0,
-                    }));
+                    // Calculate content pointer (ptr + 4)
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions.push(Instruction::I32Const(4));
+                    self.current_instructions.push(Instruction::I32Add);
 
-                debug_mir!(" LOAD_STRING: String pointer expansion completed - stack should have [content_ptr, length]");
+                    // Load length from memory
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions
+                        .push(Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }));
+                } else if matches!(value_type, Some(MirType::I32)) {
+                    // CRITICAL FIX: Integer values need to be converted to strings
+                    debug_mir!(" LOAD_STRING: Value is i32 (integer), converting to string via int_to_string");
+                    // Load the i32 value
+                    self.load_operand(operand)?;
+                    // Get int_to_string function index (stdlib function)
+                    let int_to_string_idx = *self
+                        .wasm_generator
+                        .function_map
+                        .get("int_to_string")
+                        .ok_or_else(|| CompilerError::Codegen {
+                            context: Box::new(crate::error::ErrorContext::new(
+                                "int_to_string function not found for print".to_string(),
+                                None,
+                                crate::error::ErrorType::Codegen,
+                                None,
+                            )),
+                        })?;
+                    // Call int_to_string(i32) -> i32 (string pointer)
+                    self.current_instructions
+                        .push(Instruction::Call(int_to_string_idx));
+
+                    // Now we have a string pointer on the stack, expand it
+                    let temp_local = self.next_local_index;
+                    self.next_local_index += 1;
+                    self.temp_local_types.insert(temp_local, ValType::I32);
+                    self.current_instructions
+                        .push(Instruction::LocalSet(temp_local));
+
+                    // Calculate content pointer (ptr + 4)
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions.push(Instruction::I32Const(4));
+                    self.current_instructions.push(Instruction::I32Add);
+
+                    // Load length from memory
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions
+                        .push(Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }));
+                } else if matches!(value_type, Some(MirType::Bool)) {
+                    // CRITICAL FIX: Boolean values need to be converted to strings
+                    debug_mir!(
+                        " LOAD_STRING: Value is bool, converting to string via bool_to_string"
+                    );
+                    // Load the bool value
+                    self.load_operand(operand)?;
+                    // Get bool_to_string function index (stdlib function)
+                    let bool_to_string_idx = *self
+                        .wasm_generator
+                        .function_map
+                        .get("bool_to_string")
+                        .ok_or_else(|| CompilerError::Codegen {
+                            context: Box::new(crate::error::ErrorContext::new(
+                                "bool_to_string function not found for print".to_string(),
+                                None,
+                                crate::error::ErrorType::Codegen,
+                                None,
+                            )),
+                        })?;
+                    // Call bool_to_string(i32) -> i32 (string pointer)
+                    self.current_instructions
+                        .push(Instruction::Call(bool_to_string_idx));
+
+                    // Now we have a string pointer on the stack, expand it
+                    let temp_local = self.next_local_index;
+                    self.next_local_index += 1;
+                    self.temp_local_types.insert(temp_local, ValType::I32);
+                    self.current_instructions
+                        .push(Instruction::LocalSet(temp_local));
+
+                    // Calculate content pointer (ptr + 4)
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions.push(Instruction::I32Const(4));
+                    self.current_instructions.push(Instruction::I32Add);
+
+                    // Load length from memory
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions
+                        .push(Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }));
+                } else {
+                    // String or other pointer type - load and expand normally
+                    // CRITICAL FIX: Always load values from their local variable and expand
+                    // to (content_ptr, length). Never use cached value_to_string_index mappings
+                    // because the variable may have been reassigned (e.g., html = html + "...").
+                    // The mapping only records the INITIAL assignment, not the current value.
+                    // This fixes the string concatenation truncation bug.
+                    tracing::trace!(
+                        value_id = ?value_id.0,
+                        "Expanding string pointer for ValueId (always load from local)"
+                    );
+
+                    // Load the string pointer from the local variable
+                    debug_mir!(" LOAD_STRING: Loading operand to stack");
+                    self.load_operand(operand)?;
+
+                    // Allocate a temporary local to hold the pointer
+                    let temp_local = self.next_local_index;
+                    debug_mir!(" LOAD_STRING: Allocated temp_local={}", temp_local);
+                    self.next_local_index += 1;
+                    // Track type: string pointers are i32
+                    self.temp_local_types.insert(temp_local, ValType::I32);
+
+                    // Store pointer to temp local
+                    debug_mir!(" LOAD_STRING: Storing pointer to temp_local");
+                    self.current_instructions
+                        .push(Instruction::LocalSet(temp_local));
+
+                    // Calculate content pointer (ptr + 4, skipping length field)
+                    debug_mir!(" LOAD_STRING: Calculating content_ptr = base_ptr + 4");
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions.push(Instruction::I32Const(4));
+                    self.current_instructions.push(Instruction::I32Add);
+
+                    // Load length from memory at pointer location
+                    debug_mir!(" LOAD_STRING: Loading length from base_ptr");
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions
+                        .push(Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2, // 4-byte alignment for i32
+                            memory_index: 0,
+                        }));
+
+                    debug_mir!(" LOAD_STRING: String pointer expansion completed - stack should have [content_ptr, length]");
+                }
             }
             _ => {
                 // CRITICAL FIX: For non-string operands, we need to convert them to strings first
                 // and then expand to (pointer, length) format
-                // For now, load the operand as a string pointer and then expand it
+
+                // Check the operand type to determine if we need type conversion
+                let operand_type = self.get_operand_mir_type(operand);
+                debug_mir!(" LOAD_STRING: Non-string operand type: {:?}", operand_type);
+
+                // Load the operand onto the stack
                 self.load_operand(operand)?;
+
+                // CRITICAL: For non-string operands, we must convert to string first
+                // F64 (number type) -> float_to_string
+                // I32 (integer type) -> int_to_string (but not string pointers)
+                // Bool (boolean type) -> bool_to_string
+                if matches!(operand_type, Some(MirType::F64)) {
+                    debug_mir!(" LOAD_STRING: Converting f64 to string via float_to_string");
+                    // Get float_to_string function index
+                    let float_to_string_idx = *self
+                        .wasm_generator
+                        .function_map
+                        .get("float_to_string")
+                        .ok_or_else(|| CompilerError::Codegen {
+                            context: Box::new(crate::error::ErrorContext::new(
+                                "float_to_string function not found for print".to_string(),
+                                None,
+                                crate::error::ErrorType::Codegen,
+                                None,
+                            )),
+                        })?;
+                    // Call float_to_string(f64) -> i32 (string pointer)
+                    self.current_instructions
+                        .push(Instruction::Call(float_to_string_idx));
+                } else if matches!(operand_type, Some(MirType::I32)) {
+                    debug_mir!(" LOAD_STRING: Converting i32 to string via int_to_string");
+                    // Get int_to_string function index
+                    let int_to_string_idx = *self
+                        .wasm_generator
+                        .function_map
+                        .get("int_to_string")
+                        .ok_or_else(|| CompilerError::Codegen {
+                            context: Box::new(crate::error::ErrorContext::new(
+                                "int_to_string function not found for print".to_string(),
+                                None,
+                                crate::error::ErrorType::Codegen,
+                                None,
+                            )),
+                        })?;
+                    // Call int_to_string(i32) -> i32 (string pointer)
+                    self.current_instructions
+                        .push(Instruction::Call(int_to_string_idx));
+                } else if matches!(operand_type, Some(MirType::Bool)) {
+                    debug_mir!(" LOAD_STRING: Converting bool to string via bool_to_string");
+                    // Get bool_to_string function index
+                    let bool_to_string_idx = *self
+                        .wasm_generator
+                        .function_map
+                        .get("bool_to_string")
+                        .ok_or_else(|| CompilerError::Codegen {
+                            context: Box::new(crate::error::ErrorContext::new(
+                                "bool_to_string function not found for print".to_string(),
+                                None,
+                                crate::error::ErrorType::Codegen,
+                                None,
+                            )),
+                        })?;
+                    // Call bool_to_string(i32) -> i32 (string pointer)
+                    self.current_instructions
+                        .push(Instruction::Call(bool_to_string_idx));
+                }
+                // For Ptr types and other string pointers, no conversion needed
 
                 // The operand pushed a pointer to a string structure [len|content]
                 // We need to expand this to (content_ptr, length) for printl
