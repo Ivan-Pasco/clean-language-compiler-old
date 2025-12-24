@@ -2427,10 +2427,11 @@ impl MirBuilder {
                     let left_string_id = if left_is_any {
                         let any_to_string_id = ValueId(context.function.next_value_id);
                         context.function.next_value_id += 1;
+                        // Register as Ptr(U8) - AnyToString returns a string pointer
                         self.register_temp_local(
                             context,
                             any_to_string_id,
-                            MirType::I32,
+                            MirType::Ptr(Box::new(MirType::U8)),
                             left.location.clone(),
                         );
                         let instruction = MirInstruction {
@@ -2457,10 +2458,11 @@ impl MirBuilder {
                     let right_string_id = if right_is_any {
                         let any_to_string_id = ValueId(context.function.next_value_id);
                         context.function.next_value_id += 1;
+                        // Register as Ptr(U8) - AnyToString returns a string pointer
                         self.register_temp_local(
                             context,
                             any_to_string_id,
-                            MirType::I32,
+                            MirType::Ptr(Box::new(MirType::U8)),
                             right.location.clone(),
                         );
                         let instruction = MirInstruction {
@@ -2487,12 +2489,13 @@ impl MirBuilder {
                     let result_id = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;
 
-                    // Result is a single i32 pointer to [len|content] structure in memory
-                    // CRITICAL FIX: Strings are i32 pointers to [len|content] structure in memory
+                    // Result is a string pointer to [len|content] structure in memory
+                    // CRITICAL FIX: Use Ptr(U8) to distinguish string pointers from integers
+                    // This ensures print() knows to expand as string (ptr+4, len) not convert via int_to_string
                     self.register_temp_local(
                         context,
                         result_id,
-                        MirType::I32,
+                        MirType::Ptr(Box::new(MirType::U8)),
                         expression.location.clone(),
                     );
 
@@ -2975,11 +2978,11 @@ impl MirBuilder {
                     let result_id = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;
 
-                    // Register the result as i32 (string pointer)
+                    // Register the result as Ptr(U8) to distinguish string pointers from Any
                     self.register_temp_local(
                         context,
                         result_id,
-                        MirType::I32,
+                        MirType::Ptr(Box::new(MirType::U8)),
                         expression.location.clone(),
                     );
 
@@ -3113,11 +3116,11 @@ impl MirBuilder {
                             let result_id = ValueId(context.function.next_value_id);
                             context.function.next_value_id += 1;
 
-                            // Register the result as i32 (string pointer)
+                            // Register the result as Ptr(U8) to distinguish string pointers from integers
                             self.register_temp_local(
                                 context,
                                 result_id,
-                                MirType::I32,
+                                MirType::Ptr(Box::new(MirType::U8)),
                                 expression.location.clone(),
                             );
 
@@ -3147,11 +3150,11 @@ impl MirBuilder {
                             let result_id = ValueId(context.function.next_value_id);
                             context.function.next_value_id += 1;
 
-                            // Register the result as i32 (string pointer)
+                            // Register the result as Ptr(U8) to distinguish string pointers from numbers
                             self.register_temp_local(
                                 context,
                                 result_id,
-                                MirType::I32,
+                                MirType::Ptr(Box::new(MirType::U8)),
                                 expression.location.clone(),
                             );
 
@@ -3181,11 +3184,11 @@ impl MirBuilder {
                             let result_id = ValueId(context.function.next_value_id);
                             context.function.next_value_id += 1;
 
-                            // Register the result as i32 (string pointer)
+                            // Register the result as Ptr(U8) to distinguish string pointers from booleans
                             self.register_temp_local(
                                 context,
                                 result_id,
-                                MirType::I32,
+                                MirType::Ptr(Box::new(MirType::U8)),
                                 expression.location.clone(),
                             );
 
@@ -3216,11 +3219,11 @@ impl MirBuilder {
                             let result_id = ValueId(context.function.next_value_id);
                             context.function.next_value_id += 1;
 
-                            // Register the result as i32 (string pointer)
+                            // Register the result as Ptr(U8) to distinguish string pointers from Any
                             self.register_temp_local(
                                 context,
                                 result_id,
-                                MirType::I32,
+                                MirType::Ptr(Box::new(MirType::U8)),
                                 expression.location.clone(),
                             );
 
@@ -5214,8 +5217,13 @@ impl MirBuilder {
                 let converted_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
-                // Register the converted_id in function.locals
-                self.register_temp_local(context, converted_id, MirType::I32, location.clone());
+                // Register as Ptr(U8) - int_to_string returns a string pointer
+                self.register_temp_local(
+                    context,
+                    converted_id,
+                    MirType::Ptr(Box::new(MirType::U8)),
+                    location.clone(),
+                );
 
                 let symbol_id = self
                     .symbol_table
@@ -5241,8 +5249,13 @@ impl MirBuilder {
                 let converted_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
-                // Register the converted_id in function.locals
-                self.register_temp_local(context, converted_id, MirType::I32, location.clone());
+                // Register as Ptr(U8) - float_to_string returns a string pointer
+                self.register_temp_local(
+                    context,
+                    converted_id,
+                    MirType::Ptr(Box::new(MirType::U8)),
+                    location.clone(),
+                );
 
                 let symbol_id = self
                     .symbol_table
@@ -5268,8 +5281,13 @@ impl MirBuilder {
                 let converted_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
-                // Register the converted_id in function.locals
-                self.register_temp_local(context, converted_id, MirType::I32, location.clone());
+                // Register as Ptr(U8) - bool_to_string returns a string pointer
+                self.register_temp_local(
+                    context,
+                    converted_id,
+                    MirType::Ptr(Box::new(MirType::U8)),
+                    location.clone(),
+                );
 
                 let symbol_id = self
                     .symbol_table

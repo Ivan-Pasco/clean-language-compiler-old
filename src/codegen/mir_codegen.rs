@@ -3408,6 +3408,38 @@ impl MirCodeGenerator<'_> {
                             align: 2,
                             memory_index: 0,
                         }));
+                } else if matches!(value_type, Some(MirType::Ptr(_))) {
+                    // CRITICAL FIX: Ptr(U8) values are string pointers - just expand to (content_ptr, length)
+                    // This handles the result of toString() calls which return string pointers
+                    debug_mir!(" LOAD_STRING: Value is Ptr (string pointer), expanding to (ptr+4, len)");
+
+                    // Load the string pointer from the local variable
+                    self.load_operand(operand)?;
+
+                    // Allocate a temporary local to hold the pointer
+                    let temp_local = self.next_local_index;
+                    self.next_local_index += 1;
+                    self.temp_local_types.insert(temp_local, ValType::I32);
+
+                    // Store pointer to temp local
+                    self.current_instructions
+                        .push(Instruction::LocalSet(temp_local));
+
+                    // Calculate content pointer (ptr + 4, skipping length field)
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions.push(Instruction::I32Const(4));
+                    self.current_instructions.push(Instruction::I32Add);
+
+                    // Load length from memory at pointer location
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions
+                        .push(Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }));
                 } else if matches!(value_type, Some(MirType::I32)) {
                     // CRITICAL FIX: Integer values need to be converted to strings
                     debug_mir!(" LOAD_STRING: Value is i32 (integer), converting to string via int_to_string");

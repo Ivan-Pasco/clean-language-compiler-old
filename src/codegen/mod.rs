@@ -4930,6 +4930,7 @@ impl CodeGenerator {
             self.add_function_alias("int_to_string", its_idx);
             self.add_function_alias("integer_to_string", its_idx);
             self.add_function_alias("native_int_to_string", its_idx);
+            self.add_function_alias("integer.toString", its_idx);
         }
 
         // NATIVE: bool_to_string - returns pointer to pre-allocated "true" or "false" string
@@ -4950,6 +4951,7 @@ impl CodeGenerator {
             self.add_function_alias("bool_to_string", bts_idx);
             self.add_function_alias("boolean_to_string", bts_idx);
             self.add_function_alias("native_bool_to_string", bts_idx);
+            self.add_function_alias("boolean.toString", bts_idx);
         }
 
         // NATIVE: string_to_int - parses decimal string to integer
@@ -4966,6 +4968,7 @@ impl CodeGenerator {
         if let Some(sti_idx) = self.get_function_index("__string_to_int") {
             self.add_function_alias("string_to_int", sti_idx);
             self.add_function_alias("native_string_to_int", sti_idx);
+            self.add_function_alias("string.toInteger", sti_idx);
         }
 
         // NATIVE: list_get_i32 - get element from i32 list

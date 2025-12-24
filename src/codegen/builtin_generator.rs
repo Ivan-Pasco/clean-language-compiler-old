@@ -115,9 +115,13 @@ impl CodeGenerator {
         
         // Math.pow - critical for power operator (^) - needs host implementation
         self.register_import_function("env", "math_pow", vec![ValType::F64, ValType::F64], vec![ValType::F64])?;
-        
-        // Math.sqrt - commonly used mathematical function
-        self.register_import_function("env", "math_sqrt", vec![ValType::F64], vec![ValType::F64])?;
+
+        // Math.sqrt - NATIVE: uses WASM F64Sqrt instruction
+        let sqrt_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::F64Sqrt,
+        ];
+        self.register_function("math_sqrt", vec![ValType::F64], vec![ValType::F64], &sqrt_instructions)?;
         
         // Math.sin - trigonometric function
         self.register_import_function("env", "math_sin", vec![ValType::F64], vec![ValType::F64])?;
@@ -424,19 +428,15 @@ impl CodeGenerator {
         ];
         self.register_function("number.toBoolean", vec![ValType::F64], vec![ValType::I32], &num_to_bool_instructions)?;
         
-        // String conversions require host functions for now
-        self.register_import_function("env", "int_to_string", vec![ValType::I32], vec![ValType::I32])?;
+        // String conversions - NATIVE implementations for int/bool, host for float
+        // NOTE: int_to_string, bool_to_string, string_to_int are now NATIVE (registered in mod.rs)
+        // with aliases: integer.toString, boolean.toString, string.toInteger
         self.register_import_function("env", "float_to_string", vec![ValType::F64], vec![ValType::I32])?;
-        self.register_import_function("env", "bool_to_string", vec![ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string_to_int", vec![ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_to_float", vec![ValType::I32], vec![ValType::F64])?;
         self.register_import_function("env", "string_to_bool", vec![ValType::I32], vec![ValType::I32])?;
-        
-        // Method-style string conversions
-        self.register_import_function("env", "integer.toString", vec![ValType::I32], vec![ValType::I32])?;
+
+        // Method-style string conversions - only float/number need host imports
         self.register_import_function("env", "number.toString", vec![ValType::F64], vec![ValType::I32])?;
-        self.register_import_function("env", "boolean.toString", vec![ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string.toInteger", vec![ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string.toNumber", vec![ValType::I32], vec![ValType::F64])?;
         self.register_import_function("env", "string.toBoolean", vec![ValType::I32], vec![ValType::I32])?;
         
@@ -517,63 +517,180 @@ impl CodeGenerator {
     }
 
     fn register_conditional_operations(&mut self) -> Result<(), CompilerError> {
-        // CRITICAL FIX: Register comparison functions with BOTH naming schemes:
-        // 1. Underscored names for backwards compatibility (compare_integer_equal)
-        // 2. Dotted namespace names for modern calls (compare.integer.equal)
+        // NATIVE WASM IMPLEMENTATIONS: All comparison, conditional, and logical operations
+        // are now implemented using native WASM instructions instead of host imports.
 
-        // Comparison functions for integers - underscored names
-        self.register_import_function("env", "compare_integer_equal", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "compare_integer_notEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "compare_integer_lessThan", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "compare_integer_greaterThan", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "compare_integer_lessEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "compare_integer_greaterEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        // ========== INTEGER COMPARISON FUNCTIONS (NATIVE I32 ops) ==========
 
-        // Comparison functions for integers - dotted namespace names
-        self.register_import_function("env", "compare.integer.equal", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "compare.integer.notEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "compare.integer.lessThan", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "compare.integer.greaterThan", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "compare.integer.lessEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "compare.integer.greaterEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        // compare_integer_equal: (a, b) -> a == b
+        let i32_eq_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::I32Eq,
+        ];
+        self.register_function("compare_integer_equal", vec![ValType::I32, ValType::I32], vec![ValType::I32], &i32_eq_instructions)?;
+        self.add_function_alias("compare.integer.equal", self.get_function_index("compare_integer_equal").unwrap());
 
-        // Comparison functions for numbers - underscored names
-        self.register_import_function("env", "compare_number_equal", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
-        self.register_import_function("env", "compare_number_notEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
-        self.register_import_function("env", "compare_number_lessThan", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
-        self.register_import_function("env", "compare_number_greaterThan", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
-        self.register_import_function("env", "compare_number_lessEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
-        self.register_import_function("env", "compare_number_greaterEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
+        // compare_integer_notEqual: (a, b) -> a != b
+        let i32_ne_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::I32Ne,
+        ];
+        self.register_function("compare_integer_notEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32], &i32_ne_instructions)?;
+        self.add_function_alias("compare.integer.notEqual", self.get_function_index("compare_integer_notEqual").unwrap());
 
-        // Comparison functions for numbers - dotted namespace names
-        self.register_import_function("env", "compare.number.equal", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
-        self.register_import_function("env", "compare.number.notEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
-        self.register_import_function("env", "compare.number.lessThan", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
-        self.register_import_function("env", "compare.number.greaterThan", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
-        self.register_import_function("env", "compare.number.lessEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
-        self.register_import_function("env", "compare.number.greaterEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32])?;
+        // compare_integer_lessThan: (a, b) -> a < b (signed)
+        let i32_lt_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::I32LtS,
+        ];
+        self.register_function("compare_integer_lessThan", vec![ValType::I32, ValType::I32], vec![ValType::I32], &i32_lt_instructions)?;
+        self.add_function_alias("compare.integer.lessThan", self.get_function_index("compare_integer_lessThan").unwrap());
 
-        // Conditional functions - underscored names
-        self.register_import_function("env", "conditional_integer", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "conditional_number", vec![ValType::I32, ValType::F64, ValType::F64], vec![ValType::F64])?;
-        self.register_import_function("env", "conditional_string", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "conditional_boolean", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        // compare_integer_greaterThan: (a, b) -> a > b (signed)
+        let i32_gt_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::I32GtS,
+        ];
+        self.register_function("compare_integer_greaterThan", vec![ValType::I32, ValType::I32], vec![ValType::I32], &i32_gt_instructions)?;
+        self.add_function_alias("compare.integer.greaterThan", self.get_function_index("compare_integer_greaterThan").unwrap());
 
-        // Conditional functions - dotted namespace names
-        self.register_import_function("env", "conditional.integer", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "conditional.number", vec![ValType::I32, ValType::F64, ValType::F64], vec![ValType::F64])?;
-        self.register_import_function("env", "conditional.string", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "conditional.boolean", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        // compare_integer_lessEqual: (a, b) -> a <= b (signed)
+        let i32_le_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::I32LeS,
+        ];
+        self.register_function("compare_integer_lessEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32], &i32_le_instructions)?;
+        self.add_function_alias("compare.integer.lessEqual", self.get_function_index("compare_integer_lessEqual").unwrap());
 
-        // Logical functions - underscored names
-        self.register_import_function("env", "logical_and", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "logical_or", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "logical_not", vec![ValType::I32], vec![ValType::I32])?;
+        // compare_integer_greaterEqual: (a, b) -> a >= b (signed)
+        let i32_ge_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::I32GeS,
+        ];
+        self.register_function("compare_integer_greaterEqual", vec![ValType::I32, ValType::I32], vec![ValType::I32], &i32_ge_instructions)?;
+        self.add_function_alias("compare.integer.greaterEqual", self.get_function_index("compare_integer_greaterEqual").unwrap());
 
-        // Logical functions - dotted namespace names
-        self.register_import_function("env", "logical.and", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "logical.or", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "logical.not", vec![ValType::I32], vec![ValType::I32])?;
+        // ========== NUMBER (F64) COMPARISON FUNCTIONS (NATIVE F64 ops) ==========
+
+        // compare_number_equal: (a, b) -> a == b
+        let f64_eq_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::F64Eq,
+        ];
+        self.register_function("compare_number_equal", vec![ValType::F64, ValType::F64], vec![ValType::I32], &f64_eq_instructions)?;
+        self.add_function_alias("compare.number.equal", self.get_function_index("compare_number_equal").unwrap());
+
+        // compare_number_notEqual: (a, b) -> a != b
+        let f64_ne_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::F64Ne,
+        ];
+        self.register_function("compare_number_notEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32], &f64_ne_instructions)?;
+        self.add_function_alias("compare.number.notEqual", self.get_function_index("compare_number_notEqual").unwrap());
+
+        // compare_number_lessThan: (a, b) -> a < b
+        let f64_lt_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::F64Lt,
+        ];
+        self.register_function("compare_number_lessThan", vec![ValType::F64, ValType::F64], vec![ValType::I32], &f64_lt_instructions)?;
+        self.add_function_alias("compare.number.lessThan", self.get_function_index("compare_number_lessThan").unwrap());
+
+        // compare_number_greaterThan: (a, b) -> a > b
+        let f64_gt_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::F64Gt,
+        ];
+        self.register_function("compare_number_greaterThan", vec![ValType::F64, ValType::F64], vec![ValType::I32], &f64_gt_instructions)?;
+        self.add_function_alias("compare.number.greaterThan", self.get_function_index("compare_number_greaterThan").unwrap());
+
+        // compare_number_lessEqual: (a, b) -> a <= b
+        let f64_le_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::F64Le,
+        ];
+        self.register_function("compare_number_lessEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32], &f64_le_instructions)?;
+        self.add_function_alias("compare.number.lessEqual", self.get_function_index("compare_number_lessEqual").unwrap());
+
+        // compare_number_greaterEqual: (a, b) -> a >= b
+        let f64_ge_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::F64Ge,
+        ];
+        self.register_function("compare_number_greaterEqual", vec![ValType::F64, ValType::F64], vec![ValType::I32], &f64_ge_instructions)?;
+        self.add_function_alias("compare.number.greaterEqual", self.get_function_index("compare_number_greaterEqual").unwrap());
+
+        // ========== CONDITIONAL FUNCTIONS (NATIVE select instruction) ==========
+
+        // conditional_integer: (condition, then_val, else_val) -> result
+        // WASM select: (then, else, condition) -> result
+        let cond_i32_instructions = vec![
+            Instruction::LocalGet(1), // then_val
+            Instruction::LocalGet(2), // else_val
+            Instruction::LocalGet(0), // condition
+            Instruction::Select,
+        ];
+        self.register_function("conditional_integer", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32], &cond_i32_instructions)?;
+        self.add_function_alias("conditional.integer", self.get_function_index("conditional_integer").unwrap());
+
+        // conditional_string: (condition, then_val, else_val) -> result (pointers are i32)
+        self.register_function("conditional_string", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32], &cond_i32_instructions)?;
+        self.add_function_alias("conditional.string", self.get_function_index("conditional_string").unwrap());
+
+        // conditional_boolean: (condition, then_val, else_val) -> result (booleans are i32)
+        self.register_function("conditional_boolean", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32], &cond_i32_instructions)?;
+        self.add_function_alias("conditional.boolean", self.get_function_index("conditional_boolean").unwrap());
+
+        // conditional_number: (condition, then_val, else_val) -> result (f64 values)
+        // Note: select works for f64 too, condition still i32
+        let cond_f64_instructions = vec![
+            Instruction::LocalGet(1), // then_val (f64)
+            Instruction::LocalGet(2), // else_val (f64)
+            Instruction::LocalGet(0), // condition (i32)
+            Instruction::Select,
+        ];
+        self.register_function("conditional_number", vec![ValType::I32, ValType::F64, ValType::F64], vec![ValType::F64], &cond_f64_instructions)?;
+        self.add_function_alias("conditional.number", self.get_function_index("conditional_number").unwrap());
+
+        // ========== LOGICAL FUNCTIONS (NATIVE I32 ops) ==========
+
+        // logical_and: (a, b) -> a && b (bitwise AND for booleans)
+        let and_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::I32And,
+        ];
+        self.register_function("logical_and", vec![ValType::I32, ValType::I32], vec![ValType::I32], &and_instructions)?;
+        self.add_function_alias("logical.and", self.get_function_index("logical_and").unwrap());
+
+        // logical_or: (a, b) -> a || b (bitwise OR for booleans)
+        let or_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::I32Or,
+        ];
+        self.register_function("logical_or", vec![ValType::I32, ValType::I32], vec![ValType::I32], &or_instructions)?;
+        self.add_function_alias("logical.or", self.get_function_index("logical_or").unwrap());
+
+        // logical_not: (a) -> !a (test if zero)
+        let not_instructions = vec![
+            Instruction::LocalGet(0),
+            Instruction::I32Eqz,
+        ];
+        self.register_function("logical_not", vec![ValType::I32], vec![ValType::I32], &not_instructions)?;
+        self.add_function_alias("logical.not", self.get_function_index("logical_not").unwrap());
 
         Ok(())
     }
