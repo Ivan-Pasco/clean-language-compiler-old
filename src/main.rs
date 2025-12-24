@@ -18,7 +18,7 @@ use clean_language_compiler::codegen::bridge_generator::{BridgeGenerator, Bridge
 use clean_language_compiler::debug::DebugUtils;
 use clean_language_compiler::error::{CompilerError, ErrorReporter};
 use clean_language_compiler::{
-    compile_with_file, compile_with_opt_level, runtime::runtime_manager::RuntimeManager,
+    compile_with_file, runtime::runtime_manager::RuntimeManager,
     runtime::wasmtime_config::CleanWasmtimeConfig,
 };
 use std::fs;
