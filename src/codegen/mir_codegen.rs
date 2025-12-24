@@ -3411,7 +3411,9 @@ impl MirCodeGenerator<'_> {
                 } else if matches!(value_type, Some(MirType::Ptr(_))) {
                     // CRITICAL FIX: Ptr(U8) values are string pointers - just expand to (content_ptr, length)
                     // This handles the result of toString() calls which return string pointers
-                    debug_mir!(" LOAD_STRING: Value is Ptr (string pointer), expanding to (ptr+4, len)");
+                    debug_mir!(
+                        " LOAD_STRING: Value is Ptr (string pointer), expanding to (ptr+4, len)"
+                    );
 
                     // Load the string pointer from the local variable
                     self.load_operand(operand)?;
