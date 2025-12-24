@@ -70,6 +70,22 @@ pub struct MirCodeGenerator<'a> {
     /// Plugin bridge functions to register as WASM imports
     /// These come from plugin.toml [bridge] sections
     bridge_functions: Vec<crate::plugins::BridgeFunction>,
+
+    /// CRITICAL FIX: Pending wrapper functions to be registered AFTER ALL imports are done
+    /// These are for expand_strings bridge functions that need wrapper functions
+    /// to convert Clean Language strings (ptr) to raw format (ptr+4, len)
+    pending_bridge_wrappers: Vec<PendingBridgeWrapper>,
+}
+
+/// Info for pending bridge wrapper functions that need to be registered
+/// AFTER all imports are done to avoid function index collisions
+#[derive(Clone)]
+struct PendingBridgeWrapper {
+    name: String,
+    params: Vec<crate::types::WasmType>,
+    wasm_return: Option<crate::types::WasmType>,
+    raw_func_index: u32,
+    param_types: Vec<crate::builtins::registry::BuiltinType>,
 }
 
 /// Result of MIR code generation
@@ -120,6 +136,7 @@ impl MirCodeGenerator<'_> {
             value_to_type: HashMap::new(),
             temp_local_types: HashMap::new(),
             bridge_functions: Vec::new(),
+            pending_bridge_wrappers: Vec::new(),
         }
     }
 
@@ -141,6 +158,7 @@ impl MirCodeGenerator<'_> {
             value_to_type: HashMap::new(),
             temp_local_types: HashMap::new(),
             bridge_functions: Vec::new(),
+            pending_bridge_wrappers: Vec::new(),
         }
     }
 
@@ -310,6 +328,19 @@ impl MirCodeGenerator<'_> {
                 .register_json_operations()
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: JSON operations registered");
+
+            // CRITICAL FIX: Register pending plugin bridge wrapper functions AFTER all imports
+            // These are internal WASM functions that wrap raw imports with expand_strings=true
+            // They MUST be registered after ALL imports to avoid function index collisions
+            if !self.pending_bridge_wrappers.is_empty() {
+                debug_mir!(
+                    "DEBUG MIR: Registering {} pending bridge wrapper functions",
+                    self.pending_bridge_wrappers.len()
+                );
+                self.register_pending_bridge_wrappers()
+                    .map_err(|e| vec![e])?;
+                debug_mir!("DEBUG MIR: Bridge wrapper functions registered");
+            }
         }
 
         // Set up memory section
@@ -5060,11 +5091,14 @@ impl MirCodeGenerator<'_> {
     ///
     /// For functions with `expand_strings=true`, we:
     /// 1. Register the raw import with expanded signature (strings as ptr,len pairs)
-    /// 2. Create a wrapper function that transforms Clean Language strings to ptr,len pairs
+    /// 2. Store wrapper info for LATER registration (after ALL imports are done)
+    ///
+    /// CRITICAL: This function ONLY registers imports. Wrapper functions are stored in
+    /// `pending_bridge_wrappers` and must be registered later by calling
+    /// `register_pending_bridge_wrappers()` AFTER all stdlib imports are complete.
     fn register_plugin_bridge_imports(&mut self) -> Result<(), CompilerError> {
         use crate::builtins::registry::BuiltinType;
         use crate::types::WasmType;
-        use wasm_encoder::{Instruction, MemArg};
 
         for func in &self.bridge_functions.clone() {
             let param_types = func.get_param_types();
@@ -5076,9 +5110,9 @@ impl MirCodeGenerator<'_> {
                 func.expand_strings && param_types.iter().any(|t| matches!(t, BuiltinType::String));
 
             if needs_wrapper {
-                // For expand_strings=true: register raw import and create wrapper
+                // For expand_strings=true: register raw import now, defer wrapper
 
-                // 1. Build expanded signature for raw import
+                // Build expanded signature for raw import
                 let mut raw_wasm_params = Vec::new();
                 for param_type in &param_types {
                     if matches!(param_type, BuiltinType::String) {
@@ -5111,63 +5145,25 @@ impl MirCodeGenerator<'_> {
                     wasm_return,
                 )?;
 
-                // 2. Create wrapper function with Clean Language signature
-                // Wrapper takes strings as i32 pointers and expands them to (ptr+4, len)
+                // Store wrapper info for later registration (AFTER all imports)
                 let wrapper_params: Vec<WasmType> = param_types
                     .iter()
                     .map(|t| Self::builtin_type_to_wasm_type(t))
                     .collect();
 
-                // Build wrapper instructions
-                let mut wrapper_instructions = Vec::new();
-                let mut local_idx = 0u32;
-
-                for param_type in param_types.iter() {
-                    if matches!(param_type, BuiltinType::String) {
-                        // For strings: expand to (ptr+4, len)
-                        // Clean strings are length-prefixed: [4-byte len][content]
-                        // ptr+4 = content start, load from ptr = length
-
-                        // Push content pointer (ptr + 4)
-                        wrapper_instructions.push(Instruction::LocalGet(local_idx));
-                        wrapper_instructions.push(Instruction::I32Const(4));
-                        wrapper_instructions.push(Instruction::I32Add);
-
-                        // Push length (load i32 from ptr)
-                        wrapper_instructions.push(Instruction::LocalGet(local_idx));
-                        wrapper_instructions.push(Instruction::I32Load(MemArg {
-                            offset: 0,
-                            align: 2,
-                            memory_index: 0,
-                        }));
-
-                        local_idx += 1;
-                    } else {
-                        // Non-string: pass through
-                        wrapper_instructions.push(Instruction::LocalGet(local_idx));
-                        local_idx += 1;
-                    }
-                }
-
-                // Call the raw import
-                wrapper_instructions.push(Instruction::Call(raw_func_index));
-                // Note: register_function adds End instruction automatically
-
-                // Register wrapper function
                 tracing::debug!(
                     name = %func.name,
-                    params = ?wrapper_params,
-                    returns = ?wasm_return,
                     raw_func_index = raw_func_index,
-                    "Registering wrapper function for expand_strings bridge"
+                    "Deferring wrapper function registration until after all imports"
                 );
 
-                self.wasm_generator.register_function(
-                    &func.name,
-                    &wrapper_params,
+                self.pending_bridge_wrappers.push(PendingBridgeWrapper {
+                    name: func.name.clone(),
+                    params: wrapper_params,
                     wasm_return,
-                    &wrapper_instructions,
-                )?;
+                    raw_func_index,
+                    param_types: param_types.clone(),
+                });
             } else {
                 // No expansion needed: register import directly
                 let wasm_params: Vec<WasmType> = param_types
@@ -5195,6 +5191,74 @@ impl MirCodeGenerator<'_> {
                     wasm_return,
                 )?;
             }
+        }
+
+        Ok(())
+    }
+
+    /// Register pending bridge wrapper functions
+    ///
+    /// CRITICAL: This MUST be called AFTER all imports are registered (including stdlib imports)
+    /// Wrapper functions are internal WASM functions, not imports, so they must be registered
+    /// after the import section is complete to avoid function index collisions.
+    fn register_pending_bridge_wrappers(&mut self) -> Result<(), CompilerError> {
+        use crate::builtins::registry::BuiltinType;
+        use wasm_encoder::{Instruction, MemArg};
+
+        let wrappers = std::mem::take(&mut self.pending_bridge_wrappers);
+
+        for wrapper in wrappers {
+            // Build wrapper instructions
+            let mut wrapper_instructions = Vec::new();
+            let mut local_idx = 0u32;
+
+            for param_type in wrapper.param_types.iter() {
+                if matches!(param_type, BuiltinType::String) {
+                    // For strings: expand to (ptr+4, len)
+                    // Clean strings are length-prefixed: [4-byte len][content]
+                    // ptr+4 = content start, load from ptr = length
+
+                    // Push content pointer (ptr + 4)
+                    wrapper_instructions.push(Instruction::LocalGet(local_idx));
+                    wrapper_instructions.push(Instruction::I32Const(4));
+                    wrapper_instructions.push(Instruction::I32Add);
+
+                    // Push length (load i32 from ptr)
+                    wrapper_instructions.push(Instruction::LocalGet(local_idx));
+                    wrapper_instructions.push(Instruction::I32Load(MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+
+                    local_idx += 1;
+                } else {
+                    // Non-string: pass through
+                    wrapper_instructions.push(Instruction::LocalGet(local_idx));
+                    local_idx += 1;
+                }
+            }
+
+            // Call the raw import
+            wrapper_instructions.push(Instruction::Call(wrapper.raw_func_index));
+            // Note: register_function adds End instruction automatically
+
+            // Register wrapper function
+            tracing::debug!(
+                name = %wrapper.name,
+                params = ?wrapper.params,
+                returns = ?wrapper.wasm_return,
+                raw_func_index = wrapper.raw_func_index,
+                function_count = self.wasm_generator.function_count,
+                "Registering wrapper function for expand_strings bridge (after all imports)"
+            );
+
+            self.wasm_generator.register_function(
+                &wrapper.name,
+                &wrapper.params,
+                wrapper.wasm_return,
+                &wrapper_instructions,
+            )?;
         }
 
         Ok(())

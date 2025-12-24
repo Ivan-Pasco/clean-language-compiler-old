@@ -750,26 +750,17 @@ async fn handle_compile(
     );
     tracing::trace!(source_content = %source, "Source code to compile");
 
-    // Use the appropriate pipeline based on plugin mode
-    let wasm_binary = if plugins {
-        // Use plugin-aware compilation that auto-detects import: blocks
-        match clean_language_compiler::compile_with_external_plugins_and_opt_level(
-            &source, &input, opt_level,
-        ) {
-            Ok(binary) => binary,
-            Err(errors) => {
-                output_config.report_errors(&errors, Some(&source));
-                return Err(format!("Compilation failed with {} errors", errors.len()).into());
-            }
-        }
-    } else {
-        // Use the standard 7-stage pipeline for compilation
-        match compile_with_opt_level(&source, &input, opt_level) {
-            Ok(binary) => binary,
-            Err(errors) => {
-                output_config.report_errors(&errors, Some(&source));
-                return Err(format!("Compilation failed with {} errors", errors.len()).into());
-            }
+    // Always use plugin-aware compilation that auto-detects import: blocks
+    // This function automatically loads external plugins from ~/.cleen/plugins/
+    // when `import:` blocks are present in the source, otherwise compiles as pure Clean
+    let _ = plugins; // Ignore the flag, always enable plugin detection
+    let wasm_binary = match clean_language_compiler::compile_with_external_plugins_and_opt_level(
+        &source, &input, opt_level,
+    ) {
+        Ok(binary) => binary,
+        Err(errors) => {
+            output_config.report_errors(&errors, Some(&source));
+            return Err(format!("Compilation failed with {} errors", errors.len()).into());
         }
     };
 

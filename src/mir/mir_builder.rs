@@ -763,13 +763,28 @@ impl MirBuilder {
                     // Build initializer expression
                     let init_value_id = self.build_expression(context, init_expr)?;
 
+                    // CRITICAL FIX: Check the ACTUAL MIR type of the initialized value,
+                    // not just the typechecker's type. This is important because MIR builder
+                    // may infer different types (e.g., list.get on Any receiver returns Any).
+                    let actual_mir_type = context
+                        .function
+                        .locals
+                        .get(&init_value_id)
+                        .map(|local| local.local_type.clone());
+
+                    // If the actual MIR type is Any, don't try to box - it's already Any format
+                    let init_is_actually_any = matches!(actual_mir_type, Some(MirType::Any));
+
                     // Check if we need to unbox: initializer type is Any but variable type is not
-                    let needs_unboxing = matches!(init_expr.expr_type, ConcreteType::Any)
+                    let needs_unboxing = (matches!(init_expr.expr_type, ConcreteType::Any)
+                        || init_is_actually_any)
                         && !matches!(var_type, ConcreteType::Any);
 
                     // Check if we need to box: variable type is Any but initializer is not Any
+                    // CRITICAL FIX: Also check actual MIR type - if already Any, no boxing needed
                     let needs_boxing = matches!(var_type, ConcreteType::Any)
-                        && !matches!(init_expr.expr_type, ConcreteType::Any);
+                        && !matches!(init_expr.expr_type, ConcreteType::Any)
+                        && !init_is_actually_any;
 
                     if needs_unboxing {
                         trace!(
@@ -896,9 +911,23 @@ impl MirBuilder {
                 // Handle assignment target - for now, only support simple variable assignments
                 match &target.kind {
                     TastExpressionKind::Variable { symbol_id: _, name } => {
+                        // CRITICAL FIX: Check the ACTUAL MIR type of the value,
+                        // not just the typechecker's type. This is important because MIR builder
+                        // may infer different types (e.g., list.get on Any receiver returns Any).
+                        let actual_mir_type = context
+                            .function
+                            .locals
+                            .get(&value_id)
+                            .map(|local| local.local_type.clone());
+
+                        // If the actual MIR type is Any, don't try to box - it's already Any format
+                        let value_is_actually_any = matches!(actual_mir_type, Some(MirType::Any));
+
                         // Check if we need to box: target type is Any but value type is not Any
+                        // CRITICAL FIX: Also check actual MIR type - if already Any, no boxing needed
                         let final_value_id = if matches!(target.expr_type, ConcreteType::Any)
                             && !matches!(value.expr_type, ConcreteType::Any)
+                            && !value_is_actually_any
                         {
                             trace!(
                                 var_name = %name,
@@ -2787,8 +2816,38 @@ impl MirBuilder {
                 let result_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
+                // CRITICAL FIX: Infer return type for namespace functions like list.get
+                // When called with Any type argument, the return should also be Any
+                let inferred_type = if let Some(ref func_name) = function_name_opt {
+                    if func_name == "list.get" || func_name == "list_get" {
+                        // Check if first argument is Any type
+                        if !arguments.is_empty()
+                            && matches!(arguments[0].expr_type, ConcreteType::Any)
+                        {
+                            // list.get on Any returns Any
+                            ConcreteType::Any
+                        } else if !arguments.is_empty() {
+                            // For Array<T>, extract element type
+                            if let ConcreteType::Array(element_type) = &arguments[0].expr_type {
+                                element_type.as_ref().clone()
+                            } else {
+                                expression.expr_type.clone()
+                            }
+                        } else {
+                            expression.expr_type.clone()
+                        }
+                    } else if func_name == "list.size" || func_name == "list.length" {
+                        // list.size always returns Integer
+                        ConcreteType::Integer
+                    } else {
+                        expression.expr_type.clone()
+                    }
+                } else {
+                    expression.expr_type.clone()
+                };
+
                 // Convert the expression type to MIR type
-                let result_type = self.convert_concrete_type(&expression.expr_type);
+                let result_type = self.convert_concrete_type(&inferred_type);
 
                 // CRITICAL FIX: Check if this is a void function
                 // Void functions have Null or Undefined types, which convert to void-related MIR types
@@ -2817,10 +2876,7 @@ impl MirBuilder {
                 // These functions DO return values (pointers), they just have unknown types.
                 // Only treat actual MirType::Void (not Ptr(Void)) as void.
                 let is_void = is_known_void_function
-                    || matches!(
-                        expression.expr_type,
-                        ConcreteType::Null | ConcreteType::Undefined
-                    )
+                    || matches!(inferred_type, ConcreteType::Null | ConcreteType::Undefined)
                     || matches!(result_type, MirType::Void);
                 trace!(
                     is_void = is_void,
@@ -3555,6 +3611,10 @@ impl MirBuilder {
                     if let ConcreteType::Array(element_type) = &receiver.expr_type {
                         // Extract element type from Array<T> -> T
                         element_type.as_ref().clone()
+                    } else if matches!(&receiver.expr_type, ConcreteType::Any) {
+                        // CRITICAL FIX: When calling .get() on Any type (e.g., JSON data),
+                        // the result is also Any since we don't know the element type
+                        ConcreteType::Any
                     } else if let ConcreteType::Class {
                         symbol_id: class_symbol,
                         ..

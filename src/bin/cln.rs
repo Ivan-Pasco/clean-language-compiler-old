@@ -536,8 +536,15 @@ fn compile_with_config(config: &CompileConfig) -> Result<(), CompilerError> {
         println!("⚙️ Runtime config: {:?}", runtime_config);
     }
 
-    // Perform compilation (use existing compile_file for now)
-    compile_file(&config.input_file, &config.output_file)?;
+    // Convert OptimizationLevel to u8 for compiler API
+    let opt_level = match runtime_config.optimization_level {
+        OptimizationLevel::None => 0,
+        OptimizationLevel::Speed => 2,
+        OptimizationLevel::SpeedAndSize => 3,
+    };
+
+    // Perform compilation with external plugin support
+    compile_file_with_opt(&config.input_file, &config.output_file, opt_level)?;
 
     // Generate bridge files based on target
     let bridge_target = match config.target.to_lowercase().as_str() {
@@ -788,11 +795,10 @@ fn benchmark_runtimes(file_path: &str) -> Result<(), CompilerError> {
         )
     })?;
 
-    // Compile to WASM (pure Clean Language, no framework plugins)
-    // compile_with_file() internally uses compile_pure() which creates an empty plugin registry
-    // Framework features (endpoints:, data:, component:) are NOT supported in the cln binary
+    // Compile with external plugin support
+    // This automatically detects `import:` blocks and loads plugins from ~/.cleen/plugins/
     let wasm_bytes =
-        clean_language_compiler::compile_with_file(&source, file_path).map_err(|errors| {
+        clean_language_compiler::compile_with_external_plugins_and_opt_level(&source, file_path, 2).map_err(|errors| {
             if let Some(first_error) = errors.first() {
                 first_error.clone()
             } else {
@@ -903,16 +909,20 @@ fn print_version() {
 }
 
 fn compile_file(input_file: &str, output_file: &str) -> Result<(), CompilerError> {
+    compile_file_with_opt(input_file, output_file, 2) // Default to -O2
+}
+
+fn compile_file_with_opt(input_file: &str, output_file: &str, opt_level: u8) -> Result<(), CompilerError> {
     println!("🔨 Compiling {input_file} → {output_file}");
 
     // Read the input file
     let source = read_source_file(input_file)?;
 
-    // Compile with pure Clean Language (no framework plugins)
-    // compile_with_file() internally uses compile_pure() which creates an empty plugin registry
-    // Framework features (endpoints:, data:, component:) are NOT supported in the cln binary
+    // Compile with external plugin support
+    // This automatically detects `import:` blocks and loads plugins from ~/.cleen/plugins/
+    // If no imports are found, it compiles as pure Clean Language
     let wasm_binary =
-        clean_language_compiler::compile_with_file(&source, input_file).map_err(|errors| {
+        clean_language_compiler::compile_with_external_plugins_and_opt_level(&source, input_file, opt_level).map_err(|errors| {
             for error in &errors {
                 display_error(error, &source, input_file);
             }
