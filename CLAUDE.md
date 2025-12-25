@@ -96,6 +96,50 @@ This is a Rust-based compiler for Clean Language, a type-safe programming langua
 
 Language characteristics are described in the [Language Specification](./Language-Specification.md). If you find something that is not described in the specification, propose a change to the specification before implementing it. When something is added you need to update the specification.
 
+## Platform Architecture
+
+**CRITICAL: The compiler's role in the platform architecture**
+
+The runtime platform architecture is documented in [../platform-architecture/](../platform-architecture/README.md). This defines the separation between compiler and runtime responsibilities:
+
+- **[Host Bridge Specification](../platform-architecture/HOST_BRIDGE.md)** - All portable host functions (console, math, string, database, file I/O, HTTP client, crypto)
+- **[Memory Model](../platform-architecture/MEMORY_MODEL.md)** - WASM memory layout, string format, bump allocator
+- **[Server Extensions](../platform-architecture/SERVER_EXTENSIONS.md)** - HTTP server-specific functions (routing, request context, auth)
+- **[Implementing a New Host](../platform-architecture/IMPLEMENTING_HOST.md)** - Guide for building new runtime implementations
+
+### Compiler Architecture Principles
+
+**NEVER hardcode bridge functions in the compiler.** The compiler's job is to:
+
+1. **Read plugin declarations** from `plugin.toml` files
+2. **Generate correct WASM imports** based on those declarations
+3. **Handle `expand_strings`** parameter expansion (string → ptr+len pairs)
+4. **Trust the runtime** to provide the actual implementations
+
+**What belongs in the compiler (`src/builtins/registry.rs`):**
+- ✅ Language built-ins: print, printl, input (console I/O always available)
+- ✅ Math operations: abs, sqrt, pow, sin, cos (pure computation)
+- ✅ Type conversions: toString, toInteger (compiler-level type operations)
+- ✅ Classes and namespaces: Math.*, String.*, Integer.* (language structures)
+- ✅ Pure WASM operations: json.* (implemented entirely in WASM, no host calls)
+
+**What DOES NOT belong in the compiler:**
+- ❌ File I/O functions (file.read, file.write, file.exists)
+- ❌ HTTP client functions (http.get, http.post, http.put)
+- ❌ HTTP server functions (_http_route, _http_listen)
+- ❌ Database functions (_db_query, _db_execute)
+- ❌ Request context functions (_req_param, _req_query)
+- ❌ Any function that requires runtime/host implementation
+
+**These portable functions come from:**
+- Plugin `[bridge]` declarations in `plugin.toml`
+- Runtime host-bridge implementations
+- The compiler only generates WASM imports, never implements them
+
+**Rule of thumb:** If a function needs to interact with the outside world (I/O, network, database), it belongs in a plugin declaration, NOT in the compiler registry.
+
+When modifying host functions or adding new ones, always update the platform architecture documentation.
+
 ## Common Commands
 
 ### Building and Testing
