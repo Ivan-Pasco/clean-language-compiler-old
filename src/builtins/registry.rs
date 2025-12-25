@@ -211,7 +211,6 @@ impl BuiltinRegistry {
         registry.register_io_functions();
         registry.register_math_functions();
         registry.register_type_conversion_functions();
-        registry.register_http_server_functions();
         registry.register_math_class();
         registry.register_string_utils_class();
         registry.register_string_class();
@@ -339,39 +338,6 @@ impl BuiltinRegistry {
         ];
 
         for func in type_functions {
-            self.functions.insert(func.name.clone(), func);
-        }
-    }
-
-    /// Register HTTP server functions (_http_route, _http_listen)
-    /// These are internal bridge functions used by the Frame runtime
-    fn register_http_server_functions(&mut self) {
-        let http_server_functions = vec![
-            // _http_route(method: string, path: string, handler_idx: integer) -> integer
-            // Registers a route handler with the HTTP server
-            BuiltinFunction::new(
-                "_http_route",
-                vec![
-                    BuiltinType::String,
-                    BuiltinType::String,
-                    BuiltinType::Integer,
-                ],
-                BuiltinType::Integer,
-                BuiltinCategory::Http,
-            )
-            .with_wasm_import("env", "_http_route"),
-            // _http_listen(port: integer) -> integer
-            // Starts the HTTP server listening on the given port
-            BuiltinFunction::new(
-                "_http_listen",
-                vec![BuiltinType::Integer],
-                BuiltinType::Integer,
-                BuiltinCategory::Http,
-            )
-            .with_wasm_import("env", "_http_listen"),
-        ];
-
-        for func in http_server_functions {
             self.functions.insert(func.name.clone(), func);
         }
     }

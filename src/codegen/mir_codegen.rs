@@ -5162,19 +5162,19 @@ impl MirCodeGenerator<'_> {
                     _ => Some(Self::builtin_type_to_wasm_type(&return_type)),
                 };
 
-                // Register raw import with __raw suffix
-                let raw_name = format!("{}__raw", func.name);
+                // Register import with expanded signature (NO __raw suffix)
+                // The runtime provides functions with their original names
                 tracing::debug!(
-                    name = %raw_name,
+                    name = %func.name,
                     module = %module,
                     params = ?raw_wasm_params,
                     returns = ?wasm_return,
-                    "Registering raw plugin bridge import (expand_strings)"
+                    "Registering plugin bridge import (expand_strings)"
                 );
 
                 let raw_func_index = self.wasm_generator.register_import_function(
                     module,
-                    &raw_name,
+                    &func.name,
                     &raw_wasm_params,
                     wasm_return,
                 )?;
