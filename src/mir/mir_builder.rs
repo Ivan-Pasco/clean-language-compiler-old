@@ -886,9 +886,11 @@ impl MirBuilder {
                 }
 
                 // Create local variable entry (skip for Array without initializer - already created)
+                // CRITICAL FIX: Don't overwrite if local already exists from initializer expression
+                // The initializer's type may be more specific (e.g., F64 for float literals)
                 let should_create_local =
                     !(initializer.is_none() && matches!(var_type, ConcreteType::Array(_)));
-                if should_create_local {
+                if should_create_local && !context.function.locals.contains_key(&value_id) {
                     let local = MirLocal {
                         name: Some(name.clone()),
                         local_type: self.convert_concrete_type(var_type),
@@ -897,6 +899,12 @@ impl MirBuilder {
                     };
 
                     context.function.locals.insert(value_id, local);
+                } else if should_create_local {
+                    // Local already exists from initializer - just update the name and mutability
+                    if let Some(local) = context.function.locals.get_mut(&value_id) {
+                        local.name = Some(name.clone());
+                        local.is_mutable = true;
+                    }
                 }
             }
 
@@ -1184,13 +1192,11 @@ impl MirBuilder {
                         let converted_id = ValueId(context.function.next_value_id);
                         context.function.next_value_id += 1;
 
-                        // Register the converted_id BEFORE creating the instruction to ensure
-                        // it's in the function.locals map for codegen
-                        // CRITICAL FIX: Strings are i32 pointers to [len|content] structure in memory
+                        // Register as Ptr(U8) - float_to_string returns a string pointer
                         self.register_temp_local(
                             context,
                             converted_id,
-                            MirType::I32,
+                            MirType::Ptr(Box::new(MirType::U8)),
                             location.clone(),
                         );
 
