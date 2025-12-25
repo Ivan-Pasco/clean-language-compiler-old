@@ -221,8 +221,6 @@ impl BuiltinRegistry {
         registry.register_compare_namespace();
         registry.register_conditional_namespace();
         registry.register_logical_namespace();
-        registry.register_file_namespace();
-        registry.register_http_namespace();
         registry.register_json_namespace(); // BOOK: json-module
 
         registry
@@ -1028,85 +1026,6 @@ impl BuiltinRegistry {
         ]);
 
         self.namespaces.insert("logical".to_string(), logical_ns);
-    }
-
-    /// Register file namespace
-    fn register_file_namespace(&mut self) {
-        let file_ns = BuiltinNamespace::new("file").with_functions(vec![
-            BuiltinFunction::new(
-                "read",
-                vec![BuiltinType::String],
-                BuiltinType::String,
-                BuiltinCategory::File,
-            )
-            .with_wasm_import("env", "file_read"),
-            BuiltinFunction::new(
-                "write",
-                vec![BuiltinType::String, BuiltinType::String],
-                BuiltinType::Boolean,
-                BuiltinCategory::File,
-            )
-            .with_wasm_import("env", "file_write"),
-            BuiltinFunction::new(
-                "exists",
-                vec![BuiltinType::String],
-                BuiltinType::Boolean,
-                BuiltinCategory::File,
-            )
-            .with_wasm_import("env", "file_exists"),
-            BuiltinFunction::new(
-                "delete",
-                vec![BuiltinType::String],
-                BuiltinType::Boolean,
-                BuiltinCategory::File,
-            )
-            .with_wasm_import("env", "file_delete"),
-            BuiltinFunction::new(
-                "append",
-                vec![BuiltinType::String, BuiltinType::String],
-                BuiltinType::Boolean,
-                BuiltinCategory::File,
-            )
-            .with_wasm_import("env", "file_append"),
-        ]);
-
-        self.namespaces.insert("file".to_string(), file_ns);
-    }
-
-    /// Register http namespace
-    fn register_http_namespace(&mut self) {
-        let http_ns = BuiltinNamespace::new("http").with_functions(vec![
-            BuiltinFunction::new(
-                "get",
-                vec![BuiltinType::String],
-                BuiltinType::String,
-                BuiltinCategory::Http,
-            )
-            .with_wasm_import("env", "http_get"),
-            BuiltinFunction::new(
-                "post",
-                vec![BuiltinType::String, BuiltinType::String],
-                BuiltinType::String,
-                BuiltinCategory::Http,
-            )
-            .with_wasm_import("env", "http_post"),
-            BuiltinFunction::new(
-                "put",
-                vec![BuiltinType::String, BuiltinType::String],
-                BuiltinType::String,
-                BuiltinCategory::Http,
-            )
-            .with_wasm_import("env", "http_put"),
-            BuiltinFunction::new(
-                "delete",
-                vec![BuiltinType::String],
-                BuiltinType::String,
-                BuiltinCategory::Http,
-            )
-            .with_wasm_import("env", "http_delete"),
-        ]);
-
-        self.namespaces.insert("http".to_string(), http_ns);
     }
 
     /// Register json namespace (json.textToData, json.dataToText, etc.)
