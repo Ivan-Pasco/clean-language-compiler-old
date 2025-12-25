@@ -1941,52 +1941,11 @@ impl MirCodeGenerator<'_> {
                             }
                         }
                     }
-                    Some(name) if name.starts_with("http.") => {
-                        // HTTP functions need string arguments expanded to (content_ptr, length)
-                        // http.get(url) -> http_get(url_ptr, url_len)
-                        // http.post(url, data) -> http_post(url_ptr, url_len, data_ptr, data_len)
-                        debug_mir!(": Matched HTTP function '{}', expanding string arguments", name);
-                        for arg in arguments {
-                            self.load_string_argument_for_print(arg)?;
-                        }
-                    }
-                    Some("_http_route") => {
-                        // _http_route(method, path, handler_idx) needs strings expanded
-                        // -> _http_route(method_ptr, method_len, path_ptr, path_len, handler_idx)
-                        debug_mir!(": Matched _http_route, expanding string arguments");
-                        if arguments.len() >= 3 {
-                            // Expand first string argument (method)
-                            self.load_string_argument_for_print(&arguments[0])?;
-                            // Expand second string argument (path)
-                            self.load_string_argument_for_print(&arguments[1])?;
-                            // Load third argument normally (handler_idx is integer)
-                            self.load_operand(&arguments[2])?;
-                        } else {
-                            for arg in arguments {
-                                self.load_operand(arg)?;
-                            }
-                        }
-                    }
-                    Some("_http_listen") => {
-                        // _http_listen(port) - single integer argument, no string expansion needed
-                        debug_mir!(": Matched _http_listen");
-                        for arg in arguments {
-                            self.load_operand(arg)?;
-                        }
-                    }
-                    Some("_req_param") | Some("_req_query") | Some("_req_header") => {
-                        // Request context functions with string argument: _req_param(name) -> string
-                        // Need to expand string argument to (ptr, len)
-                        debug_mir!(": Matched request context function, expanding string argument");
-                        if !arguments.is_empty() {
-                            self.load_string_argument_for_print(&arguments[0])?;
-                        }
-                    }
-                    Some("_req_body") | Some("_req_method") | Some("_req_path") => {
-                        // Request context functions with no arguments: _req_body() -> string
-                        debug_mir!(": Matched request context function with no args");
-                        // No arguments to load
-                    }
+                    // REMOVED: Hardcoded string expansion for bridge functions
+                    // Bridge functions with expand_strings=true now use wrapper functions
+                    // that handle the expansion automatically. The wrapper receives original
+                    // Clean Language string pointers and expands them to (ptr+4, len) pairs.
+                    // No special handling needed here - just use normal load_operand.
                     Some("conditional.number") => {
                         // conditional.number(bool, f64, f64) -> f64
                         // Need to convert integer arguments to f64
