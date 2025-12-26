@@ -5102,8 +5102,10 @@ impl MirBuilder {
         let result_id = ValueId(context.function.next_value_id);
         context.function.next_value_id += 1;
 
-        // Register the result as a temp local (boxed value is a pointer = i32)
-        self.register_temp_local(context, result_id, MirType::I32, location.clone());
+        // Register the result as a temp local with Any type (boxed value)
+        // CRITICAL FIX: Boxed values must have MirType::Any, not MirType::I32
+        // This ensures proper type tracking for Any variables
+        self.register_temp_local(context, result_id, MirType::Any, location.clone());
 
         let instruction = MirInstruction {
             dest: Some(result_id),

@@ -1094,19 +1094,12 @@ impl GlobalSymbolTable {
             ("file.exists", vec![HirType::String], HirType::Boolean),
             ("file.delete", vec![HirType::String], HirType::Boolean),
             // JSON namespace functions  // BOOK: json-module
-            // JSON values are represented as i32 pointers at WASM level
-            ("json.textToData", vec![HirType::String], HirType::Integer),
-            (
-                "json.tryTextToData",
-                vec![HirType::String],
-                HirType::Integer,
-            ),
-            ("json.dataToText", vec![HirType::Integer], HirType::String),
-            (
-                "json.prettyDataToText",
-                vec![HirType::Integer],
-                HirType::String,
-            ),
+            // JSON parse functions return Any type (dynamic data structures)
+            ("json.textToData", vec![HirType::String], HirType::Any),
+            ("json.tryTextToData", vec![HirType::String], HirType::Any),
+            // JSON stringify functions take Any type and return string
+            ("json.dataToText", vec![HirType::Any], HirType::String),
+            ("json.prettyDataToText", vec![HirType::Any], HirType::String),
             // Comparison namespace functions (compare.integer.*, compare.number.*)
             (
                 "compare.integer_equal",
