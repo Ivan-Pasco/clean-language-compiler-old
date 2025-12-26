@@ -58,6 +58,112 @@ impl JsonClass {
     }
 
     fn register_parse_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+        // Phase 4 Implementation: Register helper functions and simplify main parser
+        // Step 1: Get malloc index (required by all parsing functions)
+        let malloc_index = codegen
+            .get_function_index("__malloc")
+            .expect("__malloc must be registered before JSON parsing functions");
+
+        // Step 2: Calculate what the function indices will be
+        // We need to know these in advance for mutual recursion
+        // Get next available function index
+        let base_idx = codegen.get_next_function_index();
+        let value_idx_predicted = base_idx; // Will be registered first
+        let object_idx_predicted = base_idx + 1; // Will be registered second
+        let array_idx_predicted = base_idx + 2; // Will be registered third
+
+        // Step 3: Register all three helper functions with correct indices
+        // __json_parse_value - uses predicted object and array indices
+        let value_idx = register_stdlib_function_with_locals(
+            codegen,
+            "__json_parse_value",
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // string_ptr, position_ptr, length
+            Some(WasmType::I32),                            // returns value_ptr
+            &[
+                WasmType::I32, // Local 3: position (cached from position_ptr)
+                WasmType::I32, // Local 4: current_character
+                WasmType::I32, // Local 5: result_ptr / value_ptr
+                WasmType::I32, // Local 6: start_position (for number/string parsing)
+                WasmType::I32, // Local 7: value_length / parse_pos
+                WasmType::I32, // Local 8: temp / is_negative
+                WasmType::I32, // Local 9: temp
+                WasmType::I32, // Local 10: temp
+                WasmType::I32, // Local 11: temp
+                WasmType::F64, // Local 12: decimal_divisor (F64)
+                WasmType::F64, // Local 13: temp_f64 (for F64Store operand swapping)
+                WasmType::F64, // Local 14: temp_f64_2 (additional F64 temp for array elem parsing)
+            ],
+            self.generate_parse_value_instructions(
+                object_idx_predicted,
+                array_idx_predicted,
+                malloc_index,
+            ),
+        )?;
+
+        // Verify our prediction was correct
+        assert_eq!(
+            value_idx, value_idx_predicted,
+            "Function index prediction failed for __json_parse_value"
+        );
+
+        // __json_parse_object - uses actual value_idx
+        let object_idx = register_stdlib_function_with_locals(
+            codegen,
+            "__json_parse_object",
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // string_ptr, position_ptr, length
+            Some(WasmType::I32),                            // returns object_ptr
+            &[
+                WasmType::I32, // Local 3: position (cached from position_ptr)
+                WasmType::I32, // Local 4: current_character
+                WasmType::I32, // Local 5: pair_count
+                WasmType::I32, // Local 6: object_ptr (allocated memory)
+                WasmType::I32, // Local 7: loop counter i
+                WasmType::I32, // Local 8: start_position / key_start / num_start / str_start
+                WasmType::I32, // Local 9: key_len / str_len / parse_pos
+                WasmType::I32, // Local 10: key_ptr / is_negative / temp / depth
+                WasmType::I32, // Local 11: value_ptr / str_ptr
+                WasmType::I32, // Local 12: temp
+                WasmType::F64, // Local 13: decimal_divisor (F64)
+                WasmType::F64, // Local 14: temp_f64 (for F64Store operand swapping)
+            ],
+            self.generate_parse_object_instructions(value_idx, malloc_index),
+        )?;
+
+        assert_eq!(
+            object_idx, object_idx_predicted,
+            "Function index prediction failed for __json_parse_object"
+        );
+
+        // __json_parse_array - uses actual value_idx
+        let array_idx = register_stdlib_function_with_locals(
+            codegen,
+            "__json_parse_array",
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // string_ptr, position_ptr, length
+            Some(WasmType::I32),                            // returns array_ptr
+            &[
+                WasmType::I32, // Local 3: position (cached from position_ptr)
+                WasmType::I32, // Local 4: current_character
+                WasmType::I32, // Local 5: element_count
+                WasmType::I32, // Local 6: array_ptr (allocated memory)
+                WasmType::I32, // Local 7: loop counter i
+                WasmType::I32, // Local 8: start_position / num_start / str_start
+                WasmType::I32, // Local 9: element_ptr / value / str_len / parse_pos
+                WasmType::I32, // Local 10: depth tracker / is_negative
+                WasmType::I32, // Local 11: value_ptr / str_ptr / temp
+                WasmType::I32, // Local 12: temp
+                WasmType::F64, // Local 13: decimal_divisor (F64)
+                WasmType::F64, // Local 14: temp_f64 (for F64Store operand swapping)
+            ],
+            self.generate_parse_array_instructions(value_idx, malloc_index),
+        )?;
+
+        assert_eq!(
+            array_idx, array_idx_predicted,
+            "Function index prediction failed for __json_parse_array"
+        );
+
+        // Step 4: Register main public API functions using the simplified implementation
+
         // json.textToData(text: string) -> any
         // Parse JSON text into a data structure
         register_stdlib_function_with_locals(
@@ -66,21 +172,10 @@ impl JsonClass {
             &[WasmType::I32],    // string pointer
             Some(WasmType::I32), // returns data pointer
             &[
-                WasmType::I32, // Local 1: position
-                WasmType::I32, // Local 2: string length
-                WasmType::I32, // Local 3: current character
-                WasmType::I32, // Local 4: result/temp pointer
-                WasmType::I32, // Local 5: pair count / element count
-                WasmType::I32, // Local 6: allocated memory pointer
-                WasmType::I32, // Local 7: loop counter
-                WasmType::I32, // Local 8: start position
-                WasmType::I32, // Local 9: string/number length
-                WasmType::I32, // Local 10: temp value
-                WasmType::I32, // Local 11: temp value 2
-                WasmType::I32, // Local 12: temp value 3
-                WasmType::F64, // Local 13: decimal divisor for float parsing
+                WasmType::I32, // Local 1: position_ptr (allocated temp)
+                WasmType::I32, // Local 2: length
             ],
-            self.generate_text_to_data_instructions(),
+            self.generate_text_to_data_instructions(value_idx, malloc_index),
         )?;
 
         // json.tryTextToData(text: string) -> any (returns null on error)
@@ -91,21 +186,10 @@ impl JsonClass {
             &[WasmType::I32],    // string pointer
             Some(WasmType::I32), // returns data pointer (null on error)
             &[
-                WasmType::I32, // Local 1: position
-                WasmType::I32, // Local 2: string length
-                WasmType::I32, // Local 3: current character
-                WasmType::I32, // Local 4: result/temp pointer
-                WasmType::I32, // Local 5: pair count / element count
-                WasmType::I32, // Local 6: allocated memory pointer
-                WasmType::I32, // Local 7: loop counter
-                WasmType::I32, // Local 8: start position
-                WasmType::I32, // Local 9: string/number length
-                WasmType::I32, // Local 10: temp value
-                WasmType::I32, // Local 11: temp value 2
-                WasmType::I32, // Local 12: temp value 3
-                WasmType::F64, // Local 13: decimal divisor for float parsing
+                WasmType::I32, // Local 1: position_ptr (allocated temp)
+                WasmType::I32, // Local 2: length
             ],
-            self.generate_try_text_to_data_instructions(),
+            self.generate_try_text_to_data_instructions(value_idx, malloc_index),
         )?;
 
         Ok(())
@@ -219,7 +303,11 @@ impl JsonClass {
             Instruction::LocalGet(4), // i
             Instruction::LocalGet(1), // len1
             Instruction::I32GeU,
-            Instruction::BrIf(1), // Exit loop if done
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // All bytes matched - return 0
+            Instruction::I32Const(0),
+            Instruction::Br(2), // Exit block with value
+            Instruction::End,
             // Load byte from ptr1[i]
             Instruction::LocalGet(0), // ptr1
             Instruction::LocalGet(4), // i
@@ -306,7 +394,11 @@ impl JsonClass {
             Instruction::LocalGet(4), // i
             Instruction::LocalGet(3), // count
             Instruction::I32GeU,
-            Instruction::BrIf(1), // Exit loop if done
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // No match found - return null (0)
+            Instruction::I32Const(0),
+            Instruction::Br(2), // Exit block with value
+            Instruction::End,
             // Load current key pointer
             // Key offset: object_ptr + 4 + (i * 8)
             // Each pair is 8 bytes: 4 for key_ptr + 4 for val_ptr
@@ -476,2057 +568,59 @@ impl JsonClass {
 
     /// Generate WASM instructions for json.textToData
     /// Parses a JSON string and returns a pointer to the parsed data structure
-    /// PHASE 2 IMPLEMENTATION: Full object parser with malloc integration
-    fn generate_text_to_data_instructions(&self) -> Vec<Instruction<'static>> {
-        // JSON Parser Implementation - PRODUCTION VERSION
-        // Handles all JSON types with proper memory allocation
-        //
-        // Memory layout for JSON values:
-        // - Null: 0
-        // - Boolean: 1 (false) or 2 (true)
-        // - Number: pointer to [i32 tag=3, f64 value]
-        // - String: pointer to [i32 length, bytes...]
-        // - Array: pointer to [i32 count, i32 elem0, i32 elem1, ...]
-        // - Object: pointer to [i32 count, i32 key0_ptr, i32 val0_ptr, ...]
-        //
-        // NOTE: This is a simplified implementation that handles basic cases.
-        // Full recursive parser with nested structures is in Phase 4.
-
+    /// PHASE 4 IMPLEMENTATION: Simplified main parser using helper functions
+    fn generate_text_to_data_instructions(
+        &self,
+        parse_value_index: u32,
+        malloc_index: u32,
+    ) -> Vec<Instruction<'static>> {
         vec![
-            // Local 0: input string pointer (parameter)
-            // Local 1: current position in string
-            // Local 2: string length
-            // Local 3: current character
-            // Local 4: result pointer
+            // Local variable declarations:
+            // Local 0: string_ptr (parameter)
+            // Local 1: position_ptr (allocated temp for tracking parse position)
+            // Local 2: length (string length)
 
-            // Initialize position to 0
+            // Step 1: Allocate 4 bytes for position storage
+            Instruction::I32Const(4),
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(1), // position_ptr
+            // Step 2: Initialize position to 0
+            Instruction::LocalGet(1), // position_ptr
             Instruction::I32Const(0),
-            Instruction::LocalSet(1),
-            // Get string length from the length-prefixed string
-            // String format: [4 bytes length][string data]
-            Instruction::LocalGet(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Step 3: Get string length (stored at offset 0 in string)
+            Instruction::LocalGet(0), // string_ptr
             Instruction::I32Load(wasm_encoder::MemArg {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
             }),
-            Instruction::LocalSet(2),
-            // Skip whitespace at start
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            // Check if position < length
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(1), // Exit if at end
-            // Get current character
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4), // Skip length prefix
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check if whitespace (space=32, tab=9, newline=10, return=13)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(32),
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(9),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(10),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(13),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::I32Eqz,
-            Instruction::BrIf(1), // Exit loop if not whitespace
-            // Increment position
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Br(0), // Continue loop
-            Instruction::End,   // End loop
-            Instruction::End,   // End block
-            // Check first non-whitespace character to determine value type
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check for 'n' (null)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(110), // 'n'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            Instruction::I32Const(0), // Return null (0)
-            Instruction::Else,
-            // Check for 't' (true)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(116), // 't'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            Instruction::I32Const(2), // Return true (encoded as 2)
-            Instruction::Else,
-            // Check for 'f' (false)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(102), // 'f'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            Instruction::I32Const(1), // Return false (encoded as 1)
-            Instruction::Else,
-            // Check for '"' (string)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(34), // '"'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // For strings, return the original string pointer for now
-            // A full implementation would extract the string content
-            Instruction::LocalGet(0),
-            Instruction::Else,
-            // Check for digit or '-' (number)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(48), // '0'
-            Instruction::I32GeU,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(57), // '9'
-            Instruction::I32LeU,
-            Instruction::I32And,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(45), // '-'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // For numbers, return a tagged pointer
-            // In a full implementation, we'd parse and store the number
-            Instruction::I32Const(0), // Placeholder - would be pointer to parsed number
-            Instruction::Else,
-            // Check for '[' (array)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(91), // '['
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // ARRAY PARSER IMPLEMENTATION
-            // Parse JSON array: [value1,value2,value3,...]
-            //
-            // Strategy (similar to object parser):
-            // 1. Count elements by scanning for commas
-            // 2. Allocate memory: 4 bytes (count) + elements * 4 bytes (element pointer per element)
-            // 3. Parse each element and store in memory
-            //
-            // Memory layout: [i32 count][i32 elem0][i32 elem1][i32 elem2]...
-
-            // Step 1: Skip opening '['
-            Instruction::LocalGet(1), // position
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1), // position++
-            // Step 2: Count elements by scanning
-            // Save current position
-            Instruction::LocalGet(1),
-            Instruction::LocalSet(8), // start_position = position
-            // Initialize element count to 0
-            Instruction::I32Const(0),
-            Instruction::LocalSet(5), // elem_count = 0
-            // Scan to count elements
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            // Skip whitespace
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            // Check if pos >= len
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3), // Exit to outer block
-            // Get current char
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3), // char
-            // Check if whitespace
-            Instruction::LocalGet(3),
-            Instruction::I32Const(32),
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(9),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(10),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(13),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::I32Eqz,
-            Instruction::BrIf(1), // Exit whitespace loop
-            // Increment position
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Br(0), // Continue whitespace loop
-            Instruction::End,   // End whitespace loop
-            Instruction::End,   // End whitespace block
-            // Check for ']' (empty array or end of array)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(93), // ']'
-            Instruction::I32Eq,
-            Instruction::BrIf(1), // Exit counting loop
-            // We found an element - increment count
-            Instruction::LocalGet(5),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(5), // elem_count++
-            // Skip past this element to find next comma or ']'
-            Instruction::I32Const(0),
-            Instruction::LocalSet(10), // depth = 0
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            // Check bounds
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3), // Exit to outer block
-            // Get char
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Increment position
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            // Track nesting depth for nested arrays/objects
-            Instruction::LocalGet(3),
-            Instruction::I32Const(123), // '{'
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(91), // '['
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(10), // depth++
-            Instruction::End,
-            // Check for '}' or ']'
-            Instruction::LocalGet(3),
-            Instruction::I32Const(125), // '}'
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(93), // ']'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(0),
-            Instruction::I32GtU,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(1),
-            Instruction::I32Sub,
-            Instruction::LocalSet(10), // depth--
-            Instruction::End,
-            Instruction::End,
-            // At depth 0, check for ',' or ']'
-            Instruction::LocalGet(10),
-            Instruction::I32Eqz,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(44), // ','
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(93), // ']'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::BrIf(2), // Exit skip loop
-            Instruction::End,
-            Instruction::Br(0), // Continue skip loop
-            Instruction::End,   // End skip loop
-            Instruction::End,   // End skip block
-            // Check if we hit ']' (end of array)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(93), // ']'
-            Instruction::I32Eq,
-            Instruction::BrIf(1), // Exit counting loop
-            Instruction::Br(0),   // Continue counting loop
-            Instruction::End,     // End counting loop
-            Instruction::End,     // End counting block
-            // Step 3: Allocate memory for array
-            // Size = 4 (count) + elem_count * 4 (element pointers)
-            Instruction::I32Const(4),
-            Instruction::LocalGet(5), // elem_count
-            Instruction::I32Const(4),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::Call(0),     // Call __malloc
-            Instruction::LocalSet(6), // array_ptr = malloc(...)
-            // Store element count at offset 0
-            Instruction::LocalGet(6),
-            Instruction::LocalGet(5),
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Step 4: Reset position to start and parse elements
-            Instruction::LocalGet(8),
-            Instruction::LocalSet(1), // position = start_position
-            // Initialize loop counter
-            Instruction::I32Const(0),
-            Instruction::LocalSet(7), // i = 0
-            // Parse each element
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            // Check if we've parsed all elements
-            Instruction::LocalGet(7),
-            Instruction::LocalGet(5),
-            Instruction::I32GeU,
-            Instruction::BrIf(1), // Exit if i >= elem_count
-            // Skip whitespace before element
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3), // Exit to outer
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(32),
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(9),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(10),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(13),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::I32Eqz,
-            Instruction::BrIf(1),
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Br(0),
-            Instruction::End,
-            Instruction::End,
-            // Parse element value - check first character to determine type
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check if element is a number (digit or '-')
-            Instruction::LocalGet(3),
-            Instruction::I32Const(48), // '0'
-            Instruction::I32GeU,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(57), // '9'
-            Instruction::I32LeU,
-            Instruction::I32And,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(45), // '-'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Parse number (reuse number parsing logic from object parser)
-            Instruction::LocalGet(1),
-            Instruction::LocalSet(8), // num_start = position
-            // Find end of number
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3),
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check if char is part of number
-            Instruction::LocalGet(3),
-            Instruction::I32Const(48),
-            Instruction::I32GeU,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(57),
-            Instruction::I32LeU,
-            Instruction::I32And,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(46), // '.'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(45), // '-'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::I32Eqz,
-            Instruction::BrIf(1),
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Br(0),
-            Instruction::End,
-            Instruction::End,
-            // Allocate and parse number (same as object parser)
-            Instruction::I32Const(12),
-            Instruction::Call(0),      // __malloc
-            Instruction::LocalSet(11), // value_ptr
-            // Store type tag = 3
-            Instruction::LocalGet(11),
-            Instruction::I32Const(3),
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Initialize accumulator
-            Instruction::F64Const(0.0),
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            // Parse number value
-            Instruction::LocalGet(8), // num_start
-            Instruction::LocalSet(9), // parse_pos
-            Instruction::I32Const(0),
-            Instruction::LocalSet(10), // is_negative
-            // Check for negative sign
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(9),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::I32Const(45), // '-'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::I32Const(1),
-            Instruction::LocalSet(10),
-            Instruction::LocalGet(9),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(9),
-            Instruction::End,
-            // Parse digits
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(9),
-            Instruction::LocalGet(1),
-            Instruction::I32GeU,
-            Instruction::BrIf(1),
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(9),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check if digit
-            Instruction::LocalGet(3),
-            Instruction::I32Const(48),
-            Instruction::I32GeU,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(57),
-            Instruction::I32LeU,
-            Instruction::I32And,
-            Instruction::I32Eqz,
-            Instruction::BrIf(1),
-            // Accumulate: result = result * 10 + digit
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Load(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            Instruction::F64Const(10.0),
-            Instruction::F64Mul,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(48),
-            Instruction::I32Sub,
-            Instruction::F64ConvertI32S,
-            Instruction::F64Add,
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            Instruction::LocalGet(9),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(9),
-            Instruction::Br(0),
-            Instruction::End,
-            Instruction::End,
-            // Parse decimal point if present (array element)
-            // Check if parse_pos < position and current char is '.'
-            Instruction::LocalGet(9), // parse_pos
-            Instruction::LocalGet(1), // position (end of number)
-            Instruction::I32LtU,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Get current character
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(9),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check if it's a decimal point '.' (46)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(46), // '.'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Skip the decimal point
-            Instruction::LocalGet(9),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(9),
-            // Initialize decimal divisor to 10.0
-            Instruction::F64Const(10.0),
-            Instruction::LocalSet(13),
-            // Parse fractional digits
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            // Check if parse_pos >= position (end of number)
-            Instruction::LocalGet(9),
-            Instruction::LocalGet(1),
-            Instruction::I32GeU,
-            Instruction::BrIf(1), // Exit if done
-            // Get current character
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(9),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check if it's a digit (48-57)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(48), // '0'
-            Instruction::I32GeU,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(57), // '9'
-            Instruction::I32LeU,
-            Instruction::I32And,
-            Instruction::I32Eqz,
-            Instruction::BrIf(1), // Exit if not a digit
-            // Load current accumulator value
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Load(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            // Convert digit to value (char - '0')
-            Instruction::LocalGet(3),
-            Instruction::I32Const(48),
-            Instruction::I32Sub,
-            Instruction::F64ConvertI32S,
-            // Divide by decimal_divisor
-            Instruction::LocalGet(13),
-            Instruction::F64Div,
-            // Add to accumulator
-            Instruction::F64Add,
-            // Store back
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            // Multiply divisor by 10 for next digit
-            Instruction::LocalGet(13),
-            Instruction::F64Const(10.0),
-            Instruction::F64Mul,
-            Instruction::LocalSet(13),
-            // Increment parse_pos
-            Instruction::LocalGet(9),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(9),
-            Instruction::Br(0), // Continue loop
-            Instruction::End,   // End fractional loop
-            Instruction::End,   // End fractional block
-            Instruction::End,   // End decimal point check
-            Instruction::End,   // End parse_pos < position check
-            // Apply negative sign
-            Instruction::LocalGet(10),
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Load(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            Instruction::F64Neg,
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            Instruction::End,
-            // Store element pointer in array
-            Instruction::LocalGet(6), // array_ptr
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(7), // i
-            Instruction::I32Const(4),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::LocalGet(11), // value_ptr
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::Else,
-            // PHASE 4: Parse non-number elements (string, bool, null, nested)
-
-            // Check if element is a string (starts with '"')
-            Instruction::LocalGet(3),
-            Instruction::I32Const(34), // '"'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Parse string element
-            // Skip opening '"'
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            // Save string start position
-            Instruction::LocalGet(1),
-            Instruction::LocalSet(8), // str_start = position
-            // Find closing '"'
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3), // Exit to outer
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check for closing '"'
-            Instruction::LocalGet(3),
-            Instruction::I32Const(34), // '"'
-            Instruction::I32Eq,
-            Instruction::BrIf(1),
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Br(0),
-            Instruction::End,
-            Instruction::End,
-            // Calculate string length
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(8),
-            Instruction::I32Sub,
-            Instruction::LocalSet(9), // str_len
-            // Allocate memory: 4 bytes (length) + str_len
-            Instruction::I32Const(4),
-            Instruction::LocalGet(9),
-            Instruction::I32Add,
-            Instruction::Call(0),      // __malloc
-            Instruction::LocalSet(11), // str_ptr
-            // Store string length
-            Instruction::LocalGet(11),
-            Instruction::LocalGet(9),
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Copy string bytes
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(8),
-            Instruction::I32Add,
-            Instruction::LocalGet(9),
-            Instruction::MemoryCopy {
-                src_mem: 0,
-                dst_mem: 0,
-            },
-            // Skip closing '"'
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            // Store string pointer in array
-            Instruction::LocalGet(6), // array_ptr
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(7), // i
-            Instruction::I32Const(4),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::LocalGet(11), // str_ptr
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::Else,
-            // Check if element is 'true'
-            Instruction::LocalGet(3),
-            Instruction::I32Const(116), // 't'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Store true (encoded as 2)
-            Instruction::LocalGet(6), // array_ptr
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(7), // i
-            Instruction::I32Const(4),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Const(2), // true = 2
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Skip past "true" (4 characters)
-            Instruction::LocalGet(1),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Else,
-            // Check if element is 'false'
-            Instruction::LocalGet(3),
-            Instruction::I32Const(102), // 'f'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Store false (encoded as 1)
-            Instruction::LocalGet(6), // array_ptr
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(7), // i
-            Instruction::I32Const(4),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Const(1), // false = 1
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Skip past "false" (5 characters)
-            Instruction::LocalGet(1),
-            Instruction::I32Const(5),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Else,
-            // Check if element is 'null'
-            Instruction::LocalGet(3),
-            Instruction::I32Const(110), // 'n'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Store null (0)
-            Instruction::LocalGet(6), // array_ptr
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(7), // i
-            Instruction::I32Const(4),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Const(0), // null = 0
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Skip past "null" (4 characters)
-            Instruction::LocalGet(1),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Else,
-            // Unknown element type (nested object/array or error)
-            // For true nested support, would need recursive calls
-            Instruction::LocalGet(6), // array_ptr
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(7), // i
-            Instruction::I32Const(4),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Const(0), // null for nested (Phase 4+)
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::End, // null check
-            Instruction::End, // false check
-            Instruction::End, // true check
-            Instruction::End, // string check
-            Instruction::End, // number check (outer else)
-            // Skip past element to find ',' or ']'
-            Instruction::I32Const(0),
-            Instruction::LocalSet(10), // depth = 0
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3),
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            // Track depth
-            Instruction::LocalGet(3),
-            Instruction::I32Const(123),
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(91),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(10),
-            Instruction::End,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(125),
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(93),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(0),
-            Instruction::I32GtU,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(1),
-            Instruction::I32Sub,
-            Instruction::LocalSet(10),
-            Instruction::End,
-            Instruction::End,
-            // At depth 0, check for ',' or ']'
-            Instruction::LocalGet(10),
-            Instruction::I32Eqz,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(44),
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(93),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::BrIf(2),
-            Instruction::End,
-            Instruction::Br(0),
-            Instruction::End,
-            Instruction::End,
-            // Increment loop counter
-            Instruction::LocalGet(7),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(7), // i++
-            Instruction::Br(0),       // Continue parse loop
-            Instruction::End,         // End parse loop
-            Instruction::End,         // End parse block
-            // Return array pointer
-            Instruction::LocalGet(6),
-            Instruction::Else,
-            // Check for '{' (object)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(123), // '{'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // OBJECT PARSER IMPLEMENTATION
-            // Parse JSON object: {"key1":value1,"key2":value2,...}
-            //
-            // Strategy:
-            // 1. Count key-value pairs by scanning for commas
-            // 2. Allocate memory: 4 bytes (count) + pairs * 8 bytes (key_ptr, val_ptr per pair)
-            // 3. Parse each key-value pair and store in memory
-            //
-            // Memory layout: [i32 count][i32 key0_ptr][i32 val0_ptr][i32 key1_ptr][i32 val1_ptr]...
-
-            // Step 1: Skip opening '{'
-            Instruction::LocalGet(1), // position
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1), // position++
-            // Step 2: Count pairs by scanning for commas and keys
-            // Save current position
-            Instruction::LocalGet(1),
-            Instruction::LocalSet(8), // start_position = position
-            // Initialize pair count to 0
-            Instruction::I32Const(0),
-            Instruction::LocalSet(5), // pair_count = 0
-            // Scan to count pairs
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            // Skip whitespace
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            // Check if pos >= len
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3), // Exit to outer block if end reached
-            // Get current char
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3), // char
-            // Check if whitespace
-            Instruction::LocalGet(3),
-            Instruction::I32Const(32),
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(9),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(10),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(13),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::I32Eqz,
-            Instruction::BrIf(1), // Exit whitespace loop if not whitespace
-            // Increment position
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Br(0), // Continue whitespace loop
-            Instruction::End,   // End whitespace loop
-            Instruction::End,   // End whitespace block
-            // Check for '}' (empty object or end of object)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(125), // '}'
-            Instruction::I32Eq,
-            Instruction::BrIf(1), // Exit counting loop if closing brace
-            // We found a key - increment pair count
-            Instruction::LocalGet(5),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(5), // pair_count++
-            // Skip past this key-value pair to find next comma or '}'
-            Instruction::I32Const(0),
-            Instruction::LocalSet(10), // depth = 0 (for nested structures)
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            // Check bounds
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3), // Exit to outer block
-            // Get char
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Increment position
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            // Check for nested '{' or '['
-            Instruction::LocalGet(3),
-            Instruction::I32Const(123), // '{'
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(91), // '['
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(10), // depth++
-            Instruction::End,
-            // Check for '}' or ']'
-            Instruction::LocalGet(3),
-            Instruction::I32Const(125), // '}'
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(93), // ']'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(0),
-            Instruction::I32GtU,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(1),
-            Instruction::I32Sub,
-            Instruction::LocalSet(10), // depth--
-            Instruction::End,
-            Instruction::End,
-            // At depth 0, check for ',' or '}'
-            Instruction::LocalGet(10),
-            Instruction::I32Eqz,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(44), // ','
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(125), // '}'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::BrIf(2), // Exit skip loop
-            Instruction::End,
-            Instruction::Br(0), // Continue skip loop
-            Instruction::End,   // End skip loop
-            Instruction::End,   // End skip block
-            // Check if we hit '}' (end of object)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(125), // '}'
-            Instruction::I32Eq,
-            Instruction::BrIf(1), // Exit counting loop
-            Instruction::Br(0),   // Continue counting loop
-            Instruction::End,     // End counting loop
-            Instruction::End,     // End counting block
-            // Step 3: Allocate memory for object
-            // Size = 4 (count) + pair_count * 8 (key ptr + val ptr)
-            Instruction::I32Const(4),
-            Instruction::LocalGet(5), // pair_count
-            Instruction::I32Const(8),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::Call(0),     // Call __malloc (function index 0)
-            Instruction::LocalSet(6), // object_ptr = malloc(...)
-            // Store pair count at offset 0
-            Instruction::LocalGet(6),
-            Instruction::LocalGet(5),
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Step 4: Reset position to start and parse pairs
-            Instruction::LocalGet(8),
-            Instruction::LocalSet(1), // position = start_position
-            // Initialize loop counter
-            Instruction::I32Const(0),
-            Instruction::LocalSet(7), // i = 0
-            // Parse each key-value pair
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            // Check if we've parsed all pairs
-            Instruction::LocalGet(7),
-            Instruction::LocalGet(5),
-            Instruction::I32GeU,
-            Instruction::BrIf(1), // Exit if i >= pair_count
-            // Skip whitespace before key
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3), // Exit to outer block
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(32),
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(9),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(10),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(13),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::I32Eqz,
-            Instruction::BrIf(1),
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Br(0),
-            Instruction::End,
-            Instruction::End,
-            // Parse key (must be string starting with '"')
-            // Skip opening '"'
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            // Find end of string (closing '"')
-            Instruction::LocalGet(1),
-            Instruction::LocalSet(8), // key_start = position
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3),
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check for closing '"'
-            Instruction::LocalGet(3),
-            Instruction::I32Const(34), // '"'
-            Instruction::I32Eq,
-            Instruction::BrIf(1),
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Br(0),
-            Instruction::End,
-            Instruction::End,
-            // Calculate key length
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(8),
-            Instruction::I32Sub,
-            Instruction::LocalSet(9), // key_len = position - key_start
-            // Allocate memory for key string: 4 bytes (length) + key_len bytes
-            Instruction::I32Const(4),
-            Instruction::LocalGet(9),
-            Instruction::I32Add,
-            Instruction::Call(0),      // Call __malloc
-            Instruction::LocalSet(10), // key_ptr = malloc(...)
-            // Store key length
-            Instruction::LocalGet(10),
-            Instruction::LocalGet(9),
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Copy key bytes
-            Instruction::LocalGet(10),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(8),
-            Instruction::I32Add,
-            Instruction::LocalGet(9),
-            Instruction::MemoryCopy {
-                src_mem: 0,
-                dst_mem: 0,
-            },
-            // Store key pointer in object
-            Instruction::LocalGet(6), // object_ptr
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(7), // i
-            Instruction::I32Const(8),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::LocalGet(10), // key_ptr
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Skip closing '"' and whitespace
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            // Skip whitespace before ':'
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3),
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(32),
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(9),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(10),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(13),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::I32Eqz,
-            Instruction::BrIf(1),
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Br(0),
-            Instruction::End,
-            Instruction::End,
-            // Skip ':' character
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            // Skip whitespace before value
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3),
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(32),
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(9),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(10),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(13),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::I32Eqz,
-            Instruction::BrIf(1),
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Br(0),
-            Instruction::End,
-            Instruction::End,
-            // Parse value - check first character to determine type
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check if value is a number (digit or '-')
-            Instruction::LocalGet(3),
-            Instruction::I32Const(48), // '0'
-            Instruction::I32GeU,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(57), // '9'
-            Instruction::I32LeU,
-            Instruction::I32And,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(45), // '-'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Parse number value
-            Instruction::LocalGet(1),
-            Instruction::LocalSet(8), // num_start = position
-            // Find end of number
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3),
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check if char is digit or '.' or 'e' or 'E' or '+' or '-'
-            Instruction::LocalGet(3),
-            Instruction::I32Const(48),
-            Instruction::I32GeU,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(57),
-            Instruction::I32LeU,
-            Instruction::I32And,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(46), // '.'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(101), // 'e'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(69), // 'E'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(43), // '+'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(45), // '-'
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::I32Eqz,
-            Instruction::BrIf(1),
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Br(0),
-            Instruction::End,
-            Instruction::End,
-            // IMPROVED NUMBER PARSER - Multi-digit integers and floats
-            // Parse the complete numeric value from num_start to current position
-
-            // Allocate 12 bytes: 4 (type tag = 3) + 8 (f64 value)
-            Instruction::I32Const(12),
-            Instruction::Call(0),      // __malloc
-            Instruction::LocalSet(11), // value_ptr
-            // Store type tag = 3 (number)
-            Instruction::LocalGet(11),
-            Instruction::I32Const(3),
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Initialize accumulator to 0.0
-            Instruction::F64Const(0.0),
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            // Initialize parsing state
-            Instruction::LocalGet(8), // num_start
-            Instruction::LocalSet(9), // parse_pos = num_start
-            Instruction::I32Const(0),
-            Instruction::LocalSet(10), // is_negative = 0
-            // Check for negative sign
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(9),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::I32Const(45), // '-'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::I32Const(1),
-            Instruction::LocalSet(10), // is_negative = 1
-            Instruction::LocalGet(9),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(9), // parse_pos++ (skip '-')
-            Instruction::End,
-            // Parse integer part - accumulate digits
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            // Check if parse_pos >= position (end of number)
-            Instruction::LocalGet(9),
-            Instruction::LocalGet(1),
-            Instruction::I32GeU,
-            Instruction::BrIf(1),
-            // Get current character
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(9),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check if it's a digit (48-57)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(48), // '0'
-            Instruction::I32GeU,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(57), // '9'
-            Instruction::I32LeU,
-            Instruction::I32And,
-            Instruction::I32Eqz,
-            Instruction::BrIf(1), // Exit if not a digit (decimal point or end)
-            // Load current accumulator value
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Load(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            // Multiply by 10
-            Instruction::F64Const(10.0),
-            Instruction::F64Mul,
-            // Add current digit value (char - '0')
-            Instruction::LocalGet(3),
-            Instruction::I32Const(48),
-            Instruction::I32Sub,
-            Instruction::F64ConvertI32S,
-            Instruction::F64Add,
-            // Store back
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            // Increment parse_pos
-            Instruction::LocalGet(9),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(9),
-            Instruction::Br(0), // Continue loop
-            Instruction::End,
-            Instruction::End,
-            // Parse decimal point if present
-            // Check if parse_pos < position and current char is '.'
-            Instruction::LocalGet(9), // parse_pos
-            Instruction::LocalGet(1), // position (end of number)
-            Instruction::I32LtU,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Get current character
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(9),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check if it's a decimal point '.' (46)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(46), // '.'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Skip the decimal point
-            Instruction::LocalGet(9),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(9),
-            // Initialize decimal divisor to 10.0
-            Instruction::F64Const(10.0),
-            Instruction::LocalSet(13),
-            // Parse fractional digits
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            // Check if parse_pos >= position (end of number)
-            Instruction::LocalGet(9),
-            Instruction::LocalGet(1),
-            Instruction::I32GeU,
-            Instruction::BrIf(1), // Exit if done
-            // Get current character
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(9),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check if it's a digit (48-57)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(48), // '0'
-            Instruction::I32GeU,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(57), // '9'
-            Instruction::I32LeU,
-            Instruction::I32And,
-            Instruction::I32Eqz,
-            Instruction::BrIf(1), // Exit if not a digit
-            // Load current accumulator value
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Load(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            // Convert digit to value (char - '0')
-            Instruction::LocalGet(3),
-            Instruction::I32Const(48),
-            Instruction::I32Sub,
-            Instruction::F64ConvertI32S,
-            // Divide by decimal_divisor
-            Instruction::LocalGet(13),
-            Instruction::F64Div,
-            // Add to accumulator
-            Instruction::F64Add,
-            // Store back
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            // Multiply divisor by 10 for next digit
-            Instruction::LocalGet(13),
-            Instruction::F64Const(10.0),
-            Instruction::F64Mul,
-            Instruction::LocalSet(13),
-            // Increment parse_pos
-            Instruction::LocalGet(9),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(9),
-            Instruction::Br(0), // Continue loop
-            Instruction::End,   // End fractional loop
-            Instruction::End,   // End fractional block
-            Instruction::End,   // End decimal point check
-            Instruction::End,   // End parse_pos < position check
-            // Apply negative sign if needed
-            Instruction::LocalGet(10), // is_negative
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Negate the value
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Load(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            Instruction::F64Neg,
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::F64Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
-            Instruction::End,
-            // Store value pointer in object
-            Instruction::LocalGet(6), // object_ptr
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(7), // i
-            Instruction::I32Const(8),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Const(4),
-            Instruction::I32Add,       // offset to value slot
-            Instruction::LocalGet(11), // value_ptr
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::Else,
-            // Parse other value types: string, boolean, null, or nested structures
-
-            // Check if value is a string (starts with '"')
-            Instruction::LocalGet(3),
-            Instruction::I32Const(34), // '"'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Parse string value (similar to key parsing)
-            // Skip opening '"'
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            // Save string start position
-            Instruction::LocalGet(1),
-            Instruction::LocalSet(8), // str_start = position
-            // Find closing '"'
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3), // Exit to outer
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Check for closing '"'
-            Instruction::LocalGet(3),
-            Instruction::I32Const(34), // '"'
-            Instruction::I32Eq,
-            Instruction::BrIf(1),
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Br(0),
-            Instruction::End,
-            Instruction::End,
-            // Calculate string length
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(8),
-            Instruction::I32Sub,
-            Instruction::LocalSet(9), // str_len
-            // Allocate memory: 4 bytes (length) + str_len
-            Instruction::I32Const(4),
-            Instruction::LocalGet(9),
-            Instruction::I32Add,
-            Instruction::Call(0),      // __malloc
-            Instruction::LocalSet(11), // str_ptr
-            // Store string length
-            Instruction::LocalGet(11),
-            Instruction::LocalGet(9),
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Copy string bytes
-            Instruction::LocalGet(11),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(8),
-            Instruction::I32Add,
-            Instruction::LocalGet(9),
-            Instruction::MemoryCopy {
-                src_mem: 0,
-                dst_mem: 0,
-            },
-            // Skip closing '"'
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            // Store string pointer in object
-            Instruction::LocalGet(6), // object_ptr
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(7), // i
-            Instruction::I32Const(8),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(11), // str_ptr
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::Else,
-            // Check if value is 'true'
-            Instruction::LocalGet(3),
-            Instruction::I32Const(116), // 't'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Store true (encoded as 2)
-            Instruction::LocalGet(6), // object_ptr
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(7), // i
-            Instruction::I32Const(8),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::I32Const(2), // true = 2
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Skip past "true" (4 characters)
-            Instruction::LocalGet(1),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Else,
-            // Check if value is 'false'
-            Instruction::LocalGet(3),
-            Instruction::I32Const(102), // 'f'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Store false (encoded as 1)
-            Instruction::LocalGet(6), // object_ptr
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(7), // i
-            Instruction::I32Const(8),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::I32Const(1), // false = 1
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Skip past "false" (5 characters)
-            Instruction::LocalGet(1),
-            Instruction::I32Const(5),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Else,
-            // Check if value is 'null'
-            Instruction::LocalGet(3),
-            Instruction::I32Const(110), // 'n'
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            // Store null (0)
-            Instruction::LocalGet(6), // object_ptr
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(7), // i
-            Instruction::I32Const(8),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::I32Const(0), // null = 0
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Skip past "null" (4 characters)
-            Instruction::LocalGet(1),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            Instruction::Else,
-            // NESTED STRUCTURE SUPPORT (ONE LEVEL)
-            // Check if value is '{' (nested object) or '[' (nested array)
-
-            // For now, store null for nested structures
-            // Full nested support requires architectural refactoring
-            // to extract object/array parsers into separate WASM functions
-            Instruction::LocalGet(6), // object_ptr
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(7), // i
-            Instruction::I32Const(8),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::I32Const(0), // null for nested (not yet supported)
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::End, // null check
-            Instruction::End, // false check
-            Instruction::End, // true check
-            Instruction::End, // string check
-            Instruction::End, // number check (outer else)
-            // Skip past value to find ',' or '}'
-            Instruction::I32Const(0),
-            Instruction::LocalSet(10), // depth = 0
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(2),
-            Instruction::I32GeU,
-            Instruction::BrIf(3),
-            Instruction::LocalGet(0),
-            Instruction::I32Const(4),
-            Instruction::I32Add,
-            Instruction::LocalGet(1),
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            Instruction::LocalGet(1),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(1),
-            // Track nesting depth
-            Instruction::LocalGet(3),
-            Instruction::I32Const(123),
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(91),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(10),
-            Instruction::End,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(125),
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(93),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(0),
-            Instruction::I32GtU,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(1),
-            Instruction::I32Sub,
-            Instruction::LocalSet(10),
-            Instruction::End,
-            Instruction::End,
-            // At depth 0, check for ',' or '}'
-            Instruction::LocalGet(10),
-            Instruction::I32Eqz,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(44),
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(125),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::BrIf(2),
-            Instruction::End,
-            Instruction::Br(0),
-            Instruction::End,
-            Instruction::End,
-            // Increment loop counter
-            Instruction::LocalGet(7),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(7), // i++
-            Instruction::Br(0),       // Continue parse loop
-            Instruction::End,         // End parse loop
-            Instruction::End,         // End parse block
-            // Return object pointer
-            Instruction::LocalGet(6),
-            Instruction::Else,
-            // Default: return null for unknown
-            Instruction::I32Const(0),
-            Instruction::End, // object check
-            Instruction::End, // array check
-            Instruction::End, // number check
-            Instruction::End, // string check
-            Instruction::End, // false check
-            Instruction::End, // true check
-            Instruction::End, // null check
+            Instruction::LocalSet(2), // length
+            // Step 4: Call value parser
+            // This handles all JSON types: null, boolean, number, string, array, object
+            Instruction::LocalGet(0), // string_ptr
+            Instruction::LocalGet(1), // position_ptr
+            Instruction::LocalGet(2), // length
+            Instruction::Call(parse_value_index),
+            // Returns value_ptr (position updated at position_ptr by the parser)
         ]
     }
 
     /// Generate WASM instructions for json.tryTextToData
     /// Same as textToData but returns null on error instead of failing
-    fn generate_try_text_to_data_instructions(&self) -> Vec<Instruction<'static>> {
-        // Wrap the parsing in error handling - for now, same as textToData
-        // but structured to return null on any error
-        self.generate_text_to_data_instructions()
+    /// PHASE 4 IMPLEMENTATION: Simplified using helper functions
+    fn generate_try_text_to_data_instructions(
+        &self,
+        parse_value_index: u32,
+        malloc_index: u32,
+    ) -> Vec<Instruction<'static>> {
+        // For now, same as textToData - error handling to be added in future phase
+        // The helper functions already handle most edge cases gracefully
+        self.generate_text_to_data_instructions(parse_value_index, malloc_index)
     }
 
     /// Generate WASM instructions for json.dataToText
@@ -2583,6 +677,2700 @@ impl JsonClass {
     fn generate_pretty_data_to_text_instructions(&self) -> Vec<Instruction<'static>> {
         // For now, same as dataToText (pretty printing would add indentation)
         self.generate_data_to_text_instructions()
+    }
+
+    // ====================================================================================
+    // PHASE 1-3: RECURSIVE JSON PARSER HELPERS
+    // ====================================================================================
+    // These helper functions enable parsing of nested JSON structures (objects and arrays)
+    // by extracting the inline parsing logic into separate WASM functions that can
+    // call each other recursively.
+    //
+    // Function signatures:
+    // - __json_parse_value(string_ptr: i32, position_ptr: i32, length: i32) -> i32
+    // - __json_parse_object(string_ptr: i32, position_ptr: i32, length: i32) -> i32
+    // - __json_parse_array(string_ptr: i32, position_ptr: i32, length: i32) -> i32
+    //
+    // Position pointer pattern:
+    // All functions use position_ptr as a memory location (not a value) to track
+    // the current parsing position. Functions read the position at entry, update it
+    // during parsing, and write it back before returning. This enables position
+    // tracking across recursive calls.
+    // ====================================================================================
+
+    /// Generate WASM instructions for __json_parse_value
+    /// Dispatches to appropriate parser based on value type
+    ///
+    /// Parameters:
+    /// - string_ptr (i32): Pointer to JSON string
+    /// - position_ptr (i32): Memory location containing current position
+    /// - length (i32): String length
+    ///
+    /// Returns:
+    /// - i32: Pointer to parsed value (or 0 for null)
+    fn generate_parse_value_instructions(
+        &self,
+        parse_object_index: u32,
+        parse_array_index: u32,
+        malloc_index: u32,
+    ) -> Vec<Instruction<'static>> {
+        vec![
+            // Local variable declarations:
+            // Local 0: string_ptr (parameter)
+            // Local 1: position_ptr (parameter - memory location)
+            // Local 2: length (parameter)
+            // Local 3: position (cached from position_ptr)
+            // Local 4: current_character
+            // Local 5: result_ptr / value_ptr
+            // Local 6: start_position (for number/string parsing)
+            // Local 7: value_length / parse_pos
+            // Local 8: temp / is_negative
+            // Local 9: temp
+            // Local 10: temp
+            // Local 11: temp
+            // Local 12: decimal_divisor (F64)
+
+            // Entry: Read position from memory
+            Instruction::LocalGet(1), // position_ptr
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(3), // position (cached)
+            // Skip whitespace (space=32, tab=9, newline=10, return=13)
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check bounds
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(1), // Exit if position >= length
+            // Load character
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4), // current_character
+            // Check if whitespace
+            Instruction::LocalGet(4),
+            Instruction::I32Const(32), // space
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(9), // tab
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(10), // newline
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(13), // return
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Increment position
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(1), // Continue loop
+            Instruction::End,
+            Instruction::Br(1), // Exit loop (non-whitespace found)
+            Instruction::End,
+            Instruction::End,
+            // Read first non-whitespace character (already in Local 4)
+            // We already have it from the whitespace skip loop
+
+            // Dispatch based on character
+            // Check for '{' (123) - object
+            Instruction::LocalGet(4),
+            Instruction::I32Const(123),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Write position back before call
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Call parse_object
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(2),
+            Instruction::Call(parse_object_index),
+            Instruction::Else,
+            // Check for '[' (91) - array
+            Instruction::LocalGet(4),
+            Instruction::I32Const(91),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Write position back before call
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Call parse_array
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(2),
+            Instruction::Call(parse_array_index),
+            Instruction::Else,
+            // Check for '"' (34) - string
+            Instruction::LocalGet(4),
+            Instruction::I32Const(34),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Skip opening '"'
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Save string start position
+            Instruction::LocalGet(3),
+            Instruction::LocalSet(6), // str_start = position
+            // Find closing '"'
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(1), // Exit loop if position >= length
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check for closing '"'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(34), // '"'
+            Instruction::I32Eq,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Calculate string length
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(6),
+            Instruction::I32Sub,
+            Instruction::LocalSet(7), // str_len
+            // Allocate memory: 4 bytes (length) + str_len
+            Instruction::I32Const(4),
+            Instruction::LocalGet(7),
+            Instruction::I32Add,
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(5), // str_ptr
+            // Store string length
+            Instruction::LocalGet(5),
+            Instruction::LocalGet(7),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Copy string bytes
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(6),
+            Instruction::I32Add,
+            Instruction::LocalGet(7),
+            Instruction::MemoryCopy {
+                src_mem: 0,
+                dst_mem: 0,
+            },
+            // Skip closing '"'
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Write position back
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return string pointer
+            Instruction::LocalGet(5),
+            Instruction::Else,
+            // Check for digit (48-57) or '-' (45) - number
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32GeU,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(57),
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(45), // '-'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Parse number value
+            Instruction::LocalGet(3),
+            Instruction::LocalSet(6), // num_start = position
+            // Find end of number
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if char is digit or '.' or 'e' or 'E' or '+' or '-'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32GeU,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(57),
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(46), // '.'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(101), // 'e'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(69), // 'E'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(43), // '+'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(45), // '-'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Allocate 12 bytes: 4 (type tag = 3) + 8 (f64 value)
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(5), // value_ptr
+            // Store type tag = 3 (number)
+            Instruction::LocalGet(5),
+            Instruction::I32Const(3),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Initialize accumulator to 0.0
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Const(0.0),
+            Instruction::F64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Initialize parsing state
+            Instruction::LocalGet(6), // num_start
+            Instruction::LocalSet(7), // parse_pos = num_start
+            Instruction::I32Const(0),
+            Instruction::LocalSet(8), // is_negative = 0
+            // Check for negative sign
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::I32Const(45), // '-'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::I32Const(1),
+            Instruction::LocalSet(8), // is_negative = 1
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(7), // parse_pos++ (skip '-')
+            Instruction::End,
+            // Parse integer part - accumulate digits
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check if parse_pos >= position (end of number)
+            Instruction::LocalGet(7),
+            Instruction::LocalGet(3),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            // Get current character
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if it's a digit (48-57)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48), // '0'
+            Instruction::I32GeU,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(57), // '9'
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1), // Exit if not a digit (decimal point or end)
+            // Load current accumulator value
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Multiply by 10
+            Instruction::F64Const(10.0),
+            Instruction::F64Mul,
+            // Add current digit value (char - '0')
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32Sub,
+            Instruction::F64ConvertI32S,
+            Instruction::F64Add,
+            // Save to temp local 13 (F64)
+            Instruction::LocalSet(13),
+            // Store back (address first, then value for F64Store)
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(13),
+            Instruction::F64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Increment parse_pos
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(7),
+            Instruction::Br(0), // Continue loop
+            Instruction::End,
+            Instruction::End,
+            // Parse decimal point if present
+            // Check if parse_pos < position and current char is '.'
+            Instruction::LocalGet(7), // parse_pos
+            Instruction::LocalGet(3), // position (end of number)
+            Instruction::I32LtU,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Get current character
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if it's a decimal point '.' (46)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(46), // '.'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Skip the decimal point
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(7),
+            // Initialize decimal divisor to 10.0
+            Instruction::F64Const(10.0),
+            Instruction::LocalSet(12),
+            // Parse fractional digits
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check if parse_pos >= position (end of number)
+            Instruction::LocalGet(7),
+            Instruction::LocalGet(3),
+            Instruction::I32GeU,
+            Instruction::BrIf(1), // Exit if done
+            // Get current character
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if it's a digit (48-57)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48), // '0'
+            Instruction::I32GeU,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(57), // '9'
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1), // Exit if not a digit
+            // Load current accumulator value
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Convert digit to value (char - '0')
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32Sub,
+            Instruction::F64ConvertI32S,
+            // Divide by decimal_divisor
+            Instruction::LocalGet(12),
+            Instruction::F64Div,
+            // Add to accumulator
+            Instruction::F64Add,
+            // Save result to temp local 13 (F64)
+            Instruction::LocalSet(13),
+            // Store back (address first, then value for F64Store)
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(13),
+            Instruction::F64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Multiply divisor by 10 for next digit
+            Instruction::LocalGet(12),
+            Instruction::F64Const(10.0),
+            Instruction::F64Mul,
+            Instruction::LocalSet(12),
+            // Increment parse_pos
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(7),
+            Instruction::Br(0), // Continue loop
+            Instruction::End,   // End fractional loop
+            Instruction::End,   // End fractional block
+            Instruction::End,   // End decimal point check
+            Instruction::End,   // End parse_pos < position check
+            // Apply negative sign if needed
+            Instruction::LocalGet(8), // is_negative
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Negate the value
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::F64Neg,
+            // Save negated value to temp local 13
+            Instruction::LocalSet(13),
+            // Store back (address first, then value)
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(13),
+            Instruction::F64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::End,
+            // Write position back
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return number pointer
+            Instruction::LocalGet(5),
+            Instruction::Else,
+            // Check for 't' (116) - true
+            Instruction::LocalGet(4),
+            Instruction::I32Const(116),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Skip past "true" (4 characters)
+            Instruction::LocalGet(3),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Write position back
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return 2 (true encoding)
+            Instruction::I32Const(2),
+            Instruction::Else,
+            // Check for 'f' (102) - false
+            Instruction::LocalGet(4),
+            Instruction::I32Const(102),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Skip past "false" (5 characters)
+            Instruction::LocalGet(3),
+            Instruction::I32Const(5),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Write position back
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return 1 (false encoding)
+            Instruction::I32Const(1),
+            Instruction::Else,
+            // Check for 'n' (110) - null
+            Instruction::LocalGet(4),
+            Instruction::I32Const(110),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Skip past "null" (4 characters)
+            Instruction::LocalGet(3),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Write position back
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return 0 (null encoding)
+            Instruction::I32Const(0),
+            Instruction::Else,
+            // Unknown value - return null
+            Instruction::I32Const(0),
+            Instruction::End, // End 'n' check
+            Instruction::End, // End 'f' check
+            Instruction::End, // End 't' check
+            Instruction::End, // End number check
+            Instruction::End, // End string check
+            Instruction::End, // End array check
+            Instruction::End, // End object check
+        ]
+    }
+
+    /// Generate WASM instructions for __json_parse_object
+    /// Parses JSON object: {"key1":value1,"key2":value2,...}
+    ///
+    /// Parameters:
+    /// - string_ptr (i32): Pointer to JSON string
+    /// - position_ptr (i32): Memory location containing current position
+    /// - length (i32): String length
+    ///
+    /// Returns:
+    /// - i32: Pointer to object or 0 on error
+    fn generate_parse_object_instructions(
+        &self,
+        parse_value_index: u32,
+        malloc_index: u32,
+    ) -> Vec<Instruction<'static>> {
+        vec![
+            // Local variable declarations:
+            // Local 0: string_ptr (parameter)
+            // Local 1: position_ptr (parameter - memory location)
+            // Local 2: length (parameter)
+            // Local 3: position (cached from position_ptr)
+            // Local 4: current_character
+            // Local 5: pair_count
+            // Local 6: object_ptr (allocated memory)
+            // Local 7: loop counter i
+            // Local 8: start_position / key_start / num_start / str_start
+            // Local 9: key_len / str_len / parse_pos
+            // Local 10: key_ptr / is_negative / temp / depth
+            // Local 11: value_ptr / str_ptr
+            // Local 12: temp
+            // Local 13: temp
+            // Local 14: decimal_divisor (F64)
+
+            // Read position from memory into cache
+            Instruction::LocalGet(1), // position_ptr
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(3), // position (cached)
+            // OBJECT PARSER IMPLEMENTATION
+            // Parse JSON object: {"key1":value1,"key2":value2,...}
+            //
+            // Strategy:
+            // 1. Count key-value pairs by scanning for commas
+            // 2. Allocate memory: 4 bytes (count) + pairs * 8 bytes (key_ptr, val_ptr per pair)
+            // 3. Parse each key-value pair and store in memory
+            //
+            // Memory layout: [i32 count][i32 key0_ptr][i32 val0_ptr][i32 key1_ptr][i32 val1_ptr]...
+
+            // Step 1: Skip opening '{'
+            Instruction::LocalGet(3), // position
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3), // position++
+            // Step 2: Count pairs by scanning for commas and keys
+            // Save current position
+            Instruction::LocalGet(3),
+            Instruction::LocalSet(8), // start_position = position
+            // Initialize pair count to 0
+            Instruction::I32Const(0),
+            Instruction::LocalSet(5), // pair_count = 0
+            // Scan to count pairs
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Skip whitespace
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check if pos >= len
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3), // Exit to outer block if end reached
+            // Get current char
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4), // char
+            // Check if whitespace
+            Instruction::LocalGet(4),
+            Instruction::I32Const(32),
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(9),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(10),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(13),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1), // Exit whitespace loop if not whitespace
+            // Increment position
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0), // Continue whitespace loop
+            Instruction::End,   // End whitespace loop
+            Instruction::End,   // End whitespace block
+            // Check for '}' (empty object or end of object)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(125), // '}'
+            Instruction::I32Eq,
+            Instruction::BrIf(1), // Exit counting loop if closing brace
+            // We found a key - increment pair count
+            Instruction::LocalGet(5),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(5), // pair_count++
+            // Skip past this key-value pair to find next comma or '}'
+            Instruction::I32Const(0),
+            Instruction::LocalSet(10), // depth = 0 (for nested structures)
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check bounds
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3), // Exit to outer block
+            // Get char
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Increment position
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Check for nested '{' or '['
+            Instruction::LocalGet(4),
+            Instruction::I32Const(123), // '{'
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(91), // '['
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(10),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(10), // depth++
+            Instruction::End,
+            // Check for '}' or ']'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(125), // '}'
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(93), // ']'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(10),
+            Instruction::I32Const(0),
+            Instruction::I32GtU,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(10),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::LocalSet(10), // depth--
+            Instruction::End,
+            Instruction::End,
+            // At depth 0, check for ',' or '}'
+            Instruction::LocalGet(10),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(44), // ','
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(125), // '}'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::BrIf(2), // Exit skip loop
+            Instruction::End,
+            Instruction::Br(0), // Continue skip loop
+            Instruction::End,   // End skip loop
+            Instruction::End,   // End skip block
+            // Check if we hit '}' (end of object)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(125), // '}'
+            Instruction::I32Eq,
+            Instruction::BrIf(1), // Exit counting loop
+            Instruction::Br(0),   // Continue counting loop
+            Instruction::End,     // End counting loop
+            Instruction::End,     // End counting block
+            // Step 3: Allocate memory for object
+            // Size = 4 (count) + pair_count * 8 (key ptr + val ptr)
+            Instruction::I32Const(4),
+            Instruction::LocalGet(5), // pair_count
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::Call(malloc_index), // Call __malloc
+            Instruction::LocalSet(6),        // object_ptr = malloc(...)
+            // Store pair count at offset 0
+            Instruction::LocalGet(6),
+            Instruction::LocalGet(5),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Step 4: Reset position to start and parse pairs
+            Instruction::LocalGet(8),
+            Instruction::LocalSet(3), // position = start_position
+            // Initialize loop counter
+            Instruction::I32Const(0),
+            Instruction::LocalSet(7), // i = 0
+            // Parse each key-value pair
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check if we've parsed all pairs
+            Instruction::LocalGet(7),
+            Instruction::LocalGet(5),
+            Instruction::I32GeU,
+            Instruction::BrIf(1), // Exit if i >= pair_count
+            // Skip whitespace before key
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3), // Exit to outer block
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(32),
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(9),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(10),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(13),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Parse key (must be string starting with '"')
+            // Skip opening '"'
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Find end of string (closing '"')
+            Instruction::LocalGet(3),
+            Instruction::LocalSet(8), // key_start = position
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3),
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check for closing '"'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(34), // '"'
+            Instruction::I32Eq,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Calculate key length
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(8),
+            Instruction::I32Sub,
+            Instruction::LocalSet(9), // key_len = position - key_start
+            // Allocate memory for key string: 4 bytes (length) + key_len bytes
+            Instruction::I32Const(4),
+            Instruction::LocalGet(9),
+            Instruction::I32Add,
+            Instruction::Call(malloc_index), // Call __malloc
+            Instruction::LocalSet(10),       // key_ptr = malloc(...)
+            // Store key length
+            Instruction::LocalGet(10),
+            Instruction::LocalGet(9),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Copy key bytes
+            Instruction::LocalGet(10),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(8),
+            Instruction::I32Add,
+            Instruction::LocalGet(9),
+            Instruction::MemoryCopy {
+                src_mem: 0,
+                dst_mem: 0,
+            },
+            // Store key pointer in object
+            Instruction::LocalGet(6), // object_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // i
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalGet(10), // key_ptr
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Skip closing '"' and whitespace
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Skip whitespace before ':'
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3),
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(32),
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(9),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(10),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(13),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Skip ':' character
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Skip whitespace before value
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3),
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(32),
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(9),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(10),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(13),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Parse value - check first character to determine type
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if value is a number (digit or '-')
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48), // '0'
+            Instruction::I32GeU,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(57), // '9'
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(45), // '-'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Parse number value
+            Instruction::LocalGet(3),
+            Instruction::LocalSet(8), // num_start = position
+            // Find end of number
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3),
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if char is digit or '.' or 'e' or 'E' or '+' or '-'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32GeU,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(57),
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(46), // '.'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(101), // 'e'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(69), // 'E'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(43), // '+'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(45), // '-'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // IMPROVED NUMBER PARSER - Multi-digit integers and floats
+            // Parse the complete numeric value from num_start to current position
+
+            // Allocate 12 bytes: 4 (type tag = 3) + 8 (f64 value)
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index), // __malloc
+            Instruction::LocalSet(11),       // value_ptr
+            // Store type tag = 3 (number)
+            Instruction::LocalGet(11),
+            Instruction::I32Const(3),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Initialize accumulator to 0.0 (address first, then value)
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Const(0.0),
+            Instruction::F64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Initialize parsing state
+            Instruction::LocalGet(8), // num_start
+            Instruction::LocalSet(9), // parse_pos = num_start
+            Instruction::I32Const(0),
+            Instruction::LocalSet(10), // is_negative = 0
+            // Check for negative sign
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(9),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::I32Const(45), // '-'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::I32Const(1),
+            Instruction::LocalSet(10), // is_negative = 1
+            Instruction::LocalGet(9),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(9), // parse_pos++ (skip '-')
+            Instruction::End,
+            // Parse integer part - accumulate digits
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check if parse_pos >= position (end of number)
+            Instruction::LocalGet(9),
+            Instruction::LocalGet(3),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            // Get current character
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(9),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if it's a digit (48-57)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48), // '0'
+            Instruction::I32GeU,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(57), // '9'
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1), // Exit if not a digit (decimal point or end)
+            // Load current accumulator value
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Multiply by 10
+            Instruction::F64Const(10.0),
+            Instruction::F64Mul,
+            // Add current digit value (char - '0')
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32Sub,
+            Instruction::F64ConvertI32S,
+            Instruction::F64Add,
+            // Save to temp local 14 (F64)
+            Instruction::LocalSet(14),
+            // Store back (address first, then value)
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(14),
+            Instruction::F64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Increment parse_pos
+            Instruction::LocalGet(9),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(9),
+            Instruction::Br(0), // Continue loop
+            Instruction::End,
+            Instruction::End,
+            // Parse decimal point if present
+            // Check if parse_pos < position and current char is '.'
+            Instruction::LocalGet(9), // parse_pos
+            Instruction::LocalGet(3), // position (end of number)
+            Instruction::I32LtU,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Get current character
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(9),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if it's a decimal point '.' (46)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(46), // '.'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Skip the decimal point
+            Instruction::LocalGet(9),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(9),
+            // Initialize decimal divisor to 10.0 (use local 13, not 14 - 14 is for temp storage)
+            Instruction::F64Const(10.0),
+            Instruction::LocalSet(13),
+            // Parse fractional digits
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check if parse_pos >= position (end of number)
+            Instruction::LocalGet(9),
+            Instruction::LocalGet(3),
+            Instruction::I32GeU,
+            Instruction::BrIf(1), // Exit if done
+            // Get current character
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(9),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if it's a digit (48-57)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48), // '0'
+            Instruction::I32GeU,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(57), // '9'
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1), // Exit if not a digit
+            // Load current accumulator value
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Convert digit to value (char - '0')
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32Sub,
+            Instruction::F64ConvertI32S,
+            // Divide by decimal_divisor (local 13)
+            Instruction::LocalGet(13),
+            Instruction::F64Div,
+            // Add to accumulator
+            Instruction::F64Add,
+            // Save result to temp local 14 (F64)
+            Instruction::LocalSet(14),
+            // Store back (address first, then value)
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(14),
+            Instruction::F64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Multiply divisor by 10 for next digit
+            Instruction::LocalGet(13),
+            Instruction::F64Const(10.0),
+            Instruction::F64Mul,
+            Instruction::LocalSet(13),
+            // Increment parse_pos
+            Instruction::LocalGet(9),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(9),
+            Instruction::Br(0), // Continue loop
+            Instruction::End,   // End fractional loop
+            Instruction::End,   // End fractional block
+            Instruction::End,   // End decimal point check
+            Instruction::End,   // End parse_pos < position check
+            // Apply negative sign if needed
+            Instruction::LocalGet(10), // is_negative
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Negate the value
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::F64Neg,
+            // Save negated value to temp local 14
+            Instruction::LocalSet(14),
+            // Store back (address first, then value)
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(14),
+            Instruction::F64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::End,
+            // Store value pointer in object
+            Instruction::LocalGet(6), // object_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // i
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Const(4),
+            Instruction::I32Add,       // offset to value slot
+            Instruction::LocalGet(11), // value_ptr
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::Else,
+            // Parse other value types: string, boolean, null, or nested structures
+
+            // Check if value is a string (starts with '"')
+            Instruction::LocalGet(4),
+            Instruction::I32Const(34), // '"'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Parse string value (similar to key parsing)
+            // Skip opening '"'
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Save string start position
+            Instruction::LocalGet(3),
+            Instruction::LocalSet(8), // str_start = position
+            // Find closing '"'
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3), // Exit to outer
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check for closing '"'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(34), // '"'
+            Instruction::I32Eq,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Calculate string length
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(8),
+            Instruction::I32Sub,
+            Instruction::LocalSet(9), // str_len
+            // Allocate memory: 4 bytes (length) + str_len
+            Instruction::I32Const(4),
+            Instruction::LocalGet(9),
+            Instruction::I32Add,
+            Instruction::Call(malloc_index), // __malloc
+            Instruction::LocalSet(11),       // str_ptr
+            // Store string length
+            Instruction::LocalGet(11),
+            Instruction::LocalGet(9),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Copy string bytes
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(8),
+            Instruction::I32Add,
+            Instruction::LocalGet(9),
+            Instruction::MemoryCopy {
+                src_mem: 0,
+                dst_mem: 0,
+            },
+            // Skip closing '"'
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Store string pointer in object
+            Instruction::LocalGet(6), // object_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // i
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(11), // str_ptr
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::Else,
+            // Check if value is 'true'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(116), // 't'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Store true (encoded as 2)
+            Instruction::LocalGet(6), // object_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // i
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::I32Const(2), // true = 2
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Skip past "true" (4 characters)
+            Instruction::LocalGet(3),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Else,
+            // Check if value is 'false'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(102), // 'f'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Store false (encoded as 1)
+            Instruction::LocalGet(6), // object_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // i
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::I32Const(1), // false = 1
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Skip past "false" (5 characters)
+            Instruction::LocalGet(3),
+            Instruction::I32Const(5),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Else,
+            // Check if value is 'null'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(110), // 'n'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Store null (0)
+            Instruction::LocalGet(6), // object_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // i
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::I32Const(0), // null = 0
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Skip past "null" (4 characters)
+            Instruction::LocalGet(3),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Else,
+            // NESTED STRUCTURE SUPPORT
+            // Check if value is '{' (nested object) or '[' (nested array)
+            // Use recursive call to parse_value
+
+            // Write current position to memory before recursive call
+            Instruction::LocalGet(1), // position_ptr
+            Instruction::LocalGet(3), // cached position
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Recursive call to value parser
+            Instruction::LocalGet(0), // string_ptr
+            Instruction::LocalGet(1), // position_ptr
+            Instruction::LocalGet(2), // length
+            Instruction::Call(parse_value_index),
+            Instruction::LocalSet(11), // value_ptr
+            // Read updated position
+            Instruction::LocalGet(1),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(3), // update position cache
+            // Store nested value pointer in object
+            Instruction::LocalGet(6), // object_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // i
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(11), // value_ptr
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::End, // null check
+            Instruction::End, // false check
+            Instruction::End, // true check
+            Instruction::End, // string check
+            Instruction::End, // number check (outer else)
+            // Skip past value to find ',' or '}'
+            Instruction::I32Const(0),
+            Instruction::LocalSet(10), // depth = 0
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3),
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Track nesting depth
+            Instruction::LocalGet(4),
+            Instruction::I32Const(123),
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(91),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(10),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(10),
+            Instruction::End,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(125),
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(93),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(10),
+            Instruction::I32Const(0),
+            Instruction::I32GtU,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(10),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::LocalSet(10),
+            Instruction::End,
+            Instruction::End,
+            // At depth 0, check for ',' or '}'
+            Instruction::LocalGet(10),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(44),
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(125),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::BrIf(2),
+            Instruction::End,
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Increment loop counter
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(7), // i++
+            Instruction::Br(0),       // Continue parse loop
+            Instruction::End,         // End parse loop
+            Instruction::End,         // End parse block
+            // Write final position back to memory
+            Instruction::LocalGet(1), // position_ptr
+            Instruction::LocalGet(3), // cached position
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return object pointer
+            Instruction::LocalGet(6),
+        ]
+    }
+
+    /// Generate WASM instructions for __json_parse_array
+    /// Parses JSON array: [value1,value2,value3,...]
+    ///
+    /// Parameters:
+    /// - string_ptr (i32): Pointer to JSON string
+    /// - position_ptr (i32): Memory location containing current position
+    /// - length (i32): String length
+    ///
+    /// Returns:
+    /// - i32: Pointer to array or 0 on error
+    fn generate_parse_array_instructions(
+        &self,
+        parse_value_index: u32,
+        malloc_index: u32,
+    ) -> Vec<Instruction<'static>> {
+        // Local 0: string_ptr (parameter)
+        // Local 1: position_ptr (parameter - memory location)
+        // Local 2: length (parameter)
+        // Local 3: position (cached from position_ptr)
+        // Local 4: current_character
+        // Local 5: element_count
+        // Local 6: array_ptr (allocated memory)
+        // Local 7: loop counter i
+        // Local 8: start_position / num_start / str_start
+        // Local 9: element_ptr / value / str_len / parse_pos
+        // Local 10: depth tracker / is_negative
+        // Local 11: value_ptr / str_ptr / temp
+        // Local 12: temp
+        // Local 13: decimal_divisor (F64)
+        // Local 14: temp
+
+        vec![
+            // Read position from memory into cache
+            Instruction::LocalGet(1), // position_ptr
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(3), // position (cached)
+            // ARRAY PARSER IMPLEMENTATION
+            // Parse JSON array: [value1,value2,value3,...]
+            //
+            // Strategy (similar to object parser):
+            // 1. Count elements by scanning for commas
+            // 2. Allocate memory: 4 bytes (count) + elements * 4 bytes (element pointer per element)
+            // 3. Parse each element and store in memory
+            //
+            // Memory layout: [i32 count][i32 elem0][i32 elem1][i32 elem2]...
+
+            // Step 1: Skip opening '['
+            Instruction::LocalGet(3), // position
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3), // position++
+            // Step 2: Count elements by scanning
+            // Save current position
+            Instruction::LocalGet(3),
+            Instruction::LocalSet(8), // start_position = position
+            // Initialize element count to 0
+            Instruction::I32Const(0),
+            Instruction::LocalSet(5), // elem_count = 0
+            // Scan to count elements
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Skip whitespace
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check if pos >= len
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3), // Exit to outer block
+            // Get current char
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4), // char
+            // Check if whitespace
+            Instruction::LocalGet(4),
+            Instruction::I32Const(32),
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(9),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(10),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(13),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1), // Exit whitespace loop
+            // Increment position
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0), // Continue whitespace loop
+            Instruction::End,   // End whitespace loop
+            Instruction::End,   // End whitespace block
+            // Check for ']' (empty array or end of array)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(93), // ']'
+            Instruction::I32Eq,
+            Instruction::BrIf(1), // Exit counting loop
+            // We found an element - increment count
+            Instruction::LocalGet(5),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(5), // elem_count++
+            // Skip past this element to find next comma or ']'
+            Instruction::I32Const(0),
+            Instruction::LocalSet(10), // depth = 0
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check bounds
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3), // Exit to outer block
+            // Get char
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Increment position
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Track nesting depth for nested arrays/objects
+            Instruction::LocalGet(4),
+            Instruction::I32Const(123), // '{'
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(91), // '['
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(10),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(10), // depth++
+            Instruction::End,
+            // Check for '}' or ']'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(125), // '}'
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(93), // ']'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(10),
+            Instruction::I32Const(0),
+            Instruction::I32GtU,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(10),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::LocalSet(10), // depth--
+            Instruction::End,
+            Instruction::End,
+            // At depth 0, check for ',' or ']'
+            Instruction::LocalGet(10),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(44), // ','
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(93), // ']'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::BrIf(2), // Exit skip loop
+            Instruction::End,
+            Instruction::Br(0), // Continue skip loop
+            Instruction::End,   // End skip loop
+            Instruction::End,   // End skip block
+            // Check if we hit ']' (end of array)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(93), // ']'
+            Instruction::I32Eq,
+            Instruction::BrIf(1), // Exit counting loop
+            Instruction::Br(0),   // Continue counting loop
+            Instruction::End,     // End counting loop
+            Instruction::End,     // End counting block
+            // Step 3: Allocate memory for array
+            // Size = 4 (count) + elem_count * 4 (element pointers)
+            Instruction::I32Const(4),
+            Instruction::LocalGet(5), // elem_count
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::Call(malloc_index), // Call __malloc
+            Instruction::LocalSet(6),        // array_ptr = malloc(...)
+            // Store element count at offset 0
+            Instruction::LocalGet(6),
+            Instruction::LocalGet(5),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Step 4: Reset position to start and parse elements
+            Instruction::LocalGet(8),
+            Instruction::LocalSet(3), // position = start_position
+            // Initialize loop counter
+            Instruction::I32Const(0),
+            Instruction::LocalSet(7), // i = 0
+            // Parse each element
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check if we've parsed all elements
+            Instruction::LocalGet(7),
+            Instruction::LocalGet(5),
+            Instruction::I32GeU,
+            Instruction::BrIf(1), // Exit if i >= elem_count
+            // Skip whitespace before element
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3), // Exit to outer
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(32),
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(9),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(10),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(13),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Parse element value - check first character to determine type
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if element is a number (digit or '-')
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48), // '0'
+            Instruction::I32GeU,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(57), // '9'
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(45), // '-'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Parse number (reuse number parsing logic from object parser)
+            Instruction::LocalGet(3),
+            Instruction::LocalSet(8), // num_start = position
+            // Find end of number
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3),
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if char is part of number
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32GeU,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(57),
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(46), // '.'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(45), // '-'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Allocate and parse number (same as object parser)
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index), // __malloc
+            Instruction::LocalSet(11),       // value_ptr
+            // Store type tag = 3
+            Instruction::LocalGet(11),
+            Instruction::I32Const(3),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Initialize accumulator (address first, then value)
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Const(0.0),
+            Instruction::F64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Parse number value
+            Instruction::LocalGet(8), // num_start
+            Instruction::LocalSet(9), // parse_pos
+            Instruction::I32Const(0),
+            Instruction::LocalSet(10), // is_negative
+            // Check for negative sign
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(9),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::I32Const(45), // '-'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::I32Const(1),
+            Instruction::LocalSet(10),
+            Instruction::LocalGet(9),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(9),
+            Instruction::End,
+            // Parse digits
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(9),
+            Instruction::LocalGet(3),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(9),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if digit
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32GeU,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(57),
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1),
+            // Accumulate: result = result * 10 + digit
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::F64Const(10.0),
+            Instruction::F64Mul,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32Sub,
+            Instruction::F64ConvertI32S,
+            Instruction::F64Add,
+            // Save to temp local 14 (F64)
+            Instruction::LocalSet(14),
+            // Store back (address first, then value)
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(14),
+            Instruction::F64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(9),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(9),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Parse decimal point if present (array element)
+            // Check if parse_pos < position and current char is '.'
+            Instruction::LocalGet(9), // parse_pos
+            Instruction::LocalGet(3), // position (end of number)
+            Instruction::I32LtU,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Get current character
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(9),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if it's a decimal point '.' (46)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(46), // '.'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Skip the decimal point
+            Instruction::LocalGet(9),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(9),
+            // Initialize decimal divisor to 10.0
+            Instruction::F64Const(10.0),
+            Instruction::LocalSet(13),
+            // Parse fractional digits
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check if parse_pos >= position (end of number)
+            Instruction::LocalGet(9),
+            Instruction::LocalGet(3),
+            Instruction::I32GeU,
+            Instruction::BrIf(1), // Exit if done
+            // Get current character
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(9),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check if it's a digit (48-57)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48), // '0'
+            Instruction::I32GeU,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(57), // '9'
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1), // Exit if not a digit
+            // Load current accumulator value
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Convert digit to value (char - '0')
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32Sub,
+            Instruction::F64ConvertI32S,
+            // Divide by decimal_divisor
+            Instruction::LocalGet(13),
+            Instruction::F64Div,
+            // Add to accumulator
+            Instruction::F64Add,
+            // Save result to temp local 14 (F64)
+            Instruction::LocalSet(14),
+            // Store back (address first, then value)
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(14),
+            Instruction::F64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Multiply divisor by 10 for next digit
+            Instruction::LocalGet(13),
+            Instruction::F64Const(10.0),
+            Instruction::F64Mul,
+            Instruction::LocalSet(13),
+            // Increment parse_pos
+            Instruction::LocalGet(9),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(9),
+            Instruction::Br(0), // Continue loop
+            Instruction::End,   // End fractional loop
+            Instruction::End,   // End fractional block
+            Instruction::End,   // End decimal point check
+            Instruction::End,   // End parse_pos < position check
+            // Apply negative sign
+            Instruction::LocalGet(10),
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::F64Neg,
+            // Save negated value to temp local 14
+            Instruction::LocalSet(14),
+            // Store back (address first, then value)
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(14),
+            Instruction::F64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::End,
+            // Store element pointer in array
+            Instruction::LocalGet(6), // array_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // i
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalGet(11), // value_ptr
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::Else,
+            // PHASE 4: Parse non-number elements (string, bool, null, nested)
+
+            // Check if element is a string (starts with '"')
+            Instruction::LocalGet(4),
+            Instruction::I32Const(34), // '"'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Parse string element
+            // Skip opening '"'
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Save string start position
+            Instruction::LocalGet(3),
+            Instruction::LocalSet(8), // str_start = position
+            // Find closing '"'
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3), // Exit to outer
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // Check for closing '"'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(34), // '"'
+            Instruction::I32Eq,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Calculate string length
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(8),
+            Instruction::I32Sub,
+            Instruction::LocalSet(9), // str_len
+            // Allocate memory: 4 bytes (length) + str_len
+            Instruction::I32Const(4),
+            Instruction::LocalGet(9),
+            Instruction::I32Add,
+            Instruction::Call(malloc_index), // __malloc
+            Instruction::LocalSet(11),       // str_ptr
+            // Store string length
+            Instruction::LocalGet(11),
+            Instruction::LocalGet(9),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Copy string bytes
+            Instruction::LocalGet(11),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(8),
+            Instruction::I32Add,
+            Instruction::LocalGet(9),
+            Instruction::MemoryCopy {
+                src_mem: 0,
+                dst_mem: 0,
+            },
+            // Skip closing '"'
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Store string pointer in array
+            Instruction::LocalGet(6), // array_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // i
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalGet(11), // str_ptr
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::Else,
+            // Check if element is 'true'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(116), // 't'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Store true (encoded as 2)
+            Instruction::LocalGet(6), // array_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // i
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Const(2), // true = 2
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Skip past "true" (4 characters)
+            Instruction::LocalGet(3),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Else,
+            // Check if element is 'false'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(102), // 'f'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Store false (encoded as 1)
+            Instruction::LocalGet(6), // array_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // i
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Const(1), // false = 1
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Skip past "false" (5 characters)
+            Instruction::LocalGet(3),
+            Instruction::I32Const(5),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Else,
+            // Check if element is 'null'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(110), // 'n'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Store null (0)
+            Instruction::LocalGet(6), // array_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // i
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Const(0), // null = 0
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Skip past "null" (4 characters)
+            Instruction::LocalGet(3),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Else,
+            // Nested object/array - use recursive call to parse_value
+            // Write current position to memory before recursive call
+            Instruction::LocalGet(1), // position_ptr
+            Instruction::LocalGet(3), // cached position
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Recursive call to value parser
+            Instruction::LocalGet(0), // string_ptr
+            Instruction::LocalGet(1), // position_ptr
+            Instruction::LocalGet(2), // length
+            Instruction::Call(parse_value_index),
+            Instruction::LocalSet(9), // element_ptr
+            // Read updated position
+            Instruction::LocalGet(1),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(3), // update position cache
+            // Store nested element pointer in array
+            Instruction::LocalGet(6), // array_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7), // i
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalGet(9), // element_ptr (parsed nested value)
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::End, // null check
+            Instruction::End, // false check
+            Instruction::End, // true check
+            Instruction::End, // string check
+            Instruction::End, // number check (outer else)
+            // Skip past element to find ',' or ']'
+            Instruction::I32Const(0),
+            Instruction::LocalSet(10), // depth = 0
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(3),
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Track depth
+            Instruction::LocalGet(4),
+            Instruction::I32Const(123),
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(91),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(10),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(10),
+            Instruction::End,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(125),
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(93),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(10),
+            Instruction::I32Const(0),
+            Instruction::I32GtU,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(10),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::LocalSet(10),
+            Instruction::End,
+            Instruction::End,
+            // At depth 0, check for ',' or ']'
+            Instruction::LocalGet(10),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(44),
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(93),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::BrIf(2),
+            Instruction::End,
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Increment loop counter
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(7), // i++
+            Instruction::Br(0),       // Continue parse loop
+            Instruction::End,         // End parse loop
+            Instruction::End,         // End parse block
+            // Write final position back to memory
+            Instruction::LocalGet(1), // position_ptr
+            Instruction::LocalGet(3), // cached position
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return array pointer
+            Instruction::LocalGet(6),
+        ]
     }
 }
 

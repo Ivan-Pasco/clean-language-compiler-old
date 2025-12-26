@@ -476,8 +476,26 @@ impl<'a> SpecificationLexer<'a> {
                     }
                 }
                 &'{' => {
-                    has_interpolation = true;
-                    break;
+                    // Check if this looks like interpolation (followed by identifier char or whitespace)
+                    self.advance(); // Skip '{'
+                    self.skip_whitespace();
+
+                    if let Some(&next_ch) = self.peek() {
+                        // Valid interpolation starts with letter, underscore, or is a sub-expression
+                        if next_ch.is_alphabetic() || next_ch == '_' || next_ch == '(' {
+                            has_interpolation = true;
+                            break;
+                        } else {
+                            // Not interpolation - treat '{' as literal
+                            content.push('{');
+                            // Continue scanning (already advanced past '{')
+                            continue;
+                        }
+                    } else {
+                        // End of string after '{' - not interpolation
+                        content.push('{');
+                        break;
+                    }
                 }
                 &'\n' => {
                     return Err(LexError::UnterminatedString {

@@ -1,0 +1,11 @@
+// Test: JSON module - null only
+// Minimal test to isolate the issue
+
+functions:
+	void testParseNull()
+		integer data = json.textToData("null")
+		println("Parsed null")
+
+start()
+	testParseNull()
+	println("Test completed")

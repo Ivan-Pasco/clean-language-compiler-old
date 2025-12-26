@@ -1,0 +1,17 @@
+// Minimal test case for JSON object parsing
+// Test parsing {"count":4} and accessing the count field
+
+start()
+	// Test 1: Parse simple object
+	string jsonText = "{\"count\":4}"
+	any result = json.tryTextToData(jsonText)
+
+	if result == null
+		printl("FAIL: Parsing returned null")
+	else
+		printl("SUCCESS: Object parsed")
+
+		// Test 2: Access field
+		any countValue = result.count
+		printl("count field value:")
+		printl(countValue.toString())

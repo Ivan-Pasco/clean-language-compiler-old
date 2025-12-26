@@ -1,0 +1,57 @@
+// Minimal test case for JSON field access bug
+// Issue: any.field returns 0 instead of actual field value
+// Expected: Field values should be accessible on parsed JSON objects
+
+functions:
+	string testSimpleJsonParsing()
+		// Test 1: Simple object with one field
+		string jsonStr = "{\"count\":4}"
+		any parsed = json.tryTextToData(jsonStr)
+
+		if parsed == null
+			return "FAIL: JSON parsing returned null for simple object"
+
+		// This should work but currently returns 0
+		any countField = parsed.count
+		string countValue = countField.toString()
+
+		if countValue == "4"
+			return "PASS: Field access works correctly"
+		else
+			return "FAIL: Field access returned '" + countValue + "' instead of '4'"
+
+	string testNestedJsonParsing()
+		// Test 2: Nested object
+		string jsonStr = "{\"data\":{\"count\":4,\"name\":\"test\"}}"
+		any parsed = json.tryTextToData(jsonStr)
+
+		if parsed == null
+			return "FAIL: JSON parsing returned null for nested object"
+
+		any dataField = parsed.data
+		if dataField == null
+			return "FAIL: Nested object field is null"
+
+		any countField = dataField.count
+		string countValue = countField.toString()
+
+		if countValue == "4"
+			return "PASS: Nested field access works"
+		else
+			return "FAIL: Nested field returned '" + countValue + "' instead of '4'"
+
+start()
+	printl("=== JSON Field Access Bug Test ===")
+	printl("")
+
+	printl("Test 1: Simple object parsing")
+	printl(testSimpleJsonParsing())
+	printl("")
+
+	printl("Test 2: Nested object parsing")
+	printl(testNestedJsonParsing())
+	printl("")
+
+	printl("=== Expected Results ===")
+	printl("Both tests should PASS, but currently both FAIL")
+	printl("This confirms the bug: JSON field access returns default values")

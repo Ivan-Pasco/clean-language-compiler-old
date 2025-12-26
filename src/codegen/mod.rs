@@ -476,6 +476,12 @@ impl CodeGenerator {
         self.function_map.get(function_name).copied()
     }
 
+    /// Get the next function index that will be assigned
+    /// This is useful for forward references in mutually recursive functions
+    pub fn get_next_function_index(&self) -> u32 {
+        self.function_count
+    }
+
     /// Get function index from function map with error handling
     pub fn get_function_index_or_error(&self, function_name: &str) -> Result<u32, CompilerError> {
         self.function_map
