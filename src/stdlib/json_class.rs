@@ -474,60 +474,6 @@ impl JsonClass {
         ]
     }
 
-    /// Helper: Generate instructions to skip whitespace characters
-    /// Updates position (local 2) to point to next non-whitespace character
-    /// Uses: input_ptr (local 0), string_len (local 1), pos (local 2), char (local 3)
-    fn generate_skip_whitespace(&self) -> Vec<Instruction<'static>> {
-        vec![
-            // Loop through characters until non-whitespace found
-            Instruction::Block(wasm_encoder::BlockType::Empty),
-            Instruction::Loop(wasm_encoder::BlockType::Empty),
-            // Check if pos >= string_len (end of string)
-            Instruction::LocalGet(2), // pos
-            Instruction::LocalGet(1), // string_len
-            Instruction::I32GeU,
-            Instruction::BrIf(1), // Exit if at end
-            // Load current character
-            Instruction::LocalGet(0), // input_ptr
-            Instruction::I32Const(4), // Skip length prefix
-            Instruction::I32Add,
-            Instruction::LocalGet(2), // pos
-            Instruction::I32Add,
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3), // char
-            // Check if whitespace (space=32, tab=9, newline=10, return=13)
-            Instruction::LocalGet(3),
-            Instruction::I32Const(32), // space
-            Instruction::I32Eq,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(9), // tab
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(10), // newline
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::LocalGet(3),
-            Instruction::I32Const(13), // carriage return
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::I32Eqz,  // If NOT whitespace
-            Instruction::BrIf(1), // Exit loop
-            // Increment position
-            Instruction::LocalGet(2), // pos
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(2), // pos++
-            Instruction::Br(0),       // Continue loop
-            Instruction::End,         // End loop
-            Instruction::End,         // End block
-        ]
-    }
-
     /// Generate WASM instructions for json.textToData
     /// Parses a JSON string and returns a pointer to the parsed data structure
     /// PHASE 2 IMPLEMENTATION: Full object parser with malloc integration
