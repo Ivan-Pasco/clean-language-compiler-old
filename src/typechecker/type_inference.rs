@@ -3867,6 +3867,32 @@ impl<'a> TypeInference<'a> {
                 Ok(ConcreteType::Boolean)
             }
 
+            // JSON static methods
+            ("json", "textToData") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                // Returns Any - parsed JSON value
+                // json.textToData(string) -> any
+                Ok(ConcreteType::Any)
+            }
+            ("json", "tryTextToData") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                // Returns Any - parsed JSON value or null on error
+                // json.tryTextToData(string) -> any
+                Ok(ConcreteType::Any)
+            }
+            ("json", "dataToText") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                // Returns string - JSON text representation
+                // json.dataToText(any) -> string
+                Ok(ConcreteType::String)
+            }
+            ("json", "prettyDataToText") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                // Returns string - formatted JSON text representation
+                // json.prettyDataToText(any) -> string
+                Ok(ConcreteType::String)
+            }
+
             // For unknown static method/class combinations, return Unknown
             _ => Ok(ConcreteType::Unknown),
         }

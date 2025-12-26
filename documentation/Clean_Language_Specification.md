@@ -233,6 +233,39 @@ functions
 ""          // Empty string
 ```
 
+**Escape Sequences:**
+
+Clean Language supports standard escape sequences within string literals:
+
+| Sequence | Result | Example |
+|----------|--------|---------|
+| `\"` | Double quote | `"say \"hi\""` → `say "hi"` |
+| `\\` | Backslash | `"path\\file"` → `path\file` |
+| `\n` | Newline | `"line1\nline2"` → two lines |
+| `\t` | Tab | `"col1\tcol2"` → tab-separated |
+| `\r` | Carriage return | `"text\r"` → with CR |
+| `\{` | Literal left brace | `"\{not interpolation\}"` → `{not interpolation}` |
+| `\}` | Literal right brace | `"\{literal\}"` → `{literal}` |
+| `\0` | Null character | `"text\0"` → null-terminated |
+
+**Escape Sequences in JSON Strings:**
+
+Escape sequences are particularly useful when working with JSON:
+
+```clean
+// JSON with escaped quotes
+string jsonStr = "{\"name\": \"Alice\", \"age\": 25}"
+
+// Parse JSON containing escape sequences
+any data = json.textToData("{\"count\": 42}")
+integer count = data.count  // Returns 42
+
+// Nested JSON with multiple escape sequences
+string nestedJson = "{\"user\": {\"name\": \"Bob\", \"active\": true}}"
+any parsed = json.textToData(nestedJson)
+string userName = parsed.user.name  // Returns "Bob"
+```
+
 **String Interpolation:**
 ```clean
 name = "World"
@@ -245,6 +278,15 @@ message = "User {user.name} is {user.age} years old"
 // Note: Complex method calls in strings are not supported
 // ❌ "Hello {user.name}, you have {messages.count()} messages"
 ```
+
+**Interpolation vs Literal Braces:**
+
+The compiler distinguishes between interpolation and literal braces:
+- `"{variable}"` → Interpolation (evaluates `variable`)
+- `"{obj.prop}"` → Interpolation (evaluates `obj.prop`)
+- `"{(expr)}"` → Interpolation (evaluates expression)
+- `"{\"literal\"}"` → NOT interpolation (produces `{"literal"}`)
+- `"\{literal\}"` → NOT interpolation (produces `{literal}`)
 
 #### Boolean Literals
 ```clean
@@ -2435,11 +2477,18 @@ functions:
         //   - JSON number → number
         //   - JSON boolean → boolean
         //   - JSON null → null
+        //
+        // Supports nested structures with unlimited depth:
+        //   - Nested objects: {"user": {"name": "John", "age": 42}}
+        //   - Nested arrays: {"matrix": [[1,2], [3,4]]}
+        //   - Arrays of objects: [{"id": 1}, {"id": 2}]
+        //   - Complex combinations: {"users": [{"name": "Alice", "tags": ["admin"]}]}
 
     any tryTextToData(string jsonText)
         // Attempts to parse JSON, returns null on failure
         // Useful when you want to handle invalid JSON gracefully
         // Does not throw errors for malformed JSON
+        // Supports all nested structures same as textToData()
 ```
 
 #### Accessing JSON Data
@@ -2545,6 +2594,34 @@ start()
     else
         print("Successfully parsed JSON")
 
+    // Parse nested objects with escape sequences
+    string nestedJson = "{\"user\": {\"name\": \"Alice\", \"age\": 25, \"address\": {\"city\": \"NYC\"}}}"
+    any data = json.textToData(nestedJson)
+
+    // Access nested fields using dot notation
+    string userName = data.user.name        // Returns "Alice"
+    integer userAge = data.user.age         // Returns 25
+    string city = data.user.address.city    // Returns "NYC"
+
+    // Parse nested arrays
+    string matrixJson = "{\"matrix\": [[1, 2, 3], [4, 5, 6], [7, 8, 9]]}"
+    any matrixData = json.textToData(matrixJson)
+    any firstRow = matrixData.matrix[0]     // Returns [1, 2, 3]
+    any element = matrixData.matrix[0][1]   // Returns 2
+
+    // Parse arrays of objects
+    string usersJson = "[{\"id\": 1, \"name\": \"Alice\"}, {\"id\": 2, \"name\": \"Bob\"}]"
+    any users = json.textToData(usersJson)
+    any firstUser = users[0]                // Returns {"id": 1, "name": "Alice"}
+    string firstName = users[0].name        // Returns "Alice"
+    integer secondId = users[1].id          // Returns 2
+
+    // Complex nested structure
+    string complexJson = "{\"users\": [{\"id\": 1, \"tags\": [\"admin\", \"staff\"]}, {\"id\": 2, \"tags\": [\"user\"]}]}"
+    any complex = json.textToData(complexJson)
+    any adminTags = complex.users[0].tags   // Returns ["admin", "staff"]
+    string firstTag = complex.users[0].tags[0]  // Returns "admin"
+
     // Create data and serialize to JSON
     pairs<string, any> user = {}
     user["name"] = "Bob"
@@ -2588,6 +2665,62 @@ start()
 | number | `number` | `3.14` → `3.14` |
 | boolean | `boolean` | `true` → `true` |
 | null | `null` | `null` → `null` |
+
+**Note on Nested Structures**: The JSON parser fully supports nested objects and arrays. When parsing nested structures, inner objects and arrays are recursively parsed and stored as `any` values within the parent structure.
+
+```clean
+// Nested object example
+string json = "{\"user\": {\"name\": \"Alice\", \"age\": 25}}"
+any data = json.textToData(json)
+// data type: pairs<string, any>
+// data.user type: any (contains a pairs<string, any>)
+// data.user.name type: any (contains a string)
+
+// Nested array example
+string arrayJson = "{\"matrix\": [[1, 2], [3, 4]]}"
+any matrix = json.textToData(arrayJson)
+// matrix type: pairs<string, any>
+// matrix.matrix type: any (contains a list<any>)
+// matrix.matrix[0] type: any (contains a list<any>)
+// matrix.matrix[0][0] type: any (contains a number)
+```
+
+#### Nested Structure Support
+
+The JSON parser uses a **recursive architecture** to support arbitrary nesting depth:
+
+**Capabilities:**
+- **Unlimited nesting depth**: Parse structures with any level of nesting
+- **Mixed structures**: Combine objects and arrays at any depth
+- **Complex data**: Handle real-world JSON from APIs and config files
+
+**Implementation:**
+The parser uses three mutually recursive helper functions:
+- `__json_parse_value`: Dispatcher for all JSON value types
+- `__json_parse_object`: Recursive object parser
+- `__json_parse_array`: Recursive array parser
+
+**Examples of supported structures:**
+
+```clean
+// Deep object nesting (5 levels)
+string deepJson = "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\": 42}}}}}"
+any deep = json.textToData(deepJson)
+integer value = deep.a.b.c.d.e  // Returns 42
+
+// Deep array nesting
+string arrayJson = "[[[[[1]]]]]"
+any arrays = json.textToData(arrayJson)
+integer val = arrays[0][0][0][0][0]  // Returns 1
+
+// Real-world API response
+string apiResponse = "{\"data\": {\"users\": [{\"id\": 1, \"profile\": {\"name\": \"Alice\", \"tags\": [\"admin\", \"user\"]}}]}}"
+any response = json.textToData(apiResponse)
+string name = response.data.users[0].profile.name  // Returns "Alice"
+string tag = response.data.users[0].profile.tags[0]  // Returns "admin"
+```
+
+**Performance:** The recursive parser is optimized for WebAssembly execution and can efficiently handle typical JSON structures from web APIs (up to ~50 nesting levels, limited by WebAssembly stack depth).
 
 #### Error Handling
 

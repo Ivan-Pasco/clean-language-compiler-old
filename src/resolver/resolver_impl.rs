@@ -2470,7 +2470,7 @@ impl NameResolver {
                 Box::new(Self::builtin_type_to_hir_type(v)),
             ),
             BuiltinType::Namespace => HirType::Integer, // Namespace is internal, use Integer as placeholder
-            BuiltinType::Any => HirType::Integer,       // Any type defaults to Integer for codegen
+            BuiltinType::Any => HirType::Any,           // Any type for dynamic/JSON values
         }
     }
 }
