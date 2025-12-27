@@ -2374,71 +2374,9 @@ impl MirCodeGenerator<'_> {
                     debug_mir!(" CALL DEST: Processing call with dest={:?}", dest);
                     debug_mir!(" CALL DEST: function_name={:?}", function_name);
 
-                    // CRITICAL FIX: Convert function results from F64 to I32 when destination is I32
-                    // Use the function signature's return type to determine if conversion is needed
-                    if let Some(dest_type) = self.value_to_type.get(&dest) {
-                        debug_mir!(" CALL DEST: dest_type={:?}", dest_type);
-                        if matches!(dest_type, MirType::I32) {
-                            debug_mir!(
-                                " CALL DEST: Destination is I32, checking function return type..."
-                            );
-
-                            // Check if the function returns F64 by checking the signature
-                            // For SymbolId(0) stdlib functions, the MIR signature may be Void (incorrect)
-                            // In that case, fall back to function name checking
-                            let needs_conversion = if let Some(sig) = &function_signature {
-                                debug_mir!(" CALL DEST: Checking signature return_type={:?} for SymbolId={:?}", sig.return_type, symbol_id_opt);
-
-                                // If signature has a proper return type, use it
-                                if matches!(sig.return_type, MirType::F64) {
-                                    true
-                                } else if matches!(sig.return_type, MirType::Void) {
-                                    // Void signature is incorrect for stdlib functions, check function name instead
-                                    if let Some(fname) = &function_name {
-                                        debug_mir!(" CALL DEST: Void signature detected, checking function name={}", fname);
-                                        fname.starts_with("math.")
-                                    } else {
-                                        debug_mir!(
-                                            "DEBUG CALL DEST: Void signature but no function name"
-                                        );
-                                        false
-                                    }
-                                } else {
-                                    // I32 or other non-F64 return type
-                                    false
-                                }
-                            } else if let Some(fname) = &function_name {
-                                // Fallback to function name check if no signature
-                                debug_mir!(
-                                    "DEBUG CALL DEST: No signature, checking function name={}",
-                                    fname
-                                );
-                                fname.starts_with("math.")
-                            } else {
-                                debug_mir!(" CALL DEST: No signature or function name");
-                                false
-                            };
-
-                            if needs_conversion {
-                                debug_mir!(
-            "DEBUG TYPE CONVERSION (CALL): Adding f64→i32 conversion for {:?} result",
-                                    function_name
-                                );
-                                self.current_instructions.push(Instruction::I32TruncF64S);
-                                tracing::trace!(
-                                    "Added F64->I32 conversion for {:?} with I32 destination",
-                                    function_name
-                                );
-                            } else {
-                                debug_mir!(
-                                    "DEBUG CALL DEST: Function {:?} does not need conversion",
-                                    function_name
-                                );
-                            }
-                        }
-                    } else {
-                        debug_mir!(" CALL DEST: No dest_type found for {:?}", dest);
-                    }
+                    // NOTE: Type conversion (F64 to I32) is handled by store_to_local_with_conversion
+                    // which is called in the signature/stdlib handling below. DO NOT add redundant
+                    // conversion here - it causes double truncation errors.
 
                     if let Some(signature) = &function_signature {
                         // CRITICAL FIX: Check if dest_type is Ptr(Void) from Unknown types
@@ -2483,7 +2421,10 @@ impl MirCodeGenerator<'_> {
                                             "DEBUG SIG VOID: Storing return value (type: {:?}) to Any type dest",
                                             signature.return_type
                                         );
-                                        self.store_to_local(dest)?;
+                                        self.store_to_local_with_conversion(
+                                            dest,
+                                            Some(signature.return_type.clone()),
+                                        )?;
                                     }
                                 }
                             }
@@ -2506,22 +2447,44 @@ impl MirCodeGenerator<'_> {
                                         "Handling StringTuple return (storing single i32 pointer)"
                                     );
 
-                                    self.store_to_local(dest)?;
+                                    self.store_to_local_with_conversion(
+                                        dest,
+                                        Some(signature.return_type.clone()),
+                                    )?;
 
                                     tracing::trace!(
                                         "Stored StringTuple return as single i32 pointer"
                                     );
                                 }
                                 _ => {
-                                    // Regular single-value return
-                                    self.store_to_local(dest)?;
+                                    // Regular single-value return - with type conversion if needed
+                                    // CRITICAL FIX: Pass return type for automatic f64->i32 conversion
+                                    self.store_to_local_with_conversion(
+                                        dest,
+                                        Some(signature.return_type.clone()),
+                                    )?;
                                 }
                             }
                         }
                     } else {
-                        // Fallback: no signature available
-                        // Check if the destination value was registered as Void type
-                        if let Some(dest_type) = self.value_to_type.get(&dest) {
+                        // Fallback: no signature available from SymbolId lookup
+                        // CRITICAL FIX: Try looking up return type by function name for stdlib functions
+                        let stdlib_return_type = function_name
+                            .as_ref()
+                            .and_then(|name| self.get_stdlib_return_type(name));
+
+                        if let Some(return_type) = stdlib_return_type {
+                            // Found stdlib return type - use it for type conversion
+                            if !matches!(return_type, MirType::Void) {
+                                debug_mir!(
+                                    "DEBUG STDLIB: Found return type {:?} for function {:?}",
+                                    return_type,
+                                    function_name
+                                );
+                                self.store_to_local_with_conversion(dest, Some(return_type))?;
+                            }
+                            // Void functions don't store anything
+                        } else if let Some(dest_type) = self.value_to_type.get(&dest) {
                             debug_mir!(
                                 "DEBUG VOID CHECK: dest={:?}, dest_type={:?}, function={:?}",
                                 dest,
@@ -3671,6 +3634,49 @@ impl MirCodeGenerator<'_> {
             MirOperand::Function(_) => Some(MirType::I32), // Function pointers are i32
             MirOperand::NamedFunction { .. } => Some(MirType::I32), // Named function pointers are i32
             MirOperand::Global(_) => Some(MirType::I32), // Global variable pointers are i32
+        }
+    }
+
+    /// Get the return type for stdlib functions by name
+    /// This is used for namespace functions (SymbolId(0)) where signature lookup by ID fails
+    fn get_stdlib_return_type(&self, function_name: &str) -> Option<MirType> {
+        match function_name {
+            // Math functions that return F64
+            "math.abs" | "math.sqrt" | "math.sin" | "math.cos" | "math.tan" | "math.asin"
+            | "math.acos" | "math.atan" | "math.atan2" | "math.sinh" | "math.cosh"
+            | "math.tanh" | "math.ln" | "math.log10" | "math.log2" | "math.exp" | "math.exp2"
+            | "math.floor" | "math.ceil" | "math.round" | "math.trunc" | "math.sign"
+            | "math.pow" | "math.max" | "math.min" | "math.pi" | "math.e" | "math.tau" => {
+                Some(MirType::F64)
+            }
+            // Math functions that return I32
+            "math.abs.i32" => Some(MirType::I32),
+
+            // CRITICAL FIX: Type conversion methods - these must be checked BEFORE generic patterns
+            // .toNumber() methods always return F64
+            "string.toNumber" | "integer.toNumber" | "boolean.toNumber" | "number.toNumber" => {
+                Some(MirType::F64)
+            }
+            // .toInteger() methods always return I32
+            "string.toInteger" | "number.toInteger" | "boolean.toInteger" => Some(MirType::I32),
+            // .toBoolean() methods always return I32 (boolean is i32 in WASM)
+            "string.toBoolean" | "integer.toBoolean" | "number.toBoolean" => Some(MirType::I32),
+            // Matrix methods
+            "matrix.determinant" => Some(MirType::F64),
+            "matrix.rows" | "matrix.cols" | "matrix.size" => Some(MirType::I32),
+
+            // String functions that return I32 (string pointer or length)
+            name if name.starts_with("string.") => Some(MirType::I32),
+            // List functions that return I32 (list pointer or length)
+            name if name.starts_with("list.") => Some(MirType::I32),
+            // HTTP functions that return I32 (string pointer)
+            name if name.starts_with("http.") => Some(MirType::I32),
+            // File functions that return I32 (string pointer or boolean)
+            name if name.starts_with("file.") => Some(MirType::I32),
+            // Void functions
+            "print" | "printl" | "println" => Some(MirType::Void),
+            // Default - return None to indicate unknown
+            _ => None,
         }
     }
 

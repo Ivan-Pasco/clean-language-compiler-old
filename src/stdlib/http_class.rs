@@ -35,71 +35,71 @@ impl HttpClass {
 
     fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // http.get(string url) -> string
-        // FIXED: Corrected parameter count - function passes url_data_ptr, url_len (2 parameters)
+        // Takes 1 string pointer parameter, internally extracts data ptr and length
         register_stdlib_function(
             codegen,
             "http.get",
-            &[WasmType::I32, WasmType::I32],
+            &[WasmType::I32],
             Some(WasmType::I32),
             self.generate_get_with_host_call(codegen, "http_get")?,
         )?;
 
         // http.post(string url, string data) -> string
-        // FIXED: Corrected parameter count - function passes url_ptr, url_len, body_ptr, body_len (4 parameters)
+        // Takes 2 string pointer parameters (url_ptr, body_ptr)
         register_stdlib_function(
             codegen,
             "http.post",
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_post_with_host_call(codegen, "http_post")?,
         )?;
 
         // http.put(string url, string data) -> string
-        // FIXED: Corrected parameter count - function passes url_ptr, url_len, body_ptr, body_len (4 parameters)
+        // Takes 2 string pointer parameters (url_ptr, body_ptr)
         register_stdlib_function(
             codegen,
             "http.put",
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_post_with_host_call(codegen, "http_put")?,
         )?;
 
         // http.patch(string url, string data) -> string
-        // FIXED: Corrected parameter count - function passes url_ptr, url_len, body_ptr, body_len (4 parameters)
+        // Takes 2 string pointer parameters (url_ptr, body_ptr)
         register_stdlib_function(
             codegen,
             "http.patch",
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_post_with_host_call(codegen, "http_patch")?,
         )?;
 
         // http.delete(string url) -> string
-        // FIXED: Corrected parameter count - function passes url_data_ptr, url_len (2 parameters)
+        // Takes 1 string pointer parameter
         register_stdlib_function(
             codegen,
             "http.delete",
-            &[WasmType::I32, WasmType::I32],
+            &[WasmType::I32],
             Some(WasmType::I32),
             self.generate_get_with_host_call(codegen, "http_delete")?,
         )?;
 
         // http.head(string url) -> string
-        // FIXED: Corrected parameter count - function passes url_data_ptr, url_len (2 parameters)
+        // Takes 1 string pointer parameter
         register_stdlib_function(
             codegen,
             "http.head",
-            &[WasmType::I32, WasmType::I32],
+            &[WasmType::I32],
             Some(WasmType::I32),
             self.generate_get_with_host_call(codegen, "http_head")?,
         )?;
 
         // http.options(string url) -> string
-        // FIXED: Corrected parameter count - function passes url_data_ptr, url_len (2 parameters)
+        // Takes 1 string pointer parameter
         register_stdlib_function(
             codegen,
             "http.options",
-            &[WasmType::I32, WasmType::I32],
+            &[WasmType::I32],
             Some(WasmType::I32),
             self.generate_get_with_host_call(codegen, "http_options")?,
         )?;
@@ -112,16 +112,17 @@ impl HttpClass {
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
         // http.getWithHeaders(string url, array<string> headers) -> string
-        // FIXED: Corrected parameter count - function passes url_ptr, url_len, body_ptr, body_len (4 parameters)
+        // Takes 2 string pointers (url_ptr, headers_ptr)
         register_stdlib_function(
             codegen,
             "http.getWithHeaders",
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_post_with_host_call(codegen, "http_get_with_headers")?,
         )?;
 
         // http.postWithHeaders(string url, string data, array<string> headers) -> string
+        // Takes 3 string pointers (url_ptr, body_ptr, headers_ptr)
         register_stdlib_function(
             codegen,
             "http.postWithHeaders",
@@ -131,41 +132,41 @@ impl HttpClass {
         )?;
 
         // http.postJson(string url, string jsonData) -> string
-        // FIXED: Corrected parameter count - function passes url_ptr, url_len, body_ptr, body_len (4 parameters)
+        // Takes 2 string pointers (url_ptr, body_ptr)
         register_stdlib_function(
             codegen,
             "http.postJson",
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_post_with_host_call(codegen, "http_post_json")?,
         )?;
 
         // http.putJson(string url, string jsonData) -> string
-        // FIXED: Corrected parameter count - function passes url_ptr, url_len, body_ptr, body_len (4 parameters)
+        // Takes 2 string pointers (url_ptr, body_ptr)
         register_stdlib_function(
             codegen,
             "http.putJson",
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_post_with_host_call(codegen, "http_put_json")?,
         )?;
 
         // http.patchJson(string url, string jsonData) -> string
-        // FIXED: Corrected parameter count - function passes url_ptr, url_len, body_ptr, body_len (4 parameters)
+        // Takes 2 string pointers (url_ptr, body_ptr)
         register_stdlib_function(
             codegen,
             "http.patchJson",
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_post_with_host_call(codegen, "http_patch_json")?,
         )?;
 
         // http.postForm(string url, array<string> formData) -> string
-        // FIXED: Corrected parameter count - function passes url_ptr, url_len, body_ptr, body_len (4 parameters)
+        // Takes 2 string pointers (url_ptr, formdata_ptr)
         register_stdlib_function(
             codegen,
             "http.postForm",
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_post_with_host_call(codegen, "http_post_form")?,
         )?;
@@ -232,31 +233,31 @@ impl HttpClass {
         )?;
 
         // http.encodeUrl(string url) -> string
-        // FIXED: Corrected parameter count - function passes url_data_ptr, url_len (2 parameters)
+        // Takes 1 string pointer parameter
         register_stdlib_function(
             codegen,
             "http.encodeUrl",
-            &[WasmType::I32, WasmType::I32],
+            &[WasmType::I32],
             Some(WasmType::I32),
             self.generate_get_with_host_call(codegen, "http_encode_url")?,
         )?;
 
         // http.decodeUrl(string encodedUrl) -> string
-        // FIXED: Corrected parameter count - function passes url_data_ptr, url_len (2 parameters)
+        // Takes 1 string pointer parameter
         register_stdlib_function(
             codegen,
             "http.decodeUrl",
-            &[WasmType::I32, WasmType::I32],
+            &[WasmType::I32],
             Some(WasmType::I32),
             self.generate_get_with_host_call(codegen, "http_decode_url")?,
         )?;
 
         // http.buildQuery(array<string> params) -> string
-        // FIXED: Corrected parameter count - function passes url_data_ptr, url_len (2 parameters)
+        // Takes 1 array pointer parameter
         register_stdlib_function(
             codegen,
             "http.buildQuery",
-            &[WasmType::I32, WasmType::I32],
+            &[WasmType::I32],
             Some(WasmType::I32),
             self.generate_get_with_host_call(codegen, "http_build_query")?,
         )?;

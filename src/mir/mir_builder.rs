@@ -809,7 +809,55 @@ impl MirBuilder {
                         );
                         self.emit_box_any(context, init_value_id, &init_expr.expr_type, location)
                     } else {
-                        init_value_id
+                        // CRITICAL FIX: Check if we need type conversion between numeric types
+                        // This handles cases like: integer y = math.abs(x) where math.abs returns f64
+                        // but y is declared as integer (i32)
+                        let declared_mir_type = self.convert_concrete_type(var_type);
+                        let init_mir_type = actual_mir_type
+                            .clone()
+                            .unwrap_or_else(|| declared_mir_type.clone());
+
+                        // Check if types differ and we need conversion
+                        let needs_type_conversion = match (&init_mir_type, &declared_mir_type) {
+                            (MirType::F64, MirType::I32) | (MirType::I32, MirType::F64) => true,
+                            _ => false,
+                        };
+
+                        if needs_type_conversion {
+                            trace!(
+                                var_name = %name,
+                                init_mir_type = ?init_mir_type,
+                                declared_mir_type = ?declared_mir_type,
+                                "Emitting type conversion for variable declaration"
+                            );
+
+                            // Create a new ValueId for the converted value
+                            let converted_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            // Register the converted value with the DECLARED type
+                            self.register_temp_local(
+                                context,
+                                converted_id,
+                                declared_mir_type.clone(),
+                                location.clone(),
+                            );
+
+                            // Emit Cast instruction for type conversion
+                            let convert_instruction = MirInstruction {
+                                dest: Some(converted_id),
+                                operation: MirOperation::Cast {
+                                    value: MirOperand::Value(init_value_id),
+                                    target_type: declared_mir_type,
+                                },
+                                location: location.clone(),
+                            };
+                            self.add_instruction(context, convert_instruction);
+
+                            converted_id
+                        } else {
+                            init_value_id
+                        }
                     }
                 } else {
                     // Check if this is an Array type (list) - if so, allocate an empty list
@@ -2855,6 +2903,41 @@ impl MirBuilder {
                     } else if func_name == "list.size" || func_name == "list.length" {
                         // list.size always returns Integer
                         ConcreteType::Integer
+                    } else if func_name == "conditional.number" {
+                        // CRITICAL FIX: conditional.number always returns Number (f64)
+                        // The typechecker may not properly propagate this for namespace calls
+                        ConcreteType::Number
+                    } else if func_name == "conditional.integer"
+                        || func_name == "conditional.boolean"
+                    {
+                        // conditional.integer and conditional.boolean return Integer/Boolean
+                        ConcreteType::Integer
+                    } else if func_name.starts_with("math.") {
+                        // CRITICAL FIX: All math namespace functions return Number (f64)
+                        ConcreteType::Number
+                    } else if func_name.starts_with("compare.number") {
+                        // compare.number functions return Boolean
+                        ConcreteType::Boolean
+                    } else if func_name.starts_with("compare.integer") {
+                        // compare.integer functions return Boolean
+                        ConcreteType::Boolean
+                    } else if func_name.ends_with(".toNumber") {
+                        // CRITICAL FIX: All .toNumber() methods return Number (f64)
+                        // This includes string.toNumber, integer.toNumber, boolean.toNumber, number.toNumber
+                        ConcreteType::Number
+                    } else if func_name.ends_with(".toInteger") {
+                        // CRITICAL FIX: All .toInteger() methods return Integer (i32)
+                        // This includes string.toInteger, number.toInteger
+                        ConcreteType::Integer
+                    } else if func_name.ends_with(".toBoolean") {
+                        // CRITICAL FIX: All .toBoolean() methods return Boolean (i32)
+                        ConcreteType::Boolean
+                    } else if func_name.ends_with(".determinant") {
+                        // Matrix.determinant() returns Number (f64)
+                        ConcreteType::Number
+                    } else if func_name.ends_with(".toString") {
+                        // All .toString() methods return String
+                        ConcreteType::String
                     } else {
                         expression.expr_type.clone()
                     }
@@ -3664,14 +3747,48 @@ impl MirBuilder {
                         | "toLowerCase" | "replace" | "replaceAll" | "padStart" | "padEnd"
                         | "charAt" | "concat" | "split" => ConcreteType::String,
                         // Methods that return Integer
-                        "length" | "size" | "indexOf" | "lastIndexOf" | "charCodeAt" => {
-                            ConcreteType::Integer
-                        }
+                        "length" | "size" | "indexOf" | "lastIndexOf" | "charCodeAt"
+                        | "toInteger" => ConcreteType::Integer,
                         // Methods that return Boolean
-                        "contains" | "startsWith" | "endsWith" | "isEmpty" | "isBlank" => {
-                            ConcreteType::Boolean
-                        }
+                        "contains" | "startsWith" | "endsWith" | "isEmpty" | "isBlank"
+                        | "toBoolean" => ConcreteType::Boolean,
+                        // Type conversion methods that return Number
+                        "toNumber" => ConcreteType::Number,
                         // Default to expression type for unknown methods
+                        _ => expression.expr_type.clone(),
+                    }
+                } else if matches!(&receiver.expr_type, ConcreteType::Integer) {
+                    // CRITICAL FIX: Integer methods have known return types
+                    match method_name.as_str() {
+                        "toString" => ConcreteType::String,
+                        "toNumber" => ConcreteType::Number,
+                        "toBoolean" => ConcreteType::Boolean,
+                        _ => expression.expr_type.clone(),
+                    }
+                } else if matches!(&receiver.expr_type, ConcreteType::Number) {
+                    // CRITICAL FIX: Number methods have known return types
+                    match method_name.as_str() {
+                        "toString" => ConcreteType::String,
+                        "toInteger" => ConcreteType::Integer,
+                        "toBoolean" => ConcreteType::Boolean,
+                        "toNumber" => ConcreteType::Number, // identity
+                        _ => expression.expr_type.clone(),
+                    }
+                } else if matches!(&receiver.expr_type, ConcreteType::Boolean) {
+                    // CRITICAL FIX: Boolean methods have known return types
+                    match method_name.as_str() {
+                        "toString" => ConcreteType::String,
+                        "toNumber" => ConcreteType::Number,
+                        "toInteger" => ConcreteType::Integer,
+                        _ => expression.expr_type.clone(),
+                    }
+                } else if matches!(&receiver.expr_type, ConcreteType::Matrix(_)) {
+                    // CRITICAL FIX: Matrix methods have known return types
+                    match method_name.as_str() {
+                        "toString" => ConcreteType::String,
+                        "determinant" => ConcreteType::Number,
+                        "transpose" | "inverse" => receiver.expr_type.clone(),
+                        "rows" | "cols" | "size" => ConcreteType::Integer,
                         _ => expression.expr_type.clone(),
                     }
                 } else if let ConcreteType::Class {
