@@ -36,15 +36,21 @@ impl MethodStyleManager {
         let types = ["integer", "number", "string", "boolean", "value"];
 
         for type_name in &types {
-            // Length methods for strings and lists
-            let length_name = format!("{type_name}.length");
-            register_stdlib_function(
-                codegen,
-                &length_name,
-                &[WasmType::I32],    // value pointer
-                Some(WasmType::I32), // length
-                self.generate_value_length(),
-            )?;
+            // CRITICAL FIX: Skip string.length - it has a dedicated native implementation
+            // The polymorphic version expects boxed values with type IDs at offset 8,
+            // but raw string literals have [length|data] format with no type ID
+            // Registering a polymorphic string.length overwrites the correct native function
+            if *type_name != "string" {
+                // Length methods for non-string types
+                let length_name = format!("{type_name}.length");
+                register_stdlib_function(
+                    codegen,
+                    &length_name,
+                    &[WasmType::I32],    // value pointer
+                    Some(WasmType::I32), // length
+                    self.generate_value_length(),
+                )?;
+            }
 
             // Check if value is defined (not null/undefined)
             register_stdlib_function(
