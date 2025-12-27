@@ -2,5 +2,5 @@
 // BOOK: null-support - Basic null literal test
 
 start()
-	value = null
-	print("Null value created successfully")
+	any value = null
+	printl("Null value created successfully")

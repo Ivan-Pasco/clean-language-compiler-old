@@ -916,8 +916,36 @@ impl JsonClass {
                 align: 2,
                 memory_index: 0,
             }),
-            // Return string pointer
-            Instruction::LocalGet(5),
+            // Now box the string: allocate 12 bytes for boxed any
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(8), // boxed_ptr in local 8
+            // Store type tag 4 (String) at offset 0
+            Instruction::LocalGet(8),
+            Instruction::I32Const(4), // String tag
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store string pointer at offset 4
+            Instruction::LocalGet(8),
+            Instruction::LocalGet(5), // str_ptr
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store 0 at offset 8
+            Instruction::LocalGet(8),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return boxed string pointer
+            Instruction::LocalGet(8),
             Instruction::Else,
             // Check for digit (48-57) or '-' (45) - number
             Instruction::LocalGet(4),
@@ -1268,8 +1296,36 @@ impl JsonClass {
                 align: 2,
                 memory_index: 0,
             }),
-            // Return 2 (true encoding)
-            Instruction::I32Const(2),
+            // Allocate 12 bytes for boxed boolean (true)
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(5),
+            // Store type tag 2 (Boolean) at offset 0
+            Instruction::LocalGet(5),
+            Instruction::I32Const(2), // Boolean tag
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store value 1 (true) at offset 4
+            Instruction::LocalGet(5),
+            Instruction::I32Const(1), // true = 1
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store 0 at offset 8 (padding)
+            Instruction::LocalGet(5),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return boxed boolean pointer
+            Instruction::LocalGet(5),
             Instruction::Else,
             // Check for 'f' (102) - false
             Instruction::LocalGet(4),
@@ -1289,8 +1345,36 @@ impl JsonClass {
                 align: 2,
                 memory_index: 0,
             }),
-            // Return 1 (false encoding)
-            Instruction::I32Const(1),
+            // Allocate 12 bytes for boxed boolean (false)
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(5),
+            // Store type tag 2 (Boolean) at offset 0
+            Instruction::LocalGet(5),
+            Instruction::I32Const(2), // Boolean tag
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store value 0 (false) at offset 4
+            Instruction::LocalGet(5),
+            Instruction::I32Const(0), // false = 0
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store 0 at offset 8 (padding)
+            Instruction::LocalGet(5),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return boxed boolean pointer
+            Instruction::LocalGet(5),
             Instruction::Else,
             // Check for 'n' (110) - null
             Instruction::LocalGet(4),
@@ -1310,11 +1394,49 @@ impl JsonClass {
                 align: 2,
                 memory_index: 0,
             }),
-            // Return 0 (null encoding)
+            // Allocate 12 bytes for boxed null
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(5),
+            // Store type tag 0 (Null) at offset 0
+            Instruction::LocalGet(5),
+            Instruction::I32Const(0), // Null tag
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store 0 at offset 4
+            Instruction::LocalGet(5),
             Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store 0 at offset 8
+            Instruction::LocalGet(5),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return boxed null pointer
+            Instruction::LocalGet(5),
             Instruction::Else,
-            // Unknown value - return null
+            // Unknown value - return boxed null
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(5),
+            Instruction::LocalGet(5),
             Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(5),
             Instruction::End, // End 'n' check
             Instruction::End, // End 'f' check
             Instruction::End, // End 't' check

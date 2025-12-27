@@ -2469,13 +2469,22 @@ impl<'a> TypeInference<'a> {
                 // CRITICAL FIX: Use SymbolId(0) for built-in namespace methods
                 // (string.*, math.*, list.*, etc.) so MIR builder creates NamedFunction operands
                 // For user-defined static methods, keep the actual method_symbol_id
-                let is_builtin_namespace =
-                    ["string", "math", "list", "array", "compare", "file", "http"]
-                        .iter()
-                        .any(|ns| {
-                            full_class_name.eq(*ns)
-                                || full_class_name.starts_with(&format!("{}.", ns))
-                        });
+                let is_builtin_namespace = [
+                    "string",
+                    "math",
+                    "list",
+                    "array",
+                    "compare",
+                    "file",
+                    "http",
+                    "json",
+                    "input",
+                    "validator",
+                ]
+                .iter()
+                .any(|ns| {
+                    full_class_name.eq(*ns) || full_class_name.starts_with(&format!("{}.", ns))
+                });
 
                 tracing::debug!("DEBUG TYPE INF STATIC: full_class_name='{}', method='{}', is_builtin={}, method_symbol_id=SymbolId({})",
                           full_class_name, method, is_builtin_namespace, method_symbol_id.0);

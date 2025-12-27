@@ -782,8 +782,14 @@ impl MirBuilder {
 
                     // Check if we need to box: variable type is Any but initializer is not Any
                     // CRITICAL FIX: Also check actual MIR type - if already Any, no boxing needed
+                    // CRITICAL FIX 2: Don't box if init_expr.expr_type is Unknown and MIR type is Any
+                    // This handles cases like json.tryTextToData() where TAST type may be Unknown
+                    // but the actual function returns a boxed Any value
                     let needs_boxing = matches!(var_type, ConcreteType::Any)
-                        && !matches!(init_expr.expr_type, ConcreteType::Any)
+                        && !matches!(
+                            init_expr.expr_type,
+                            ConcreteType::Any | ConcreteType::Unknown
+                        )
                         && !init_is_actually_any;
 
                     if needs_unboxing {

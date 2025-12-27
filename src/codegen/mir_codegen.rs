@@ -2476,12 +2476,14 @@ impl MirCodeGenerator<'_> {
                                         );
                                     }
                                     _ => {
-                                        // Function returns a value - drop it since we can't use it (Unknown type)
+                                        // CRITICAL FIX: Ptr(Void) represents Any type which CAN hold return values
+                                        // Store the value to the local - Any type can store any pointer/value
+                                        // Previously this was incorrectly dropping the value
                                         debug_mir!(
-                                            "DEBUG SIG VOID: Dropping 1 value (return type: {:?})",
+                                            "DEBUG SIG VOID: Storing return value (type: {:?}) to Any type dest",
                                             signature.return_type
                                         );
-                                        self.current_instructions.push(Instruction::Drop);
+                                        self.store_to_local(dest)?;
                                     }
                                 }
                             }
@@ -2528,20 +2530,17 @@ impl MirCodeGenerator<'_> {
                             );
                             let is_ptr_void = matches!(dest_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
 
-                            // CRITICAL FIX: If dest_type is Ptr(Void), it means Unknown type
-                            // The presence of dest means the function returns a value, so drop it
+                            // CRITICAL FIX: Ptr(Void) represents Any type which can hold any value
+                            // Store the return value regardless of whether dest is Ptr(Void) or not
                             if is_ptr_void {
-                                // Ptr(Void) means Unknown type that actually returns a value
-                                // Without signature, we assume single return value (most common case)
+                                // Ptr(Void) means Any type - store the value (not drop!)
                                 debug_mir!(
-                                    "DEBUG VOID DEST: Dropping 1 value for Unknown type dest {:?}",
+                                    "DEBUG VOID DEST: Storing value to Any type dest {:?}",
                                     dest
                                 );
-                                self.current_instructions.push(Instruction::Drop);
-                            } else {
-                                // Normal case: store the return value
-                                self.store_to_local(dest)?;
                             }
+                            // Both Ptr(Void) and other types should store the return value
+                            self.store_to_local(dest)?;
                         } else {
                             debug_mir!(
                                 "DEBUG VOID CHECK: dest={:?} not found in value_to_type",

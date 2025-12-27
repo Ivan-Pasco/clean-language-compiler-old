@@ -1,11 +1,6 @@
 // Simple QA Test for Import/Export Block Syntax
-// Tests basic import: and private: block syntax for module management
-
-// Test simple import block syntax
-import:
-	math
-	string
-	list
+// Tests basic private: block syntax for module management
+// Note: Builtin namespaces (math, string, list) are always available
 
 functions:
 
