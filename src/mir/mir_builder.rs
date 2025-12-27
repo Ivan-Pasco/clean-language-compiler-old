@@ -2719,11 +2719,12 @@ impl MirBuilder {
                 }
 
                 // CRITICAL FIX: For print/printl function calls, convert all arguments to strings
-                // Check if this is a print/printl call
-                let is_print_call = function_symbol_id == SymbolId(0) // print
-                    || function_symbol_id == SymbolId(1) // printl
-                    || function_symbol_id == SymbolId(162) // print (alternative)
-                    || function_symbol_id == SymbolId(163); // printl (alternative)
+                // Check if this is a print/printl call BY NAME, not just SymbolId
+                // SymbolId(0) is also used as a placeholder for namespace functions like math.sqrt
+                let is_print_call = matches!(
+                    function_name_opt.as_deref(),
+                    Some("print") | Some("printl") | Some("println")
+                );
 
                 // Look up function parameter types for boxing any-typed parameters
                 // Check both all_functions and class constructors
