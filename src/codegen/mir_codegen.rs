@@ -341,6 +341,13 @@ impl MirCodeGenerator<'_> {
                     .map_err(|e| vec![e])?;
                 debug_mir!("DEBUG MIR: Bridge wrapper functions registered");
             }
+
+            // CRITICAL FIX: Register HTTP server wrapper functions for string expansion
+            // _http_route and _req_param need wrappers to expand string pointers to (ptr+4, len) pairs
+            // This MUST be called after all imports are registered
+            debug_mir!("DEBUG MIR: Registering HTTP server wrapper functions");
+            self.register_http_server_wrappers().map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: HTTP server wrapper functions registered");
         }
 
         // Set up memory section
@@ -5257,6 +5264,134 @@ impl MirCodeGenerator<'_> {
                 wrapper.wasm_return,
                 &wrapper_instructions,
             )?;
+        }
+
+        Ok(())
+    }
+
+    /// Register HTTP server wrapper functions for string expansion
+    ///
+    /// HTTP server functions like `_http_route` and `_req_param` need wrapper functions
+    /// to expand Clean Language strings (ptr to [len][content]) to raw format (ptr+4, len).
+    ///
+    /// CRITICAL: This MUST be called AFTER all imports are registered AND after
+    /// `register_pending_bridge_wrappers()` to avoid function index collisions.
+    fn register_http_server_wrappers(&mut self) -> Result<(), CompilerError> {
+        use crate::builtins::registry::BuiltinType;
+        use crate::types::WasmType;
+        use wasm_encoder::{Instruction, MemArg};
+
+        // Define HTTP server functions that need wrappers
+        // These have expand_strings behavior: strings passed as (ptr, len) pairs to host
+        let http_server_functions = [
+            // _http_route: (string method, string path, integer handler_idx) -> i32
+            (
+                "_http_route",
+                vec![
+                    BuiltinType::String,
+                    BuiltinType::String,
+                    BuiltinType::Integer,
+                ],
+                Some(WasmType::I32),
+            ),
+            // _req_param: (string param_name) -> string (pointer)
+            ("_req_param", vec![BuiltinType::String], Some(WasmType::I32)),
+        ];
+
+        for (func_name, param_types, wasm_return) in http_server_functions {
+            // Get the raw import index from http_import_indices
+            let raw_func_index = match self.wasm_generator.http_import_indices.get(func_name) {
+                Some(&idx) => idx,
+                None => {
+                    // Function wasn't registered as an import - skip
+                    tracing::debug!(
+                        name = %func_name,
+                        "HTTP server function not registered as import, skipping wrapper"
+                    );
+                    continue;
+                }
+            };
+
+            // Build wrapper parameters (Clean Language types)
+            let wrapper_params: Vec<WasmType> = param_types
+                .iter()
+                .map(|t| Self::builtin_type_to_wasm_type(t))
+                .collect();
+
+            // Build wrapper instructions
+            let mut wrapper_instructions = Vec::new();
+            let mut local_idx = 0u32;
+
+            for param_type in param_types.iter() {
+                if matches!(param_type, BuiltinType::String) {
+                    // For strings: expand to (ptr+4, len)
+                    // Clean strings are length-prefixed: [4-byte len][content]
+                    // ptr+4 = content start, load from ptr = length
+
+                    // Push content pointer (ptr + 4)
+                    wrapper_instructions.push(Instruction::LocalGet(local_idx));
+                    wrapper_instructions.push(Instruction::I32Const(4));
+                    wrapper_instructions.push(Instruction::I32Add);
+
+                    // Push length (load i32 from ptr)
+                    wrapper_instructions.push(Instruction::LocalGet(local_idx));
+                    wrapper_instructions.push(Instruction::I32Load(MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+
+                    local_idx += 1;
+                } else {
+                    // Non-string: pass through
+                    wrapper_instructions.push(Instruction::LocalGet(local_idx));
+                    local_idx += 1;
+                }
+            }
+
+            // Call the raw import
+            wrapper_instructions.push(Instruction::Call(raw_func_index));
+
+            // Create a wrapper name that will be used for lookups
+            let wrapper_name = format!("{}_wrapper", func_name);
+
+            tracing::debug!(
+                name = %func_name,
+                wrapper_name = %wrapper_name,
+                params = ?wrapper_params,
+                returns = ?wasm_return,
+                raw_func_index = raw_func_index,
+                function_count = self.wasm_generator.function_count,
+                "Registering HTTP server wrapper function for string expansion"
+            );
+
+            // Register wrapper function
+            let wrapper_index = self.wasm_generator.register_function(
+                &wrapper_name,
+                &wrapper_params,
+                wasm_return,
+                &wrapper_instructions,
+            )?;
+
+            // CRITICAL: Map the original function name to the wrapper index
+            // This ensures that calls to _http_route use the wrapper, not the raw import
+            self.wasm_generator
+                .function_map
+                .insert(func_name.to_string(), wrapper_index);
+
+            // CRITICAL: Also update http_import_indices to point to wrapper
+            // MIR codegen uses http_import_indices for HTTP function lookups
+            self.wasm_generator
+                .http_import_indices
+                .insert(func_name.to_string(), wrapper_index);
+
+            tracing::debug!(
+                name = %func_name,
+                wrapper_index = wrapper_index,
+                "Mapped {} to wrapper function index {} (both function_map and http_import_indices)",
+                func_name,
+                wrapper_index
+            );
         }
 
         Ok(())

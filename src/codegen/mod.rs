@@ -4838,9 +4838,12 @@ impl CodeGenerator {
             &concat_instructions,
         )?;
         // Create aliases for different access patterns
+        // NOTE: Do NOT alias "string.concat" here - that would overwrite the host import
+        // registered in builtin_generator.rs. The host import is preferred because it
+        // handles memory allocation more reliably in the runtime environment.
         if let Some(concat_idx) = self.get_function_index("__string_concat") {
             self.add_function_alias("string_concat", concat_idx);
-            self.add_function_alias("string.concat", concat_idx);
+            // self.add_function_alias("string.concat", concat_idx);  // REMOVED: Use host import instead
             self.add_function_alias("native_string_concat", concat_idx);
         }
 
