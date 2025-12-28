@@ -256,9 +256,9 @@ impl<'a> SpecificationLexer<'a> {
         // Check if this is an empty line or comment-only line
         if let Some(&'\n') = self.peek() {
             // Skip empty lines for indentation purposes - advance to next line and continue
+            // Note: advance() already increments self.line when reading '\n'
             self.advance();
-            self.line += 1;
-            self.column = 1;
+            // DON'T increment line again - advance() already did it
             self.at_line_start = true;
             // Return newline token instead of recursing
             return Ok(Token::simple(TokenKind::Newline, start_location));

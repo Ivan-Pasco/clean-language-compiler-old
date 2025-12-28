@@ -1703,6 +1703,10 @@ impl<'a> TypeInference<'a> {
                         let tast_init = self.infer_expression(init_expr)?;
 
                         // Add constraint that initializer type matches declared type
+                        tracing::debug!(
+                            "DEBUG CONSTRAINT: VariableDecl '{}' at line {} - left={:?}, right={:?}",
+                            name, location.line, tast_init.expr_type, declared_type
+                        );
                         self.add_constraint(TypeConstraint::Equality {
                             left: tast_init.expr_type.clone(),
                             right: declared_type.clone(),
