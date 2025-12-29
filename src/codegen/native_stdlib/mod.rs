@@ -21,7 +21,9 @@ pub mod type_conversions;
 use wasm_encoder::{Instruction, MemArg, ValType};
 
 /// Memory layout constants
-pub const HEAP_START: u32 = 1024;
+/// HEAP_START must be after all static data sections to avoid memory overlap
+/// Static data sections can extend to ~8KB or more, so start heap at 64KB
+pub const HEAP_START: u32 = 65536;
 pub const ALIGNMENT: u32 = 8;
 
 /// String memory layout:

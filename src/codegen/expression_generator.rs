@@ -1193,6 +1193,8 @@ impl CodeGenerator {
         self.generate_expression(object, instructions)?;
 
         // 2. Add property name to string pool and push pointer
+        // add_string_to_pool returns pointer to [i32 length][bytes...]
+        // __json_get_field will handle the length prefix internally
         let key_ptr = self.add_string_to_pool(property);
         instructions.push(Instruction::I32Const(key_ptr as i32));
 

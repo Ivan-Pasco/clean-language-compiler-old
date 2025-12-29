@@ -438,13 +438,16 @@ impl JsonClass {
             // NOTE: Currently using simplified comparison (first byte + length)
             // __memcmp_bytes is available but not integrated yet
             // This optimization works well for typical JSON field names
-            Instruction::LocalGet(9), // key_data_ptr
+            Instruction::LocalGet(9), // key_data_ptr (stored key + 4, already points to bytes)
             Instruction::I32Load8U(wasm_encoder::MemArg {
                 offset: 0,
                 align: 0,
                 memory_index: 0,
             }),
-            Instruction::LocalGet(1), // key_ptr
+            // key_ptr is a length-prefixed string, so skip 4 bytes to get to actual bytes
+            Instruction::LocalGet(1), // key_ptr (points to [length][bytes...])
+            Instruction::I32Const(4), // Skip length prefix
+            Instruction::I32Add,
             Instruction::I32Load8U(wasm_encoder::MemArg {
                 offset: 0,
                 align: 0,

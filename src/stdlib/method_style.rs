@@ -157,12 +157,13 @@ impl MethodStyleManager {
                 self.generate_value_to_string(),
             )?;
 
-            // Integer conversion
-            register_stdlib_function(
+            // Integer conversion - needs extra local for type tag
+            register_stdlib_function_with_locals(
                 codegen,
                 &format!("{type_name}.toInteger"),
                 &[WasmType::I32],    // value pointer
                 Some(WasmType::I32), // integer value
+                &[WasmType::I32],    // local 1: type tag storage
                 self.generate_value_to_integer(),
             )?;
 
@@ -270,23 +271,67 @@ impl MethodStyleManager {
     }
 
     /// Generate WASM for value.isDefined() method
+    /// Handles boxed Any values from JSON parsing
+    /// Memory layout: [type_tag: i32][value: f64 or i32 pointer]
     fn generate_value_is_defined(&self) -> Vec<Instruction> {
         vec![
             // Parameters: value_ptr (0)
-            // Returns: 1 if defined (not null), 0 if null
+            // Returns: 1 if defined (type tag != 0), 0 if null (type tag == 0)
+            //
+            // Boxed Any format from JSON:
+            // - Offset 0: type tag (i32)
+            //   - 0 = null → isNotDefined
+            //   - 1 = false → isDefined
+            //   - 2 = true → isDefined
+            //   - 3 = number → isDefined
+            //   - 4 = string → isDefined
+            //   - 5 = array → isDefined
+            //   - 6 = object → isDefined
+            //
+            // Check for null pointer first
             Instruction::LocalGet(0),
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::I32Const(0), // null pointer = not defined
+            Instruction::Else,
+            // Load type tag from offset 0
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Check if type tag is NOT 0 (null)
             Instruction::I32Const(0),
-            Instruction::I32Ne,
+            Instruction::I32Ne, // type_tag != 0 means defined
+            Instruction::End,
         ]
     }
 
     /// Generate WASM for value.isNotDefined() method
+    /// Handles boxed Any values from JSON parsing
+    /// Memory layout: [type_tag: i32][value: f64 or i32 pointer]
     fn generate_value_is_not_defined(&self) -> Vec<Instruction> {
         vec![
             // Parameters: value_ptr (0)
-            // Returns: 1 if null, 0 if defined
+            // Returns: 1 if null (type tag == 0), 0 if defined
+            //
+            // Check for null pointer first
             Instruction::LocalGet(0),
             Instruction::I32Eqz,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::I32Const(1), // null pointer = not defined
+            Instruction::Else,
+            // Load type tag from offset 0
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Check if type tag is 0 (null)
+            Instruction::I32Eqz, // type_tag == 0 means not defined
+            Instruction::End,
         ]
     }
 
@@ -410,18 +455,64 @@ impl MethodStyleManager {
     }
 
     /// Generate WASM for value.toInteger() method
+    /// Handles boxed Any values from JSON parsing
+    /// Memory layout: [type_tag: i32][value: f64 or i32 pointer]
     fn generate_value_to_integer(&self) -> Vec<Instruction> {
         vec![
             // Parameters: value_ptr (0)
             // Returns: integer value
+            //
+            // Boxed Any format from JSON:
+            // - Offset 0: type tag (i32)
+            //   - 0 = null
+            //   - 1 = false
+            //   - 2 = true
+            //   - 3 = number (f64 at offset 4)
+            //   - 4 = string (string ptr at offset 4)
+            //   - 5 = array
+            //   - 6 = object
+            // - Offset 4: value (f64 for numbers, i32 ptr for others)
 
-            // Load value assuming it's stored as i32
+            // Check for null pointer (safety check)
+            Instruction::LocalGet(0),
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::I32Const(0), // null returns 0
+            Instruction::Else,
+            // Load type tag from offset 0
             Instruction::LocalGet(0),
             Instruction::I32Load(MemArg {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
             }),
+            Instruction::LocalSet(1), // Store type tag in local 1
+            // Check if type tag is 3 (number)
+            Instruction::LocalGet(1),
+            Instruction::I32Const(3),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            // Type is number - load f64 from offset 4 and convert to i32
+            Instruction::LocalGet(0),
+            Instruction::F64Load(MemArg {
+                offset: 4,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::I32TruncF64S, // Convert f64 to i32
+            Instruction::Else,
+            // Check for boolean true (type tag 2)
+            Instruction::LocalGet(1),
+            Instruction::I32Const(2),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::I32Const(1), // true = 1
+            Instruction::Else,
+            // For null/false/other, return 0
+            Instruction::I32Const(0),
+            Instruction::End,
+            Instruction::End,
+            Instruction::End,
         ]
     }
 

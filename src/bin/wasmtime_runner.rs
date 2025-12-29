@@ -7,7 +7,8 @@ use std::sync::Mutex;
 use wasmtime::{Caller, Extern, Linker, Memory, Module, Result, Store};
 
 // Global allocator for dynamic string storage with scope-based arena management
-static NEXT_ALLOCATION_OFFSET: Mutex<usize> = Mutex::new(2048); // Start after static data
+// Start at 64KB to avoid overlapping with static data sections (which can be up to ~8KB or more)
+static NEXT_ALLOCATION_OFFSET: Mutex<usize> = Mutex::new(65536);
 
 // Scope marks for arena-style memory management
 // When entering a scope (loop, function), push current offset

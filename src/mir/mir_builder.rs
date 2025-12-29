@@ -3607,6 +3607,101 @@ impl MirBuilder {
                             }
                             (list_get_symbol, args)
                         }
+                        // CRITICAL FIX: Handle any type's isDefined/isNotDefined/isEmpty/isNotEmpty methods
+                        // These were falling through to the default case which used SymbolId(0) (print function)
+                        // Use NamedFunction since these are stdlib functions registered by name, not in symbol table
+                        (ConcreteType::Any, "isDefined") => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32, // Boolean
+                                expression.location.clone(),
+                            );
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::NamedFunction {
+                                        name: "value.isDefined".to_string(),
+                                        symbol_id: SymbolId(0),
+                                    },
+                                    arguments: vec![MirOperand::Value(receiver_id)],
+                                },
+                                location: expression.location.clone(),
+                            };
+                            self.add_instruction(context, instruction);
+                            return Ok(result_id);
+                        }
+                        (ConcreteType::Any, "isNotDefined") => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32, // Boolean
+                                expression.location.clone(),
+                            );
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::NamedFunction {
+                                        name: "value.isNotDefined".to_string(),
+                                        symbol_id: SymbolId(0),
+                                    },
+                                    arguments: vec![MirOperand::Value(receiver_id)],
+                                },
+                                location: expression.location.clone(),
+                            };
+                            self.add_instruction(context, instruction);
+                            return Ok(result_id);
+                        }
+                        (ConcreteType::Any, "isEmpty") => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32, // Boolean
+                                expression.location.clone(),
+                            );
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::NamedFunction {
+                                        name: "value.isEmpty".to_string(),
+                                        symbol_id: SymbolId(0),
+                                    },
+                                    arguments: vec![MirOperand::Value(receiver_id)],
+                                },
+                                location: expression.location.clone(),
+                            };
+                            self.add_instruction(context, instruction);
+                            return Ok(result_id);
+                        }
+                        (ConcreteType::Any, "isNotEmpty") => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32, // Boolean
+                                expression.location.clone(),
+                            );
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::NamedFunction {
+                                        name: "value.isNotEmpty".to_string(),
+                                        symbol_id: SymbolId(0),
+                                    },
+                                    arguments: vec![MirOperand::Value(receiver_id)],
+                                },
+                                location: expression.location.clone(),
+                            };
+                            self.add_instruction(context, instruction);
+                            return Ok(result_id);
+                        }
                         // For other built-in methods, fall back to treating as instance method
                         _ => {
                             let mut args = vec![MirOperand::Value(receiver_id)];
