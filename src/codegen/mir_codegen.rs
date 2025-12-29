@@ -4724,13 +4724,59 @@ impl MirCodeGenerator<'_> {
         debug_mir!("Unboxing any value to i32");
 
         // The boxed pointer is on the stack
-        // Read value1 at offset 4 (the primary i32 value)
+        // Need to check type tag and handle both integer (tag 1) and number (tag 3) cases
+
+        // Save pointer to a temp local so we can read both tag and value
+        let ptr_local = self.next_local_index;
+        self.next_local_index += 1;
+        self.temp_local_types.insert(ptr_local, ValType::I32);
+
+        self.current_instructions
+            .push(Instruction::LocalSet(ptr_local));
+
+        // Read the type tag at offset 0
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.current_instructions
+            .push(Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }));
+
+        // Check if type tag is 3 (f64 number from JSON parsing)
+        self.current_instructions.push(Instruction::I32Const(3));
+        self.current_instructions.push(Instruction::I32Eq);
+        self.current_instructions
+            .push(Instruction::If(wasm_encoder::BlockType::Result(
+                ValType::I32,
+            )));
+
+        // Type tag is 3 (Number): Read f64 at offset 4 and convert to i32
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.current_instructions
+            .push(Instruction::F64Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 3,
+                memory_index: 0,
+            }));
+        // Convert f64 to i32 (truncate)
+        self.current_instructions.push(Instruction::I32TruncF64S);
+
+        self.current_instructions.push(Instruction::Else);
+
+        // Type tag is not 3: Read i32 at offset 4 directly (type tag 1 = Integer)
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
         self.current_instructions
             .push(Instruction::I32Load(wasm_encoder::MemArg {
                 offset: 4,
                 align: 2,
                 memory_index: 0,
             }));
+
+        self.current_instructions.push(Instruction::End);
 
         Ok(())
     }

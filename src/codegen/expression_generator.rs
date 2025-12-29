@@ -1194,9 +1194,11 @@ impl CodeGenerator {
 
         // 2. Add property name to string pool and push pointer
         // add_string_to_pool returns pointer to [i32 length][bytes...]
-        // __json_get_field will handle the length prefix internally
+        // CRITICAL FIX: __json_get_field expects raw bytes pointer (past length prefix)
+        // to be consistent with MIR codegen which uses load_string_argument_for_print
         let key_ptr = self.add_string_to_pool(property);
-        instructions.push(Instruction::I32Const(key_ptr as i32));
+        // Skip 4-byte length prefix to get to the actual content bytes
+        instructions.push(Instruction::I32Const((key_ptr + 4) as i32));
 
         // 3. Push property name length
         let key_len = property.len() as i32;

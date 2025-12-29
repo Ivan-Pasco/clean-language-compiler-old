@@ -227,6 +227,11 @@ impl JsonClass {
     /// Register JSON access operations for bracket notation support
     /// These functions enable data["field"] and data[0] syntax
     fn register_access_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+        // Get malloc index for boxing compact values
+        let malloc_index = codegen
+            .get_function_index("__malloc")
+            .expect("__malloc must be registered before JSON access functions");
+
         // First register string comparison helper needed by field accessor
         register_stdlib_function_with_locals(
             codegen,
@@ -240,6 +245,7 @@ impl JsonClass {
         // __json_get_field(any_ptr: i32, key_ptr: i32, key_len: i32) -> i32
         // Access a field on a JSON object by string key
         // Returns pointer to field value, or null (0) if not found
+        // NOTE: Handles compact boolean encoding (1=false, 2=true) by boxing them
         register_stdlib_function_with_locals(
             codegen,
             "__json_get_field",
@@ -250,23 +256,29 @@ impl JsonClass {
                 WasmType::I32, // Local 4: i (loop counter)
                 WasmType::I32, // Local 5: current_key_ptr
                 WasmType::I32, // Local 6: current_key_len
-                WasmType::I32, // Local 7: current_value_ptr
+                WasmType::I32, // Local 7: current_value_ptr (raw value from object)
                 WasmType::I32, // Local 8: match result
                 WasmType::I32, // Local 9: key_data_ptr (current key data, skipping length)
+                WasmType::I32, // Local 10: boxed_ptr (for boxing compact values)
             ],
-            self.generate_get_field_instructions(),
+            self.generate_get_field_instructions(malloc_index),
         )?;
 
         // __json_get_index(any_ptr: i32, index: i32) -> i32
         // Access an element on a JSON array by integer index
         // Returns pointer to element, or null (0) if out of bounds
+        // NOTE: Handles compact boolean encoding (1=false, 2=true) by boxing them
         register_stdlib_function_with_locals(
             codegen,
             "__json_get_index",
             &[WasmType::I32, WasmType::I32], // any_ptr, index
             Some(WasmType::I32),             // returns any pointer
-            &[WasmType::I32],                // Local 2: count
-            self.generate_get_index_instructions(),
+            &[
+                WasmType::I32, // Local 2: count
+                WasmType::I32, // Local 3: raw_value (for boxing check)
+                WasmType::I32, // Local 4: boxed_ptr (for boxing compact values)
+            ],
+            self.generate_get_index_instructions(malloc_index),
         )?;
 
         Ok(())
@@ -350,7 +362,8 @@ impl JsonClass {
     /// Generate WASM instructions for __json_get_field
     /// Accesses a field on a JSON object by string key
     /// PRODUCTION IMPLEMENTATION - Proper field lookup with string comparison
-    fn generate_get_field_instructions(&self) -> Vec<Instruction<'static>> {
+    /// CRITICAL: Handles compact boolean encoding (1=false, 2=true) by boxing them
+    fn generate_get_field_instructions(&self, malloc_index: u32) -> Vec<Instruction<'static>> {
         // Parameters:
         // Local 0: object_ptr (i32) - pointer to JSON object
         // Local 1: key_ptr (i32) - pointer to key string CONTENT (raw bytes, already past length prefix)
@@ -362,12 +375,19 @@ impl JsonClass {
         // Local 4: i (i32) - loop counter
         // Local 5: current_key_ptr (i32) - pointer to current key being checked
         // Local 6: current_key_len (i32) - length of current key
-        // Local 7: current_value_ptr (i32) - pointer to current value
+        // Local 7: current_value_ptr (i32) - raw value from object (may be compact encoded)
         // Local 8: match_result (i32) - result from memcmp (0 = match)
         // Local 9: key_data_ptr (i32) - pointer to current key data (skipping length prefix)
+        // Local 10: boxed_ptr (i32) - pointer to boxed value (for compact booleans)
         //
         // Object Memory Layout: [i32 count][i32 key0_ptr][i32 val0_ptr][i32 key1_ptr][i32 val1_ptr]...
         // String Memory Layout: [i32 length][bytes...]
+        //
+        // Compact Encoding (stored directly in object value slots):
+        // 0 = null (returned as-is)
+        // 1 = false (must be boxed to [tag=2][value=0][padding=0])
+        // 2 = true (must be boxed to [tag=2][value=1][padding=0])
+        // >2 = pointer to boxed value (returned as-is)
 
         vec![
             // Check if object_ptr is null
@@ -469,7 +489,7 @@ impl JsonClass {
             Instruction::LocalGet(8), // match_result
             Instruction::I32Eqz,
             Instruction::If(wasm_encoder::BlockType::Empty),
-            // Keys matched! Load and return the corresponding value
+            // Keys matched! Load the corresponding value
             // Value offset: object_ptr + 4 + (i * 8) + 4
             Instruction::LocalGet(0), // object_ptr
             Instruction::I32Const(4), // Skip count field
@@ -485,7 +505,87 @@ impl JsonClass {
                 align: 2,
                 memory_index: 0,
             }),
-            // Return this value pointer
+            Instruction::LocalSet(7), // Store raw value in current_value_ptr
+            // CRITICAL FIX: Check for compact boolean encoding and box if needed
+            // Compact encoding: 0=null, 1=false, 2=true
+            // Check if value == 1 (compact false)
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Value is compact false (1) - allocate and box as boolean
+            Instruction::I32Const(12), // 12 bytes for boxed boolean
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(10), // Store in boxed_ptr
+            // Store tag=2 (Boolean) at offset 0
+            Instruction::LocalGet(10),
+            Instruction::I32Const(2), // AnyTypeTag::Boolean
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store value=0 (false) at offset 4
+            Instruction::LocalGet(10),
+            Instruction::I32Const(0), // false = 0
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store padding=0 at offset 8
+            Instruction::LocalGet(10),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return boxed boolean pointer
+            Instruction::LocalGet(10),
+            Instruction::Else,
+            // Check if value == 2 (compact true)
+            Instruction::LocalGet(7),
+            Instruction::I32Const(2),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Value is compact true (2) - allocate and box as boolean
+            Instruction::I32Const(12), // 12 bytes for boxed boolean
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(10), // Store in boxed_ptr
+            // Store tag=2 (Boolean) at offset 0
+            Instruction::LocalGet(10),
+            Instruction::I32Const(2), // AnyTypeTag::Boolean
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store value=1 (true) at offset 4
+            Instruction::LocalGet(10),
+            Instruction::I32Const(1), // true = 1
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store padding=0 at offset 8
+            Instruction::LocalGet(10),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return boxed boolean pointer
+            Instruction::LocalGet(10),
+            Instruction::Else,
+            // Value is not compact encoded (0=null or >2=pointer)
+            // Return as-is
+            Instruction::LocalGet(7),
+            Instruction::End, // End inner if (value == 2)
+            Instruction::End, // End outer if (value == 1)
+            // Now we have the (possibly boxed) value on stack
             Instruction::Br(2), // Exit both loop and block with value on stack
             Instruction::End,
             // No match - increment counter and continue
@@ -505,15 +605,24 @@ impl JsonClass {
     /// Generate WASM instructions for __json_get_index
     /// Accesses an element on a JSON array by integer index
     /// PRODUCTION IMPLEMENTATION - Proper bounds checking and element access
-    fn generate_get_index_instructions(&self) -> Vec<Instruction<'static>> {
+    /// CRITICAL: Handles compact boolean encoding (1=false, 2=true) by boxing them
+    fn generate_get_index_instructions(&self, malloc_index: u32) -> Vec<Instruction<'static>> {
         // Parameters:
         // Local 0: array_ptr (i32) - pointer to JSON array
         // Local 1: index (i32) - array index to access
         //
         // Working Locals:
         // Local 2: count (i32) - array length
+        // Local 3: raw_value (i32) - raw value from array (may be compact encoded)
+        // Local 4: boxed_ptr (i32) - pointer to boxed value (for compact booleans)
         //
         // Array Memory Layout: [i32 count][i32 elem0_ptr][i32 elem1_ptr][i32 elem2_ptr]...
+        //
+        // Compact Encoding (stored directly in array element slots):
+        // 0 = null (returned as-is)
+        // 1 = false (must be boxed to [tag=2][value=0][padding=0])
+        // 2 = true (must be boxed to [tag=2][value=1][padding=0])
+        // >2 = pointer to boxed value (returned as-is)
         //
         // Returns: Pointer to element at index, or null (0) if out of bounds
 
@@ -545,7 +654,7 @@ impl JsonClass {
             // Combine both checks with AND
             Instruction::I32And,
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // Valid index - load and return element
+            // Valid index - load element
             // Element offset: array_ptr + 4 + (index * 4)
             // +4 to skip the count field
             // * 4 because each element pointer is 4 bytes
@@ -561,7 +670,87 @@ impl JsonClass {
                 align: 2,
                 memory_index: 0,
             }),
-            // Element pointer is now on stack - return it
+            Instruction::LocalSet(3), // Store raw value
+            // CRITICAL FIX: Check for compact boolean encoding and box if needed
+            // Compact encoding: 0=null, 1=false, 2=true
+            // Check if value == 1 (compact false)
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Value is compact false (1) - allocate and box as boolean
+            Instruction::I32Const(12), // 12 bytes for boxed boolean
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(4), // Store in boxed_ptr
+            // Store tag=2 (Boolean) at offset 0
+            Instruction::LocalGet(4),
+            Instruction::I32Const(2), // AnyTypeTag::Boolean
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store value=0 (false) at offset 4
+            Instruction::LocalGet(4),
+            Instruction::I32Const(0), // false = 0
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store padding=0 at offset 8
+            Instruction::LocalGet(4),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return boxed boolean pointer
+            Instruction::LocalGet(4),
+            Instruction::Else,
+            // Check if value == 2 (compact true)
+            Instruction::LocalGet(3),
+            Instruction::I32Const(2),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Value is compact true (2) - allocate and box as boolean
+            Instruction::I32Const(12), // 12 bytes for boxed boolean
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(4), // Store in boxed_ptr
+            // Store tag=2 (Boolean) at offset 0
+            Instruction::LocalGet(4),
+            Instruction::I32Const(2), // AnyTypeTag::Boolean
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store value=1 (true) at offset 4
+            Instruction::LocalGet(4),
+            Instruction::I32Const(1), // true = 1
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store padding=0 at offset 8
+            Instruction::LocalGet(4),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return boxed boolean pointer
+            Instruction::LocalGet(4),
+            Instruction::Else,
+            // Value is not compact encoded (0=null or >2=pointer)
+            // Return as-is
+            Instruction::LocalGet(3),
+            Instruction::End, // End inner if (value == 2)
+            Instruction::End, // End outer if (value == 1)
+            // Now we have the (possibly boxed) value on stack - return it
             Instruction::Else,
             // Invalid index (negative or >= count) - return null
             Instruction::I32Const(0),
@@ -1614,7 +1803,8 @@ impl JsonClass {
             Instruction::I32Add,
             Instruction::LocalSet(10), // depth++
             Instruction::End,
-            // Check for '}' or ']'
+            // CRITICAL FIX: Check for '}' or ']' at depth 0 FIRST (before decrementing)
+            // This ensures we exit only for outer braces, not inner ones
             Instruction::LocalGet(4),
             Instruction::I32Const(125), // '}'
             Instruction::I32Eq,
@@ -1623,20 +1813,11 @@ impl JsonClass {
             Instruction::I32Eq,
             Instruction::I32Or,
             Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(0),
-            Instruction::I32GtU,
-            Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::LocalGet(10),
-            Instruction::I32Const(1),
-            Instruction::I32Sub,
-            Instruction::LocalSet(10), // depth--
-            Instruction::End,
-            Instruction::End,
-            // At depth 0, check for ',' or '}'
+            // Is this a closing brace at depth 0? If so, exit
             Instruction::LocalGet(10),
             Instruction::I32Eqz,
             Instruction::If(wasm_encoder::BlockType::Empty),
+            // depth is 0, this is an outer brace - check for ',' or '}' exit
             Instruction::LocalGet(4),
             Instruction::I32Const(44), // ','
             Instruction::I32Eq,
@@ -1644,7 +1825,23 @@ impl JsonClass {
             Instruction::I32Const(125), // '}'
             Instruction::I32Eq,
             Instruction::I32Or,
-            Instruction::BrIf(2), // Exit skip loop
+            Instruction::BrIf(3), // Exit skip block (Br(3) from inside 2 Ifs + Loop = Block)
+            Instruction::Else,
+            // depth > 0, this is an inner closing brace - decrement depth
+            Instruction::LocalGet(10),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::LocalSet(10), // depth--
+            Instruction::End,
+            Instruction::End,
+            // At depth 0, check for ','
+            Instruction::LocalGet(10),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(44), // ','
+            Instruction::I32Eq,
+            Instruction::BrIf(2), // Exit skip loop for comma
             Instruction::End,
             Instruction::Br(0), // Continue skip loop
             Instruction::End,   // End skip loop
@@ -1730,6 +1927,70 @@ impl JsonClass {
             Instruction::Br(0),
             Instruction::End,
             Instruction::End,
+            // CRITICAL FIX: Skip comma separator between key-value pairs
+            // After parsing a value, we might be at ',' before the next key
+            // Check if current char is ',' and skip it
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::I32Const(44), // ','
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Skip the comma
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            // Skip whitespace after comma
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(32), // space
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(9), // tab
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(10), // newline
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(13), // return
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1), // Exit if not whitespace
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            Instruction::End, // End comma check
             // Parse key (must be string starting with '"')
             // Skip opening '"'
             Instruction::LocalGet(3),
@@ -2345,7 +2606,36 @@ impl JsonClass {
             Instruction::I32Const(1),
             Instruction::I32Add,
             Instruction::LocalSet(3),
-            // Store string pointer in object
+            // CRITICAL FIX: Box the string as an any type value
+            // Allocate 12 bytes for boxed structure: [tag=4][str_ptr][padding]
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(12), // boxed_ptr in local 12 (temp)
+            // Store type tag 4 (String) at offset 0
+            Instruction::LocalGet(12),
+            Instruction::I32Const(4), // AnyTypeTag::String
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store string pointer at offset 4
+            Instruction::LocalGet(12),
+            Instruction::LocalGet(11), // str_ptr
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store padding=0 at offset 8
+            Instruction::LocalGet(12),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store boxed pointer in object (not raw str_ptr)
             Instruction::LocalGet(6), // object_ptr
             Instruction::I32Const(4),
             Instruction::I32Add,
@@ -2355,7 +2645,7 @@ impl JsonClass {
             Instruction::I32Add,
             Instruction::I32Const(4),
             Instruction::I32Add,
-            Instruction::LocalGet(11), // str_ptr
+            Instruction::LocalGet(12), // boxed_ptr (not str_ptr)
             Instruction::I32Store(wasm_encoder::MemArg {
                 offset: 0,
                 align: 2,
@@ -2528,36 +2818,44 @@ impl JsonClass {
             Instruction::I32Add,
             Instruction::LocalSet(10),
             Instruction::End,
+            // CRITICAL FIX: Check for '}' or ']' - handle depth correctly
             Instruction::LocalGet(4),
-            Instruction::I32Const(125),
+            Instruction::I32Const(125), // '}'
             Instruction::I32Eq,
             Instruction::LocalGet(4),
-            Instruction::I32Const(93),
+            Instruction::I32Const(93), // ']'
             Instruction::I32Eq,
             Instruction::I32Or,
             Instruction::If(wasm_encoder::BlockType::Empty),
+            // Is this at depth 0? If so, exit for outer brace
             Instruction::LocalGet(10),
-            Instruction::I32Const(0),
-            Instruction::I32GtU,
+            Instruction::I32Eqz,
             Instruction::If(wasm_encoder::BlockType::Empty),
+            // depth is 0, check for ',' or '}' to exit
+            Instruction::LocalGet(4),
+            Instruction::I32Const(44), // ','
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(125), // '}'
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::BrIf(3), // Exit skip block (Br(3) from inside 2 Ifs + Loop = Block)
+            Instruction::Else,
+            // depth > 0, decrement for inner closing brace
             Instruction::LocalGet(10),
             Instruction::I32Const(1),
             Instruction::I32Sub,
-            Instruction::LocalSet(10),
+            Instruction::LocalSet(10), // depth--
             Instruction::End,
             Instruction::End,
-            // At depth 0, check for ',' or '}'
+            // At depth 0, check for ','
             Instruction::LocalGet(10),
             Instruction::I32Eqz,
             Instruction::If(wasm_encoder::BlockType::Empty),
             Instruction::LocalGet(4),
-            Instruction::I32Const(44),
+            Instruction::I32Const(44), // ','
             Instruction::I32Eq,
-            Instruction::LocalGet(4),
-            Instruction::I32Const(125),
-            Instruction::I32Eq,
-            Instruction::I32Or,
-            Instruction::BrIf(2),
+            Instruction::BrIf(2), // Exit skip loop for comma
             Instruction::End,
             Instruction::Br(0),
             Instruction::End,
@@ -3274,7 +3572,36 @@ impl JsonClass {
             Instruction::I32Const(1),
             Instruction::I32Add,
             Instruction::LocalSet(3),
-            // Store string pointer in array
+            // CRITICAL FIX: Box the string as an any type value
+            // Allocate 12 bytes for boxed structure: [tag=4][str_ptr][padding]
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(12), // boxed_ptr in local 12 (temp)
+            // Store type tag 4 (String) at offset 0
+            Instruction::LocalGet(12),
+            Instruction::I32Const(4), // AnyTypeTag::String
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store string pointer at offset 4
+            Instruction::LocalGet(12),
+            Instruction::LocalGet(11), // str_ptr
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store padding=0 at offset 8
+            Instruction::LocalGet(12),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store boxed pointer in array (not raw str_ptr)
             Instruction::LocalGet(6), // array_ptr
             Instruction::I32Const(4),
             Instruction::I32Add,
@@ -3282,7 +3609,7 @@ impl JsonClass {
             Instruction::I32Const(4),
             Instruction::I32Mul,
             Instruction::I32Add,
-            Instruction::LocalGet(11), // str_ptr
+            Instruction::LocalGet(12), // boxed_ptr (not str_ptr)
             Instruction::I32Store(wasm_encoder::MemArg {
                 offset: 0,
                 align: 2,
