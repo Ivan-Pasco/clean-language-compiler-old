@@ -3336,6 +3336,60 @@ impl MirBuilder {
 
                             return Ok(result_id);
                         }
+                        // Any to Integer conversion - unbox and convert to i32
+                        // Handles both Integer (tag 1) and Number (tag 3) boxed values
+                        (ConcreteType::Any, "toInteger") => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            // Register the result as i32
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32,
+                                expression.location.clone(),
+                            );
+
+                            // Use UnboxAnyToI32 to extract the integer value
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::UnboxAnyToI32 {
+                                    value: MirOperand::Value(receiver_id),
+                                },
+                                location: expression.location.clone(),
+                            };
+
+                            self.add_instruction(context, instruction);
+
+                            return Ok(result_id);
+                        }
+                        // Any to Number conversion - unbox and convert to f64
+                        // Handles both Integer (tag 1) and Number (tag 3) boxed values
+                        (ConcreteType::Any, "toNumber") => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            // Register the result as f64
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::F64,
+                                expression.location.clone(),
+                            );
+
+                            // Use UnboxAnyToF64 to extract the number value
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::UnboxAnyToF64 {
+                                    value: MirOperand::Value(receiver_id),
+                                },
+                                location: expression.location.clone(),
+                            };
+
+                            self.add_instruction(context, instruction);
+
+                            return Ok(result_id);
+                        }
                         // Number to Integer conversion (f64 -> i32)
                         (ConcreteType::Number, "toInteger") => {
                             let result_id = ValueId(context.function.next_value_id);
@@ -4080,37 +4134,18 @@ impl MirBuilder {
                 // For Any type (JSON/dynamic objects), use AnyGetField instead of GetElementPtr
                 if matches!(object.expr_type, ConcreteType::Any) {
                     // Any type: generate AnyGetField operation
-                    // Create a string constant for the property name as the key
-                    let key_result_id = ValueId(context.function.next_value_id);
-                    context.function.next_value_id += 1;
-
                     // Get string pool index for the property name
                     let string_index = self.get_string_index(property_name.clone());
 
-                    // Register key as i32 local (string pointers are i32)
-                    self.register_temp_local(
-                        context,
-                        key_result_id,
-                        MirType::I32,
-                        expression.location.clone(),
-                    );
-
-                    // Create Copy instruction to load the string constant
-                    let key_instruction = MirInstruction {
-                        dest: Some(key_result_id),
-                        operation: MirOperation::Copy {
-                            source: MirOperand::Constant(MirConstant::String(string_index)),
-                        },
-                        location: expression.location.clone(),
-                    };
-                    self.add_instruction(context, key_instruction);
-
-                    // Generate AnyGetField operation
+                    // CRITICAL FIX: Pass string constant directly to AnyGetField
+                    // Do NOT create an intermediate I32 variable - this causes load_string_argument_for_print
+                    // to mistakenly call int_to_string instead of expanding the string properly.
+                    // Generate AnyGetField operation with constant key directly
                     let instruction = MirInstruction {
                         dest: Some(result_id),
                         operation: MirOperation::AnyGetField {
                             object: MirOperand::Value(object_id),
-                            key: MirOperand::Value(key_result_id),
+                            key: MirOperand::Constant(MirConstant::String(string_index)),
                         },
                         location: expression.location.clone(),
                     };

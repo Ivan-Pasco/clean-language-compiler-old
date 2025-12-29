@@ -353,7 +353,8 @@ impl JsonClass {
     fn generate_get_field_instructions(&self) -> Vec<Instruction<'static>> {
         // Parameters:
         // Local 0: object_ptr (i32) - pointer to JSON object
-        // Local 1: key_ptr (i32) - pointer to key string data (raw bytes, NOT length-prefixed)
+        // Local 1: key_ptr (i32) - pointer to key string CONTENT (raw bytes, already past length prefix)
+        //          NOTE: MIR codegen uses load_string_argument_for_print which skips the 4-byte length prefix
         // Local 2: key_len (i32) - length of key string
         //
         // Working Locals:
@@ -444,10 +445,10 @@ impl JsonClass {
                 align: 0,
                 memory_index: 0,
             }),
-            // key_ptr is a length-prefixed string, so skip 4 bytes to get to actual bytes
-            Instruction::LocalGet(1), // key_ptr (points to [length][bytes...])
-            Instruction::I32Const(4), // Skip length prefix
-            Instruction::I32Add,
+            // CRITICAL FIX: MIR codegen uses load_string_argument_for_print which already
+            // skips the 4-byte length prefix. key_ptr already points directly to the bytes.
+            // DO NOT add 4 here - that was causing us to read garbage memory.
+            Instruction::LocalGet(1), // key_ptr (already points to bytes, NOT length-prefixed)
             Instruction::I32Load8U(wasm_encoder::MemArg {
                 offset: 0,
                 align: 0,
