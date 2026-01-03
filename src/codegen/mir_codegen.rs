@@ -1403,21 +1403,31 @@ impl MirCodeGenerator<'_> {
                         self.find_loop_increment_block(function, *true_block, block_id);
 
                     if let Some(increment_id) = increment_block_id {
-                        if let Some(increment_block) = function.blocks.get(&increment_id) {
-                            debug_mir!(
-                                "DEBUG LOOP: Found increment block {:?} that jumps back to header {:?}",
-                                increment_id, block_id
-                            );
+                        // CRITICAL FIX: Check if increment block was already generated
+                        // This happens when a nested if statement's continuation is the same
+                        // as the increment block (e.g., while loop with if inside).
+                        // The if's continuation handling may have already generated this block.
+                        if !generated.contains(&increment_id) {
+                            if let Some(increment_block) = function.blocks.get(&increment_id) {
+                                debug_mir!(
+                                    "DEBUG LOOP: Found increment block {:?} that jumps back to header {:?}",
+                                    increment_id, block_id
+                                );
 
-                            // Generate increment block instructions INSIDE the loop
-                            for instruction in &increment_block.instructions {
-                                self.generate_instruction(instruction)?;
+                                // Generate increment block instructions INSIDE the loop
+                                for instruction in &increment_block.instructions {
+                                    self.generate_instruction(instruction)?;
+                                }
+                                generated.insert(increment_id);
                             }
-                            generated.insert(increment_id);
-
-                            // Add br 0 to jump back to loop header
-                            self.current_instructions.push(Instruction::Br(0));
+                        } else {
+                            debug_mir!(
+                                "DEBUG LOOP: Increment block {:?} already generated (by nested if continuation), skipping",
+                                increment_id
+                            );
                         }
+                        // Always add br 0 to jump back to loop header (regardless of whether we generated the block)
+                        self.current_instructions.push(Instruction::Br(0));
                     } else {
                         // No separate increment block - check if body jumps directly back to header
                         if let Some(body_block) = function.blocks.get(true_block) {
