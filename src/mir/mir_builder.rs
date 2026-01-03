@@ -2696,6 +2696,48 @@ impl MirBuilder {
                     }
                 };
 
+                // CRITICAL FIX: Handle standalone toString(any) function calls
+                // When calling toString(value) where value is Any type, we need to use
+                // the AnyToString operation for proper runtime type dispatch
+                if matches!(function_name_opt.as_deref(), Some("toString"))
+                    && arguments.len() == 1
+                    && matches!(arguments[0].expr_type, ConcreteType::Any)
+                {
+                    // Build the argument expression
+                    let arg_id = self.build_expression(context, &arguments[0])?;
+
+                    // Allocate result ValueId
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    // Register the result as Ptr(U8) to distinguish string pointers from Any
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        MirType::Ptr(Box::new(MirType::U8)),
+                        expression.location.clone(),
+                    );
+
+                    // Generate AnyToString operation for runtime type dispatch
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::AnyToString {
+                            value: MirOperand::Value(arg_id),
+                        },
+                        location: expression.location.clone(),
+                    };
+
+                    self.add_instruction(context, instruction);
+
+                    trace!(
+                        result_id = ?result_id,
+                        arg_id = ?arg_id,
+                        "toString(any) with AnyToString operation"
+                    );
+
+                    return Ok(result_id);
+                }
+
                 // Build argument operands
                 let mut mir_arguments = Vec::new();
 
@@ -3097,6 +3139,42 @@ impl MirBuilder {
                         result_id = ?result_id,
                         receiver_id = ?receiver_id,
                         "Any.toString() with AnyToString operation (early detection)"
+                    );
+
+                    return Ok(result_id);
+                }
+
+                // CRITICAL FIX: Handle Any.toInteger() EARLY for chained calls
+                // For chained calls like c.get().toInteger() where c.get() returns Any,
+                // the method_symbol might be non-zero, but we need to use UnboxAnyToI32 operation
+                if matches!(&receiver_actual_type, ConcreteType::Any) && method_name == "toInteger"
+                {
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    // Register the result as i32
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        MirType::I32,
+                        expression.location.clone(),
+                    );
+
+                    // Use UnboxAnyToI32 to extract the integer value
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::UnboxAnyToI32 {
+                            value: MirOperand::Value(receiver_id),
+                        },
+                        location: expression.location.clone(),
+                    };
+
+                    self.add_instruction(context, instruction);
+
+                    trace!(
+                        result_id = ?result_id,
+                        receiver_id = ?receiver_id,
+                        "Any.toInteger() with UnboxAnyToI32 operation (early detection)"
                     );
 
                     return Ok(result_id);
@@ -3660,6 +3738,56 @@ impl MirBuilder {
                                 args.push(MirOperand::Value(arg_id));
                             }
                             (list_get_symbol, args)
+                        }
+                        // CRITICAL FIX: Handle Any.get() method for JSON field access
+                        // This must generate AnyGetField operation, not a regular method call
+                        (ConcreteType::Any, "get") => {
+                            // Get the key argument (should be a string)
+                            if arguments.len() != 1 {
+                                return Err(vec![CompilerError::validation_error(
+                                    format!(
+                                        "any.get() expects 1 argument, got {}",
+                                        arguments.len()
+                                    ),
+                                    expression.location.clone(),
+                                )]);
+                            }
+
+                            let key_arg = &arguments[0];
+                            let key_id = self.build_expression(context, key_arg)?;
+
+                            // Allocate result ValueId
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            // Result is also Any type
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::Any,
+                                expression.location.clone(),
+                            );
+
+                            // Generate AnyGetField operation
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::AnyGetField {
+                                    object: MirOperand::Value(receiver_id),
+                                    key: MirOperand::Value(key_id),
+                                },
+                                location: expression.location.clone(),
+                            };
+
+                            self.add_instruction(context, instruction);
+
+                            trace!(
+                                result_id = ?result_id,
+                                receiver_id = ?receiver_id,
+                                key_id = ?key_id,
+                                "Any.get() with AnyGetField operation"
+                            );
+
+                            return Ok(result_id);
                         }
                         // CRITICAL FIX: Handle any type's isDefined/isNotDefined/isEmpty/isNotEmpty methods
                         // These were falling through to the default case which used SymbolId(0) (print function)
