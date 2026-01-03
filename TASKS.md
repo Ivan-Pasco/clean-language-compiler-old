@@ -1,5 +1,69 @@
 # Clean Language Compiler - Implementation Tasks
 
+## 🟡 OPEN: Boolean toBoolean().toString() Display Issue
+
+**Priority**: MEDIUM - Display formatting issue
+**Discovered**: December 29, 2025
+**Status**: 🟡 OPEN
+
+### Issue
+When calling `toBoolean().toString()` on JSON parsed values, the output contains excessive whitespace/garbage characters instead of "true" or "false".
+
+### Reproduction
+```clean
+string j1 = "{\"bool\":true}"
+any p1 = json.tryTextToData(j1)
+printl("bool: " + p1.bool.toBoolean().toString())
+// Expected: "bool: true"
+// Actual: "bool: " followed by hundreds of spaces then random text
+```
+
+### Observed Behavior
+Output shows:
+```
+  bool:
+```
+
+### Likely Root Cause
+The `toBoolean()` method may be returning an incorrect pointer or value that when passed to `toString()` reads memory beyond the intended boolean string.
+
+### Files to Investigate
+- `src/stdlib/json_class.rs` - JSON boolean parsing
+- `src/codegen/expression_generator.rs` - `toBoolean()` method generation
+- `src/codegen/builtin_generator.rs` - `bool_to_string` implementation
+
+---
+
+## ✅ RESOLVED: JSON Field Access After Nested Objects
+
+**Priority**: CRITICAL
+**Discovered**: December 29, 2025
+**Resolved**: December 29, 2025 (v0.20.18)
+**Status**: ✅ COMPLETE
+
+### Issue
+Fields appearing AFTER nested objects in JSON could not be accessed. For example:
+```clean
+string json = "{\"a\":{\"x\":1},\"b\":\"value\"}"
+any p = json.tryTextToData(json)
+printl(p.b.toString())  // Returns undefined instead of "value"
+```
+
+### Root Cause
+Wrong branch target in skip loops. `BrIf(4)` was targeting the counting/parsing Loop instead of the skip Block:
+- From inside depth==0 If: Br(3) correctly exits skip Block
+- BrIf(4) was continuing the loop instead of exiting
+
+### Solution
+Changed `BrIf(4)` to `BrIf(3)` in two locations:
+- Line 1828 (counting pass skip loop)
+- Line 2842 (parsing pass skip loop)
+
+### Files Modified
+- `src/stdlib/json_class.rs` (lines 1828, 2842)
+
+---
+
 ## ✅ RESOLVED: JSON Parsing - Field Access Returns Default Values
 
 **Priority**: CRITICAL - Blocks all JSON-based functionality
@@ -118,21 +182,27 @@ Implement complete JSON parser in WASM (pure WASM design, no runtime dependency)
 
 ---
 
-## CURRENT STATUS (December 15, 2025 - Post-Remediation)
+## CURRENT STATUS (December 29, 2025)
 
 ### COMPILATION vs EXECUTION REALITY
 
 | Metric | Status | Notes |
 |--------|--------|-------|
 | **Compilation Success** | 100% | All .cln files compile successfully |
-| **WASM Validation** | 100% (1458/1458) | All files pass wasm-validate |
-| **Execution Success** | **98% (316/322)** | Fixed list.add, polymorphism tests |
+| **WASM Validation** | 100% | All files pass wasm-validate |
+| **Execution Success** | ~98% | Most tests execute correctly |
 | **Unit Tests** | 374 passing | All unit tests pass |
 | **todo!() Macros** | 0 | Build protection active |
 | **Build Warnings** | 0 | Clean build |
 
-**Current Version**: 0.17.2
-**Assessment Date**: December 15, 2025
+**Current Version**: 0.20.21
+**Assessment Date**: January 3, 2026
+
+### Recent Fixes (v0.20.15 - v0.20.18)
+- ✅ v0.20.18: JSON field access after nested objects (BrIf branch target fix)
+- ✅ v0.20.17: JSON nested objects parsing (skip loop depth tracking)
+- ✅ v0.20.16: any type method call dispatch for isDefined/isNotDefined
+- ✅ v0.20.15: Lexer line number accuracy in error reporting
 
 ### EXECUTION TEST RESULTS (December 15, 2025)
 
@@ -436,7 +506,7 @@ Per CLAUDE.md mandate:
 
 ---
 
-**Last Updated**: December 14, 2025
-**Current Version**: 0.17.2
-**Status**: IMPROVED - All critical placeholders fixed, build warnings eliminated
-**Remaining**: 236 #[allow(dead_code)] annotations (audit ongoing), 12 TODO comments (documented limitations)
+**Last Updated**: January 3, 2026
+**Current Version**: 0.20.21
+**Status**: IMPROVED - JSON parsing fully functional, nested objects supported, while loop bug verified fixed
+**Remaining**: 1 open issue (boolean toBoolean().toString() display), 236 #[allow(dead_code)] annotations (audit ongoing)
