@@ -3740,9 +3740,9 @@ impl MirBuilder {
                             (list_get_symbol, args)
                         }
                         // CRITICAL FIX: Handle Any.get() method for JSON field access
-                        // This must generate AnyGetField operation, not a regular method call
+                        // This must generate AnyGetField or AnyGetIndex based on argument type
                         (ConcreteType::Any, "get") => {
-                            // Get the key argument (should be a string)
+                            // Get the key/index argument
                             if arguments.len() != 1 {
                                 return Err(vec![CompilerError::validation_error(
                                     format!(
@@ -3753,8 +3753,8 @@ impl MirBuilder {
                                 )]);
                             }
 
-                            let key_arg = &arguments[0];
-                            let key_id = self.build_expression(context, key_arg)?;
+                            let arg = &arguments[0];
+                            let arg_id = self.build_expression(context, arg)?;
 
                             // Allocate result ValueId
                             let result_id = ValueId(context.function.next_value_id);
@@ -3768,13 +3768,27 @@ impl MirBuilder {
                                 expression.location.clone(),
                             );
 
-                            // Generate AnyGetField operation
+                            // Check argument type to determine operation
+                            let operation = match &arg.expr_type {
+                                ConcreteType::Integer | ConcreteType::Number => {
+                                    // Integer/Number index: use AnyGetIndex for array access
+                                    MirOperation::AnyGetIndex {
+                                        array: MirOperand::Value(receiver_id),
+                                        index: MirOperand::Value(arg_id),
+                                    }
+                                }
+                                _ => {
+                                    // String or other type: use AnyGetField for object field access
+                                    MirOperation::AnyGetField {
+                                        object: MirOperand::Value(receiver_id),
+                                        key: MirOperand::Value(arg_id),
+                                    }
+                                }
+                            };
+
                             let instruction = MirInstruction {
                                 dest: Some(result_id),
-                                operation: MirOperation::AnyGetField {
-                                    object: MirOperand::Value(receiver_id),
-                                    key: MirOperand::Value(key_id),
-                                },
+                                operation,
                                 location: expression.location.clone(),
                             };
 
@@ -3783,8 +3797,9 @@ impl MirBuilder {
                             trace!(
                                 result_id = ?result_id,
                                 receiver_id = ?receiver_id,
-                                key_id = ?key_id,
-                                "Any.get() with AnyGetField operation"
+                                arg_id = ?arg_id,
+                                arg_type = ?arg.expr_type,
+                                "Any.get() dispatched based on argument type"
                             );
 
                             return Ok(result_id);

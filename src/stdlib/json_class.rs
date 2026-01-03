@@ -1000,6 +1000,39 @@ impl JsonClass {
             Instruction::LocalGet(1),
             Instruction::LocalGet(2),
             Instruction::Call(parse_object_index),
+            // CRITICAL FIX: Box the object result with AnyTypeTag::Object (6)
+            // Save raw object pointer to local 5
+            Instruction::LocalSet(5),
+            // Allocate 12 bytes for boxed any
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(9), // boxed_ptr in local 9
+            // Store type tag 6 (Object) at offset 0
+            Instruction::LocalGet(9),
+            Instruction::I32Const(6), // AnyTypeTag::Object = 6
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store object pointer at offset 4
+            Instruction::LocalGet(9),
+            Instruction::LocalGet(5), // raw object pointer
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store 0 at offset 8
+            Instruction::LocalGet(9),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return boxed object pointer
+            Instruction::LocalGet(9),
             Instruction::Else,
             // Check for '[' (91) - array
             Instruction::LocalGet(4),
@@ -1019,6 +1052,39 @@ impl JsonClass {
             Instruction::LocalGet(1),
             Instruction::LocalGet(2),
             Instruction::Call(parse_array_index),
+            // CRITICAL FIX: Box the array result with AnyTypeTag::List (5)
+            // Save raw array pointer to local 5
+            Instruction::LocalSet(5),
+            // Allocate 12 bytes for boxed any
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(9), // boxed_ptr in local 9
+            // Store type tag 5 (List) at offset 0
+            Instruction::LocalGet(9),
+            Instruction::I32Const(5), // AnyTypeTag::List = 5
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store array pointer at offset 4
+            Instruction::LocalGet(9),
+            Instruction::LocalGet(5), // raw array pointer
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store 0 at offset 8
+            Instruction::LocalGet(9),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Return boxed array pointer
+            Instruction::LocalGet(9),
             Instruction::Else,
             // Check for '"' (34) - string
             Instruction::LocalGet(4),
