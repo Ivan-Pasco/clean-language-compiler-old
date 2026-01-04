@@ -1,0 +1,32 @@
+// Regression test for JSON array .get() bug
+// Tests that accessing array elements by index works correctly for all indices
+// See: FIX_ARRAY_GET_BUG.md for original bug description
+
+start()
+	// Test 1: Simple array with objects
+	string jsonStr = "{\"rows\":[{\"slug\":\"first\",\"read_time\":5},{\"slug\":\"second\",\"read_time\":6}]}"
+	any parsed = json.tryTextToData(jsonStr)
+	any rows = parsed.rows
+
+	any item0 = rows.get(0)
+	any slug0 = item0.slug
+	printl("Test 1 - item0.slug: " + slug0.toString())
+
+	any item1 = rows.get(1)
+	any slug1 = item1.slug
+	printl("Test 1 - item1.slug: " + slug1.toString())
+
+	// Test 2: Nested data structure (like database response)
+	string nestedJson = "{\"data\":{\"count\":4,\"rows\":[{\"slug\":\"a\",\"v\":1},{\"slug\":\"b\",\"v\":2},{\"slug\":\"c\",\"v\":3},{\"slug\":\"d\",\"v\":4}]}}"
+	any data = json.tryTextToData(nestedJson)
+	any dataObj = data.data
+	any nestedRows = dataObj.rows
+
+	integer i = 0
+	while i < 4
+		any article = nestedRows.get(i)
+		any slugField = article.slug
+		printl("Test 2 - index " + i.toString() + " slug: " + slugField.toString())
+		i = i + 1
+
+	printl("All JSON array .get() tests passed")

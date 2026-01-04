@@ -5129,6 +5129,13 @@ impl MirCodeGenerator<'_> {
         );
         module.section(&global_section);
 
+        // Export the heap pointer global so host can read it for debugging
+        self.wasm_generator.export_section.export(
+            "__heap_ptr",
+            wasm_encoder::ExportKind::Global,
+            0,
+        );
+
         // CRITICAL FIX: Always export memory for WASM host interop
         // Memory must be exported for plugins and any host that needs to read/write WASM memory
         self.wasm_generator
