@@ -1831,6 +1831,8 @@ impl JsonClass {
             // Skip past this key-value pair to find next comma or '}'
             Instruction::I32Const(0),
             Instruction::LocalSet(10), // depth = 0 (for nested structures)
+            Instruction::I32Const(0),
+            Instruction::LocalSet(12), // in_string = 0 (for tracking quoted strings)
             Instruction::Block(wasm_encoder::BlockType::Empty),
             Instruction::Loop(wasm_encoder::BlockType::Empty),
             // Check bounds
@@ -1855,6 +1857,21 @@ impl JsonClass {
             Instruction::I32Const(1),
             Instruction::I32Add,
             Instruction::LocalSet(3),
+            // Check for quote character to toggle in_string
+            Instruction::LocalGet(4),
+            Instruction::I32Const(34), // '"'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Toggle in_string: in_string = 1 - in_string
+            Instruction::I32Const(1),
+            Instruction::LocalGet(12),
+            Instruction::I32Sub,
+            Instruction::LocalSet(12),
+            Instruction::End,
+            // Only check for structure characters when NOT inside a string
+            Instruction::LocalGet(12),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Empty),
             // Check for nested '{' or '['
             Instruction::LocalGet(4),
             Instruction::I32Const(123), // '{'
@@ -1869,8 +1886,7 @@ impl JsonClass {
             Instruction::I32Add,
             Instruction::LocalSet(10), // depth++
             Instruction::End,
-            // CRITICAL FIX: Check for '}' or ']' at depth 0 FIRST (before decrementing)
-            // This ensures we exit only for outer braces, not inner ones
+            // Check for '}' or ']' at depth 0 FIRST (before decrementing)
             Instruction::LocalGet(4),
             Instruction::I32Const(125), // '}'
             Instruction::I32Eq,
@@ -1891,7 +1907,7 @@ impl JsonClass {
             Instruction::I32Const(125), // '}'
             Instruction::I32Eq,
             Instruction::I32Or,
-            Instruction::BrIf(3), // Exit skip block (Br(3) from inside 2 Ifs + Loop = Block)
+            Instruction::BrIf(4), // Exit skip block (adjusted: 2 Ifs + in_string If + Loop = Block)
             Instruction::Else,
             // depth > 0, this is an inner closing brace - decrement depth
             Instruction::LocalGet(10),
@@ -1907,8 +1923,9 @@ impl JsonClass {
             Instruction::LocalGet(4),
             Instruction::I32Const(44), // ','
             Instruction::I32Eq,
-            Instruction::BrIf(2), // Exit skip loop for comma
+            Instruction::BrIf(3), // Exit skip loop for comma (adjusted for in_string If)
             Instruction::End,
+            Instruction::End,   // End in_string check
             Instruction::Br(0), // Continue skip loop
             Instruction::End,   // End skip loop
             Instruction::End,   // End skip block
@@ -3071,6 +3088,8 @@ impl JsonClass {
             // Skip past this element to find next comma or ']'
             Instruction::I32Const(0),
             Instruction::LocalSet(10), // depth = 0
+            Instruction::I32Const(0),
+            Instruction::LocalSet(12), // in_string = 0 (for tracking quoted strings)
             Instruction::Block(wasm_encoder::BlockType::Empty),
             Instruction::Loop(wasm_encoder::BlockType::Empty),
             // Check bounds
@@ -3095,6 +3114,21 @@ impl JsonClass {
             Instruction::I32Const(1),
             Instruction::I32Add,
             Instruction::LocalSet(3),
+            // Check for quote character to toggle in_string
+            Instruction::LocalGet(4),
+            Instruction::I32Const(34), // '"'
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Toggle in_string: in_string = 1 - in_string
+            Instruction::I32Const(1),
+            Instruction::LocalGet(12),
+            Instruction::I32Sub,
+            Instruction::LocalSet(12),
+            Instruction::End,
+            // Only check for structure characters when NOT inside a string
+            Instruction::LocalGet(12),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Empty),
             // Track nesting depth for nested arrays/objects
             Instruction::LocalGet(4),
             Instruction::I32Const(123), // '{'
@@ -3139,8 +3173,9 @@ impl JsonClass {
             Instruction::I32Const(93), // ']'
             Instruction::I32Eq,
             Instruction::I32Or,
-            Instruction::BrIf(2), // Exit skip loop
+            Instruction::BrIf(3), // Exit skip loop (adjusted for in_string If)
             Instruction::End,
+            Instruction::End,   // End in_string check
             Instruction::Br(0), // Continue skip loop
             Instruction::End,   // End skip loop
             Instruction::End,   // End skip block
