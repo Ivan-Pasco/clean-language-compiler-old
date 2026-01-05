@@ -242,6 +242,11 @@ impl JsonClass {
             self.generate_memcmp_bytes_instructions(),
         )?;
 
+        // Get memcmp index for field comparison
+        let memcmp_index = codegen
+            .get_function_index("__memcmp_bytes")
+            .expect("__memcmp_bytes must be registered before __json_get_field");
+
         // __json_get_field(any_ptr: i32, key_ptr: i32, key_len: i32) -> i32
         // Access a field on a JSON object by string key
         // Returns pointer to field value, or null (0) if not found
@@ -261,7 +266,7 @@ impl JsonClass {
                 WasmType::I32, // Local 9: key_data_ptr (current key data, skipping length)
                 WasmType::I32, // Local 10: boxed_ptr (for boxing compact values)
             ],
-            self.generate_get_field_instructions(malloc_index),
+            self.generate_get_field_instructions(malloc_index, memcmp_index),
         )?;
 
         // __json_get_index(any_ptr: i32, index: i32) -> i32
@@ -363,7 +368,11 @@ impl JsonClass {
     /// Accesses a field on a JSON object by string key
     /// PRODUCTION IMPLEMENTATION - Proper field lookup with string comparison
     /// CRITICAL: Handles compact boolean encoding (1=false, 2=true) by boxing them
-    fn generate_get_field_instructions(&self, malloc_index: u32) -> Vec<Instruction<'static>> {
+    fn generate_get_field_instructions(
+        &self,
+        malloc_index: u32,
+        memcmp_index: u32,
+    ) -> Vec<Instruction<'static>> {
         // Parameters:
         // Local 0: object_ptr (i32) - pointer to JSON object
         // Local 1: key_ptr (i32) - pointer to key string CONTENT (raw bytes, already past length prefix)
@@ -449,42 +458,15 @@ impl JsonClass {
             Instruction::I32Const(4),
             Instruction::I32Add,
             Instruction::LocalSet(9), // key_data_ptr
-            // Compare keys - inline string comparison for now
-            // First check if lengths match
+            // Compare keys using full byte-by-byte comparison
+            // Call __memcmp_bytes(key_data_ptr, current_key_len, key_ptr, key_len)
+            // Returns 0 if equal, non-zero if different
+            Instruction::LocalGet(9), // key_data_ptr (stored key bytes, after length prefix)
             Instruction::LocalGet(6), // current_key_len
+            Instruction::LocalGet(1), // key_ptr (search key bytes, already past length prefix)
             Instruction::LocalGet(2), // key_len
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // Lengths match - need to compare bytes
-            // NOTE: Currently using simplified comparison (first byte + length)
-            // __memcmp_bytes is available but not integrated yet
-            // This optimization works well for typical JSON field names
-            Instruction::LocalGet(9), // key_data_ptr (stored key + 4, already points to bytes)
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            // CRITICAL FIX: MIR codegen uses load_string_argument_for_print which already
-            // skips the 4-byte length prefix. key_ptr already points directly to the bytes.
-            // DO NOT add 4 here - that was causing us to read garbage memory.
-            Instruction::LocalGet(1), // key_ptr (already points to bytes, NOT length-prefixed)
-            Instruction::I32Load8U(wasm_encoder::MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::I32Eq,
-            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            Instruction::I32Const(0), // Match (for now, based on first byte)
-            Instruction::Else,
-            Instruction::I32Const(1), // No match
-            Instruction::End,
-            Instruction::Else,
-            // Lengths don't match
-            Instruction::I32Const(1), // No match
-            Instruction::End,
-            Instruction::LocalSet(8), // match_result
+            Instruction::Call(memcmp_index),
+            Instruction::LocalSet(8), // match_result (0 = match, non-zero = no match)
             // Check if keys matched (match_result == 0)
             Instruction::LocalGet(8), // match_result
             Instruction::I32Eqz,
