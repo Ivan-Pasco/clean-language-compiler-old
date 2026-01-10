@@ -210,6 +210,12 @@ pub enum HirStatement {
         location: SourceLocation,
     },
 
+    /// Break statement - exit innermost loop
+    Break { location: SourceLocation },
+
+    /// Continue statement - skip to next iteration of innermost loop
+    Continue { location: SourceLocation },
+
     /// Print statement
     Print {
         expression: HirExpression,

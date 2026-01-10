@@ -2561,6 +2561,28 @@ impl SemanticAnalyzer {
                 Ok(())
             }
 
+            Statement::Break { location } => {
+                if self.loop_depth == 0 {
+                    return Err(CompilerError::type_error(
+                        "break statement outside of loop",
+                        Some("break statements can only be used inside loops".to_string()),
+                        location.clone(),
+                    ));
+                }
+                Ok(())
+            }
+
+            Statement::Continue { location } => {
+                if self.loop_depth == 0 {
+                    return Err(CompilerError::type_error(
+                        "continue statement outside of loop",
+                        Some("continue statements can only be used inside loops".to_string()),
+                        location.clone(),
+                    ));
+                }
+                Ok(())
+            }
+
             Statement::If {
                 condition,
                 then_branch,
@@ -2864,6 +2886,32 @@ impl SemanticAnalyzer {
                         name
                     ),
                     Some("Ensure framework plugins are loaded and the expansion pass runs before semantic analysis".to_string()),
+                    location.clone(),
+                ))
+            }
+
+            Statement::ScreenBlock { location, .. } => {
+                // Screen blocks should be handled as framework blocks by plugins
+                Err(CompilerError::syntax_error(
+                    "Screen blocks are not supported in direct compilation. Use framework plugins."
+                        .to_string(),
+                    Some(
+                        "Screen blocks should be parsed as framework blocks by the plugin system"
+                            .to_string(),
+                    ),
+                    location.clone(),
+                ))
+            }
+
+            Statement::UiBlock { location, .. } => {
+                // UI blocks should be handled as framework blocks by plugins
+                Err(CompilerError::syntax_error(
+                    "UI blocks are not supported in direct compilation. Use framework plugins."
+                        .to_string(),
+                    Some(
+                        "UI blocks should be parsed as framework blocks by the plugin system"
+                            .to_string(),
+                    ),
                     location.clone(),
                 ))
             }

@@ -33,8 +33,8 @@ impl CodeGenerator {
         use crate::stdlib::StandardLibrary;
         
         // Initialize StandardLibrary and register its functions
-        let stdlib = StandardLibrary::new();
-        
+        let mut stdlib = StandardLibrary::new();
+
         // Register all StandardLibrary functions with the code generator
         // If this fails, continue anyway - we'll fall back to direct matrix function registration
         match stdlib.register_functions(self) {

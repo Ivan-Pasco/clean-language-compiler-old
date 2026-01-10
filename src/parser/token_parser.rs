@@ -39,6 +39,16 @@ impl TokenParser {
         }
     }
 
+    /// Debug: dump all tokens
+    #[allow(dead_code)]
+    fn dump_tokens(&self) {
+        println!("=== TOKEN DUMP ===");
+        for (i, token) in self.tokens.iter().enumerate() {
+            println!("{:3}: {:?}", i, token.kind);
+        }
+        println!("=== END TOKEN DUMP ===");
+    }
+
     /// Parse a complete program
     pub fn parse_program(&mut self) -> Result<Program, CompilerError> {
         self.skip_whitespace();
@@ -48,6 +58,7 @@ impl TokenParser {
         let mut tests = Vec::new();
         let mut imports = Vec::new();
         let mut statements = Vec::new();
+        let screens = Vec::new(); // Always empty - screens handled as framework blocks by plugins
 
         while !self.is_at_end() {
             self.skip_whitespace();
@@ -118,8 +129,18 @@ impl TokenParser {
                     }
                 }
                 TokenKind::Identifier(name) => {
-                    // Check if this is a framework block (identifier followed by colon)
-                    if self.peek_kind() == Some(&TokenKind::Colon) {
+                    // Check if this is a framework block
+                    // Patterns: "identifier:", "identifier string:", "identifier identifier:"
+                    let is_framework_block = match self.peek_kind() {
+                        Some(&TokenKind::Colon) => true,
+                        Some(&TokenKind::StringLiteral(_)) | Some(&TokenKind::Identifier(_)) => {
+                            // Check if second token is followed by colon
+                            matches!(self.look_ahead(2).kind, TokenKind::Colon)
+                        }
+                        _ => false,
+                    };
+
+                    if is_framework_block {
                         debug!(block_name = %name, "Found framework block");
                         match self.parse_framework_block() {
                             Ok(stmt) => statements.push(stmt),
@@ -131,7 +152,7 @@ impl TokenParser {
                         self.errors.push(CompilerError::parse_error(
                             format!("Unexpected identifier at top level: {:?}", name),
                             Some(token.location.clone()),
-                            Some("Expected 'functions:', 'class', 'start()', or framework block (e.g., 'endpoints:')".to_string()),
+                            Some("Expected 'functions:', 'class', 'start()', or framework block (e.g., 'endpoints:', 'screen \"Name\":')".to_string()),
                         ));
                         self.bump();
                     }
@@ -201,6 +222,7 @@ impl TokenParser {
             classes,
             start_function,
             tests,
+            screens,
             location: None,
         })
     }
@@ -279,20 +301,21 @@ impl TokenParser {
         &self.tokens[pos]
     }
 
-    /// Get the current block's indentation level by looking at recent Indent tokens
-    /// Returns 0 if no Indent token found (top-level)
+    /// Get the current block's indentation level by looking at recent Indent/Dedent tokens
+    /// Returns 0 if no Indent/Dedent token found (top-level)
     fn get_current_indent_level(&self) -> usize {
-        // Look backwards from current position to find the most recent Indent token
+        // Look backwards from current position to find the most recent Indent or Dedent token
+        // A Dedent(N) token means we're now at level N, so return that
         for i in (0..self.cursor).rev() {
             if let TokenKind::Indent(level) = &self.tokens[i].kind {
                 return *level;
             }
-            // Stop if we hit a Dedent (we've gone too far back)
-            if matches!(&self.tokens[i].kind, TokenKind::Dedent(_)) {
-                break;
+            // A Dedent(level) means we've transitioned TO that level
+            if let TokenKind::Dedent(level) = &self.tokens[i].kind {
+                return *level;
             }
         }
-        0 // Default to level 0 if no Indent found
+        0 // Default to level 0 if no Indent/Dedent found
     }
 
     /// Skip whitespace tokens (newlines, comments)
@@ -1364,12 +1387,13 @@ impl TokenParser {
         self.parse_function()
     }
 
-    /// Parse a framework block (e.g., endpoints:, data, component)
+    /// Parse a framework block (e.g., endpoints:, data, component, screen "Name":)
+    /// Supports patterns: "identifier:", "identifier string:", "identifier identifier:"
     /// These are captured as raw text for plugin expansion
     fn parse_framework_block(&mut self) -> Result<Statement, CompilerError> {
         let start_location = self.current().location.clone();
 
-        // Get the block name
+        // Get the block name (first identifier)
         let block_name = if let TokenKind::Identifier(name) = self.current_kind() {
             name.clone()
         } else {
@@ -1380,8 +1404,32 @@ impl TokenParser {
             ));
         };
 
-        self.bump(); // Consume identifier
+        self.bump(); // Consume first identifier
         self.skip_whitespace();
+
+        // Check for optional second part (string or identifier) before colon
+        // This handles patterns like "screen Counter:" or "screen \"Name\":"
+        let block_arg = match self.current_kind() {
+            TokenKind::StringLiteral(s) => {
+                let arg = s.clone();
+                self.bump();
+                self.skip_whitespace();
+                Some(arg)
+            }
+            TokenKind::Identifier(id) if self.peek_kind() == Some(&TokenKind::Colon) => {
+                let arg = id.clone();
+                self.bump();
+                self.skip_whitespace();
+                Some(arg)
+            }
+            _ => None,
+        };
+
+        // Combine block_name and block_arg for the full name
+        let full_block_name = match block_arg {
+            Some(arg) => format!("{} {}", block_name, arg),
+            None => block_name,
+        };
 
         // Expect colon
         self.expect(&TokenKind::Colon)?;
@@ -1517,14 +1565,14 @@ impl TokenParser {
         let content = content_lines.join("\n");
 
         debug!(
-            block_name = %block_name,
+            block_name = %full_block_name,
             line_count = content_lines.len(),
             "Parsed framework block"
         );
         trace!(content = %content, "Framework block content");
 
         Ok(Statement::FrameworkBlock {
-            name: block_name,
+            name: full_block_name,
             content,
             attributes: vec![], // Attributes parsed via @decorator syntax
             location: Some(start_location),
@@ -2109,6 +2157,8 @@ impl TokenParser {
             TokenKind::Return => self.parse_return(),
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
+            TokenKind::Break => self.parse_break(),
+            TokenKind::Continue => self.parse_continue(),
             TokenKind::For => self.parse_for(),
             TokenKind::Iterate => self.parse_iterate(),
             TokenKind::Later => self.parse_later_assignment(),
@@ -2625,6 +2675,20 @@ impl TokenParser {
         })
     }
 
+    fn parse_break(&mut self) -> Result<Statement, CompilerError> {
+        let break_token = self.expect(&TokenKind::Break)?;
+        Ok(Statement::Break {
+            location: Some(break_token.location),
+        })
+    }
+
+    fn parse_continue(&mut self) -> Result<Statement, CompilerError> {
+        let continue_token = self.expect(&TokenKind::Continue)?;
+        Ok(Statement::Continue {
+            location: Some(continue_token.location),
+        })
+    }
+
     fn parse_if(&mut self) -> Result<Statement, CompilerError> {
         // Capture the if statement's indentation level BEFORE consuming the if token
         let if_indent_level = self.get_current_indent_level();
@@ -2691,6 +2755,9 @@ impl TokenParser {
     /// Parse while statement: while condition
     ///     body
     fn parse_while(&mut self) -> Result<Statement, CompilerError> {
+        // Capture the while statement's indentation level BEFORE consuming the while token
+        let while_indent_level = self.get_current_indent_level();
+
         let while_token = self.expect(&TokenKind::While)?;
         self.skip_whitespace();
 
@@ -2698,6 +2765,31 @@ impl TokenParser {
         self.skip_whitespace();
 
         let body = self.parse_block()?;
+
+        self.skip_whitespace();
+
+        // Consume Dedent tokens until we return to the while statement's own level
+        // This ensures proper positioning for the next statement at the same level
+        loop {
+            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                let level = *dedent_level; // Copy the value to avoid borrow issues
+                if level < while_indent_level {
+                    // This Dedent would take us below the while statement's level
+                    // Don't consume it - it belongs to a parent block
+                    break;
+                }
+                self.bump();
+                self.skip_whitespace();
+
+                // After consuming a dedent, if we've reached the while statement's level, stop
+                if level == while_indent_level {
+                    break;
+                }
+            } else {
+                // Not a Dedent token - stop
+                break;
+            }
+        }
 
         Ok(Statement::While {
             condition,

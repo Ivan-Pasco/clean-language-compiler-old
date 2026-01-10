@@ -1,5 +1,31 @@
 # Clean Language Compiler - Implementation Tasks
 
+## ✅ RESOLVED: String Operations Missing Memory Allocation
+
+**Priority**: MEDIUM - Affects string methods returning new strings
+**Discovered**: January 9, 2026
+**Resolved**: January 9, 2026
+**Status**: ✅ COMPLETE
+
+### Issue
+Several string operations in `string_ops.rs` used `I32Const(0)` as a placeholder instead of properly calling the memory allocation function.
+
+### Solution Applied
+1. Added `malloc_func_idx: Option<u32>` field to `StringOperations` struct
+2. Added `set_malloc_func()` and `get_malloc_idx()` methods
+3. Updated `register_functions()` to get malloc index from codegen and store it
+4. Replaced all 4 `I32Const(0)` placeholders with `Call(self.get_malloc_idx())`
+5. Updated `StandardLibrary::register_functions` signature to `&mut self`
+6. Updated all callers to use mutable references
+
+### Files Modified
+- `src/stdlib/string_ops.rs` - Added malloc_func_idx field and methods
+- `src/stdlib/mod.rs` - Changed register_functions to take &mut self
+- `src/codegen/builtin_generator.rs` - Made stdlib mutable
+- `src/codegen/mod.rs` - Made string_ops mutable
+
+---
+
 ## 🟡 OPEN: Boolean toBoolean().toString() Display Issue
 
 **Priority**: MEDIUM - Display formatting issue

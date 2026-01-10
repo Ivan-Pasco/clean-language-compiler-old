@@ -187,6 +187,12 @@ pub enum ResolvedHirStatement {
         location: SourceLocation,
     },
 
+    /// Break statement - exit innermost loop
+    Break { location: SourceLocation },
+
+    /// Continue statement - skip to next iteration of innermost loop
+    Continue { location: SourceLocation },
+
     /// Print statement with resolved expression
     Print {
         expression: ResolvedHirExpression,

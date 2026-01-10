@@ -613,6 +613,14 @@ impl HirBuilder {
                 })
             }
 
+            Statement::Break { location } => Ok(HirStatement::Break {
+                location: location.clone().unwrap_or_default(),
+            }),
+
+            Statement::Continue { location } => Ok(HirStatement::Continue {
+                location: location.clone().unwrap_or_default(),
+            }),
+
             // TypeApplyBlock is handled in build_block() where it can expand into multiple statements
             _ => {
                 // For unsupported statements, create a dummy expression statement

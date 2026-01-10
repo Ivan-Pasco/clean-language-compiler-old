@@ -206,7 +206,7 @@ impl StandardLibrary {
         }
     }
 
-    pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+    pub fn register_functions(&mut self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // Register all standard library functions systematically
         self.string_ops.register_functions(codegen)?;
         self.numeric_ops.register_functions(codegen)?;

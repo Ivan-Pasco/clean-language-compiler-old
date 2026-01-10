@@ -563,6 +563,16 @@ impl HirValidator {
                 };
                 context.declare_variable(variable.clone(), inferred_type);
             }
+
+            HirStatement::Break { .. } => {
+                // Break statements are validated for loop context at compile time
+                // No additional validation needed here
+            }
+
+            HirStatement::Continue { .. } => {
+                // Continue statements are validated for loop context at compile time
+                // No additional validation needed here
+            }
         }
     }
 

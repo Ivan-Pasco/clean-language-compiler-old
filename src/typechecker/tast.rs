@@ -536,6 +536,9 @@ impl ConcreteType {
             // Union types (can assign to union if assignable to any member)
             (t, ConcreteType::Union(types)) => types.iter().any(|ut| t.is_assignable_to(ut)),
 
+            // Union types on left (can assign from union if all members are assignable to target)
+            (ConcreteType::Union(types), t) => types.iter().all(|ut| ut.is_assignable_to(t)),
+
             // Intersection types (can assign from intersection if all members are assignable)
             (ConcreteType::Intersection(types), t) => types.iter().all(|it| it.is_assignable_to(t)),
 

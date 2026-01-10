@@ -25,6 +25,7 @@ fn test_program_with_functions(functions: Vec<Function>) -> Program {
         classes: vec![],
         start_function: None,
         tests: vec![],
+        screens: vec![],
         location: Some(test_location()),
     }
 }
@@ -38,6 +39,7 @@ fn test_program_with_start(start_fn: Function) -> Program {
         classes: vec![],
         start_function: Some(start_fn),
         tests: vec![],
+        screens: vec![],
         location: Some(test_location()),
     }
 }
@@ -51,6 +53,7 @@ fn test_program_with_classes(classes: Vec<Class>) -> Program {
         classes,
         start_function: None,
         tests: vec![],
+        screens: vec![],
         location: Some(test_location()),
     }
 }
@@ -441,6 +444,7 @@ mod integration_tests {
             classes: vec![],
             start_function: Some(start_fn),
             tests: vec![],
+            screens: vec![],
             location: Some(test_location()),
         };
 

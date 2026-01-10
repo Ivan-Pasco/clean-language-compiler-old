@@ -14,7 +14,7 @@ TRIVIA = _{ LINE_TRIVIA | BLOCK_TRIVIA | EMPTY_LINE_TRIVIA }
 
 // Keywords and identifiers
 // BOOK: null-support - Added null and default keywords for null handling
-keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "null" | "default" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print") ~ !(ASCII_ALPHANUMERIC | "_") }
+keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "null" | "default" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print" | "break" | "continue" | "while") ~ !(ASCII_ALPHANUMERIC | "_") }
 // Identifiers can start with letter or underscore (underscore prefix for internal/bridge functions)
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
@@ -158,9 +158,10 @@ indented_expressions = {
 // Helper rule to detect the start of a new apply-block
 apply_block_start = { (sized_type | core_type | matrix_type | list_type | pairs_type) ~ ":" | identifier ~ ("." ~ identifier)+ ~ ":" | "constant" ~ ":" | function_name_in_apply_block ~ ":" }
 
-// Framework blocks for DSL plugins (endpoints:, data, component, etc.)
+// Framework blocks for DSL plugins (endpoints:, data, component, screen, etc.)
 // Captures raw content without parsing - plugins handle their own DSL syntax
-framework_block = { !keyword ~ !("constant" | "functions" | "tests" | "private") ~ identifier ~ ":" ~ framework_block_content }
+// Supports: "identifier:", "identifier string:", "identifier identifier:"
+framework_block = { !keyword ~ !("constant" | "functions" | "tests" | "private") ~ identifier ~ (WHITESPACE* ~ (string | identifier))? ~ ":" ~ framework_block_content }
 framework_block_content = @{
     NEWLINE ~ (empty_line)* ~
     (INDENT+ ~ (!NEWLINE ~ ANY)* ~ (NEWLINE | EOI))+
@@ -476,18 +477,25 @@ else_block = { NEWLINE ~ (empty_line)* ~ INDENT* ~ "else" ~ (WHITESPACE* ~ "if" 
 iterate_stmt = { "iterate" ~ WHITESPACE* ~ identifier ~ WHITESPACE* ~ "in" ~ WHITESPACE* ~ expression ~ indented_block }
 range_iterate_stmt = { "iterate" ~ WHITESPACE* ~ identifier ~ WHITESPACE* ~ "in" ~ WHITESPACE* ~ expression ~ WHITESPACE* ~ "to" ~ WHITESPACE* ~ expression ~ (WHITESPACE* ~ "step" ~ WHITESPACE* ~ expression)? ~ indented_block }
 
+// While loop
+while_stmt = { "while" ~ WHITESPACE* ~ expression ~ indented_block }
+
 // Test
 test = { "test" ~ string ~ indented_block }
 
 // Return
 return_stmt = { "return" ~ (WHITESPACE* ~ expression)? }
 
+// Break and Continue for loops
+break_stmt = { "break" }
+continue_stmt = { "continue" }
+
 // Function declarations - All functions must be in functions: blocks per specification
 
 // Parameter definitions for function declarations
 parameter_list = { parameter ~ ("," ~ " "* ~ parameter)* }
 parameter_name = @{ !critical_keyword ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* | "base" }
-critical_keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start") ~ !(ASCII_ALPHANUMERIC | "_") }
+critical_keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "onError" | "constant" | "private" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "break" | "continue" | "while") ~ !(ASCII_ALPHANUMERIC | "_") }
 parameter = { parameter_type? ~ " "* ~ parameter_name ~ (" "* ~ "=" ~ " "* ~ logical_expression)? }
 parameter_type = {
     matrix_type |
@@ -687,8 +695,11 @@ statement = {
     method_call |
     assignment |
     return_stmt |
+    break_stmt |
+    continue_stmt |
     error_stmt |
     if_stmt |
+    while_stmt |
     iterate_stmt |
     range_iterate_stmt |
     test |

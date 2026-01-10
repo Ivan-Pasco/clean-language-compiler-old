@@ -13,7 +13,8 @@ pub struct StringManager {
 }
 
 pub struct StringOperations {
-    // Simplified struct - removed unused fields
+    /// The function index for __malloc, used to allocate new strings
+    malloc_func_idx: Option<u32>,
 }
 
 impl StringManager {
@@ -236,11 +237,26 @@ impl StringManager {
 impl StringOperations {
     pub fn new(_heap_start: usize) -> Self {
         Self {
-            // Simplified constructor - no fields to initialize
+            malloc_func_idx: None,
         }
     }
 
-    pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+    /// Set the malloc function index for memory allocation
+    pub fn set_malloc_func(&mut self, idx: u32) {
+        self.malloc_func_idx = Some(idx);
+    }
+
+    /// Get the malloc function index, defaulting to 0 if not set
+    fn get_malloc_idx(&self) -> u32 {
+        self.malloc_func_idx.unwrap_or(0)
+    }
+
+    pub fn register_functions(&mut self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+        // Get malloc function index for string allocation
+        if let Some(malloc_idx) = codegen.get_function_index("__malloc") {
+            self.malloc_func_idx = Some(malloc_idx);
+        }
+
         // NOTE: string.concat is an IMPORTED runtime function (2 params: ptr1, ptr2)
         // Each pointer points to a length-prefixed string: [4-byte len][content]
         // It's registered in builtin_generator.rs, NOT here as a stdlib function.
@@ -1160,12 +1176,10 @@ impl StringOperations {
             Instruction::I32LeS,
             Instruction::If(BlockType::Result(ValType::I32)),
             // Return empty string (allocate minimal string)
-            Instruction::I32Const(20), // minimal allocation
-            Instruction::I32Const(STRING_TYPE_ID.try_into().unwrap()), // type_id
-            // FIXED: Replaced problematic Call(0) with placeholder
-            Instruction::I32Const(0), // PLACEHOLDER: Return null for now to prevent stack errors
-            Instruction::LocalTee(6), // store and keep on stack
-            Instruction::I32Const(0), // length = 0
+            Instruction::I32Const(20),                // minimal allocation
+            Instruction::Call(self.get_malloc_idx()), // allocate memory
+            Instruction::LocalTee(6),                 // store and keep on stack
+            Instruction::I32Const(0),                 // length = 0
             Instruction::I32Store(MemArg {
                 offset: 0,
                 align: 2,
@@ -1177,10 +1191,8 @@ impl StringOperations {
             Instruction::LocalGet(5),  // new length
             Instruction::I32Const(20), // header + padding
             Instruction::I32Add,
-            Instruction::I32Const(STRING_TYPE_ID.try_into().unwrap()), // type_id
-            // FIXED: Replaced problematic Call(0) with placeholder
-            Instruction::I32Const(0), // PLACEHOLDER: Return null for now to prevent stack errors
-            Instruction::LocalSet(6), // new string ptr
+            Instruction::Call(self.get_malloc_idx()), // allocate memory
+            Instruction::LocalSet(6),                 // new string ptr
             // Set new string length
             Instruction::LocalGet(6),
             Instruction::LocalGet(5), // new length
@@ -1370,12 +1382,10 @@ impl StringOperations {
             Instruction::I32Or, // out of bounds?
             Instruction::If(BlockType::Result(ValType::I32)),
             // Out of bounds - return empty string
-            Instruction::I32Const(20), // minimal allocation
-            Instruction::I32Const(STRING_TYPE_ID.try_into().unwrap()), // type_id
-            // FIXED: Replaced problematic Call(0) with placeholder
-            Instruction::I32Const(0), // PLACEHOLDER: Return null for now to prevent stack errors
-            Instruction::LocalTee(3), // store and keep on stack
-            Instruction::I32Const(0), // length = 0
+            Instruction::I32Const(20),                // minimal allocation
+            Instruction::Call(self.get_malloc_idx()), // allocate memory
+            Instruction::LocalTee(3),                 // store and keep on stack
+            Instruction::I32Const(0),                 // length = 0
             Instruction::I32Store(MemArg {
                 offset: 0,
                 align: 2,
@@ -1385,10 +1395,8 @@ impl StringOperations {
             Instruction::Else,
             // Allocate single character string
             Instruction::I32Const(21), // 1 char + header + padding
-            Instruction::I32Const(STRING_TYPE_ID.try_into().unwrap()), // type_id
-            // FIXED: Replaced problematic Call(0) with placeholder
-            Instruction::I32Const(0), // PLACEHOLDER: Return null for now to prevent stack errors
-            Instruction::LocalSet(3), // new string ptr
+            Instruction::Call(self.get_malloc_idx()), // allocate memory
+            Instruction::LocalSet(3),  // new string ptr
             // Set length to 1
             Instruction::LocalGet(3),
             Instruction::I32Const(1),

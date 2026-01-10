@@ -101,6 +101,13 @@ pub struct CodeGenerator {
     // Add missing fields
     label_counter: u32,
 
+    // Loop depth tracking for break/continue statements
+    // Stores the label depth of the current loop's outer block (for break)
+    // and loop block (for continue). Stack for nested loops.
+    loop_break_labels: Vec<u32>,    // Stack of break target labels
+    loop_continue_labels: Vec<u32>, // Stack of continue target labels
+    current_block_depth: u32,       // Current nested block depth
+
     // Result tracking for get_result function generation (legacy)
     #[allow(dead_code)]
     last_result_value: Option<i32>, // Store the final result value
@@ -201,6 +208,11 @@ impl CodeGenerator {
 
             // Add missing fields
             label_counter: 0,
+
+            // Loop depth tracking for break/continue
+            loop_break_labels: Vec::new(),
+            loop_continue_labels: Vec::new(),
+            current_block_depth: 0,
 
             // Result tracking for get_result function generation
             last_result_value: None,
@@ -857,6 +869,36 @@ impl CodeGenerator {
             Statement::Return { value, .. } => {
                 self.generate_return_statement(value, instructions)?;
             }
+            Statement::Break { .. } => {
+                // Break exits the innermost loop by branching to the outer block
+                if self.loop_break_labels.is_empty() {
+                    return Err(CompilerError::codegen_error(
+                        "break statement outside of loop",
+                        Some("break statements can only be used inside loops".to_string()),
+                        None,
+                    ));
+                }
+                // Get the label depth of the loop's outer block
+                let break_target_depth = *self.loop_break_labels.last().unwrap();
+                // Calculate relative label from current depth
+                let label = self.current_block_depth - break_target_depth;
+                instructions.push(Instruction::Br(label));
+            }
+            Statement::Continue { .. } => {
+                // Continue jumps to the loop header for next iteration
+                if self.loop_continue_labels.is_empty() {
+                    return Err(CompilerError::codegen_error(
+                        "continue statement outside of loop",
+                        Some("continue statements can only be used inside loops".to_string()),
+                        None,
+                    ));
+                }
+                // Get the label depth of the loop block
+                let continue_target_depth = *self.loop_continue_labels.last().unwrap();
+                // Calculate relative label from current depth
+                let label = self.current_block_depth - continue_target_depth;
+                instructions.push(Instruction::Br(label));
+            }
             Statement::If {
                 condition,
                 then_branch,
@@ -1092,6 +1134,32 @@ impl CodeGenerator {
                         name
                     ),
                     Some("Ensure framework plugins are loaded and the expansion pass runs before codegen".to_string()),
+                    location.clone(),
+                ));
+            }
+
+            Statement::ScreenBlock { location, .. } => {
+                // Screen blocks should be handled as framework blocks by plugins
+                return Err(CompilerError::codegen_error(
+                    "Screen blocks are not supported in direct compilation. Use framework plugins."
+                        .to_string(),
+                    Some(
+                        "Screen blocks should be parsed as framework blocks by the plugin system"
+                            .to_string(),
+                    ),
+                    location.clone(),
+                ));
+            }
+
+            Statement::UiBlock { location, .. } => {
+                // UI blocks should be handled as framework blocks by plugins
+                return Err(CompilerError::codegen_error(
+                    "UI blocks are not supported in direct compilation. Use framework plugins."
+                        .to_string(),
+                    Some(
+                        "UI blocks should be parsed as framework blocks by the plugin system"
+                            .to_string(),
+                    ),
                     location.clone(),
                 ));
             }
@@ -5164,7 +5232,7 @@ impl CodeGenerator {
         use crate::stdlib::string_ops::StringOperations;
 
         // Create a StringOperations instance and register its functions
-        let string_ops = StringOperations::new(65536); // Use same heap start
+        let mut string_ops = StringOperations::new(65536); // Use same heap start
         string_ops.register_functions(self)?;
 
         // Register trimStart
@@ -9368,26 +9436,31 @@ impl CodeGenerator {
 
         if let Some(else_) = else_branch {
             instructions.push(Instruction::If(BlockType::Empty));
+            self.current_block_depth += 1;
 
             for stmt in then_branch {
                 self.generate_statement(stmt, instructions)?;
             }
 
             instructions.push(Instruction::Else);
+            // Else doesn't change depth, it's the same block
 
             for stmt in else_ {
                 self.generate_statement(stmt, instructions)?;
             }
 
             instructions.push(Instruction::End);
+            self.current_block_depth -= 1;
         } else {
             instructions.push(Instruction::If(BlockType::Empty));
+            self.current_block_depth += 1;
 
             for stmt in then_branch {
                 self.generate_statement(stmt, instructions)?;
             }
 
             instructions.push(Instruction::End);
+            self.current_block_depth -= 1;
         }
         Ok(())
     }
@@ -9438,8 +9511,14 @@ impl CodeGenerator {
         instructions.push(Instruction::I32Const(0));
         instructions.push(Instruction::LocalSet(counter_index));
 
+        // Track block depth for break/continue
         instructions.push(Instruction::Block(BlockType::Empty));
+        self.current_block_depth += 1;
+        self.loop_break_labels.push(self.current_block_depth);
+
         instructions.push(Instruction::Loop(BlockType::Empty));
+        self.current_block_depth += 1;
+        self.loop_continue_labels.push(self.current_block_depth);
 
         instructions.push(Instruction::LocalGet(counter_index));
         instructions.push(Instruction::LocalGet(length_index));
@@ -9502,8 +9581,15 @@ impl CodeGenerator {
 
         instructions.push(Instruction::Br(0));
 
+        // End loop block
         instructions.push(Instruction::End);
+        self.current_block_depth -= 1;
+        self.loop_continue_labels.pop();
+
+        // End outer block
         instructions.push(Instruction::End);
+        self.current_block_depth -= 1;
+        self.loop_break_labels.pop();
 
         self.variable_map.remove(iterator);
         Ok(())
@@ -9525,11 +9611,17 @@ impl CodeGenerator {
         body: &[Statement],
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
-        // Create outer block for exit
+        // Create outer block for exit (break target)
         instructions.push(Instruction::Block(BlockType::Empty));
+        self.current_block_depth += 1;
+        // Store break target depth (this is where break should jump to)
+        self.loop_break_labels.push(self.current_block_depth);
 
-        // Create loop block for iteration
+        // Create loop block for iteration (continue target)
         instructions.push(Instruction::Loop(BlockType::Empty));
+        self.current_block_depth += 1;
+        // Store continue target depth (this is where continue should jump to)
+        self.loop_continue_labels.push(self.current_block_depth);
 
         // Evaluate condition
         self.generate_expression(condition, instructions)?;
@@ -9548,9 +9640,13 @@ impl CodeGenerator {
 
         // End loop block
         instructions.push(Instruction::End);
+        self.current_block_depth -= 1;
+        self.loop_continue_labels.pop();
 
         // End exit block
         instructions.push(Instruction::End);
+        self.current_block_depth -= 1;
+        self.loop_break_labels.pop();
 
         Ok(())
     }
@@ -9972,8 +10068,14 @@ impl CodeGenerator {
         }
         instructions.push(Instruction::LocalSet(step_index));
 
+        // Track block depth for break/continue
         instructions.push(Instruction::Block(BlockType::Empty));
+        self.current_block_depth += 1;
+        self.loop_break_labels.push(self.current_block_depth);
+
         instructions.push(Instruction::Loop(BlockType::Empty));
+        self.current_block_depth += 1;
+        self.loop_continue_labels.push(self.current_block_depth);
 
         instructions.push(Instruction::LocalGet(counter_index));
         instructions.push(Instruction::LocalGet(end_index));
@@ -9991,8 +10093,16 @@ impl CodeGenerator {
         instructions.push(Instruction::LocalSet(counter_index));
 
         instructions.push(Instruction::Br(0));
+
+        // End loop block
         instructions.push(Instruction::End);
+        self.current_block_depth -= 1;
+        self.loop_continue_labels.pop();
+
+        // End outer block
         instructions.push(Instruction::End);
+        self.current_block_depth -= 1;
+        self.loop_break_labels.pop();
 
         self.variable_map.remove(iterator);
         Ok(())

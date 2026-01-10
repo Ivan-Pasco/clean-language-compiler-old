@@ -278,6 +278,7 @@ impl ErrorRecoveringParser {
             classes,
             start_function,
             tests: Vec::new(),
+            screens: Vec::new(),
             location: None,
         };
 
@@ -428,6 +429,7 @@ impl ErrorRecoveringParser {
                 classes: Vec::new(),
                 start_function: Some(start_func),
                 tests: Vec::new(),
+                screens: Vec::new(),
                 location: None,
             });
         }
@@ -520,6 +522,7 @@ impl ErrorRecoveringParser {
                     classes: Vec::new(),
                     start_function,
                     tests: Vec::new(),
+                    screens: Vec::new(),
                     location: None,
                 })
             }
@@ -539,6 +542,7 @@ impl ErrorRecoveringParser {
                     classes: vec![class],
                     start_function: None,
                     tests: Vec::new(),
+                    screens: Vec::new(),
                     location: None,
                 })
             }
@@ -835,6 +839,7 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                     start_function,
                     imports: Vec::new(),
                     tests,
+                    screens: Vec::new(),
                     statements: Vec::new(),
                     location: None,
                 };
@@ -975,6 +980,7 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
         classes,
         start_function,
         tests,
+        screens: Vec::new(),
         location: None,
     };
 

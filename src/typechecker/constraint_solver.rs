@@ -94,7 +94,7 @@ impl<'a> ConstraintSolver<'a> {
     pub fn solve(mut self) -> SolverResult {
         // Process constraints until none remain or we can't make progress
         let mut iterations = 0;
-        let max_iterations = 1000; // Prevent infinite loops
+        let max_iterations = 10000; // Prevent infinite loops
 
         while !self.constraints.is_empty() && iterations < max_iterations {
             let initial_count = self.constraints.len();

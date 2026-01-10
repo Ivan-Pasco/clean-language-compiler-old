@@ -855,6 +855,14 @@ impl NameResolver {
                     location: location.clone(),
                 })
             }
+
+            HirStatement::Break { location } => Ok(ResolvedHirStatement::Break {
+                location: location.clone(),
+            }),
+
+            HirStatement::Continue { location } => Ok(ResolvedHirStatement::Continue {
+                location: location.clone(),
+            }),
         }
     }
 

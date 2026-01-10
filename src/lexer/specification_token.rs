@@ -66,6 +66,8 @@ pub enum TokenKind {
     Functions,   // functions
     Null,        // null  // BOOK: null-support - Null literal keyword
     Default,     // default  // BOOK: null-coalescing - Null coalescing operator keyword
+    Break,       // break - Loop control flow
+    Continue,    // continue - Loop control flow
 
     // Operators (§5.1 - Binary and Unary operators from specification)
     Plus,     // +
@@ -183,6 +185,8 @@ impl fmt::Display for TokenKind {
             TokenKind::Functions => write!(f, "functions"),
             TokenKind::Null => write!(f, "null"),
             TokenKind::Default => write!(f, "default"),
+            TokenKind::Break => write!(f, "break"),
+            TokenKind::Continue => write!(f, "continue"),
 
             // Operators
             TokenKind::Plus => write!(f, "+"),
@@ -386,6 +390,8 @@ impl Keywords {
             "functions" => Some(TokenKind::Functions),
             "null" => Some(TokenKind::Null), // BOOK: null-support
             "default" => Some(TokenKind::Default), // BOOK: null-coalescing
+            "break" => Some(TokenKind::Break),
+            "continue" => Some(TokenKind::Continue),
             _ => None,
         }
     }
@@ -420,6 +426,8 @@ impl TokenKind {
             TokenKind::Functions => "functions".to_string(),
             TokenKind::Null => "null".to_string(),
             TokenKind::Default => "default".to_string(),
+            TokenKind::Break => "break".to_string(),
+            TokenKind::Continue => "continue".to_string(),
             TokenKind::If => "if".to_string(),
             TokenKind::Import => "import".to_string(),
             TokenKind::In => "in".to_string(),

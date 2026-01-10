@@ -432,6 +432,16 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
+    // Break - exits the innermost loop
+    Break {
+        location: Option<SourceLocation>,
+    },
+
+    // Continue - skips to next iteration of innermost loop
+    Continue {
+        location: Option<SourceLocation>,
+    },
+
     // Control flow
     If {
         condition: Expression,
@@ -554,6 +564,20 @@ pub enum Statement {
         attributes: Vec<FrameworkAttribute>, // Optional attributes like @pk, @unique
         location: Option<SourceLocation>,
     },
+
+    // Clean UI screen definition
+    // Parsed structured form of screen "Name": ... blocks
+    ScreenBlock {
+        screen: Screen,
+        location: Option<SourceLocation>,
+    },
+
+    // Clean UI inline block (ui.column, ui.text, etc. used as statements)
+    // Note: Boxed to break recursive type cycle with UiNode::ExpressionStatement
+    UiBlock {
+        node: Box<UiNode>,
+        location: Option<SourceLocation>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -588,6 +612,197 @@ pub struct TestCase {
 pub struct FrameworkAttribute {
     pub name: String,          // Attribute name: "pk", "unique", "required"
     pub value: Option<String>, // Optional value: @default("value")
+    pub location: Option<SourceLocation>,
+}
+
+// ============================================================================
+// Clean UI AST Types
+// ============================================================================
+
+/// UI Screen definition: screen "Name": ...
+#[derive(Debug, Clone, PartialEq)]
+pub struct Screen {
+    pub name: String,
+    pub state: Option<Vec<StateVariable>>,
+    pub body: Vec<UiNode>,
+    pub location: Option<SourceLocation>,
+}
+
+/// State variable in a screen: count: integer = 0
+#[derive(Debug, Clone, PartialEq)]
+pub struct StateVariable {
+    pub name: String,
+    pub type_name: String, // "integer", "number", "text", "bool", "list"
+    pub default_value: Option<Expression>,
+    pub location: Option<SourceLocation>,
+}
+
+/// UI node types for Clean UI widgets
+#[derive(Debug, Clone, PartialEq)]
+pub enum UiNode {
+    /// Layout containers: ui.column, ui.row, ui.stack
+    Container {
+        kind: UiContainerKind,
+        props: UiProps,
+        children: Vec<UiNode>,
+        location: Option<SourceLocation>,
+    },
+
+    /// Text widget: ui.text "Hello"
+    Text {
+        content: Expression,
+        props: UiProps,
+        location: Option<SourceLocation>,
+    },
+
+    /// Button widget: ui.button "Click"
+    Button {
+        label: Expression,
+        props: UiProps,
+        events: Vec<UiEvent>,
+        location: Option<SourceLocation>,
+    },
+
+    /// Text input: ui.textField
+    TextField {
+        props: UiProps,
+        events: Vec<UiEvent>,
+        location: Option<SourceLocation>,
+    },
+
+    /// Text area: ui.textArea
+    TextArea {
+        props: UiProps,
+        events: Vec<UiEvent>,
+        location: Option<SourceLocation>,
+    },
+
+    /// Checkbox: ui.checkbox
+    Checkbox {
+        props: UiProps,
+        events: Vec<UiEvent>,
+        location: Option<SourceLocation>,
+    },
+
+    /// Toggle switch: ui.switch
+    Switch {
+        props: UiProps,
+        events: Vec<UiEvent>,
+        location: Option<SourceLocation>,
+    },
+
+    /// Select dropdown: ui.select
+    Select {
+        props: UiProps,
+        events: Vec<UiEvent>,
+        location: Option<SourceLocation>,
+    },
+
+    /// Image: ui.image
+    Image {
+        props: UiProps,
+        location: Option<SourceLocation>,
+    },
+
+    /// Divider line: ui.divider
+    Divider {
+        props: UiProps,
+        location: Option<SourceLocation>,
+    },
+
+    /// Card container: ui.card
+    Card {
+        props: UiProps,
+        children: Vec<UiNode>,
+        location: Option<SourceLocation>,
+    },
+
+    /// Link: ui.link
+    Link {
+        props: UiProps,
+        events: Vec<UiEvent>,
+        location: Option<SourceLocation>,
+    },
+
+    /// Spacer: ui.spacer
+    Spacer { location: Option<SourceLocation> },
+
+    /// Canvas region: ui.region target "canvas"
+    Region {
+        props: UiProps,
+        children: Vec<UiNode>,
+        location: Option<SourceLocation>,
+    },
+
+    /// Canvas scene: ui.canvasScene
+    CanvasScene {
+        draw: Vec<Statement>,
+        events: Vec<UiEvent>,
+        location: Option<SourceLocation>,
+    },
+
+    /// For loop in UI: for item in items: ui.text item
+    ForLoop {
+        iterator: String,
+        collection: Expression,
+        body: Vec<UiNode>,
+        location: Option<SourceLocation>,
+    },
+
+    /// If condition in UI: if state.show: ui.text "Visible"
+    IfBlock {
+        condition: Expression,
+        then_branch: Vec<UiNode>,
+        else_branch: Option<Vec<UiNode>>,
+        location: Option<SourceLocation>,
+    },
+
+    /// Expression statement (e.g., print inside event handlers gets wrapped)
+    /// Note: Boxed to break recursive type cycle with Statement::UiBlock
+    ExpressionStatement {
+        statement: Box<Statement>,
+        location: Option<SourceLocation>,
+    },
+}
+
+/// Container types for layout
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum UiContainerKind {
+    Column,
+    Row,
+    Stack,
+}
+
+/// Common properties for UI widgets
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct UiProps {
+    pub gap: Option<Expression>,
+    pub padding: Option<Expression>,
+    pub visible: Option<Expression>,
+    pub disabled: Option<Expression>,
+    pub label: Option<Expression>,
+    pub value: Option<Expression>,
+    pub placeholder: Option<Expression>,
+    pub size: Option<Expression>,
+    pub weight: Option<Expression>,
+    pub tone: Option<Expression>,
+    pub color: Option<Expression>,
+    pub background: Option<Expression>,
+    pub radius: Option<Expression>,
+    pub align: Option<Expression>,
+    pub justify: Option<Expression>,
+    pub target: Option<String>, // For ui.region target "canvas"
+    pub height: Option<Expression>,
+    pub width: Option<Expression>,
+    pub options: Option<Expression>, // For ui.select
+}
+
+/// Event handler for UI widgets
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiEvent {
+    pub name: String,        // "onClick", "onChange", "onFocus", "onBlur", "draw"
+    pub params: Vec<String>, // ["value"] for onChange, ["dt"] for draw
+    pub body: Vec<Statement>,
     pub location: Option<SourceLocation>,
 }
 
@@ -718,6 +933,7 @@ pub struct Program {
     pub classes: Vec<Class>,
     pub start_function: Option<Function>,
     pub tests: Vec<TestCase>,
+    pub screens: Vec<Screen>, // Clean UI screens
     pub location: Option<SourceLocation>,
 }
 

@@ -2024,6 +2024,12 @@ impl MirBuilder {
                 // Switch to body block
                 self.current_block = Some(body_block_id);
 
+                // Push loop context for break/continue statements
+                context.loop_stack.push(LoopContext {
+                    continue_block: header_block_id,
+                    break_block: exit_block_id,
+                });
+
                 // MEMORY MANAGEMENT: Push scope mark at start of while loop iteration
                 // This saves the current allocation offset so we can reset it at the end
                 // of each iteration, freeing all temporary allocations made in the loop body
@@ -2044,6 +2050,9 @@ impl MirBuilder {
                 for stmt in &body.statements {
                     self.build_statement(context, stmt)?;
                 }
+
+                // Pop loop context after processing body
+                context.loop_stack.pop();
 
                 // MEMORY MANAGEMENT: Pop scope mark at end of while loop iteration
                 // This resets the allocation offset to where it was at the start of the iteration,
@@ -2117,6 +2126,76 @@ impl MirBuilder {
                 // Add variable to current scope
                 if let Some(current_scope) = context.scope_stack.last_mut() {
                     current_scope.insert(variable.clone(), variable_value_id);
+                }
+            }
+
+            TastStatement::Break { location } => {
+                // Break jumps to the exit block of the innermost loop
+                // Copy the break block first to avoid borrow conflicts
+                let break_block = context.loop_stack.last().map(|ctx| ctx.break_block);
+
+                if let Some(target_block) = break_block {
+                    // Pop memory scope before jumping out of loop
+                    let scope_pop_instruction = MirInstruction {
+                        dest: None,
+                        operation: MirOperation::Call {
+                            function: MirOperand::NamedFunction {
+                                name: "mem_scope_pop".to_string(),
+                                symbol_id: SymbolId(1011),
+                            },
+                            arguments: vec![],
+                        },
+                        location: location.clone(),
+                    };
+                    self.add_instruction(context, scope_pop_instruction);
+
+                    // Jump to break block
+                    self.set_block_terminator(
+                        context,
+                        MirTerminator::Jump {
+                            target: target_block,
+                        },
+                    );
+                } else {
+                    return Err(vec![CompilerError::validation_error(
+                        "break statement used outside of a loop",
+                        location.clone(),
+                    )]);
+                }
+            }
+
+            TastStatement::Continue { location } => {
+                // Continue jumps to the header block of the innermost loop
+                // Copy the continue block first to avoid borrow conflicts
+                let continue_block = context.loop_stack.last().map(|ctx| ctx.continue_block);
+
+                if let Some(target_block) = continue_block {
+                    // Pop memory scope before jumping back to loop header
+                    let scope_pop_instruction = MirInstruction {
+                        dest: None,
+                        operation: MirOperation::Call {
+                            function: MirOperand::NamedFunction {
+                                name: "mem_scope_pop".to_string(),
+                                symbol_id: SymbolId(1011),
+                            },
+                            arguments: vec![],
+                        },
+                        location: location.clone(),
+                    };
+                    self.add_instruction(context, scope_pop_instruction);
+
+                    // Jump to continue block (loop header)
+                    self.set_block_terminator(
+                        context,
+                        MirTerminator::Jump {
+                            target: target_block,
+                        },
+                    );
+                } else {
+                    return Err(vec![CompilerError::validation_error(
+                        "continue statement used outside of a loop",
+                        location.clone(),
+                    )]);
                 }
             }
 

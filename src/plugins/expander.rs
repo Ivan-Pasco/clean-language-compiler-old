@@ -412,6 +412,7 @@ mod tests {
             imports: vec![],
             start_function: None,
             tests: vec![],
+            screens: vec![],
             location: None,
         }
     }

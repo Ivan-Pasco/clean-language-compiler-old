@@ -2079,7 +2079,15 @@ impl<'a> TypeInference<'a> {
                     expression: tast_expression,
                     location: location.clone(),
                 })
-            } // Handle any remaining unimplemented statement types
+            }
+
+            ResolvedHirStatement::Break { location } => Ok(TastStatement::Break {
+                location: location.clone(),
+            }),
+
+            ResolvedHirStatement::Continue { location } => Ok(TastStatement::Continue {
+                location: location.clone(),
+            }),
         };
         self.recursion_depth -= 1;
         result
@@ -4420,6 +4428,8 @@ impl StatementLocation for ResolvedHirStatement {
             ResolvedHirStatement::Assignment { location, .. } => location,
             ResolvedHirStatement::For { location, .. } => location,
             ResolvedHirStatement::While { location, .. } => location,
+            ResolvedHirStatement::Break { location } => location,
+            ResolvedHirStatement::Continue { location } => location,
             ResolvedHirStatement::Print { location, .. } => location,
             ResolvedHirStatement::LaterAssignment { location, .. } => location,
         }

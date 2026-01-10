@@ -17,10 +17,17 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
         Rule::print_newline_stmt => parse_print_newline_statement(inner, ast_location),
         Rule::print_bare_stmt => parse_print_bare_statement(inner, ast_location),
         Rule::if_stmt => parse_if_statement(inner, ast_location),
+        Rule::while_stmt => parse_while_statement(inner, ast_location),
         Rule::iterate_stmt => parse_iterate_statement(inner, ast_location),
         Rule::range_iterate_stmt => parse_range_iterate_statement(inner, ast_location),
         Rule::test => parse_test_statement(inner, ast_location),
         Rule::return_stmt => parse_return_statement(inner, ast_location),
+        Rule::break_stmt => Ok(Statement::Break {
+            location: Some(ast_location),
+        }),
+        Rule::continue_stmt => Ok(Statement::Continue {
+            location: Some(ast_location),
+        }),
         Rule::error_stmt => parse_error_statement(inner, ast_location),
         Rule::on_error_block => parse_on_error_block_statement(inner, ast_location),
         Rule::standalone_on_error => parse_standalone_on_error_statement(inner, ast_location),
@@ -352,6 +359,27 @@ fn parse_if_statement(
         condition,
         then_branch,
         else_branch,
+        location: Some(ast_location),
+    })
+}
+
+fn parse_while_statement(
+    pair: Pair<Rule>,
+    ast_location: crate::ast::SourceLocation,
+) -> Result<Statement, CompilerError> {
+    let mut parts = pair.into_inner();
+    let condition = parse_expression(parts.next().unwrap())?;
+
+    let mut body = Vec::new();
+    for part in parts {
+        if part.as_rule() == Rule::indented_block {
+            parse_indented_block_statements(part, &mut body)?;
+        }
+    }
+
+    Ok(Statement::While {
+        condition,
+        body,
         location: Some(ast_location),
     })
 }
