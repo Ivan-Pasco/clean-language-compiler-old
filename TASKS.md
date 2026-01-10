@@ -1,5 +1,62 @@
 # Clean Language Compiler - Implementation Tasks
 
+## 🔴 CRITICAL: Invalid WASM Code Generation - If Statement Stack Imbalance
+
+**Priority**: CRITICAL - Blocks plugin system and complex code compilation
+**Discovered**: January 10, 2026
+**Status**: 🔴 OPEN
+
+### Issue
+The compiler generates invalid WebAssembly that fails validation. Two types of errors occur:
+
+1. **If Statement Stack Imbalance**: `type mismatch at end of 'if true' branch, expected [] but got [i32]`
+   - If statements with void block type are leaving values on the stack
+   - Both branches must leave stack in same state as before the if
+
+2. **Function Call Argument Mismatch**: `type mismatch in call, expected [i32, i32, i32] but got [i32, i32]`
+   - Some function calls missing arguments (likely string ptr/len pairs)
+
+### Reproduction
+```bash
+# Compile frame.ui plugin
+cd plugins/frame.ui && ./build.sh
+
+# Validate - shows errors
+wasm-validate plugin.wasm
+```
+
+### Error Sample
+```
+plugin.wasm:000522a: error: type mismatch at end of `if true` branch, expected [] but got [i32]
+plugin.wasm:000aba7: error: type mismatch in call, expected [i32, i32, i32] but got [i32, i32]
+```
+
+### Root Cause Analysis
+- Expressions inside if blocks leave values on stack that aren't dropped
+- String operations in if blocks likely culprit (concatenation, method calls)
+- Function calls with string params may not expand to (ptr, len) pairs consistently
+
+### Files to Investigate
+- `src/codegen/mod.rs` - Main WASM generation
+- `src/codegen/statements.rs` - If/else statement handling
+- `src/codegen/expressions.rs` - Expression generation
+- `src/codegen/function_calls.rs` - Function call argument handling
+
+### Fix Required
+1. Track stack state in if blocks with void block type
+2. Emit `drop` instruction when expression leaves value in void context
+3. Ensure string function calls consistently expand to (ptr, len) pairs
+
+### Detailed Prompt
+See: `system-documents/PROMPT_FIX_INVALID_WASM_IF_STATEMENTS.md`
+
+### Verification
+```bash
+wasm-validate plugin.wasm  # Should pass with no output
+```
+
+---
+
 ## ✅ RESOLVED: String Operations Missing Memory Allocation
 
 **Priority**: MEDIUM - Affects string methods returning new strings

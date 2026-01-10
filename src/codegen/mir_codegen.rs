@@ -2726,7 +2726,9 @@ impl MirCodeGenerator<'_> {
                     self.store_to_local(dest)?;
                     debug_mir!("AsyncAssign completed successfully");
                 } else {
-                    debug_mir!("No destination for AsyncAssign result");
+                    // No destination - drop the value to avoid stack pollution
+                    self.current_instructions.push(Instruction::Drop);
+                    debug_mir!("AsyncAssign: No destination, dropped result");
                 }
             }
 
@@ -2747,6 +2749,10 @@ impl MirCodeGenerator<'_> {
                 if let Some(dest) = instruction.dest {
                     self.store_to_local(dest)?;
                     debug_mir!("BoxAny completed successfully");
+                } else {
+                    // No destination - drop the boxed value to avoid stack pollution
+                    self.current_instructions.push(Instruction::Drop);
+                    debug_mir!("BoxAny: No destination, dropped result");
                 }
             }
 
@@ -2763,6 +2769,10 @@ impl MirCodeGenerator<'_> {
                 if let Some(dest) = instruction.dest {
                     self.store_to_local(dest)?;
                     debug_mir!("AnyToString completed successfully");
+                } else {
+                    // No destination - drop the string pointer to avoid stack pollution
+                    self.current_instructions.push(Instruction::Drop);
+                    debug_mir!("AnyToString: No destination, dropped result");
                 }
             }
 
@@ -2779,6 +2789,10 @@ impl MirCodeGenerator<'_> {
                 if let Some(dest) = instruction.dest {
                     self.store_to_local(dest)?;
                     debug_mir!("UnboxAnyToI32 completed successfully");
+                } else {
+                    // No destination - drop the unboxed value to avoid stack pollution
+                    self.current_instructions.push(Instruction::Drop);
+                    debug_mir!("UnboxAnyToI32: No destination, dropped result");
                 }
             }
 
@@ -2795,6 +2809,10 @@ impl MirCodeGenerator<'_> {
                 if let Some(dest) = instruction.dest {
                     self.store_to_local(dest)?;
                     debug_mir!("UnboxAnyToF64 completed successfully");
+                } else {
+                    // No destination - drop the unboxed value to avoid stack pollution
+                    self.current_instructions.push(Instruction::Drop);
+                    debug_mir!("UnboxAnyToF64: No destination, dropped result");
                 }
             }
 
@@ -2827,6 +2845,10 @@ impl MirCodeGenerator<'_> {
                 if let Some(dest) = instruction.dest {
                     self.store_to_local(dest)?;
                     debug_mir!("AnyGetField completed successfully");
+                } else {
+                    // No destination - drop the field value to avoid stack pollution
+                    self.current_instructions.push(Instruction::Drop);
+                    debug_mir!("AnyGetField: No destination, dropped result");
                 }
             }
 
@@ -2858,6 +2880,10 @@ impl MirCodeGenerator<'_> {
                 if let Some(dest) = instruction.dest {
                     self.store_to_local(dest)?;
                     debug_mir!("AnyGetIndex completed successfully");
+                } else {
+                    // No destination - drop the element pointer to avoid stack pollution
+                    self.current_instructions.push(Instruction::Drop);
+                    debug_mir!("AnyGetIndex: No destination, dropped result");
                 }
             }
 
@@ -2897,7 +2923,9 @@ impl MirCodeGenerator<'_> {
                     self.store_to_local(dest)?;
                     debug_mir!("Alloca completed successfully, stored to {:?}", dest);
                 } else {
-                    debug_mir!("No destination for Alloca result");
+                    // No destination - drop the allocated pointer to avoid stack pollution
+                    self.current_instructions.push(Instruction::Drop);
+                    debug_mir!("Alloca: No destination, dropped result");
                 }
             }
 
@@ -2955,7 +2983,9 @@ impl MirCodeGenerator<'_> {
                     self.store_to_local(dest)?;
                     debug_mir!("Cast completed successfully, stored to {:?}", dest);
                 } else {
-                    debug_mir!("No destination for Cast result");
+                    // No destination - drop the casted value to avoid stack pollution
+                    self.current_instructions.push(Instruction::Drop);
+                    debug_mir!("Cast: No destination, dropped result");
                 }
             }
 
@@ -2987,6 +3017,10 @@ impl MirCodeGenerator<'_> {
                 if let Some(dest) = instruction.dest {
                     self.store_to_local(dest)?;
                     debug_mir!("Select completed, stored to {:?}", dest);
+                } else {
+                    // No destination - drop the selected value to avoid stack pollution
+                    self.current_instructions.push(Instruction::Drop);
+                    debug_mir!("Select: No destination, dropped result");
                 }
             }
 
