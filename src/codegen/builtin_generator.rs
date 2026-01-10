@@ -213,6 +213,10 @@ impl CodeGenerator {
         self.register_import_function("env", "string.concat", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_substring", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_index_of", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
+        // 3-arg indexOf with startIndex for searching from a specific position
+        self.register_import_function("env", "string_index_of_from", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        // 3-arg lastIndexOf with startIndex for searching from a specific position (backwards)
+        self.register_import_function("env", "string_last_index_of_from", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_to_upper", vec![ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_to_lower", vec![ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_trim", vec![ValType::I32], vec![ValType::I32])?;
@@ -261,8 +265,16 @@ impl CodeGenerator {
         if let Some(index_of_idx) = self.get_function_index("string_index_of") {
             self.add_function_alias("string.indexOf", index_of_idx);
         }
+        // Register string.indexOfFrom alias for 3-arg indexOf (text, needle, startIndex)
+        if let Some(index_of_from_idx) = self.get_function_index("string_index_of_from") {
+            self.add_function_alias("string.indexOfFrom", index_of_from_idx);
+        }
         if let Some(last_index_of_idx) = self.get_function_index("string_last_index_of") {
             self.add_function_alias("string.lastIndexOf", last_index_of_idx);
+        }
+        // Register string.lastIndexOfFrom alias for 3-arg lastIndexOf (text, needle, startIndex)
+        if let Some(last_index_of_from_idx) = self.get_function_index("string_last_index_of_from") {
+            self.add_function_alias("string.lastIndexOfFrom", last_index_of_from_idx);
         }
         if let Some(starts_with_idx) = self.get_function_index("string_starts_with") {
             self.add_function_alias("string.startsWith", starts_with_idx);

@@ -46,8 +46,12 @@ impl CodeGenerator {
             Statement::Background { expression, .. } => {
                 // For now, treat background as a regular expression statement
                 let mut temp_instructions = Vec::new();
-                self.generate_expression(expression, &mut temp_instructions)?;
+                let result_type = self.generate_expression(expression, &mut temp_instructions)?;
                 instructions.extend(temp_instructions);
+                // Drop the result if the expression produced a value (to keep stack balanced)
+                if result_type != WasmType::Unit {
+                    instructions.push(Instruction::Drop);
+                }
                 Ok(())
             },
             Statement::LaterAssignment { variable, expression, .. } => {
@@ -82,9 +86,13 @@ impl CodeGenerator {
                     if function_name == "print" || function_name == "println" || function_name == "printl" {
                         self.generate_print_statement(expression, instructions)?;
                     } else {
-                        // Generate a function call for each expression  
+                        // Generate a function call for each expression
                         let call_expr = Expression::Call(function_name.clone(), vec![expression.clone()]);
-                        self.generate_expression(&call_expr, instructions)?;
+                        let result_type = self.generate_expression(&call_expr, instructions)?;
+                        // Drop the result if the function call produced a value (to keep stack balanced)
+                        if result_type != WasmType::Unit {
+                            instructions.push(Instruction::Drop);
+                        }
                     }
                 }
                 Ok(())
@@ -101,7 +109,11 @@ impl CodeGenerator {
                             arguments: vec![expression.clone()],
                             location: SourceLocation { line: 0, column: 0, file: "apply-block".to_string() },
                         };
-                        self.generate_expression(&method_expr, instructions)?;
+                        let result_type = self.generate_expression(&method_expr, instructions)?;
+                        // Drop the result if the method call produced a value (to keep stack balanced)
+                        if result_type != WasmType::Unit {
+                            instructions.push(Instruction::Drop);
+                        }
                     }
                 }
                 Ok(())

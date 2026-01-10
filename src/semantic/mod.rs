@@ -4567,10 +4567,11 @@ impl SemanticAnalyzer {
             }
 
             (Type::String, "indexOf") => {
-                if args.len() != 1 {
+                // indexOf accepts 1 or 2 arguments: (searchString) or (searchString, startIndex)
+                if args.is_empty() || args.len() > 2 {
                     return Err(CompilerError::type_error(
-                        "Method 'indexOf' expects exactly 1 argument".to_string(),
-                        Some("Usage: text.indexOf(searchString)".to_string()),
+                        "Method 'indexOf' expects 1 or 2 arguments".to_string(),
+                        Some("Usage: text.indexOf(searchString) or text.indexOf(searchString, startIndex)".to_string()),
                         Some(location.clone()),
                     ));
                 }
@@ -4581,6 +4582,18 @@ impl SemanticAnalyzer {
                         Some("Usage: text.indexOf(\"search\")".to_string()),
                         Some(location.clone()),
                     ));
+                }
+                // If there's a second argument, it must be an integer (startIndex)
+                if args.len() == 2 {
+                    let start_type = self.check_expression(&args[1])?;
+                    if !self.types_compatible(&Type::Integer, &start_type) {
+                        return Err(CompilerError::type_error(
+                            "Second argument to 'indexOf' must be an integer (startIndex)"
+                                .to_string(),
+                            Some("Usage: text.indexOf(searchString, startIndex)".to_string()),
+                            Some(location.clone()),
+                        ));
+                    }
                 }
                 return Ok(Type::Integer);
             }
@@ -4641,10 +4654,11 @@ impl SemanticAnalyzer {
             }
 
             (Type::String, "lastIndexOf") => {
-                if args.len() != 1 {
+                // lastIndexOf accepts 1 or 2 arguments: (searchString) or (searchString, startIndex)
+                if args.is_empty() || args.len() > 2 {
                     return Err(CompilerError::type_error(
-                        "Method 'lastIndexOf' expects exactly 1 argument".to_string(),
-                        Some("Usage: text.lastIndexOf(searchString)".to_string()),
+                        "Method 'lastIndexOf' expects 1 or 2 arguments".to_string(),
+                        Some("Usage: text.lastIndexOf(searchString) or text.lastIndexOf(searchString, startIndex)".to_string()),
                         Some(location.clone()),
                     ));
                 }
@@ -4655,6 +4669,18 @@ impl SemanticAnalyzer {
                         Some("Usage: text.lastIndexOf(\"search\")".to_string()),
                         Some(location.clone()),
                     ));
+                }
+                // If there's a second argument, it must be an integer (startIndex)
+                if args.len() == 2 {
+                    let start_type = self.check_expression(&args[1])?;
+                    if !self.types_compatible(&Type::Integer, &start_type) {
+                        return Err(CompilerError::type_error(
+                            "Second argument to 'lastIndexOf' must be an integer (startIndex)"
+                                .to_string(),
+                            Some("Usage: text.lastIndexOf(searchString, startIndex)".to_string()),
+                            Some(location.clone()),
+                        ));
+                    }
                 }
                 return Ok(Type::Integer);
             }

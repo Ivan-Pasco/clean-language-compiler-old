@@ -394,6 +394,16 @@ impl BuiltinRegistry {
                 vec![BuiltinType::String, BuiltinType::String],
                 BuiltinType::Integer,
             ),
+            // 3-arg indexOf with startIndex for searching from a specific position
+            BuiltinMethod::new(
+                "indexOf",
+                vec![
+                    BuiltinType::String,
+                    BuiltinType::String,
+                    BuiltinType::Integer,
+                ],
+                BuiltinType::Integer,
+            ),
             BuiltinMethod::new(
                 "replace",
                 vec![

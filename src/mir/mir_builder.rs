@@ -3360,6 +3360,167 @@ impl MirBuilder {
                     }
                 }
 
+                // CRITICAL FIX: Handle String.indexOf methods EARLY, regardless of method_symbol
+                // indexOf has a non-zero method_symbol (e.g., 71) but needs special handling
+                // to dispatch to the correct function based on argument count
+                if matches!(&receiver.expr_type, ConcreteType::String) && method_name == "indexOf" {
+                    // indexOf has two variants:
+                    // - 1 arg: str.indexOf(needle) -> call string.indexOf (2 params)
+                    // - 2 args: str.indexOf(needle, startIndex) -> call string.indexOfFrom (3 params)
+                    let mut args = vec![MirOperand::Value(receiver_id)];
+                    for arg in arguments {
+                        let arg_id = self.build_expression(context, arg)?;
+                        args.push(MirOperand::Value(arg_id));
+                    }
+
+                    // Use NamedFunction to call the correct function based on arg count
+                    let func_name = if arguments.len() == 2 {
+                        "string.indexOfFrom".to_string()
+                    } else {
+                        "string.indexOf".to_string()
+                    };
+
+                    // Allocate result
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        MirType::I32, // Integer result
+                        expression.location.clone(),
+                    );
+
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::Call {
+                            function: MirOperand::NamedFunction {
+                                name: func_name.clone(),
+                                symbol_id: SymbolId(0), // Namespace function
+                            },
+                            arguments: args,
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, instruction);
+                    return Ok(result_id);
+                }
+
+                // CRITICAL FIX: Handle String.lastIndexOf methods EARLY, regardless of method_symbol
+                if matches!(&receiver.expr_type, ConcreteType::String)
+                    && method_name == "lastIndexOf"
+                {
+                    // lastIndexOf has two variants:
+                    // - 1 arg: str.lastIndexOf(needle) -> call string.lastIndexOf (2 params)
+                    // - 2 args: str.lastIndexOf(needle, startIndex) -> call string.lastIndexOfFrom (3 params)
+                    let mut args = vec![MirOperand::Value(receiver_id)];
+                    for arg in arguments {
+                        let arg_id = self.build_expression(context, arg)?;
+                        args.push(MirOperand::Value(arg_id));
+                    }
+
+                    // Use NamedFunction to call the correct function based on arg count
+                    let func_name = if arguments.len() == 2 {
+                        "string.lastIndexOfFrom".to_string()
+                    } else {
+                        "string.lastIndexOf".to_string()
+                    };
+
+                    // Allocate result
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        MirType::I32, // Integer result
+                        expression.location.clone(),
+                    );
+
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::Call {
+                            function: MirOperand::NamedFunction {
+                                name: func_name.clone(),
+                                symbol_id: SymbolId(0), // Namespace function
+                            },
+                            arguments: args,
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, instruction);
+                    return Ok(result_id);
+                }
+
+                // CRITICAL FIX: Handle String.substring methods EARLY, regardless of method_symbol
+                // substring has two variants:
+                // - 1 arg: str.substring(start) -> call string.substring(str, start, str.length)
+                // - 2 args: str.substring(start, end) -> call string.substring(str, start, end)
+                if matches!(&receiver.expr_type, ConcreteType::String) && method_name == "substring"
+                {
+                    let mut args = vec![MirOperand::Value(receiver_id)];
+
+                    // Build start argument
+                    if !arguments.is_empty() {
+                        let start_id = self.build_expression(context, &arguments[0])?;
+                        args.push(MirOperand::Value(start_id));
+                    }
+
+                    // Build end argument
+                    if arguments.len() >= 2 {
+                        // 2-arg: use the provided end
+                        let end_id = self.build_expression(context, &arguments[1])?;
+                        args.push(MirOperand::Value(end_id));
+                    } else {
+                        // 1-arg: end = string.length
+                        // Call string.length to get the end value
+                        let length_result_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+                        self.register_temp_local(
+                            context,
+                            length_result_id,
+                            MirType::I32,
+                            expression.location.clone(),
+                        );
+
+                        let length_instruction = MirInstruction {
+                            dest: Some(length_result_id),
+                            operation: MirOperation::Call {
+                                function: MirOperand::NamedFunction {
+                                    name: "string.length".to_string(),
+                                    symbol_id: SymbolId(0),
+                                },
+                                arguments: vec![MirOperand::Value(receiver_id)],
+                            },
+                            location: expression.location.clone(),
+                        };
+                        self.add_instruction(context, length_instruction);
+                        args.push(MirOperand::Value(length_result_id));
+                    }
+
+                    // Allocate result
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        MirType::Ptr(Box::new(MirType::U8)), // String pointer
+                        expression.location.clone(),
+                    );
+
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::Call {
+                            function: MirOperand::NamedFunction {
+                                name: "string.substring".to_string(),
+                                symbol_id: SymbolId(0),
+                            },
+                            arguments: args,
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, instruction);
+                    return Ok(result_id);
+                }
+
                 // SPECIAL CASE: Type conversion methods - emit Cast instructions or builtin calls
                 if method_symbol.0 == 0 {
                     let receiver_type = &receiver.expr_type;
@@ -3758,6 +3919,88 @@ impl MirBuilder {
                                 args.push(MirOperand::Value(arg_id));
                             }
                             (SymbolId(52), args)
+                        }
+                        (ConcreteType::String, "indexOf") => {
+                            // indexOf has two variants:
+                            // - 1 arg: str.indexOf(needle) -> call string.indexOf (2 params)
+                            // - 2 args: str.indexOf(needle, startIndex) -> call string.indexOfFrom (3 params)
+                            let mut args = vec![MirOperand::Value(receiver_id)];
+                            for arg in arguments {
+                                let arg_id = self.build_expression(context, arg)?;
+                                args.push(MirOperand::Value(arg_id));
+                            }
+
+                            // Use NamedFunction to call the correct function based on arg count
+                            let func_name = if arguments.len() == 2 {
+                                "string.indexOfFrom".to_string()
+                            } else {
+                                "string.indexOf".to_string()
+                            };
+
+                            // Allocate result
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32, // Integer result
+                                expression.location.clone(),
+                            );
+
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::NamedFunction {
+                                        name: func_name.clone(),
+                                        symbol_id: SymbolId(0), // Namespace function
+                                    },
+                                    arguments: args,
+                                },
+                                location: expression.location.clone(),
+                            };
+                            self.add_instruction(context, instruction);
+                            return Ok(result_id);
+                        }
+                        (ConcreteType::String, "lastIndexOf") => {
+                            // lastIndexOf has two variants:
+                            // - 1 arg: str.lastIndexOf(needle) -> call string.lastIndexOf (2 params)
+                            // - 2 args: str.lastIndexOf(needle, startIndex) -> call string.lastIndexOfFrom (3 params)
+                            let mut args = vec![MirOperand::Value(receiver_id)];
+                            for arg in arguments {
+                                let arg_id = self.build_expression(context, arg)?;
+                                args.push(MirOperand::Value(arg_id));
+                            }
+
+                            // Use NamedFunction to call the correct function based on arg count
+                            let func_name = if arguments.len() == 2 {
+                                "string.lastIndexOfFrom".to_string()
+                            } else {
+                                "string.lastIndexOf".to_string()
+                            };
+
+                            // Allocate result
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32, // Integer result
+                                expression.location.clone(),
+                            );
+
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::NamedFunction {
+                                        name: func_name.clone(),
+                                        symbol_id: SymbolId(0), // Namespace function
+                                    },
+                                    arguments: args,
+                                },
+                                location: expression.location.clone(),
+                            };
+                            self.add_instruction(context, instruction);
+                            return Ok(result_id);
                         }
                         // Array/List methods
                         (ConcreteType::Array(_), "size" | "length") => {

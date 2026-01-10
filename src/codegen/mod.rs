@@ -4928,6 +4928,26 @@ impl CodeGenerator {
         self.add_function_alias("string_index_of", string_index_of_idx);
         self.add_function_alias("string.indexOf", string_index_of_idx);
 
+        // NATIVE: string_index_of_from - finds substring in string starting from index
+        // Parameters: str_ptr (i32), search_ptr (i32), start_index (i32)
+        // Returns: index (i32) or -1 if not found
+        let string_index_of_from_instructions = native_stdlib::string_ops::gen_index_of_from();
+        let string_index_of_from_idx = self.register_function_with_locals(
+            "__string_index_of_from",
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &[
+                WasmType::I32, // str_len
+                WasmType::I32, // search_len
+                WasmType::I32, // i
+                WasmType::I32, // j
+                WasmType::I32, // match
+            ],
+            &string_index_of_from_instructions,
+        )?;
+        self.add_function_alias("string_index_of_from", string_index_of_from_idx);
+        self.add_function_alias("string.indexOfFrom", string_index_of_from_idx);
+
         // NATIVE: string_contains - checks if string contains substring
         // Parameters: str_ptr (i32), search_ptr (i32)
         // Returns: boolean (i32)
@@ -4962,6 +4982,28 @@ impl CodeGenerator {
         )?;
         self.add_function_alias("string_last_index_of", string_last_index_of_idx);
         self.add_function_alias("string.lastIndexOf", string_last_index_of_idx);
+
+        // NATIVE: string_last_index_of_from - finds last occurrence of substring starting from index
+        // Parameters: str_ptr (i32), search_ptr (i32), start_index (i32)
+        // Returns: index (i32) or -1 if not found
+        let string_last_index_of_from_instructions =
+            native_stdlib::string_ops::gen_last_index_of_from();
+        let string_last_index_of_from_idx = self.register_function_with_locals(
+            "__string_last_index_of_from",
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &[
+                WasmType::I32, // str_len
+                WasmType::I32, // search_len
+                WasmType::I32, // i
+                WasmType::I32, // j
+                WasmType::I32, // match
+                WasmType::I32, // result
+            ],
+            &string_last_index_of_from_instructions,
+        )?;
+        self.add_function_alias("string_last_index_of_from", string_last_index_of_from_idx);
+        self.add_function_alias("string.lastIndexOfFrom", string_last_index_of_from_idx);
 
         // NATIVE: string_starts_with - checks if string starts with prefix
         // Parameters: str_ptr (i32), prefix_ptr (i32)

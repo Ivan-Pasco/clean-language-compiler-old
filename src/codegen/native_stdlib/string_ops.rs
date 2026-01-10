@@ -377,6 +377,316 @@ pub fn gen_index_of() -> Vec<Instruction<'static>> {
     ]
 }
 
+/// Generate instructions for string.indexOfFrom (indexOf with start index)
+///
+/// Parameters:
+///   - local 0: str_ptr (string to search in)
+///   - local 1: search_ptr (string to search for)
+///   - local 2: start_index (position to start searching from)
+///
+/// Returns: i32 (index of first occurrence from start_index, or -1 if not found)
+///
+/// Uses locals:
+///   - local 3: str_len
+///   - local 4: search_len
+///   - local 5: i (outer loop counter)
+///   - local 6: j (inner loop counter)
+///   - local 7: match (flag)
+pub fn gen_index_of_from() -> Vec<Instruction<'static>> {
+    vec![
+        // Get str_len -> local 3
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: STRING_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(3),
+        // Get search_len -> local 4
+        Instruction::LocalGet(1),
+        Instruction::I32Load(MemArg {
+            offset: STRING_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(4),
+        // If search_len == 0, return start_index (or 0 if start_index < 0)
+        Instruction::LocalGet(4),
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Result(ValType::I32)),
+        Instruction::LocalGet(2), // Return start_index
+        Instruction::I32Const(0),
+        Instruction::LocalGet(2),
+        Instruction::I32Const(0),
+        Instruction::I32LtS,
+        Instruction::Select,
+        Instruction::Else,
+        // If search_len > str_len, return -1
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(3),
+        Instruction::I32GtU,
+        Instruction::If(BlockType::Result(ValType::I32)),
+        Instruction::I32Const(-1),
+        Instruction::Else,
+        // Clamp start_index to [0, str_len - search_len]
+        // If start_index < 0, start from 0
+        Instruction::LocalGet(2),
+        Instruction::I32Const(0),
+        Instruction::I32LtS,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::LocalSet(2),
+        Instruction::End,
+        // Initialize i = start_index
+        Instruction::LocalGet(2),
+        Instruction::LocalSet(5),
+        // Outer loop: try each starting position
+        Instruction::Block(BlockType::Result(ValType::I32)),
+        Instruction::Loop(BlockType::Empty),
+        // If i > str_len - search_len, not found -> return -1
+        Instruction::LocalGet(5),
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(4),
+        Instruction::I32Sub,
+        Instruction::I32GtU,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(-1),
+        Instruction::Br(2),
+        Instruction::End,
+        // Check if substring matches at position i
+        // Initialize j = 0, match = 1
+        Instruction::I32Const(0),
+        Instruction::LocalSet(6), // j
+        Instruction::I32Const(1),
+        Instruction::LocalSet(7), // match
+        // Inner loop: compare characters
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        // If j >= search_len, done checking
+        Instruction::LocalGet(6),
+        Instruction::LocalGet(4),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+        // If match == 0, skip remaining comparisons
+        Instruction::LocalGet(7),
+        Instruction::I32Eqz,
+        Instruction::BrIf(1),
+        // Compare str[i+j] vs search[j]
+        Instruction::LocalGet(0),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(5),
+        Instruction::I32Add,
+        Instruction::LocalGet(6),
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::LocalGet(1),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(6),
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::I32Ne,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::LocalSet(7), // match = false
+        Instruction::End,
+        // j++
+        Instruction::LocalGet(6),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(6),
+        Instruction::Br(0),
+        Instruction::End, // End inner loop
+        Instruction::End, // End inner block
+        // If match == 1, found -> return i
+        Instruction::LocalGet(7),
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(5), // return i
+        Instruction::Br(2),
+        Instruction::End,
+        // i++
+        Instruction::LocalGet(5),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(5),
+        Instruction::Br(0),
+        Instruction::End,          // End outer loop
+        Instruction::I32Const(-1), // default: not found
+        Instruction::End,          // End outer block
+        Instruction::End,          // End if (search_len > str_len)
+        Instruction::End,          // End if (search_len == 0)
+    ]
+}
+
+/// Generate instructions for string.lastIndexOfFrom (lastIndexOf with start index)
+///
+/// Parameters:
+///   - local 0: str_ptr (string to search in)
+///   - local 1: search_ptr (string to search for)
+///   - local 2: start_index (search backwards from this position, inclusive)
+///
+/// Returns: i32 (index of last occurrence at or before start_index, or -1 if not found)
+///
+/// Uses locals:
+///   - local 3: str_len
+///   - local 4: search_len
+///   - local 5: i (outer loop counter)
+///   - local 6: j (inner loop counter)
+///   - local 7: match (flag)
+///   - local 8: result (stores last found index)
+pub fn gen_last_index_of_from() -> Vec<Instruction<'static>> {
+    vec![
+        // Get str_len -> local 3
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: STRING_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(3),
+        // Get search_len -> local 4
+        Instruction::LocalGet(1),
+        Instruction::I32Load(MemArg {
+            offset: STRING_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(4),
+        // Initialize result to -1 (not found)
+        Instruction::I32Const(-1),
+        Instruction::LocalSet(8),
+        // If search_len == 0, return start_index (clamped to str_len)
+        Instruction::LocalGet(4),
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Result(ValType::I32)),
+        // Return min(start_index, str_len)
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(3),
+        Instruction::I32LtS,
+        Instruction::Select,
+        Instruction::Else,
+        // If search_len > str_len, return -1
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(3),
+        Instruction::I32GtU,
+        Instruction::If(BlockType::Result(ValType::I32)),
+        Instruction::I32Const(-1),
+        Instruction::Else,
+        // Clamp start_index: i = min(start_index, str_len - search_len)
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(4),
+        Instruction::I32Sub,
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(4),
+        Instruction::I32Sub,
+        Instruction::I32LtS,
+        Instruction::Select,
+        Instruction::LocalSet(5),
+        // If start_index was negative, return -1
+        Instruction::LocalGet(2),
+        Instruction::I32Const(0),
+        Instruction::I32LtS,
+        Instruction::If(BlockType::Result(ValType::I32)),
+        Instruction::I32Const(-1),
+        Instruction::Else,
+        // Outer loop: try each starting position from start to beginning
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        // Check if substring matches at position i
+        // Initialize j = 0, match = 1
+        Instruction::I32Const(0),
+        Instruction::LocalSet(6), // j
+        Instruction::I32Const(1),
+        Instruction::LocalSet(7), // match
+        // Inner loop: compare characters
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        // If j >= search_len, done checking
+        Instruction::LocalGet(6),
+        Instruction::LocalGet(4),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+        // If match == 0, skip remaining comparisons
+        Instruction::LocalGet(7),
+        Instruction::I32Eqz,
+        Instruction::BrIf(1),
+        // Compare str[i+j] vs search[j]
+        Instruction::LocalGet(0),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(5),
+        Instruction::I32Add,
+        Instruction::LocalGet(6),
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::LocalGet(1),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(6),
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::I32Ne,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::LocalSet(7), // match = false
+        Instruction::End,
+        // j++
+        Instruction::LocalGet(6),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(6),
+        Instruction::Br(0),
+        Instruction::End, // End inner loop
+        Instruction::End, // End inner block
+        // If match == 1, we found it at position i - return immediately
+        // (searching backwards, so first found is the last occurrence at or before start)
+        Instruction::LocalGet(7),
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(5), // Store result = i
+        Instruction::LocalSet(8),
+        Instruction::Br(1), // Found! Exit outer loop
+        Instruction::End,
+        // If i == 0, we've checked all positions, exit loop
+        Instruction::LocalGet(5),
+        Instruction::I32Eqz,
+        Instruction::BrIf(1),
+        // i--
+        Instruction::LocalGet(5),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::LocalSet(5),
+        Instruction::Br(0),
+        Instruction::End, // End outer loop
+        Instruction::End, // End outer block
+        // Return result (either the found index or -1)
+        Instruction::LocalGet(8),
+        Instruction::End, // End if (start_index < 0)
+        Instruction::End, // End if (search_len > str_len)
+        Instruction::End, // End if (search_len == 0)
+    ]
+}
+
 /// Generate instructions for string.lastIndexOf
 ///
 /// Parameters:
