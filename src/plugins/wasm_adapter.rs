@@ -1075,9 +1075,17 @@ impl WasmPluginAdapter {
 
         // Call the expand function with signature: (i32, i32, i32) -> i32
         // Three string pointers, returns a string pointer
+        // Use the function name from the manifest's exports section
+        let expand_fn_name = &self.manifest.exports.expand;
         let expand: TypedFunc<(i32, i32, i32), i32> = instance
-            .get_typed_func(&mut store, "expand")
-            .map_err(|e| anyhow!("Plugin does not export 'expand' function: {}", e))?;
+            .get_typed_func(&mut store, expand_fn_name)
+            .map_err(|e| {
+                anyhow!(
+                    "Plugin does not export '{}' function: {}",
+                    expand_fn_name,
+                    e
+                )
+            })?;
 
         let result_ptr = expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?;
 
@@ -1209,10 +1217,17 @@ impl WasmPluginAdapter {
         // Body
         let body_ptr = self.find_or_write_string(&mut store, &memory, &block.content)?;
 
-        // Call expand function
+        // Call expand function - use the function name from the manifest's exports section
+        let expand_fn_name = &self.manifest.exports.expand;
         let expand: TypedFunc<(i32, i32, i32), i32> = instance
-            .get_typed_func(&mut store, "expand")
-            .map_err(|e| anyhow!("Plugin does not export 'expand' function: {}", e))?;
+            .get_typed_func(&mut store, expand_fn_name)
+            .map_err(|e| {
+                anyhow!(
+                    "Plugin does not export '{}' function: {}",
+                    expand_fn_name,
+                    e
+                )
+            })?;
 
         let result_ptr = expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?;
 

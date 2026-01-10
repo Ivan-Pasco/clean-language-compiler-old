@@ -227,13 +227,22 @@ impl PluginRegistry {
     }
 
     /// Check if a block type is handled by a registered plugin
+    ///
+    /// Extracts the block type (first word) from names like "screen RegistrationForm"
+    /// before checking the handler registry.
     pub fn handles(&self, block_name: &str) -> bool {
-        self.handlers.contains_key(block_name)
+        // Extract block type (first word) from names like "screen RegistrationForm"
+        let block_type = block_name.split_whitespace().next().unwrap_or(block_name);
+        self.handlers.contains_key(block_type)
     }
 
     /// Get the plugin that handles a specific block type
+    ///
+    /// Extracts the block type (first word) from names like "screen RegistrationForm"
+    /// before looking up the handler.
     pub fn get_handler(&self, block_name: &str) -> Option<&Arc<dyn FrameworkPlugin>> {
-        self.handlers.get(block_name)
+        let block_type = block_name.split_whitespace().next().unwrap_or(block_name);
+        self.handlers.get(block_type)
     }
 
     /// Expand a framework block using the appropriate plugin
@@ -245,9 +254,11 @@ impl PluginRegistry {
     /// * `Ok(Vec<Statement>)` - The expanded statements
     /// * `Err(PluginError)` - If no handler exists or expansion fails
     pub fn expand(&self, block: &FrameworkBlock) -> Result<Vec<Statement>, PluginError> {
+        // Extract block type (first word) from names like "screen RegistrationForm"
+        let block_type = block.name.split_whitespace().next().unwrap_or(&block.name);
         let handler =
             self.handlers
-                .get(&block.name)
+                .get(block_type)
                 .ok_or_else(|| PluginError::UnknownBlockType {
                     block_name: block.name.clone(),
                     location: block.location.clone(),
@@ -280,9 +291,11 @@ impl PluginRegistry {
         &self,
         block: &FrameworkBlock,
     ) -> Result<super::PluginExpansion, PluginError> {
+        // Extract block type (first word) from names like "screen RegistrationForm"
+        let block_type = block.name.split_whitespace().next().unwrap_or(&block.name);
         let handler =
             self.handlers
-                .get(&block.name)
+                .get(block_type)
                 .ok_or_else(|| PluginError::UnknownBlockType {
                     block_name: block.name.clone(),
                     location: block.location.clone(),
