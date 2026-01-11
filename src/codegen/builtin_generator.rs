@@ -211,7 +211,17 @@ impl CodeGenerator {
         self.register_function("string_length", vec![ValType::I32], vec![ValType::I32], &string_length_instructions)?;
         // FIXED: string.concat takes 2 args (ptr1, ptr2) - each is a length-prefixed string pointer
         self.register_import_function("env", "string.concat", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string_substring", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        // Native substring implementation (replaces host import)
+        let malloc_idx = self.get_function_index("__malloc")
+            .ok_or_else(|| CompilerError::new("malloc not registered before substring"))?;
+        let substring_instructions = native_stdlib::string_ops::gen_substring(malloc_idx);
+        self.register_function_with_locals(
+            "string_substring",
+            &[WasmType::I32, WasmType::I32, WasmType::I32],  // str_ptr, start, end
+            Some(WasmType::I32),  // returns new_ptr
+            &[WasmType::I32, WasmType::I32, WasmType::I32],  // new_len, new_ptr, i
+            &substring_instructions,
+        )?;
         self.register_import_function("env", "string_index_of", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         // 3-arg indexOf with startIndex for searching from a specific position
         self.register_import_function("env", "string_index_of_from", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
@@ -286,7 +296,10 @@ impl CodeGenerator {
         self.register_import_function("env", "string.trimStart", vec![ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string.trimEnd", vec![ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string.replace", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string.substring", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
+        // Use native substring implementation (alias to string_substring)
+        if let Some(substring_idx) = self.get_function_index("string_substring") {
+            self.add_function_alias("string.substring", substring_idx);
+        }
         self.register_import_function("env", "string.toUpperCase", vec![ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string.toLowerCase", vec![ValType::I32], vec![ValType::I32])?;
 

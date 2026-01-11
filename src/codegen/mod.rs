@@ -5033,6 +5033,20 @@ impl CodeGenerator {
         self.add_function_alias("string_ends_with", string_ends_with_idx);
         self.add_function_alias("string.endsWith", string_ends_with_idx);
 
+        // NATIVE: string_substring - extracts a substring from a string
+        // Parameters: str_ptr (i32), start (i32), end (i32)
+        // Returns: pointer (i32) to new string
+        let string_substring_instructions = native_stdlib::string_ops::gen_substring(malloc_idx);
+        let string_substring_idx = self.register_function_with_locals(
+            "__string_substring",
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // 3 extra locals: new_len, new_ptr, i
+            &string_substring_instructions,
+        )?;
+        self.add_function_alias("string_substring", string_substring_idx);
+        self.add_function_alias("string.substring", string_substring_idx);
+
         // NATIVE: int_to_string - converts integer to string using malloc
         // Parameters: value (i32)
         // Returns: pointer (i32) to new string
@@ -5334,52 +5348,9 @@ impl CodeGenerator {
         // NOTE: string_last_index_of is now implemented as a native WASM function
         // in builtin_generator.rs using gen_last_index_of() - no AST wrapper needed
 
-        // Register substring
-        let substring_function = ast::Function {
-            name: "string_substring".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![
-                ast::Parameter {
-                    name: "s".to_string(),
-                    type_: ast::Type::String,
-                    default_value: None,
-                },
-                ast::Parameter {
-                    name: "start".to_string(),
-                    type_: ast::Type::Integer,
-                    default_value: None,
-                },
-                ast::Parameter {
-                    name: "end".to_string(),
-                    type_: ast::Type::Integer,
-                    default_value: None,
-                },
-            ],
-            return_type: ast::Type::String,
-            body: vec![ast::Statement::Return {
-                value: Some(ast::Expression::Call(
-                    "string_substring_impl".to_string(),
-                    vec![
-                        ast::Expression::Variable("s".to_string()),
-                        ast::Expression::Variable("start".to_string()),
-                        ast::Expression::Variable("end".to_string()),
-                    ],
-                )),
-                location: None,
-            }],
-            description: Some("Extracts a substring from a string.".to_string()),
-            syntax: ast::FunctionSyntax::Simple,
-            visibility: ast::Visibility::Public,
-            modifier: ast::FunctionModifier::None,
-            location: None,
-        };
-        self.prepare_function_type(&substring_function)?;
-        self.generate_function(&substring_function)?;
-        // Add alias for dot notation used in MIR codegen
-        if let Some(substring_idx) = self.get_function_index("string_substring") {
-            self.add_function_alias("string.substring", substring_idx);
-        }
+        // NOTE: string_substring is now implemented as a native WASM function
+        // in builtin_generator.rs using gen_substring() - no AST wrapper needed
+        // The alias string.substring -> string_substring is also registered there
 
         // Register replace
         let replace_function = ast::Function {
