@@ -5376,6 +5376,10 @@ impl CodeGenerator {
         };
         self.prepare_function_type(&substring_function)?;
         self.generate_function(&substring_function)?;
+        // Add alias for dot notation used in MIR codegen
+        if let Some(substring_idx) = self.get_function_index("string_substring") {
+            self.add_function_alias("string.substring", substring_idx);
+        }
 
         // Register replace
         let replace_function = ast::Function {

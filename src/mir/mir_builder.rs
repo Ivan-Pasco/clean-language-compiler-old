@@ -3454,7 +3454,9 @@ impl MirBuilder {
                 // substring has two variants:
                 // - 1 arg: str.substring(start) -> call string.substring(str, start, str.length)
                 // - 2 args: str.substring(start, end) -> call string.substring(str, start, end)
-                if matches!(&receiver.expr_type, ConcreteType::String) && method_name == "substring"
+                // NOTE: Must use receiver_actual_type, not receiver.expr_type, because TAST might have Unknown
+                if matches!(&receiver_actual_type, ConcreteType::String)
+                    && method_name == "substring"
                 {
                     let mut args = vec![MirOperand::Value(receiver_id)];
 
@@ -4466,8 +4468,9 @@ impl MirBuilder {
 
                 // CRITICAL FIX: For namespace functions (string.*, list.*, etc), use NamedFunction operand
                 // Check if this is a method call that should be converted to a namespace function call
+                // NOTE: Must use receiver_actual_type, not receiver.expr_type, because TAST might have Unknown
                 let function_operand = {
-                    let receiver_type_name = match &receiver.expr_type {
+                    let receiver_type_name = match &receiver_actual_type {
                         ConcreteType::String => Some("string"),
                         ConcreteType::Array(_) => Some("list"),
                         ConcreteType::Integer => Some("integer"),
