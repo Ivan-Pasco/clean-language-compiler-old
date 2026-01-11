@@ -5177,10 +5177,12 @@ impl CodeGenerator {
             self.add_function_alias("array_contains", lc_idx);
         }
 
-        // NATIVE: list_push_i32 - add element to end of list (requires reallocation)
+        // NATIVE: list_push_i32 - add element to end of list (IN-PLACE MUTATION)
+        // This mutates the list in place - no reallocation, no new pointer.
+        // Safe because empty lists are pre-allocated with capacity 8.
         // Parameters: list_ptr (i32), value (i32)
-        // Returns: new_list_ptr (i32)
-        let list_push_i32_instructions = native_stdlib::list_ops::gen_push_i32(malloc_idx);
+        // Returns: list_ptr (i32) - same pointer, mutated in place
+        let list_push_i32_instructions = native_stdlib::list_ops::gen_push_i32_inplace();
         self.register_function(
             "__list_push_i32",
             &[WasmType::I32, WasmType::I32],

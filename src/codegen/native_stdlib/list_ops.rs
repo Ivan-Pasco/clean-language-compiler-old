@@ -324,6 +324,59 @@ pub fn gen_push_i32(malloc_func: u32) -> Vec<Instruction<'static>> {
     ]
 }
 
+/// Generate instructions for list.push (i32 elements) - IN-PLACE MUTATION
+///
+/// This modifies the list in place without creating a new list.
+/// IMPORTANT: Only safe if size < capacity! Caller must ensure capacity.
+/// Empty lists are pre-allocated with capacity 8 by statement_generator.rs.
+///
+/// Parameters:
+///   - local 0: list_ptr
+///   - local 1: value
+///
+/// Returns: i32 (same list_ptr - mutated in place)
+pub fn gen_push_i32_inplace() -> Vec<Instruction<'static>> {
+    vec![
+        // Calculate element address: list_ptr + 16 + size*4
+        Instruction::LocalGet(0), // list_ptr
+        Instruction::I32Load(MemArg {
+            offset: LIST_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }), // size
+        Instruction::I32Const(LIST_ELEMENT_SIZE_I32 as i32),
+        Instruction::I32Mul, // size * 4
+        Instruction::I32Const(LIST_DATA_OFFSET as i32),
+        Instruction::I32Add, // 16 + size*4
+        Instruction::LocalGet(0),
+        Instruction::I32Add, // list_ptr + 16 + size*4
+        // Store value at element address
+        Instruction::LocalGet(1), // value
+        Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Increment size: list_ptr[0] = size + 1
+        Instruction::LocalGet(0), // list_ptr
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: LIST_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }), // size
+        Instruction::I32Const(1),
+        Instruction::I32Add, // size + 1
+        Instruction::I32Store(MemArg {
+            offset: LIST_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Return same list pointer
+        Instruction::LocalGet(0),
+    ]
+}
+
 /// Generate instructions for list.pop (i32 elements)
 /// Returns the last element (does not modify the list)
 pub fn gen_pop_i32() -> Vec<Instruction<'static>> {
