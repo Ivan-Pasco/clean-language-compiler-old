@@ -272,7 +272,7 @@ impl CodeGenerator {
         codegen.register_print_imports()?;
         codegen.register_console_imports()?;
         codegen.register_file_imports()?;
-        codegen.register_http_imports(&HashSet::new())?;
+        codegen.register_http_imports(&HashSet::new(), false)?;
         codegen.register_type_conversion_imports()?;
         codegen.register_method_style_imports()?;
         // Register native memory operations (includes native int_to_string, bool_to_string, etc.)
@@ -8629,9 +8629,14 @@ impl CodeGenerator {
     ///
     /// `skip_functions` contains function names that should NOT be registered as imports
     /// because they will be handled by plugin bridge functions with expand_strings wrappers.
+    ///
+    /// `include_server_imports` controls whether HTTP server imports (_http_route, _http_listen,
+    /// _req_param, etc.) are registered. These should only be true when compiling web server
+    /// applications that use plugins like Frame. Default should be false for CLI/library code.
     pub fn register_http_imports(
         &mut self,
         skip_functions: &HashSet<String>,
+        include_server_imports: bool,
     ) -> Result<(), CompilerError> {
         // Basic HTTP methods
 
@@ -8934,134 +8939,136 @@ impl CodeGenerator {
 
         // =========================================
         // HTTP Server functions (for Frame runtime)
+        // Only include if explicitly requested (e.g., when using web framework plugins)
         // =========================================
+        if include_server_imports {
+            // _http_route(methodPtr: i32, methodLen: i32, pathPtr: i32, pathLen: i32, handlerIdx: i32) -> i32
+            // Skip if plugin bridge will handle this function with expand_strings wrapper
+            if !skip_functions.contains("_http_route") {
+                let route_type = self.add_function_type(
+                    &[
+                        WasmType::I32,
+                        WasmType::I32,
+                        WasmType::I32,
+                        WasmType::I32,
+                        WasmType::I32,
+                    ],
+                    Some(WasmType::I32),
+                )?;
+                self.import_section.import(
+                    "env",
+                    "_http_route",
+                    wasm_encoder::EntityType::Function(route_type),
+                );
+                let route_index = self.function_count;
+                self.http_import_indices
+                    .insert("_http_route".to_string(), route_index);
+                // Also add to function_map for MIR codegen lookup
+                self.function_map
+                    .insert("_http_route".to_string(), route_index);
+                self.function_count += 1;
+            }
 
-        // _http_route(methodPtr: i32, methodLen: i32, pathPtr: i32, pathLen: i32, handlerIdx: i32) -> i32
-        // Skip if plugin bridge will handle this function with expand_strings wrapper
-        if !skip_functions.contains("_http_route") {
-            let route_type = self.add_function_type(
-                &[
-                    WasmType::I32,
-                    WasmType::I32,
-                    WasmType::I32,
-                    WasmType::I32,
-                    WasmType::I32,
-                ],
-                Some(WasmType::I32),
-            )?;
+            // _http_listen(port: i32) -> i32
+            let listen_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
             self.import_section.import(
                 "env",
-                "_http_route",
-                wasm_encoder::EntityType::Function(route_type),
+                "_http_listen",
+                wasm_encoder::EntityType::Function(listen_type),
             );
-            let route_index = self.function_count;
+            let listen_index = self.function_count;
             self.http_import_indices
-                .insert("_http_route".to_string(), route_index);
+                .insert("_http_listen".to_string(), listen_index);
             // Also add to function_map for MIR codegen lookup
             self.function_map
-                .insert("_http_route".to_string(), route_index);
+                .insert("_http_listen".to_string(), listen_index);
             self.function_count += 1;
-        }
 
-        // _http_listen(port: i32) -> i32
-        let listen_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
-            "env",
-            "_http_listen",
-            wasm_encoder::EntityType::Function(listen_type),
-        );
-        let listen_index = self.function_count;
-        self.http_import_indices
-            .insert("_http_listen".to_string(), listen_index);
-        // Also add to function_map for MIR codegen lookup
-        self.function_map
-            .insert("_http_listen".to_string(), listen_index);
-        self.function_count += 1;
+            // =========================================
+            // Request context access functions
+            // =========================================
 
-        // =========================================
-        // Request context access functions
-        // =========================================
+            // _req_param(namePtr: i32, nameLen: i32) -> i32 (returns string pointer)
+            let req_param_type =
+                self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_req_param",
+                wasm_encoder::EntityType::Function(req_param_type),
+            );
+            self.http_import_indices
+                .insert("_req_param".to_string(), self.function_count);
+            self.function_map
+                .insert("_req_param".to_string(), self.function_count);
+            self.function_count += 1;
 
-        // _req_param(namePtr: i32, nameLen: i32) -> i32 (returns string pointer)
-        let req_param_type =
-            self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
-            "env",
-            "_req_param",
-            wasm_encoder::EntityType::Function(req_param_type),
-        );
-        self.http_import_indices
-            .insert("_req_param".to_string(), self.function_count);
-        self.function_map
-            .insert("_req_param".to_string(), self.function_count);
-        self.function_count += 1;
+            // _req_query(namePtr: i32, nameLen: i32) -> i32 (returns string pointer)
+            let req_query_type =
+                self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_req_query",
+                wasm_encoder::EntityType::Function(req_query_type),
+            );
+            self.http_import_indices
+                .insert("_req_query".to_string(), self.function_count);
+            self.function_map
+                .insert("_req_query".to_string(), self.function_count);
+            self.function_count += 1;
 
-        // _req_query(namePtr: i32, nameLen: i32) -> i32 (returns string pointer)
-        let req_query_type =
-            self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
-            "env",
-            "_req_query",
-            wasm_encoder::EntityType::Function(req_query_type),
-        );
-        self.http_import_indices
-            .insert("_req_query".to_string(), self.function_count);
-        self.function_map
-            .insert("_req_query".to_string(), self.function_count);
-        self.function_count += 1;
+            // _req_body() -> i32 (returns string pointer)
+            let req_body_type = self.add_function_type(&[], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_req_body",
+                wasm_encoder::EntityType::Function(req_body_type),
+            );
+            self.http_import_indices
+                .insert("_req_body".to_string(), self.function_count);
+            self.function_map
+                .insert("_req_body".to_string(), self.function_count);
+            self.function_count += 1;
 
-        // _req_body() -> i32 (returns string pointer)
-        let req_body_type = self.add_function_type(&[], Some(WasmType::I32))?;
-        self.import_section.import(
-            "env",
-            "_req_body",
-            wasm_encoder::EntityType::Function(req_body_type),
-        );
-        self.http_import_indices
-            .insert("_req_body".to_string(), self.function_count);
-        self.function_map
-            .insert("_req_body".to_string(), self.function_count);
-        self.function_count += 1;
+            // _req_header(namePtr: i32, nameLen: i32) -> i32 (returns string pointer)
+            let req_header_type =
+                self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_req_header",
+                wasm_encoder::EntityType::Function(req_header_type),
+            );
+            self.http_import_indices
+                .insert("_req_header".to_string(), self.function_count);
+            self.function_map
+                .insert("_req_header".to_string(), self.function_count);
+            self.function_count += 1;
 
-        // _req_header(namePtr: i32, nameLen: i32) -> i32 (returns string pointer)
-        let req_header_type =
-            self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
-            "env",
-            "_req_header",
-            wasm_encoder::EntityType::Function(req_header_type),
-        );
-        self.http_import_indices
-            .insert("_req_header".to_string(), self.function_count);
-        self.function_map
-            .insert("_req_header".to_string(), self.function_count);
-        self.function_count += 1;
+            // _req_method() -> i32 (returns string pointer)
+            let req_method_type = self.add_function_type(&[], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_req_method",
+                wasm_encoder::EntityType::Function(req_method_type),
+            );
+            self.http_import_indices
+                .insert("_req_method".to_string(), self.function_count);
+            self.function_map
+                .insert("_req_method".to_string(), self.function_count);
+            self.function_count += 1;
 
-        // _req_method() -> i32 (returns string pointer)
-        let req_method_type = self.add_function_type(&[], Some(WasmType::I32))?;
-        self.import_section.import(
-            "env",
-            "_req_method",
-            wasm_encoder::EntityType::Function(req_method_type),
-        );
-        self.http_import_indices
-            .insert("_req_method".to_string(), self.function_count);
-        self.function_map
-            .insert("_req_method".to_string(), self.function_count);
-        self.function_count += 1;
-
-        // _req_path() -> i32 (returns string pointer)
-        let req_path_type = self.add_function_type(&[], Some(WasmType::I32))?;
-        self.import_section.import(
-            "env",
-            "_req_path",
-            wasm_encoder::EntityType::Function(req_path_type),
-        );
-        self.http_import_indices
-            .insert("_req_path".to_string(), self.function_count);
-        self.function_map
-            .insert("_req_path".to_string(), self.function_count);
-        self.function_count += 1;
+            // _req_path() -> i32 (returns string pointer)
+            let req_path_type = self.add_function_type(&[], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_req_path",
+                wasm_encoder::EntityType::Function(req_path_type),
+            );
+            self.http_import_indices
+                .insert("_req_path".to_string(), self.function_count);
+            self.function_map
+                .insert("_req_path".to_string(), self.function_count);
+            self.function_count += 1;
+        } // end if include_server_imports
 
         Ok(())
     }

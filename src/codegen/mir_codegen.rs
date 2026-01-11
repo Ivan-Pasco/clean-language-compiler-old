@@ -221,12 +221,21 @@ impl MirCodeGenerator<'_> {
                 .filter(|f| f.expand_strings && f.params.iter().any(|p| p == "string"))
                 .map(|f| f.name.clone())
                 .collect();
+
+            // Only include HTTP server imports if web framework plugin is loaded
+            // (detected by presence of _http_route or similar bridge functions)
+            let include_server_imports = self
+                .bridge_functions
+                .iter()
+                .any(|f| f.name.starts_with("_http_") || f.name.starts_with("_req_"));
+
             debug_mir!(
-                "DEBUG MIR: Registering HTTP imports (skipping {} for plugin expand_strings)",
-                skip_http_functions.len()
+                "DEBUG MIR: Registering HTTP imports (skipping {} for plugin expand_strings, server_imports={})",
+                skip_http_functions.len(),
+                include_server_imports
             );
             self.wasm_generator
-                .register_http_imports(&skip_http_functions)
+                .register_http_imports(&skip_http_functions, include_server_imports)
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: HTTP imports registered");
 
