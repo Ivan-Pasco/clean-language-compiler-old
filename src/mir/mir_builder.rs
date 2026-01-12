@@ -1344,17 +1344,22 @@ impl MirBuilder {
                 // Build condition expression
                 let condition_id = self.build_expression(context, condition)?;
 
-                // CRITICAL FIX: Create basic blocks for then, else, AND continue upfront
-                // This prevents block ID collisions when nested statements create new blocks
-                let then_block_id = BasicBlockId(context.function.blocks.len());
+                // CRITICAL FIX: Use next_block_id counter instead of blocks.len()
+                // This prevents block ID collisions when nested statements create new blocks.
+                // The issue is that blocks.len() can be incorrect when blocks are pre-allocated
+                // (like the continue block) and nested control flow tries to allocate more blocks.
+                let base_block_id = context.function.next_block_id;
+                let then_block_id = BasicBlockId(base_block_id);
                 let else_block_id = if else_block.is_some() {
-                    Some(BasicBlockId(context.function.blocks.len() + 1))
+                    Some(BasicBlockId(base_block_id + 1))
                 } else {
                     None
                 };
-                let continue_block_id = BasicBlockId(
-                    context.function.blocks.len() + if else_block.is_some() { 2 } else { 1 },
-                );
+                let continue_block_id =
+                    BasicBlockId(base_block_id + if else_block.is_some() { 2 } else { 1 });
+                // Update the counter to reserve all these block IDs
+                context.function.next_block_id =
+                    base_block_id + if else_block.is_some() { 3 } else { 2 };
 
                 // Pre-allocate continue block to reserve its ID
                 context.function.blocks.insert(
@@ -1684,14 +1689,15 @@ impl MirBuilder {
                 let iterable_value = self.build_expression(context, iterable)?;
 
                 // Create loop blocks
-                // CRITICAL FIX: Pre-allocate ALL loop blocks upfront to prevent block ID
-                // collisions when nested control flow (IF statements) creates its own blocks.
-                // This ensures the For loop's header, body, increment, and exit blocks have
-                // reserved IDs before any nested statements are processed.
-                let header_block_id = BasicBlockId(context.function.blocks.len());
-                let body_block_id = BasicBlockId(context.function.blocks.len() + 1);
-                let increment_block_id = BasicBlockId(context.function.blocks.len() + 2);
-                let exit_block_id = BasicBlockId(context.function.blocks.len() + 3);
+                // CRITICAL FIX: Use next_block_id counter instead of blocks.len() to prevent
+                // block ID collisions when nested control flow creates its own blocks.
+                let base_block_id = context.function.next_block_id;
+                let header_block_id = BasicBlockId(base_block_id);
+                let body_block_id = BasicBlockId(base_block_id + 1);
+                let increment_block_id = BasicBlockId(base_block_id + 2);
+                let exit_block_id = BasicBlockId(base_block_id + 3);
+                // Reserve all 4 block IDs
+                context.function.next_block_id = base_block_id + 4;
 
                 // CRITICAL: Pre-insert placeholder blocks to reserve their IDs
                 // This prevents nested IF statements from creating blocks with the same IDs
@@ -2064,11 +2070,14 @@ impl MirBuilder {
                 // entry block -> header (condition check) -> body -> header
                 //                                        -> exit
 
-                // Pre-allocate ALL while loop blocks upfront to prevent block ID
-                // collisions when nested control flow creates its own blocks.
-                let header_block_id = BasicBlockId(context.function.blocks.len());
-                let body_block_id = BasicBlockId(context.function.blocks.len() + 1);
-                let exit_block_id = BasicBlockId(context.function.blocks.len() + 2);
+                // CRITICAL FIX: Use next_block_id counter instead of blocks.len() to prevent
+                // block ID collisions when nested control flow creates its own blocks.
+                let base_block_id = context.function.next_block_id;
+                let header_block_id = BasicBlockId(base_block_id);
+                let body_block_id = BasicBlockId(base_block_id + 1);
+                let exit_block_id = BasicBlockId(base_block_id + 2);
+                // Reserve all 3 block IDs
+                context.function.next_block_id = base_block_id + 3;
 
                 // Pre-insert placeholder blocks to reserve their IDs
                 for (block_id, label) in [
@@ -5289,11 +5298,13 @@ impl MirBuilder {
                 };
                 self.add_instruction(context, init_instruction);
 
-                // Create loop blocks
-                let loop_header = BasicBlockId(context.function.blocks.len());
-                let loop_body = BasicBlockId(context.function.blocks.len() + 1);
-                let loop_increment = BasicBlockId(context.function.blocks.len() + 2);
-                let loop_exit = BasicBlockId(context.function.blocks.len() + 3);
+                // Create loop blocks using next_block_id counter
+                let base_block_id = context.function.next_block_id;
+                let loop_header = BasicBlockId(base_block_id);
+                let loop_body = BasicBlockId(base_block_id + 1);
+                let loop_increment = BasicBlockId(base_block_id + 2);
+                let loop_exit = BasicBlockId(base_block_id + 3);
+                context.function.next_block_id = base_block_id + 4;
 
                 // Jump to loop header
                 self.set_block_terminator(
@@ -5558,14 +5569,15 @@ impl MirBuilder {
         };
         self.add_instruction(context, is_negative_instruction);
 
-        // CRITICAL FIX: Pre-allocate ALL loop blocks upfront to prevent block ID
-        // collisions when nested control flow (IF statements) creates its own blocks.
-        // This ensures the range loop's header, body, increment, and exit blocks have
-        // reserved IDs before any nested statements are processed.
-        let header_block_id = BasicBlockId(context.function.blocks.len());
-        let body_block_id = BasicBlockId(context.function.blocks.len() + 1);
-        let increment_block_id = BasicBlockId(context.function.blocks.len() + 2);
-        let exit_block_id = BasicBlockId(context.function.blocks.len() + 3);
+        // CRITICAL FIX: Use next_block_id counter instead of blocks.len() to prevent
+        // block ID collisions when nested control flow creates its own blocks.
+        let base_block_id = context.function.next_block_id;
+        let header_block_id = BasicBlockId(base_block_id);
+        let body_block_id = BasicBlockId(base_block_id + 1);
+        let increment_block_id = BasicBlockId(base_block_id + 2);
+        let exit_block_id = BasicBlockId(base_block_id + 3);
+        // Reserve all 4 block IDs
+        context.function.next_block_id = base_block_id + 4;
 
         // Pre-insert placeholder blocks to reserve their IDs
         // This prevents nested IF statements from creating blocks with the same IDs

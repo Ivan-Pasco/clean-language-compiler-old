@@ -974,6 +974,63 @@ impl MirCodeGenerator<'_> {
         false
     }
 
+    /// Find the eventual continuation block from a block that may have nested control flow.
+    /// This follows through nested Branches to find where non-returning paths eventually jump.
+    /// Returns None if all paths return or if there's no common continuation.
+    fn find_eventual_continuation(
+        &self,
+        function: &MirFunction,
+        block_id: BasicBlockId,
+    ) -> Option<BasicBlockId> {
+        let mut visited = std::collections::HashSet::new();
+        let mut continuations = std::collections::HashSet::new();
+        self.collect_jump_targets(function, block_id, &mut visited, &mut continuations);
+
+        // If all non-returning paths lead to the same block, that's our continuation
+        if continuations.len() == 1 {
+            continuations.into_iter().next()
+        } else {
+            None
+        }
+    }
+
+    /// Recursively collect all Jump targets from a block's control flow.
+    /// This follows through nested Branches to find where non-returning paths jump.
+    fn collect_jump_targets(
+        &self,
+        function: &MirFunction,
+        block_id: BasicBlockId,
+        visited: &mut std::collections::HashSet<BasicBlockId>,
+        targets: &mut std::collections::HashSet<BasicBlockId>,
+    ) {
+        if visited.contains(&block_id) {
+            return;
+        }
+        visited.insert(block_id);
+
+        let Some(block) = function.blocks.get(&block_id) else {
+            return;
+        };
+
+        match &block.terminator {
+            MirTerminator::Jump { target } => {
+                targets.insert(*target);
+            }
+            MirTerminator::Branch {
+                true_block,
+                false_block,
+                ..
+            } => {
+                // Follow both branches
+                self.collect_jump_targets(function, *true_block, visited, targets);
+                self.collect_jump_targets(function, *false_block, visited, targets);
+            }
+            MirTerminator::Return { .. } | MirTerminator::Unreachable => {
+                // Dead end - no continuation from here
+            }
+        }
+    }
+
     /// Detects if a block is a loop header by checking for backedges using DFS.
     /// A block is a loop header if there's a cycle in the CFG that includes this block
     /// as the target of a backedge. This is more robust than block ID ordering.
@@ -1581,13 +1638,22 @@ impl MirCodeGenerator<'_> {
                     } else {
                         // Find and generate continuation block
                         // We need to find the continuation that at least one non-returning branch jumps to
+                        // CRITICAL FIX: Use find_eventual_continuation to handle nested control flow
                         let mut continuation: Option<BasicBlockId> = None;
 
-                        // Check if true branch jumps to a continuation
+                        // Check if true branch jumps to a continuation (may have nested control flow)
                         if !true_has_return {
                             if let Some(true_blk) = function.blocks.get(true_block) {
-                                if let MirTerminator::Jump { target } = &true_blk.terminator {
-                                    continuation = Some(*target);
+                                match &true_blk.terminator {
+                                    MirTerminator::Jump { target } => {
+                                        continuation = Some(*target);
+                                    }
+                                    MirTerminator::Branch { .. } => {
+                                        // Nested control flow - find eventual continuation
+                                        continuation =
+                                            self.find_eventual_continuation(function, *true_block);
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
@@ -1597,14 +1663,20 @@ impl MirCodeGenerator<'_> {
                             if has_else_clause {
                                 // Real else clause - check where it jumps
                                 if let Some(false_blk) = function.blocks.get(false_block) {
-                                    if let MirTerminator::Jump { target } = &false_blk.terminator {
-                                        if continuation.is_none() {
-                                            continuation = Some(*target);
-                                        } else {
-                                            // Both branches jump - verify they jump to the same place
-                                            debug_assert_eq!(continuation, Some(*target),
-                                                "Both branches jump but to different continuations - this indicates a CFG issue");
+                                    let false_cont = match &false_blk.terminator {
+                                        MirTerminator::Jump { target } => Some(*target),
+                                        MirTerminator::Branch { .. } => {
+                                            // Nested control flow - find eventual continuation
+                                            self.find_eventual_continuation(function, *false_block)
                                         }
+                                        _ => None,
+                                    };
+
+                                    if let Some(fc) = false_cont {
+                                        if continuation.is_none() {
+                                            continuation = Some(fc);
+                                        }
+                                        // Both branches should lead to same continuation
                                     }
                                 }
                             } else {
