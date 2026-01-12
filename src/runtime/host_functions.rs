@@ -1073,6 +1073,197 @@ fn register_math_functions(linker: &mut Linker<()>) -> Result<(), CompilerError>
             )
         })?;
 
+    // math_asin(value: f64) -> f64
+    linker
+        .func_wrap("env", "math_asin", |value: f64| -> f64 { value.asin() })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_asin function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_acos(value: f64) -> f64
+    linker
+        .func_wrap("env", "math_acos", |value: f64| -> f64 { value.acos() })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_acos function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_atan(value: f64) -> f64
+    linker
+        .func_wrap("env", "math_atan", |value: f64| -> f64 { value.atan() })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_atan function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_atan2(y: f64, x: f64) -> f64
+    linker
+        .func_wrap("env", "math_atan2", |y: f64, x: f64| -> f64 { y.atan2(x) })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_atan2 function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_sinh(value: f64) -> f64
+    linker
+        .func_wrap("env", "math_sinh", |value: f64| -> f64 { value.sinh() })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_sinh function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_cosh(value: f64) -> f64
+    linker
+        .func_wrap("env", "math_cosh", |value: f64| -> f64 { value.cosh() })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_cosh function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_tanh(value: f64) -> f64
+    linker
+        .func_wrap("env", "math_tanh", |value: f64| -> f64 { value.tanh() })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_tanh function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_ln(value: f64) -> f64 (natural logarithm)
+    linker
+        .func_wrap("env", "math_ln", |value: f64| -> f64 { value.ln() })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_ln function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_log10(value: f64) -> f64 (base 10 logarithm)
+    linker
+        .func_wrap("env", "math_log10", |value: f64| -> f64 { value.log10() })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_log10 function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_log2(value: f64) -> f64 (base 2 logarithm)
+    linker
+        .func_wrap("env", "math_log2", |value: f64| -> f64 { value.log2() })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_log2 function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_exp(value: f64) -> f64 (e^x)
+    linker
+        .func_wrap("env", "math_exp", |value: f64| -> f64 { value.exp() })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_exp function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_exp2(value: f64) -> f64 (2^x)
+    linker
+        .func_wrap("env", "math_exp2", |value: f64| -> f64 { value.exp2() })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_exp2 function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_trunc(value: f64) -> f64 (truncate to integer)
+    linker
+        .func_wrap("env", "math_trunc", |value: f64| -> f64 { value.trunc() })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_trunc function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_random() -> f64 (random number between 0 and 1)
+    linker
+        .func_wrap("env", "math_random", || -> f64 {
+            use rand::Rng;
+            rand::thread_rng().gen::<f64>()
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_random function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_sign(value: f64) -> f64 (sign of number: -1, 0, or 1)
+    linker
+        .func_wrap("env", "math_sign", |value: f64| -> f64 {
+            if value > 0.0 {
+                1.0
+            } else if value < 0.0 {
+                -1.0
+            } else {
+                0.0
+            }
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_sign function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // math_clamp(value: f64, min: f64, max: f64) -> f64
+    linker
+        .func_wrap(
+            "env",
+            "math_clamp",
+            |value: f64, min: f64, max: f64| -> f64 { value.clamp(min, max) },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create math_clamp function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
     Ok(())
 }
 
@@ -1222,6 +1413,34 @@ fn register_memory_functions(linker: &mut Linker<()>) -> Result<(), CompilerErro
         .map_err(|e| {
             CompilerError::runtime_error(
                 format!("Failed to create mem_release function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // mem_scope_push() - Push a new memory scope
+    linker
+        .func_wrap("memory_runtime", "mem_scope_push", || {
+            // Scope tracking is handled by the compiler's IR
+            // This is a no-op in the runtime as scopes are compile-time constructs
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create mem_scope_push function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // mem_scope_pop() - Pop a memory scope
+    linker
+        .func_wrap("memory_runtime", "mem_scope_pop", || {
+            // Scope tracking is handled by the compiler's IR
+            // This is a no-op in the runtime as scopes are compile-time constructs
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create mem_scope_pop function: {e}"),
                 None,
                 None,
             )
@@ -1807,67 +2026,475 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
             )
         })?;
 
-    // string.concat(other_ptr: i32) - Concatenate two strings
+    // string.split(string_ptr: i32, delimiter_ptr: i32) -> list_ptr: i32
+    // Splits a string by delimiter and returns pointer to a list of strings
     linker
         .func_wrap(
             "env",
-            "string.concat",
-            |mut caller: Caller<'_, ()>, ptr1: i32, ptr2: i32| -> i32 {
+            "string.split",
+            |mut caller: Caller<'_, ()>, string_ptr: i32, delimiter_ptr: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
+                let delimiter = extract_length_prefixed_string(&mut caller, delimiter_ptr);
+
+                // Split the string
+                let parts: Vec<&str> = if delimiter.is_empty() {
+                    // Split by characters if delimiter is empty
+                    string_val.split("").filter(|s| !s.is_empty()).collect()
+                } else {
+                    string_val.split(&delimiter).collect()
+                };
+
+                // Allocate a list in memory
+                // List layout: [size(4)][capacity(4)][type_id(4)][padding(4)][elements...]
+                // Each element is a pointer to a length-prefixed string
+                let num_elements = parts.len();
+                let list_header_size = 16; // 4 + 4 + 4 + 4
+                let elements_size = num_elements * 4; // Each element is an i32 pointer
+                let total_size = list_header_size + elements_size;
+
                 if let Some(memory) = caller.get_export("memory") {
                     if let Some(memory) = memory.into_memory() {
-                        let data = memory.data(&caller);
+                        // Allocate memory for the list
+                        static mut NEXT_LIST_ALLOC: i32 = 32768; // Start list allocations at 32KB
+                        unsafe {
+                            let list_ptr = NEXT_LIST_ALLOC;
+                            NEXT_LIST_ALLOC += total_size as i32 + 8; // Add padding
 
-                        // Extract first string
-                        let str1 = if ptr1 >= 0 && (ptr1 + 4) as usize <= data.len() {
-                            let len_bytes = &data[ptr1 as usize..(ptr1 + 4) as usize];
-                            let len = i32::from_le_bytes([
-                                len_bytes[0],
-                                len_bytes[1],
-                                len_bytes[2],
-                                len_bytes[3],
-                            ]);
-                            if len >= 0 && (ptr1 + 4 + len) as usize <= data.len() {
-                                let string_data =
-                                    &data[(ptr1 + 4) as usize..(ptr1 + 4 + len) as usize];
-                                std::str::from_utf8(string_data).unwrap_or("")
-                            } else {
-                                ""
+                            // Check if we need to grow memory
+                            let current_size = memory.data_size(&caller) as i32;
+                            if NEXT_LIST_ALLOC > current_size {
+                                let pages_needed =
+                                    ((NEXT_LIST_ALLOC - current_size) + 65535) / 65536;
+                                if memory.grow(&mut caller, pages_needed as u64).is_err() {
+                                    return 0;
+                                }
                             }
-                        } else {
-                            ""
-                        };
 
-                        // Extract second string
-                        let str2 = if ptr2 >= 0 && (ptr2 + 4) as usize <= data.len() {
-                            let len_bytes = &data[ptr2 as usize..(ptr2 + 4) as usize];
-                            let len = i32::from_le_bytes([
-                                len_bytes[0],
-                                len_bytes[1],
-                                len_bytes[2],
-                                len_bytes[3],
-                            ]);
-                            if len >= 0 && (ptr2 + 4 + len) as usize <= data.len() {
-                                let string_data =
-                                    &data[(ptr2 + 4) as usize..(ptr2 + 4 + len) as usize];
-                                std::str::from_utf8(string_data).unwrap_or("")
-                            } else {
-                                ""
+                            let data = memory.data_mut(&mut caller);
+
+                            // Write list header
+                            // size (number of elements)
+                            let size_bytes = (num_elements as i32).to_le_bytes();
+                            data[list_ptr as usize..(list_ptr + 4) as usize]
+                                .copy_from_slice(&size_bytes);
+
+                            // capacity (same as size for now)
+                            data[(list_ptr + 4) as usize..(list_ptr + 8) as usize]
+                                .copy_from_slice(&size_bytes);
+
+                            // type_id (string type = 4)
+                            let type_id_bytes = 4i32.to_le_bytes();
+                            data[(list_ptr + 8) as usize..(list_ptr + 12) as usize]
+                                .copy_from_slice(&type_id_bytes);
+
+                            // padding
+                            data[(list_ptr + 12) as usize..(list_ptr + 16) as usize]
+                                .copy_from_slice(&[0, 0, 0, 0]);
+
+                            // Allocate each string and store pointer in list
+                            for (i, part) in parts.iter().enumerate() {
+                                let str_ptr = allocate_string_in_memory(&mut caller, part);
+                                let element_offset = list_ptr + 16 + (i as i32 * 4);
+
+                                // Need to get memory again after allocation
+                                if let Some(mem) = caller.get_export("memory") {
+                                    if let Some(mem) = mem.into_memory() {
+                                        let data = mem.data_mut(&mut caller);
+                                        let ptr_bytes = str_ptr.to_le_bytes();
+                                        data[element_offset as usize
+                                            ..(element_offset + 4) as usize]
+                                            .copy_from_slice(&ptr_bytes);
+                                    }
+                                }
                             }
-                        } else {
-                            ""
-                        };
 
-                        // Concatenate and allocate new string
-                        let concatenated = format!("{}{}", str1, str2);
-                        return allocate_string_in_memory(&mut caller, &concatenated);
+                            return list_ptr;
+                        }
                     }
                 }
-                ptr1 // Return first pointer if extraction failed
+                0 // Return 0 on failure
             },
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create string.concat function: {e}"),
+                format!("Failed to create string.split function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.trim(ptr: i32) -> i32 - Remove leading and trailing whitespace
+    linker
+        .func_wrap(
+            "env",
+            "string.trim",
+            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, ptr);
+                let trimmed = string_val.trim();
+                allocate_string_in_memory(&mut caller, trimmed)
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.trim function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.trimStart(ptr: i32) -> i32 - Remove leading whitespace
+    linker
+        .func_wrap(
+            "env",
+            "string.trimStart",
+            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, ptr);
+                let trimmed = string_val.trim_start();
+                allocate_string_in_memory(&mut caller, trimmed)
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.trimStart function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.trimEnd(ptr: i32) -> i32 - Remove trailing whitespace
+    linker
+        .func_wrap(
+            "env",
+            "string.trimEnd",
+            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, ptr);
+                let trimmed = string_val.trim_end();
+                allocate_string_in_memory(&mut caller, trimmed)
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.trimEnd function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.indexOf(string_ptr: i32, search_ptr: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "string.indexOf",
+            |mut caller: Caller<'_, ()>, string_ptr: i32, search_ptr: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
+                let search = extract_length_prefixed_string(&mut caller, search_ptr);
+                match string_val.find(&search) {
+                    Some(pos) => pos as i32,
+                    None => -1,
+                }
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.indexOf function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.lastIndexOf(string_ptr: i32, search_ptr: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "string.lastIndexOf",
+            |mut caller: Caller<'_, ()>, string_ptr: i32, search_ptr: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
+                let search = extract_length_prefixed_string(&mut caller, search_ptr);
+                match string_val.rfind(&search) {
+                    Some(pos) => pos as i32,
+                    None => -1,
+                }
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.lastIndexOf function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.substring(ptr: i32, start: i32, end: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "string.substring",
+            |mut caller: Caller<'_, ()>, ptr: i32, start: i32, end: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, ptr);
+                let len = string_val.len() as i32;
+                let start = start.max(0).min(len) as usize;
+                let end = end.max(0).min(len) as usize;
+                let start = start.min(end);
+                let substring = &string_val[start..end];
+                allocate_string_in_memory(&mut caller, substring)
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.substring function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.charAt(ptr: i32, index: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "string.charAt",
+            |mut caller: Caller<'_, ()>, ptr: i32, index: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, ptr);
+                if index >= 0 && (index as usize) < string_val.len() {
+                    let ch = string_val.chars().nth(index as usize).unwrap_or('\0');
+                    allocate_string_in_memory(&mut caller, &ch.to_string())
+                } else {
+                    allocate_string_in_memory(&mut caller, "")
+                }
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.charAt function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.startsWith(string_ptr: i32, prefix_ptr: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "string.startsWith",
+            |mut caller: Caller<'_, ()>, string_ptr: i32, prefix_ptr: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
+                let prefix = extract_length_prefixed_string(&mut caller, prefix_ptr);
+                if string_val.starts_with(&prefix) {
+                    1
+                } else {
+                    0
+                }
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.startsWith function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.endsWith(string_ptr: i32, suffix_ptr: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "string.endsWith",
+            |mut caller: Caller<'_, ()>, string_ptr: i32, suffix_ptr: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
+                let suffix = extract_length_prefixed_string(&mut caller, suffix_ptr);
+                if string_val.ends_with(&suffix) {
+                    1
+                } else {
+                    0
+                }
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.endsWith function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.includes(string_ptr: i32, search_ptr: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "string.includes",
+            |mut caller: Caller<'_, ()>, string_ptr: i32, search_ptr: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
+                let search = extract_length_prefixed_string(&mut caller, search_ptr);
+                if string_val.contains(&search) {
+                    1
+                } else {
+                    0
+                }
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.includes function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.replace(string_ptr: i32, search_ptr: i32, replace_ptr: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "string.replace",
+            |mut caller: Caller<'_, ()>,
+             string_ptr: i32,
+             search_ptr: i32,
+             replace_ptr: i32|
+             -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
+                let search = extract_length_prefixed_string(&mut caller, search_ptr);
+                let replace = extract_length_prefixed_string(&mut caller, replace_ptr);
+                let result = string_val.replace(&search, &replace);
+                allocate_string_in_memory(&mut caller, &result)
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.replace function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.replaceFirst(string_ptr: i32, search_ptr: i32, replace_ptr: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "string.replaceFirst",
+            |mut caller: Caller<'_, ()>,
+             string_ptr: i32,
+             search_ptr: i32,
+             replace_ptr: i32|
+             -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
+                let search = extract_length_prefixed_string(&mut caller, search_ptr);
+                let replace = extract_length_prefixed_string(&mut caller, replace_ptr);
+                let result = string_val.replacen(&search, &replace, 1);
+                allocate_string_in_memory(&mut caller, &result)
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.replaceFirst function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.repeat(ptr: i32, count: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "string.repeat",
+            |mut caller: Caller<'_, ()>, ptr: i32, count: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, ptr);
+                let count = count.max(0) as usize;
+                let result = string_val.repeat(count);
+                allocate_string_in_memory(&mut caller, &result)
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.repeat function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.padStart(ptr: i32, target_len: i32, pad_ptr: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "string.padStart",
+            |mut caller: Caller<'_, ()>, ptr: i32, target_len: i32, pad_ptr: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, ptr);
+                let pad_char = extract_length_prefixed_string(&mut caller, pad_ptr);
+                let target_len = target_len.max(0) as usize;
+                let current_len = string_val.len();
+
+                if current_len >= target_len {
+                    return ptr; // Already at or exceeds target length
+                }
+
+                let pad_str = if pad_char.is_empty() { " " } else { &pad_char };
+                let padding_needed = target_len - current_len;
+                let mut result = String::new();
+
+                // Add padding
+                while result.len() < padding_needed {
+                    result.push_str(pad_str);
+                }
+                result.truncate(padding_needed);
+                result.push_str(&string_val);
+
+                allocate_string_in_memory(&mut caller, &result)
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.padStart function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.padEnd(ptr: i32, target_len: i32, pad_ptr: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "string.padEnd",
+            |mut caller: Caller<'_, ()>, ptr: i32, target_len: i32, pad_ptr: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, ptr);
+                let pad_char = extract_length_prefixed_string(&mut caller, pad_ptr);
+                let target_len = target_len.max(0) as usize;
+                let current_len = string_val.len();
+
+                if current_len >= target_len {
+                    return ptr; // Already at or exceeds target length
+                }
+
+                let pad_str = if pad_char.is_empty() { " " } else { &pad_char };
+                let mut result = string_val.clone();
+
+                // Add padding
+                while result.len() < target_len {
+                    result.push_str(pad_str);
+                }
+                result.truncate(target_len);
+
+                allocate_string_in_memory(&mut caller, &result)
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.padEnd function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string.reverse(ptr: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "string.reverse",
+            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, ptr);
+                let reversed: String = string_val.chars().rev().collect();
+                allocate_string_in_memory(&mut caller, &reversed)
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string.reverse function: {e}"),
                 None,
                 None,
             )

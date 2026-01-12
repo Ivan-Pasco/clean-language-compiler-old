@@ -1633,6 +1633,65 @@ async fn handle_run(
         ptr1
     })?; // Stub - return first pointer
 
+    // string.split - Returns empty list pointer (stub)
+    linker.func_wrap("env", "string.split", |_ptr: i32, _delim: i32| -> i32 {
+        0 // Return null pointer - stub implementation
+    })?;
+
+    // Additional string methods
+    linker.func_wrap("env", "string.trim", |ptr: i32| -> i32 { ptr })?;
+    linker.func_wrap("env", "string.trimStart", |ptr: i32| -> i32 { ptr })?;
+    linker.func_wrap("env", "string.trimEnd", |ptr: i32| -> i32 { ptr })?;
+    linker.func_wrap("env", "string.indexOf", |_ptr: i32, _search: i32| -> i32 {
+        -1
+    })?;
+    linker.func_wrap(
+        "env",
+        "string.lastIndexOf",
+        |_ptr: i32, _search: i32| -> i32 { -1 },
+    )?;
+    linker.func_wrap(
+        "env",
+        "string.substring",
+        |ptr: i32, _start: i32, _end: i32| -> i32 { ptr },
+    )?;
+    linker.func_wrap("env", "string.charAt", |_ptr: i32, _idx: i32| -> i32 { 0 })?;
+    linker.func_wrap(
+        "env",
+        "string.startsWith",
+        |_ptr: i32, _prefix: i32| -> i32 { 0 },
+    )?;
+    linker.func_wrap("env", "string.endsWith", |_ptr: i32, _suffix: i32| -> i32 {
+        0
+    })?;
+    linker.func_wrap("env", "string.includes", |_ptr: i32, _search: i32| -> i32 {
+        0
+    })?;
+    linker.func_wrap(
+        "env",
+        "string.replace",
+        |ptr: i32, _search: i32, _replace: i32| -> i32 { ptr },
+    )?;
+    linker.func_wrap(
+        "env",
+        "string.replaceFirst",
+        |ptr: i32, _search: i32, _replace: i32| -> i32 { ptr },
+    )?;
+    linker.func_wrap("env", "string.repeat", |ptr: i32, _count: i32| -> i32 {
+        ptr
+    })?;
+    linker.func_wrap(
+        "env",
+        "string.padStart",
+        |ptr: i32, _len: i32, _pad: i32| -> i32 { ptr },
+    )?;
+    linker.func_wrap(
+        "env",
+        "string.padEnd",
+        |ptr: i32, _len: i32, _pad: i32| -> i32 { ptr },
+    )?;
+    linker.func_wrap("env", "string.reverse", |ptr: i32| -> i32 { ptr })?;
+
     // BOOLEAN conversion methods
     linker.func_wrap("env", "boolean.toInteger", |value: i32| -> i32 {
         i32::from(value != 0)
@@ -1700,6 +1759,50 @@ async fn handle_run(
             0.0
         },
     )?;
+
+    // Math functions
+    linker.func_wrap("env", "math_pow", |base: f64, exp: f64| -> f64 {
+        base.powf(exp)
+    })?;
+    linker.func_wrap("env", "math_sin", |v: f64| -> f64 { v.sin() })?;
+    linker.func_wrap("env", "math_cos", |v: f64| -> f64 { v.cos() })?;
+    linker.func_wrap("env", "math_tan", |v: f64| -> f64 { v.tan() })?;
+    linker.func_wrap("env", "math_asin", |v: f64| -> f64 { v.asin() })?;
+    linker.func_wrap("env", "math_acos", |v: f64| -> f64 { v.acos() })?;
+    linker.func_wrap("env", "math_atan", |v: f64| -> f64 { v.atan() })?;
+    linker.func_wrap("env", "math_atan2", |y: f64, x: f64| -> f64 { y.atan2(x) })?;
+    linker.func_wrap("env", "math_sinh", |v: f64| -> f64 { v.sinh() })?;
+    linker.func_wrap("env", "math_cosh", |v: f64| -> f64 { v.cosh() })?;
+    linker.func_wrap("env", "math_tanh", |v: f64| -> f64 { v.tanh() })?;
+    linker.func_wrap("env", "math_ln", |v: f64| -> f64 { v.ln() })?;
+    linker.func_wrap("env", "math_log10", |v: f64| -> f64 { v.log10() })?;
+    linker.func_wrap("env", "math_log2", |v: f64| -> f64 { v.log2() })?;
+    linker.func_wrap("env", "math_exp", |v: f64| -> f64 { v.exp() })?;
+    linker.func_wrap("env", "math_exp2", |v: f64| -> f64 { v.exp2() })?;
+    linker.func_wrap("env", "math_abs", |v: f64| -> f64 { v.abs() })?;
+    linker.func_wrap("env", "math_sqrt", |v: f64| -> f64 { v.sqrt() })?;
+    linker.func_wrap("env", "math_floor", |v: f64| -> f64 { v.floor() })?;
+    linker.func_wrap("env", "math_ceil", |v: f64| -> f64 { v.ceil() })?;
+    linker.func_wrap("env", "math_round", |v: f64| -> f64 { v.round() })?;
+    linker.func_wrap("env", "math_trunc", |v: f64| -> f64 { v.trunc() })?;
+    linker.func_wrap("env", "math_min", |a: f64, b: f64| -> f64 { a.min(b) })?;
+    linker.func_wrap("env", "math_max", |a: f64, b: f64| -> f64 { a.max(b) })?;
+    linker.func_wrap("env", "math_sign", |v: f64| -> f64 {
+        if v > 0.0 {
+            1.0
+        } else if v < 0.0 {
+            -1.0
+        } else {
+            0.0
+        }
+    })?;
+    linker.func_wrap("env", "math_clamp", |v: f64, min: f64, max: f64| -> f64 {
+        v.clamp(min, max)
+    })?;
+    linker.func_wrap("env", "math_random", || -> f64 {
+        use rand::Rng;
+        rand::thread_rng().gen::<f64>()
+    })?;
 
     // File I/O functions - basic stub implementations
     linker.func_wrap(
