@@ -1430,21 +1430,90 @@ impl MirBuilder {
                     "Then block effective return check"
                 );
 
+                // CRITICAL FIX: Handle Jump to continuation for nested control flow.
+                //
+                // Two cases to handle:
+                // 1. Simple then block (no nested control flow): then_block_id needs Jump if it doesn't return
+                // 2. Nested control flow: current_block after processing is NOT then_block_id, and THAT
+                //    block needs Jump to the OUTER continuation
+                //
+                // We need to add Jump on blocks that have Unreachable placeholder terminators.
+                // We should NOT overwrite meaningful terminators (Branch, Return, Jump).
+
+                // Check if then_block_id itself needs a Jump (simple case, no nested control flow)
+                let then_has_meaningful_terminator = context
+                    .function
+                    .blocks
+                    .get(&then_block_id)
+                    .map(|b| {
+                        matches!(
+                            b.terminator,
+                            MirTerminator::Return { .. }
+                                | MirTerminator::Branch { .. }
+                                | MirTerminator::Jump { .. }
+                        )
+                    })
+                    .unwrap_or(false);
+
+                // Get the actual exit block (might be different from then_block_id if nested control flow)
+                let actual_exit_block = self.current_block;
+
                 if !has_return {
-                    trace!("Adding Jump to continue block from then branch");
-                    // Set the then block's terminator to jump to continuation
-                    // This replaces the placeholder Unreachable or sets terminator if not set
-                    let saved_current = self.current_block;
-                    self.current_block = Some(then_block_id);
-                    self.set_block_terminator(
-                        context,
-                        MirTerminator::Jump {
-                            target: continue_block_id,
-                        },
-                    );
-                    self.current_block = saved_current;
+                    // Need to ensure proper control flow to continuation
+
+                    // Case 1: Simple then block - add Jump on then_block_id
+                    if !then_has_meaningful_terminator {
+                        trace!("Adding Jump to continue block from then branch (simple case)");
+                        let saved_current = self.current_block;
+                        self.current_block = Some(then_block_id);
+                        self.set_block_terminator(
+                            context,
+                            MirTerminator::Jump {
+                                target: continue_block_id,
+                            },
+                        );
+                        self.current_block = saved_current;
+                    }
+
+                    // Case 2: Nested control flow - add Jump on the exit block if it needs one
+                    if let Some(exit_block_id) = actual_exit_block {
+                        if exit_block_id != then_block_id {
+                            // Nested control flow happened - check if exit block needs Jump
+                            let exit_has_meaningful_terminator = context
+                                .function
+                                .blocks
+                                .get(&exit_block_id)
+                                .map(|b| {
+                                    matches!(
+                                        b.terminator,
+                                        MirTerminator::Return { .. }
+                                            | MirTerminator::Branch { .. }
+                                            | MirTerminator::Jump { .. }
+                                    )
+                                })
+                                .unwrap_or(false);
+
+                            if !exit_has_meaningful_terminator {
+                                trace!(
+                                    exit_block_id = ?exit_block_id,
+                                    "Adding Jump to continue block from nested control flow exit"
+                                );
+                                self.current_block = Some(exit_block_id);
+                                self.set_block_terminator(
+                                    context,
+                                    MirTerminator::Jump {
+                                        target: continue_block_id,
+                                    },
+                                );
+                            }
+                        }
+                    }
                 } else {
-                    trace!("Then branch already has return, skipping Jump");
+                    trace!(
+                        then_block_id = ?then_block_id,
+                        has_return = has_return,
+                        "Then branch effectively returns, no Jump needed"
+                    );
                 }
 
                 // Track whether the else branch returns (all paths)
@@ -1503,15 +1572,39 @@ impl MirBuilder {
 
                     if !else_returns {
                         // At least one path doesn't return - add jump to continuation
+                        // BUT: Only if the block doesn't already have a meaningful terminator
                         let saved_current = self.current_block;
                         if let Some(curr) = saved_current {
-                            self.current_block = Some(curr);
-                            self.set_block_terminator(
-                                context,
-                                MirTerminator::Jump {
-                                    target: continue_block_id,
-                                },
-                            );
+                            // CRITICAL FIX: Check if the block already has a meaningful terminator
+                            // Include Jump in the check - an existing Jump is meaningful
+                            let has_meaningful_terminator = context
+                                .function
+                                .blocks
+                                .get(&curr)
+                                .map(|b| {
+                                    matches!(
+                                        b.terminator,
+                                        MirTerminator::Return { .. }
+                                            | MirTerminator::Branch { .. }
+                                            | MirTerminator::Jump { .. }
+                                    )
+                                })
+                                .unwrap_or(false);
+
+                            if !has_meaningful_terminator {
+                                self.current_block = Some(curr);
+                                self.set_block_terminator(
+                                    context,
+                                    MirTerminator::Jump {
+                                        target: continue_block_id,
+                                    },
+                                );
+                            } else {
+                                trace!(
+                                    block_id = ?curr,
+                                    "Else block already has proper terminator, skipping Jump"
+                                );
+                            }
                         }
                         self.current_block = saved_current;
                     } else {

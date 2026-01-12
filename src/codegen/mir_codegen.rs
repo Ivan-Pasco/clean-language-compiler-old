@@ -862,7 +862,8 @@ impl MirCodeGenerator<'_> {
     /// Helper function to check if false_block is a continuation (not a real else clause).
     /// A false_block is a continuation if:
     /// 1. It's empty (no instructions) with Unreachable/Jump/Return terminator, OR
-    /// 2. The true_block jumps directly to it (indicating no else clause in source)
+    /// 2. The true_block jumps directly to it (indicating no else clause in source), OR
+    /// 3. The true_block has nested control flow and one of its exit paths jumps to false_block
     /// This is used to detect when an if statement has NO else clause.
     fn is_continuation_not_else(
         &self,
@@ -897,6 +898,75 @@ impl MirCodeGenerator<'_> {
                 if *target == false_block {
                     // True branch jumps to false_block, so false_block is continuation
                     return true;
+                }
+            }
+
+            // Check #3: True branch has nested control flow (Branch) and one of its exit paths
+            // jumps to false_block. This handles cases like:
+            //   if outer_condition
+            //       if inner_condition
+            //           return x
+            //   return y  // This is continuation, not else!
+            //
+            // In this case, true_block has a Branch terminator (the nested if), and the nested if's
+            // continuation block jumps to false_block.
+            if let MirTerminator::Branch {
+                true_block: inner_true,
+                false_block: inner_false,
+                ..
+            } = &true_blk.terminator
+            {
+                // Check if either branch of the nested if jumps to our false_block
+                if self.block_eventually_jumps_to(function, *inner_true, false_block)
+                    || self.block_eventually_jumps_to(function, *inner_false, false_block)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Helper to check if a block eventually jumps to a target block (following Jump terminators).
+    fn block_eventually_jumps_to(
+        &self,
+        function: &MirFunction,
+        start_block: BasicBlockId,
+        target_block: BasicBlockId,
+    ) -> bool {
+        let mut visited = std::collections::HashSet::new();
+        let mut to_visit = vec![start_block];
+
+        while let Some(block_id) = to_visit.pop() {
+            if visited.contains(&block_id) {
+                continue;
+            }
+            visited.insert(block_id);
+
+            let Some(block) = function.blocks.get(&block_id) else {
+                continue;
+            };
+
+            match &block.terminator {
+                MirTerminator::Jump { target } => {
+                    if *target == target_block {
+                        return true;
+                    }
+                    // Follow the jump
+                    to_visit.push(*target);
+                }
+                MirTerminator::Branch {
+                    true_block,
+                    false_block,
+                    ..
+                } => {
+                    // Check both branches
+                    to_visit.push(*true_block);
+                    to_visit.push(*false_block);
+                }
+                MirTerminator::Return { .. } | MirTerminator::Unreachable => {
+                    // Dead end
                 }
             }
         }
@@ -1160,11 +1230,23 @@ impl MirCodeGenerator<'_> {
         };
 
         // Generate block instructions
+        debug_mir!(
+            "DEBUG BRANCH_BLOCK: Block {:?} has {} instructions in function '{}'",
+            block_id,
+            block.instructions.len(),
+            function.name
+        );
         for instruction in &block.instructions {
             self.generate_instruction(instruction)?;
         }
 
         // Handle terminator - but DON'T follow Jump terminators (those are exits to continuations)
+        debug_mir!(
+            "DEBUG BRANCH_BLOCK: Block {:?} terminator is {:?} in function '{}'",
+            block_id,
+            block.terminator,
+            function.name
+        );
         match &block.terminator {
             MirTerminator::Return { value } => {
                 if let Some(return_value) = value {

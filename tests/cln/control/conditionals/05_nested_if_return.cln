@@ -1,0 +1,68 @@
+// Test: Nested if blocks with return statements
+// This verifies that return statements inside nested if blocks correctly
+// terminate the function and return the expected value.
+
+functions:
+	integer get_nested_return_value(integer outer, integer inner)
+		if outer > 0
+			if inner > 0
+				return 100
+			return 50
+		return 0
+
+	// Test multiple levels of nesting
+	integer deep_nested_return(integer a, integer b, integer c)
+		if a > 0
+			if b > 0
+				if c > 0
+					return 1000
+				return 100
+			return 10
+		return 1
+
+	// Test nested if without else
+	integer nested_no_else(integer x)
+		if x > 10
+			if x > 20
+				return 2
+		return 0
+
+start()
+	// Test basic nested return
+	integer result1 = get_nested_return_value(1, 1)
+	if result1 == 100
+		printl("Test 1 PASSED: nested return (both positive)")
+	else
+		printl("Test 1 FAILED: expected 100")
+
+	integer result2 = get_nested_return_value(1, 0)
+	if result2 == 50
+		printl("Test 2 PASSED: outer only positive")
+	else
+		printl("Test 2 FAILED: expected 50")
+
+	integer result3 = get_nested_return_value(0, 1)
+	if result3 == 0
+		printl("Test 3 PASSED: neither condition met")
+	else
+		printl("Test 3 FAILED: expected 0")
+
+	// Test deep nesting
+	integer result4 = deep_nested_return(1, 1, 1)
+	if result4 == 1000
+		printl("Test 4 PASSED: deep nested return")
+	else
+		printl("Test 4 FAILED: expected 1000")
+
+	// Test nested without else
+	integer result5 = nested_no_else(25)
+	if result5 == 2
+		printl("Test 5 PASSED: nested no else")
+	else
+		printl("Test 5 FAILED: expected 2")
+
+	integer result6 = nested_no_else(15)
+	if result6 == 0
+		printl("Test 6 PASSED: outer only, inner not met")
+	else
+		printl("Test 6 FAILED: expected 0")
