@@ -98,6 +98,9 @@ impl<'a> TypeInference<'a> {
         // Initialize built-in types in type environment
         self.initialize_builtins();
 
+        // Register state variables from symbol table
+        self.register_state_variables();
+
         // Infer types for all program elements
         let tast_program = self.infer_program(&program);
 
@@ -981,6 +984,26 @@ impl<'a> TypeInference<'a> {
                             // Skip non-function builtins (classes, namespaces, etc.)
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Register state variables from symbol table in type environment
+    fn register_state_variables(&mut self) {
+        // Scan all symbols in the global scope and register state variables
+        let all_symbols: Vec<_> = self.symbol_table.accessible_symbols();
+        for symbol_id in all_symbols {
+            if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
+                if let crate::resolver::SymbolKind::StateVariable { var_type, .. } = &symbol.kind {
+                    // Convert HirType to ConcreteType and register in type environment
+                    let concrete_type = Self::hir_type_to_concrete_type(var_type);
+                    self.type_env.insert(symbol_id, concrete_type);
+                    tracing::trace!(
+                        "Registered state variable '{}' (SymbolId {:?}) with type",
+                        symbol.name,
+                        symbol_id
+                    );
                 }
             }
         }

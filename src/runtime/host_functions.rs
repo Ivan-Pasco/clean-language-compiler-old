@@ -2123,11 +2123,11 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
             )
         })?;
 
-    // string.trim(ptr: i32) -> i32 - Remove leading and trailing whitespace
+    // string_trim(ptr: i32) -> i32 - Remove leading and trailing whitespace
     linker
         .func_wrap(
             "env",
-            "string.trim",
+            "string_trim",
             |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, ptr);
                 let trimmed = string_val.trim();
@@ -2136,17 +2136,17 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create string.trim function: {e}"),
+                format!("Failed to create string_trim function: {e}"),
                 None,
                 None,
             )
         })?;
 
-    // string.trimStart(ptr: i32) -> i32 - Remove leading whitespace
+    // string_trim_start(ptr: i32) -> i32 - Remove leading whitespace
     linker
         .func_wrap(
             "env",
-            "string.trimStart",
+            "string_trim_start",
             |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, ptr);
                 let trimmed = string_val.trim_start();
@@ -2155,17 +2155,17 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create string.trimStart function: {e}"),
+                format!("Failed to create string_trim_start function: {e}"),
                 None,
                 None,
             )
         })?;
 
-    // string.trimEnd(ptr: i32) -> i32 - Remove trailing whitespace
+    // string_trim_end(ptr: i32) -> i32 - Remove trailing whitespace
     linker
         .func_wrap(
             "env",
-            "string.trimEnd",
+            "string_trim_end",
             |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, ptr);
                 let trimmed = string_val.trim_end();
@@ -2174,7 +2174,31 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
         )
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to create string.trimEnd function: {e}"),
+                format!("Failed to create string_trim_end function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string_compare(ptr1: i32, ptr2: i32) -> i32 - Compare two strings
+    // Returns 1 if equal, 0 if not equal
+    linker
+        .func_wrap(
+            "env",
+            "string_compare",
+            |mut caller: Caller<'_, ()>, ptr1: i32, ptr2: i32| -> i32 {
+                let string1 = extract_length_prefixed_string(&mut caller, ptr1);
+                let string2 = extract_length_prefixed_string(&mut caller, ptr2);
+                if string1 == string2 {
+                    1
+                } else {
+                    0
+                }
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string_compare function: {e}"),
                 None,
                 None,
             )

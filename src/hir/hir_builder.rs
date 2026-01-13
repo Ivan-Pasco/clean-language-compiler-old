@@ -114,12 +114,28 @@ impl HirBuilder {
             start_function = Some(self.build_function(start_func)?);
         }
 
+        // Process state block if present
+        let state = if let Some(ast_state) = &program.state {
+            Some(self.build_state_block(ast_state)?)
+        } else {
+            None
+        };
+
+        // Process watch blocks
+        let watch_blocks = program
+            .watch_blocks
+            .iter()
+            .map(|wb| self.build_watch_block(wb))
+            .collect::<Result<Vec<_>, _>>()?;
+
         let hir_program = HirProgram {
             functions,
             classes,
             start_function,
             imports,
             tests,
+            state,
+            watch_blocks,
             location: program.location.unwrap_or_default(),
         };
 
@@ -976,6 +992,93 @@ impl HirBuilder {
             }
             Value::Null | Value::Void => HirType::Void,
         }
+    }
+
+    /// Convert AST state block to HIR state block
+    fn build_state_block(
+        &mut self,
+        state_block: &crate::ast::StateBlock,
+    ) -> Result<HirStateBlock, CompilerError> {
+        let declarations = state_block
+            .declarations
+            .iter()
+            .map(|decl| self.build_state_declaration(decl))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let computed = state_block
+            .computed
+            .iter()
+            .map(|comp| self.build_computed_declaration(comp))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let scope = match state_block.scope {
+            crate::ast::StateScope::App => HirStateScope::App,
+            crate::ast::StateScope::Screen => HirStateScope::Screen,
+        };
+
+        Ok(HirStateBlock {
+            declarations,
+            computed,
+            scope,
+            location: state_block.location.clone().unwrap_or_default(),
+        })
+    }
+
+    /// Convert AST state declaration to HIR state declaration
+    fn build_state_declaration(
+        &mut self,
+        decl: &crate::ast::StateDeclaration,
+    ) -> Result<HirStateDeclaration, CompilerError> {
+        let state_type = self.build_type(&decl.type_)?;
+        let initializer = self.build_expression(&decl.initializer)?;
+
+        let guard = if let Some(ast_guard) = &decl.guard {
+            Some(HirGuardClause {
+                condition: self.build_expression(&ast_guard.condition)?,
+                error_message: ast_guard.error_message.clone(),
+                location: ast_guard.location.clone().unwrap_or_default(),
+            })
+        } else {
+            None
+        };
+
+        Ok(HirStateDeclaration {
+            name: decl.name.clone(),
+            state_type,
+            initializer,
+            guard,
+            location: decl.location.clone().unwrap_or_default(),
+        })
+    }
+
+    /// Convert AST computed declaration to HIR computed declaration
+    fn build_computed_declaration(
+        &mut self,
+        comp: &crate::ast::ComputedDeclaration,
+    ) -> Result<HirComputedDeclaration, CompilerError> {
+        let computed_type = self.build_type(&comp.type_)?;
+        let body = self.build_block(&comp.body)?;
+
+        Ok(HirComputedDeclaration {
+            name: comp.name.clone(),
+            computed_type,
+            body,
+            location: comp.location.clone().unwrap_or_default(),
+        })
+    }
+
+    /// Convert AST watch block to HIR watch block
+    fn build_watch_block(
+        &mut self,
+        watch: &crate::ast::WatchBlock,
+    ) -> Result<HirWatchBlock, CompilerError> {
+        let body = self.build_block(&watch.body)?;
+
+        Ok(HirWatchBlock {
+            targets: watch.targets.clone(),
+            body,
+            location: watch.location.clone().unwrap_or_default(),
+        })
     }
 }
 

@@ -442,21 +442,27 @@ impl StringOperations {
             self.generate_string_substring(),
         )?;
 
-        register_stdlib_function(
-            codegen,
-            "string_replace",
-            &[WasmType::I32, WasmType::I32, WasmType::I32], // string, old, new
-            Some(WasmType::I32),                            // new string
-            self.generate_string_replace(),
-        )?;
+        // NOTE: string_replace is now handled via host import registered in mir_codegen.rs
+        // via register_string_replace_import(). Do NOT register it here.
+        // REMOVED: Internal stub registration - now uses host import instead
+        // register_stdlib_function(
+        //     codegen,
+        //     "string_replace",
+        //     &[WasmType::I32, WasmType::I32, WasmType::I32], // string, old, new
+        //     Some(WasmType::I32),                            // new string
+        //     self.generate_string_replace(),
+        // )?;
 
-        register_stdlib_function(
-            codegen,
-            "string_replace_all",
-            &[WasmType::I32, WasmType::I32, WasmType::I32], // string, old, new
-            Some(WasmType::I32),                            // new string
-            self.generate_string_replace_all(),
-        )?;
+        // NOTE: string_replace_all also uses the host import since it replaces all occurrences
+        // which is the same as our host string.replace behavior
+        // REMOVED: Internal stub registration - now uses host import instead
+        // register_stdlib_function(
+        //     codegen,
+        //     "string_replace_all",
+        //     &[WasmType::I32, WasmType::I32, WasmType::I32], // string, old, new
+        //     Some(WasmType::I32),                            // new string
+        //     self.generate_string_replace_all(),
+        // )?;
 
         register_stdlib_function_with_locals(
             codegen,
@@ -546,15 +552,19 @@ impl StringOperations {
             self.generate_simple_substring(),
         )?;
 
-        // Register string_replace_impl for compatibility with codegen
-        // IMPROVED: Basic replace implementation
-        register_stdlib_function(
-            codegen,
-            "string_replace_impl",
-            &[WasmType::I32, WasmType::I32, WasmType::I32], // string, old, new
-            Some(WasmType::I32),                            // new string
-            self.generate_simple_replace(),
-        )?;
+        // NOTE: string_replace_impl is now handled via host import registered in mir_codegen.rs
+        // via register_string_replace_import(). Do NOT register it here to avoid overriding
+        // the import with a stub.
+        // The alias "string_replace_impl" is added to the import function.
+
+        // REMOVED: Internal stub registration - now uses host import instead
+        // register_stdlib_function(
+        //     codegen,
+        //     "string_replace_impl",
+        //     &[WasmType::I32, WasmType::I32, WasmType::I32], // string, old, new
+        //     Some(WasmType::I32),                            // new string
+        //     self.generate_simple_replace(),
+        // )?;
 
         // Register string_pad_start_impl for compatibility with codegen
         // Using minimal stub to avoid WASM validation errors

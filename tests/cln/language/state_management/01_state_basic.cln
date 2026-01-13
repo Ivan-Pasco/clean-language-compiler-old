@@ -1,0 +1,23 @@
+// Test basic state declaration
+// State is a first-class language concept that persists across function calls
+
+state:
+	integer count = 0
+	string username = ""
+	boolean isLoggedIn = false
+
+functions:
+	void increment()
+		count = count + 1
+
+	void setUser(string name)
+		username = name
+		isLoggedIn = true
+
+start()
+	print("Initial count: " + count.toString())
+	increment()
+	increment()
+	print("After increments: " + count.toString())
+	setUser("Alice")
+	print("User: " + username)

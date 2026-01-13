@@ -25,6 +25,10 @@ pub struct HirProgram {
     pub start_function: Option<HirFunction>,
     pub imports: Vec<HirImport>,
     pub tests: Vec<HirTest>,
+    /// State block containing persistent state declarations
+    pub state: Option<HirStateBlock>,
+    /// Watch blocks for reactive state observers
+    pub watch_blocks: Vec<HirWatchBlock>,
     pub location: SourceLocation,
 }
 
@@ -145,6 +149,59 @@ pub struct HirImport {
 pub struct HirTest {
     pub name: String,
     pub description: Option<String>,
+    pub body: HirBlock,
+    pub location: SourceLocation,
+}
+
+/// HIR State Scope - determines state variable lifetime
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HirStateScope {
+    /// App-level state: persists for the application lifetime
+    App,
+    /// Screen-level state: persists for the screen/component lifetime
+    Screen,
+}
+
+/// HIR State Block - persistent state declarations
+#[derive(Debug, Clone)]
+pub struct HirStateBlock {
+    pub declarations: Vec<HirStateDeclaration>,
+    pub computed: Vec<HirComputedDeclaration>,
+    pub scope: HirStateScope,
+    pub location: SourceLocation,
+}
+
+/// HIR State Declaration - individual state variable
+#[derive(Debug, Clone)]
+pub struct HirStateDeclaration {
+    pub name: String,
+    pub state_type: HirType,
+    pub initializer: HirExpression,
+    pub guard: Option<HirGuardClause>,
+    pub location: SourceLocation,
+}
+
+/// HIR Guard Clause - validation constraint for state mutations
+#[derive(Debug, Clone)]
+pub struct HirGuardClause {
+    pub condition: HirExpression,
+    pub error_message: String,
+    pub location: SourceLocation,
+}
+
+/// HIR Computed Declaration - derived state value
+#[derive(Debug, Clone)]
+pub struct HirComputedDeclaration {
+    pub name: String,
+    pub computed_type: HirType,
+    pub body: HirBlock, // Body that computes the value (must end with return)
+    pub location: SourceLocation,
+}
+
+/// HIR Watch Block - reactive observer for state changes
+#[derive(Debug, Clone)]
+pub struct HirWatchBlock {
+    pub targets: Vec<String>,
     pub body: HirBlock,
     pub location: SourceLocation,
 }

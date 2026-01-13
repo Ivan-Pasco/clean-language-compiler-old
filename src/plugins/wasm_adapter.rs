@@ -342,6 +342,254 @@ impl WasmPluginAdapter {
             },
         )?;
 
+        // env.string_trim - Remove leading and trailing whitespace
+        // String format: [4-byte length][data]
+        linker.func_wrap(
+            "env",
+            "string_trim",
+            |mut caller: Caller<'_, PluginState>, str_ptr: i32| -> i32 {
+                // Use the read_clean_string helper pattern
+                let original = {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let data = memory.data(&caller);
+                    let len_start = str_ptr as usize;
+                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
+                    let len = u32::from_le_bytes(len_bytes) as usize;
+                    let data_start = len_start + 4;
+                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                };
+                let trimmed = original.trim();
+
+                // Allocate and write result
+                let result = trimmed.as_bytes();
+                let result_len = result.len();
+                let state = caller.data_mut();
+                let ptr = state.allocate(result_len + 4);
+                let memory = caller
+                    .get_export("memory")
+                    .and_then(|e| e.into_memory())
+                    .unwrap();
+                let len_bytes = (result_len as u32).to_le_bytes();
+                let _ = memory.write(&mut caller, ptr, &len_bytes);
+                let _ = memory.write(&mut caller, ptr + 4, result);
+                ptr as i32
+            },
+        )?;
+
+        // env.string_trim_start - Remove leading whitespace
+        linker.func_wrap(
+            "env",
+            "string_trim_start",
+            |mut caller: Caller<'_, PluginState>, str_ptr: i32| -> i32 {
+                let original = {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let data = memory.data(&caller);
+                    let len_start = str_ptr as usize;
+                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
+                    let len = u32::from_le_bytes(len_bytes) as usize;
+                    let data_start = len_start + 4;
+                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                };
+                let trimmed = original.trim_start();
+
+                let result = trimmed.as_bytes();
+                let result_len = result.len();
+                let state = caller.data_mut();
+                let ptr = state.allocate(result_len + 4);
+                let memory = caller
+                    .get_export("memory")
+                    .and_then(|e| e.into_memory())
+                    .unwrap();
+                let len_bytes = (result_len as u32).to_le_bytes();
+                let _ = memory.write(&mut caller, ptr, &len_bytes);
+                let _ = memory.write(&mut caller, ptr + 4, result);
+                ptr as i32
+            },
+        )?;
+
+        // env.string_trim_end - Remove trailing whitespace
+        linker.func_wrap(
+            "env",
+            "string_trim_end",
+            |mut caller: Caller<'_, PluginState>, str_ptr: i32| -> i32 {
+                let original = {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let data = memory.data(&caller);
+                    let len_start = str_ptr as usize;
+                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
+                    let len = u32::from_le_bytes(len_bytes) as usize;
+                    let data_start = len_start + 4;
+                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                };
+                let trimmed = original.trim_end();
+
+                let result = trimmed.as_bytes();
+                let result_len = result.len();
+                let state = caller.data_mut();
+                let ptr = state.allocate(result_len + 4);
+                let memory = caller
+                    .get_export("memory")
+                    .and_then(|e| e.into_memory())
+                    .unwrap();
+                let len_bytes = (result_len as u32).to_le_bytes();
+                let _ = memory.write(&mut caller, ptr, &len_bytes);
+                let _ = memory.write(&mut caller, ptr + 4, result);
+                ptr as i32
+            },
+        )?;
+
+        // env.string_compare - Compare two strings
+        // Returns 1 if equal, 0 if not equal
+        linker.func_wrap(
+            "env",
+            "string_compare",
+            |mut caller: Caller<'_, PluginState>, ptr1: i32, ptr2: i32| -> i32 {
+                let (string1, string2) = {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let data = memory.data(&caller);
+
+                    // Read first string
+                    let len_start1 = ptr1 as usize;
+                    let len_bytes1: [u8; 4] = data[len_start1..len_start1 + 4].try_into().unwrap();
+                    let len1 = u32::from_le_bytes(len_bytes1) as usize;
+                    let data_start1 = len_start1 + 4;
+                    let s1 =
+                        String::from_utf8_lossy(&data[data_start1..data_start1 + len1]).to_string();
+
+                    // Read second string
+                    let len_start2 = ptr2 as usize;
+                    let len_bytes2: [u8; 4] = data[len_start2..len_start2 + 4].try_into().unwrap();
+                    let len2 = u32::from_le_bytes(len_bytes2) as usize;
+                    let data_start2 = len_start2 + 4;
+                    let s2 =
+                        String::from_utf8_lossy(&data[data_start2..data_start2 + len2]).to_string();
+
+                    (s1, s2)
+                };
+                if string1 == string2 {
+                    1
+                } else {
+                    0
+                }
+            },
+        )?;
+
+        // env.string_replace - Replace all occurrences of a substring
+        // string_replace(string_ptr: i32, search_ptr: i32, replace_ptr: i32) -> i32
+        linker.func_wrap(
+            "env",
+            "string_replace",
+            |mut caller: Caller<'_, PluginState>,
+             string_ptr: i32,
+             search_ptr: i32,
+             replace_ptr: i32|
+             -> i32 {
+                // Read all three strings first
+                let (string_val, search, replace) = {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let data = memory.data(&caller);
+
+                    // Read source string
+                    let len_start1 = string_ptr as usize;
+                    let len_bytes1: [u8; 4] = data[len_start1..len_start1 + 4].try_into().unwrap();
+                    let len1 = u32::from_le_bytes(len_bytes1) as usize;
+                    let data_start1 = len_start1 + 4;
+                    let s1 =
+                        String::from_utf8_lossy(&data[data_start1..data_start1 + len1]).to_string();
+
+                    // Read search string
+                    let len_start2 = search_ptr as usize;
+                    let len_bytes2: [u8; 4] = data[len_start2..len_start2 + 4].try_into().unwrap();
+                    let len2 = u32::from_le_bytes(len_bytes2) as usize;
+                    let data_start2 = len_start2 + 4;
+                    let s2 =
+                        String::from_utf8_lossy(&data[data_start2..data_start2 + len2]).to_string();
+
+                    // Read replace string
+                    let len_start3 = replace_ptr as usize;
+                    let len_bytes3: [u8; 4] = data[len_start3..len_start3 + 4].try_into().unwrap();
+                    let len3 = u32::from_le_bytes(len_bytes3) as usize;
+                    let data_start3 = len_start3 + 4;
+                    let s3 =
+                        String::from_utf8_lossy(&data[data_start3..data_start3 + len3]).to_string();
+
+                    (s1, s2, s3)
+                };
+
+                // Perform the replacement
+                eprintln!(
+                    "[Plugin Debug] string.replace called: source='{}', search='{}', replace='{}'",
+                    string_val, search, replace
+                );
+                let result = string_val.replace(&search, &replace);
+                eprintln!("[Plugin Debug] string.replace result: '{}'", result);
+
+                // Allocate and write result
+                let result_bytes = result.as_bytes();
+                let result_len = result_bytes.len();
+                let state = caller.data_mut();
+                let ptr = state.allocate(result_len + 4);
+                let memory = caller
+                    .get_export("memory")
+                    .and_then(|e| e.into_memory())
+                    .unwrap();
+                let len_bytes = (result_len as u32).to_le_bytes();
+                let _ = memory.write(&mut caller, ptr, &len_bytes);
+                let _ = memory.write(&mut caller, ptr + 4, result_bytes);
+                ptr as i32
+            },
+        )?;
+
+        // env.string_from_char_code - Create string from character code
+        // string_from_char_code(char_code: i32) -> i32
+        linker.func_wrap(
+            "env",
+            "string_from_char_code",
+            |mut caller: Caller<'_, PluginState>, char_code: i32| -> i32 {
+                eprintln!(
+                    "[Plugin Debug] string.fromCharCode called: char_code={}",
+                    char_code
+                );
+                // Create a single-character string from the char code
+                let ch = if char_code >= 0 && char_code <= 127 {
+                    char::from_u32(char_code as u32).unwrap_or('\0')
+                } else {
+                    '\0'
+                };
+                let result = ch.to_string();
+                eprintln!("[Plugin Debug] string.fromCharCode result: '{}'", result);
+
+                // Allocate and write result
+                let result_bytes = result.as_bytes();
+                let result_len = result_bytes.len();
+                let state = caller.data_mut();
+                let ptr = state.allocate(result_len + 4);
+                let memory = caller
+                    .get_export("memory")
+                    .and_then(|e| e.into_memory())
+                    .unwrap();
+                let len_bytes = (result_len as u32).to_le_bytes();
+                let _ = memory.write(&mut caller, ptr, &len_bytes);
+                let _ = memory.write(&mut caller, ptr + 4, result_bytes);
+                ptr as i32
+            },
+        )?;
+
         // =========================================
         // MEMORY_RUNTIME NAMESPACE - Memory management
         // =========================================
@@ -1492,10 +1740,11 @@ struct PluginState {
 impl PluginState {
     fn new() -> Self {
         Self {
-            // Start allocations at 64KB to avoid collision with WASM data section
-            // The WASM module's static data (string constants) starts at 4KB (0x1000)
-            // and can extend quite far for large plugins
-            alloc_offset: 65536,
+            // Start allocations at 512KB to avoid collision with WASM data section
+            // and the module's internal heap which can grow from lower addresses
+            // The WASM module's static data starts at 4KB and heap follows data section
+            // For large plugins with many string operations, 512KB should be safe
+            alloc_offset: 524288,
             last_error: None,
         }
     }
@@ -1543,15 +1792,15 @@ mod tests {
         let mut state = PluginState::new();
 
         let ptr1 = state.allocate(100);
-        // Starts at 64KB (65536) to avoid collision with WASM data section
-        assert_eq!(ptr1, 65536);
+        // Starts at 512KB (524288) to avoid collision with WASM data section
+        assert_eq!(ptr1, 524288);
 
         let ptr2 = state.allocate(200);
-        // 65536 + 100 = 65636, aligned to 8 = 65640
-        assert_eq!(ptr2, 65640);
+        // 524288 + 100 = 524388, aligned to 8 = 524392
+        assert_eq!(ptr2, 524392);
 
         let ptr3 = state.allocate(50);
-        // 65640 + 200 = 65840, aligned to 8 = 65840
-        assert_eq!(ptr3, 65840);
+        // 524392 + 200 = 524592, aligned to 8 = 524592
+        assert_eq!(ptr3, 524592);
     }
 }

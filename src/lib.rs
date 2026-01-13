@@ -638,6 +638,8 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
             start_function,
             imports: all_imports,
             tests: all_tests,
+            state: None, // Multi-file compilation doesn't merge state blocks yet
+            watch_blocks: Vec::new(),
             location,
         }
     };

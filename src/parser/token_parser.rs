@@ -59,6 +59,7 @@ impl TokenParser {
         let mut imports = Vec::new();
         let mut statements = Vec::new();
         let screens = Vec::new(); // Always empty - screens handled as framework blocks by plugins
+        let mut state: Option<crate::ast::StateBlock> = None;
 
         while !self.is_at_end() {
             self.skip_whitespace();
@@ -124,6 +125,20 @@ impl TokenParser {
                                 "Parsed functions block"
                             );
                             functions.append(&mut block_functions)
+                        }
+                        Err(e) => self.errors.push(e),
+                    }
+                }
+                TokenKind::State => {
+                    // Parse state: block
+                    debug!("Parsing state: block");
+                    match self.parse_state_block() {
+                        Ok(state_block) => {
+                            debug!(
+                                declaration_count = state_block.declarations.len(),
+                                "Parsed state block"
+                            );
+                            state = Some(state_block);
                         }
                         Err(e) => self.errors.push(e),
                     }
@@ -223,6 +238,9 @@ impl TokenParser {
             start_function,
             tests,
             screens,
+            state,
+            watch_blocks: Vec::new(),
+            screen_blocks: Vec::new(),
             location: None,
         })
     }
@@ -3750,5 +3768,168 @@ impl TokenParser {
         let error_block = self.parse_block()?;
 
         Ok(Some((error_block, error_location)))
+    }
+
+    /// Parse a state: block containing state variable declarations
+    fn parse_state_block(&mut self) -> Result<crate::ast::StateBlock, CompilerError> {
+        use crate::ast::{StateBlock, StateDeclaration, StateScope};
+
+        // Consume "state" keyword
+        self.expect(&TokenKind::State)?;
+        self.skip_whitespace();
+
+        // Consume ":"
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        let mut declarations: Vec<StateDeclaration> = Vec::new();
+        let computed = Vec::new(); // Will be populated when computed: blocks are parsed
+
+        // Expect indentation for block body
+        if !matches!(self.current_kind(), TokenKind::Indent(_))
+            && !matches!(self.current_kind(), TokenKind::Newline)
+        {
+            return Err(CompilerError::parse_error(
+                "Expected indented state declarations after 'state:'".to_string(),
+                Some(self.current().location.clone()),
+                Some("State declarations must be indented".to_string()),
+            ));
+        }
+
+        // Skip newline if present
+        if matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump();
+        }
+
+        // Get the indent level
+        let block_level = if let TokenKind::Indent(level) = self.current_kind() {
+            *level
+        } else {
+            1 // Default to level 1
+        };
+
+        // Consume the initial indent
+        if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            self.bump();
+        }
+
+        // Parse state declarations until we see a dedent or different token
+        loop {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for dedent (end of block)
+            if let TokenKind::Dedent(level) = self.current_kind() {
+                if *level < block_level {
+                    self.bump();
+                    break;
+                }
+            }
+
+            // Check for other top-level keywords that end the state block
+            if matches!(
+                self.current_kind(),
+                TokenKind::Functions
+                    | TokenKind::Class
+                    | TokenKind::Start
+                    | TokenKind::Tests
+                    | TokenKind::Import
+                    | TokenKind::State
+            ) {
+                break;
+            }
+
+            // Parse a state declaration: type name = value
+            // Look for a type identifier (integer, string, number, boolean, etc.)
+            match self.current_kind() {
+                TokenKind::Identifier(type_name) => {
+                    let location = self.current().location.clone();
+                    let type_str = type_name.clone();
+                    self.bump(); // consume type
+
+                    self.skip_whitespace();
+
+                    // Get variable name
+                    let var_name = if let TokenKind::Identifier(name) = self.current_kind() {
+                        let name = name.clone();
+                        self.bump();
+                        name
+                    } else {
+                        return Err(CompilerError::parse_error(
+                            "Expected variable name in state declaration".to_string(),
+                            Some(self.current().location.clone()),
+                            Some(
+                                "State declarations must have format: type name = value"
+                                    .to_string(),
+                            ),
+                        ));
+                    };
+
+                    self.skip_whitespace();
+
+                    // Expect = sign
+                    self.expect(&TokenKind::Assign)?;
+                    self.skip_whitespace();
+
+                    // Parse initializer expression
+                    let initializer = self.parse_expression()?;
+
+                    // Convert type string to Type
+                    let type_ = match type_str.as_str() {
+                        "integer" => crate::ast::Type::Integer,
+                        "number" => crate::ast::Type::Number,
+                        "string" => crate::ast::Type::String,
+                        "boolean" => crate::ast::Type::Boolean,
+                        other => crate::ast::Type::Object(other.to_string()),
+                    };
+
+                    declarations.push(StateDeclaration {
+                        name: var_name,
+                        type_,
+                        initializer,
+                        guard: None, // Guards will be parsed later if present
+                        location: Some(location),
+                    });
+
+                    // Skip newline after declaration
+                    if matches!(self.current_kind(), TokenKind::Newline) {
+                        self.bump();
+                    }
+
+                    // Check for next indent token
+                    if let TokenKind::Indent(level) = self.current_kind() {
+                        if *level == block_level {
+                            self.bump(); // Continue parsing next declaration
+                        } else if *level < block_level {
+                            // End of block
+                            break;
+                        }
+                    }
+                }
+                TokenKind::Newline => {
+                    self.bump();
+                }
+                TokenKind::Indent(_) => {
+                    self.bump();
+                }
+                TokenKind::Dedent(_) => {
+                    break;
+                }
+                _ => {
+                    // Unknown token, skip and continue
+                    break;
+                }
+            }
+        }
+
+        Ok(StateBlock {
+            declarations,
+            computed,
+            scope: StateScope::App, // Default to App scope for top-level state
+            location: None,
+        })
     }
 }

@@ -57,6 +57,12 @@ pub enum SymbolKind {
     Namespace {
         functions: Vec<SymbolId>,
     },
+    /// State variable - persistent global variable with optional guard
+    StateVariable {
+        var_type: HirType,
+        scope: crate::hir::HirStateScope, // App or Screen scope
+        has_guard: bool,                  // Whether the state has a guard clause
+    },
 }
 
 /// Symbol information stored in the symbol table

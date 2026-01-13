@@ -75,6 +75,24 @@ pub struct MirCodeGenerator<'a> {
     /// These are for expand_strings bridge functions that need wrapper functions
     /// to convert Clean Language strings (ptr) to raw format (ptr+4, len)
     pending_bridge_wrappers: Vec<PendingBridgeWrapper>,
+
+    /// CRITICAL FIX: Stack of loop contexts for proper break/continue code generation
+    /// Each entry contains (exit_block_id, depth_at_block_instruction)
+    /// When we're inside a loop and encounter a Jump to exit_block, we emit br with correct depth
+    loop_context_stack: Vec<LoopCodegenContext>,
+
+    /// Current block nesting depth (for calculating br depths)
+    current_block_depth: u32,
+}
+
+/// Context for loop code generation
+#[derive(Clone)]
+struct LoopCodegenContext {
+    /// MIR block ID of the loop's exit block (where break jumps to)
+    exit_block_id: BasicBlockId,
+    /// WASM block depth when the outer Block instruction was pushed
+    /// Used to calculate relative br depth for break
+    block_depth: u32,
 }
 
 /// Info for pending bridge wrapper functions that need to be registered
@@ -137,6 +155,8 @@ impl MirCodeGenerator<'_> {
             temp_local_types: HashMap::new(),
             bridge_functions: Vec::new(),
             pending_bridge_wrappers: Vec::new(),
+            loop_context_stack: Vec::new(),
+            current_block_depth: 0,
         }
     }
 
@@ -159,6 +179,8 @@ impl MirCodeGenerator<'_> {
             temp_local_types: HashMap::new(),
             bridge_functions: Vec::new(),
             pending_bridge_wrappers: Vec::new(),
+            loop_context_stack: Vec::new(),
+            current_block_depth: 0,
         }
     }
 
@@ -254,6 +276,28 @@ impl MirCodeGenerator<'_> {
                 .register_string_split_import()
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: string.split import registered");
+
+            // CRITICAL: Register string trim imports BEFORE math operations
+            // Trim functions (trim, trimStart, trimEnd) are host imports
+            debug_mir!("DEBUG MIR: Registering string trim imports");
+            self.wasm_generator
+                .register_string_trim_imports()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: String trim imports registered");
+
+            // CRITICAL: Register string_compare import for string equality comparisons
+            debug_mir!("DEBUG MIR: Registering string_compare import");
+            self.wasm_generator
+                .register_string_compare_import()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: String compare import registered");
+
+            // CRITICAL: Register string_replace import for string.replace() method
+            debug_mir!("DEBUG MIR: Registering string_replace import");
+            self.wasm_generator
+                .register_string_replace_import()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: String replace import registered");
 
             // CRITICAL: Register plugin bridge functions as WASM imports BEFORE any internal functions
             // These are declared in plugin.toml [bridge] sections
@@ -544,6 +588,8 @@ impl MirCodeGenerator<'_> {
         self.next_block_label = 0;
         self.current_instructions.clear();
         self.current_function = Some(function.clone());
+        self.loop_context_stack.clear();
+        self.current_block_depth = 0;
 
         // Populate value_to_type from function parameters
         debug_mir!(
@@ -1314,9 +1360,34 @@ impl MirCodeGenerator<'_> {
                 self.current_instructions.push(Instruction::Return);
             }
 
-            MirTerminator::Jump { .. } => {
-                // Don't follow jumps in branch blocks - they jump to continuations
-                // The continuation will be generated after the if-else structure
+            MirTerminator::Jump { target } => {
+                // CRITICAL FIX: Check if this jump is a break (targets loop exit block)
+                // If so, we need to emit a br instruction with the correct depth
+                let mut emitted_br = false;
+                for loop_ctx in self.loop_context_stack.iter().rev() {
+                    if *target == loop_ctx.exit_block_id {
+                        // This is a break - emit br to exit the loop
+                        // Calculate depth: current_depth - block_depth gives us how many levels to jump
+                        let br_depth = self.current_block_depth - loop_ctx.block_depth;
+                        debug_mir!(
+                            "DEBUG BREAK: Emitting br {} for break to loop exit block {:?} (current_depth={}, block_depth={})",
+                            br_depth, target, self.current_block_depth, loop_ctx.block_depth
+                        );
+                        self.current_instructions.push(Instruction::Br(br_depth));
+                        emitted_br = true;
+                        break;
+                    }
+                }
+
+                if !emitted_br {
+                    // Not a break - regular jump to continuation
+                    // Don't follow jumps in branch blocks - they jump to continuations
+                    // The continuation will be generated after the if-else structure
+                    debug_mir!(
+                        "DEBUG JUMP: Skipping jump to {:?} (not a loop exit, will be generated as continuation)",
+                        target
+                    );
+                }
             }
 
             MirTerminator::Branch {
@@ -1335,6 +1406,7 @@ impl MirCodeGenerator<'_> {
                 self.load_operand(condition)?;
                 self.current_instructions
                     .push(Instruction::If(BlockType::Empty));
+                self.current_block_depth += 1;
 
                 self.generate_branch_block(function, *true_block, generated)?;
 
@@ -1348,6 +1420,7 @@ impl MirCodeGenerator<'_> {
 
                 if has_else_clause && !is_loop_exit {
                     self.current_instructions.push(Instruction::Else);
+                    // Else doesn't change depth
                     self.generate_branch_block(function, *false_block, generated)?;
                 } else if is_loop_exit {
                     debug_mir!("DEBUG BRANCH_BLOCK: Skipping false_block {:?} - detected as loop exit continuation in function '{}'",
@@ -1355,6 +1428,7 @@ impl MirCodeGenerator<'_> {
                 }
 
                 self.current_instructions.push(Instruction::End);
+                self.current_block_depth -= 1;
 
                 // After generating nested if-else, check if there's a continuation to inline.
                 // If both branches jump to the same continuation, generate it inline.
@@ -1525,8 +1599,17 @@ impl MirCodeGenerator<'_> {
 
                     self.current_instructions
                         .push(Instruction::Block(BlockType::Empty)); // label @1 (exit target)
+                    self.current_block_depth += 1;
+
+                    // CRITICAL FIX: Push loop context so break inside nested if can emit correct br
+                    self.loop_context_stack.push(LoopCodegenContext {
+                        exit_block_id: *false_block,
+                        block_depth: self.current_block_depth,
+                    });
+
                     self.current_instructions
                         .push(Instruction::Loop(BlockType::Empty)); // label @0 (loop target)
+                    self.current_block_depth += 1;
 
                     // CRITICAL: Generate header block instructions INSIDE the loop
                     // This ensures condition is re-evaluated on each iteration
@@ -1590,7 +1673,12 @@ impl MirCodeGenerator<'_> {
                     }
 
                     self.current_instructions.push(Instruction::End); // end loop
+                    self.current_block_depth -= 1;
                     self.current_instructions.push(Instruction::End); // end block
+                    self.current_block_depth -= 1;
+
+                    // Pop loop context
+                    self.loop_context_stack.pop();
 
                     // Generate continuation (false_block) - this is where we exit to
                     debug_mir!(
@@ -1609,6 +1697,7 @@ impl MirCodeGenerator<'_> {
                     self.load_operand(condition)?;
                     self.current_instructions
                         .push(Instruction::If(BlockType::Empty));
+                    self.current_block_depth += 1;
 
                     // Use generate_branch_block to avoid following Jump terminators inside branches
                     self.generate_branch_block(function, *true_block, generated)?;
@@ -1616,10 +1705,12 @@ impl MirCodeGenerator<'_> {
                     // Only generate else clause if false_block is NOT an empty continuation
                     if has_else_clause {
                         self.current_instructions.push(Instruction::Else);
+                        // Else doesn't change depth - same block
                         self.generate_branch_block(function, *false_block, generated)?;
                     }
 
                     self.current_instructions.push(Instruction::End);
+                    self.current_block_depth -= 1;
 
                     // Check if both branches directly return (without following Jumps to continuations)
                     let true_has_return = self.block_directly_returns(function, *true_block);
@@ -3988,6 +4079,24 @@ impl MirCodeGenerator<'_> {
     ) -> Result<(), CompilerError> {
         // Determine if we're working with floats by checking operand types
         let is_float = self.is_float_operand(left) || self.is_float_operand(right);
+        // Determine if we're working with strings
+        let is_string = self.is_string_operand(left) || self.is_string_operand(right);
+
+        // Handle string comparison specially - call string_compare function
+        if is_string && matches!(op, MirBinaryOp::Eq | MirBinaryOp::Ne) {
+            // Get the string_compare function index
+            if let Some(compare_idx) = self.wasm_generator.get_function_index("string_compare") {
+                // Call string_compare(left, right) - operands are already on stack
+                self.current_instructions
+                    .push(Instruction::Call(compare_idx));
+                // For NotEqual, invert the result
+                if matches!(op, MirBinaryOp::Ne) {
+                    self.current_instructions.push(Instruction::I32Eqz);
+                }
+                return Ok(());
+            }
+            // Fall through to pointer comparison if string_compare not available
+        }
 
         let instruction = match op {
             // Arithmetic operations
@@ -4092,6 +4201,22 @@ impl MirCodeGenerator<'_> {
             MirOperand::Value(value_id) => {
                 if let Some(mir_type) = self.value_to_type.get(value_id) {
                     matches!(mir_type, MirType::F32 | MirType::F64)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Helper: Check if an operand is a string type
+    fn is_string_operand(&self, operand: &MirOperand) -> bool {
+        match operand {
+            MirOperand::Constant(constant) => matches!(constant, MirConstant::String(_)),
+            MirOperand::Value(value_id) => {
+                if let Some(mir_type) = self.value_to_type.get(value_id) {
+                    // Strings are represented as Ptr(I8) in MIR
+                    matches!(mir_type, MirType::Ptr(inner) if matches!(inner.as_ref(), MirType::I8))
                 } else {
                     false
                 }

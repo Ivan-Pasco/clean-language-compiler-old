@@ -64,6 +64,12 @@ pub enum TokenKind {
     Private,     // private
     Constant,    // constant
     Functions,   // functions
+    State,       // state - State management block
+    Watch,       // watch - State change observer
+    Computed,    // computed - Derived state value
+    Guard,       // guard - State validation constraint
+    Reset,       // reset - Reset state to initial value
+    Screen,      // screen - Screen-level state scope
     Null,        // null  // BOOK: null-support - Null literal keyword
     Default,     // default  // BOOK: null-coalescing - Null coalescing operator keyword
     Break,       // break - Loop control flow
@@ -183,6 +189,12 @@ impl fmt::Display for TokenKind {
             TokenKind::Private => write!(f, "private"),
             TokenKind::Constant => write!(f, "constant"),
             TokenKind::Functions => write!(f, "functions"),
+            TokenKind::State => write!(f, "state"),
+            TokenKind::Watch => write!(f, "watch"),
+            TokenKind::Computed => write!(f, "computed"),
+            TokenKind::Guard => write!(f, "guard"),
+            TokenKind::Reset => write!(f, "reset"),
+            TokenKind::Screen => write!(f, "screen"),
             TokenKind::Null => write!(f, "null"),
             TokenKind::Default => write!(f, "default"),
             TokenKind::Break => write!(f, "break"),
@@ -388,6 +400,12 @@ impl Keywords {
             "private" => Some(TokenKind::Private),
             "constant" => Some(TokenKind::Constant),
             "functions" => Some(TokenKind::Functions),
+            "state" => Some(TokenKind::State),
+            "watch" => Some(TokenKind::Watch),
+            "computed" => Some(TokenKind::Computed),
+            "guard" => Some(TokenKind::Guard),
+            "reset" => Some(TokenKind::Reset),
+            "screen" => Some(TokenKind::Screen),
             "null" => Some(TokenKind::Null), // BOOK: null-support
             "default" => Some(TokenKind::Default), // BOOK: null-coalescing
             "break" => Some(TokenKind::Break),
@@ -424,6 +442,12 @@ impl TokenKind {
             TokenKind::Else => "else".to_string(),
             TokenKind::Error => "error".to_string(),
             TokenKind::Functions => "functions".to_string(),
+            TokenKind::State => "state".to_string(),
+            TokenKind::Watch => "watch".to_string(),
+            TokenKind::Computed => "computed".to_string(),
+            TokenKind::Guard => "guard".to_string(),
+            TokenKind::Reset => "reset".to_string(),
+            TokenKind::Screen => "screen".to_string(),
             TokenKind::Null => "null".to_string(),
             TokenKind::Default => "default".to_string(),
             TokenKind::Break => "break".to_string(),

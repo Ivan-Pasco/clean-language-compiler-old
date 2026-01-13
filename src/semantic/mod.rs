@@ -114,6 +114,9 @@ pub struct SemanticAnalyzer {
     error_context_depth: i32,
     module_resolver: ModuleResolver,
     current_imports: Option<ImportResolution>,
+
+    // State management - persistent state variables
+    state_variables: HashMap<String, (Type, crate::ast::StateScope)>,
 }
 
 impl Default for SemanticAnalyzer {
@@ -150,6 +153,7 @@ impl SemanticAnalyzer {
             error_context_depth: 0,
             module_resolver: ModuleResolver::new(),
             current_imports: None,
+            state_variables: HashMap::new(),
         };
 
         analyzer.register_builtin_functions();
@@ -195,6 +199,95 @@ impl SemanticAnalyzer {
             existing_overloads,
             true, // is_builtin
         );
+    }
+
+    /// Register state variables from a state block
+    /// State variables are registered in the global scope and available to all functions
+    fn register_state_block(
+        &mut self,
+        state_block: &crate::ast::StateBlock,
+    ) -> Result<(), CompilerError> {
+        for decl in &state_block.declarations {
+            // Check if state variable name already exists
+            if self.state_variables.contains_key(&decl.name) {
+                return Err(CompilerError::validation_error(
+                    &format!(
+                        "State variable '{}' is already declared. State variable names must be unique across all scopes.",
+                        decl.name
+                    ),
+                    decl.location.clone().unwrap_or_default(),
+                ));
+            }
+
+            // Type check the initializer
+            let init_type = self.check_expression(&decl.initializer)?;
+            let resolved_type = self.resolve_type(&decl.type_);
+
+            // Validate type compatibility
+            if !self.types_compatible(&resolved_type, &init_type) {
+                return Err(CompilerError::type_error(
+                    format!(
+                        "State variable '{}' has type '{}' but initializer has type '{}'",
+                        decl.name, resolved_type, init_type
+                    ),
+                    Some(format!(
+                        "Expected type '{}', found '{}'",
+                        resolved_type, init_type
+                    )),
+                    decl.location.clone(),
+                ));
+            }
+
+            // Type check guard clause if present
+            if let Some(guard) = &decl.guard {
+                let guard_type = self.check_expression(&guard.condition)?;
+                if guard_type != Type::Boolean {
+                    return Err(CompilerError::type_error(
+                        format!(
+                            "Guard condition for state variable '{}' must be boolean, found '{}'",
+                            decl.name, guard_type
+                        ),
+                        Some("Guard conditions must evaluate to a boolean value".to_string()),
+                        guard.location.clone(),
+                    ));
+                }
+            }
+
+            // Register state variable
+            self.state_variables.insert(
+                decl.name.clone(),
+                (resolved_type.clone(), state_block.scope),
+            );
+
+            // Also add to current scope for direct access
+            self.current_scope
+                .define_variable(decl.name.clone(), resolved_type);
+        }
+
+        // Register computed state
+        for computed in &state_block.computed {
+            // Check if name already exists
+            if self.state_variables.contains_key(&computed.name) {
+                return Err(CompilerError::validation_error(
+                    &format!(
+                        "Computed state '{}' conflicts with existing state variable",
+                        computed.name
+                    ),
+                    computed.location.clone().unwrap_or_default(),
+                ));
+            }
+
+            // Register computed state variable (read-only)
+            let resolved_type = self.resolve_type(&computed.type_);
+            self.state_variables.insert(
+                computed.name.clone(),
+                (resolved_type.clone(), state_block.scope),
+            );
+            self.current_scope
+                .define_variable(computed.name.clone(), resolved_type);
+        }
+
+        Ok(())
     }
 
     /// Register built-in functions that are available in the global scope
@@ -1554,6 +1647,11 @@ impl SemanticAnalyzer {
             }
         }
 
+        // Register state variables (app-level state)
+        if let Some(state_block) = &program.state {
+            self.register_state_block(state_block)?;
+        }
+
         // Comprehensive inheritance validation (cycles, method overriding, access control, etc.)
         self.inheritance_validator.validate_inheritance()?;
 
@@ -1780,6 +1878,13 @@ impl SemanticAnalyzer {
             self.check_type(&param.type_)?;
             self.current_scope
                 .declare_variable(&param.name, param.type_.clone());
+        }
+
+        // Inject state variables into function scope
+        // State variables are available in all functions
+        for (name, (type_, _scope)) in &self.state_variables.clone() {
+            self.current_scope
+                .define_variable(name.clone(), type_.clone());
         }
 
         // Check if this function has class context from preprocessor
@@ -2914,6 +3019,22 @@ impl SemanticAnalyzer {
                     ),
                     location.clone(),
                 ))
+            }
+            Statement::StateBlockStmt { .. } => {
+                // State blocks are handled at HIR level; this is exhaustive match only
+                Ok(())
+            }
+            Statement::WatchBlockStmt { .. } => {
+                // Watch blocks are handled at HIR level; this is exhaustive match only
+                Ok(())
+            }
+            Statement::ResetStmt { .. } => {
+                // Reset statements are handled at HIR level; this is exhaustive match only
+                Ok(())
+            }
+            Statement::ScreenBlockStmt { .. } => {
+                // Screen blocks are handled at HIR level; this is exhaustive match only
+                Ok(())
             }
         }
     }

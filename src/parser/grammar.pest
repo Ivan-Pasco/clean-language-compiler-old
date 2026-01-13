@@ -14,7 +14,7 @@ TRIVIA = _{ LINE_TRIVIA | BLOCK_TRIVIA | EMPTY_LINE_TRIVIA }
 
 // Keywords and identifiers
 // BOOK: null-support - Added null and default keywords for null handling
-keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "null" | "default" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print" | "break" | "continue" | "while") ~ !(ASCII_ALPHANUMERIC | "_") }
+keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "null" | "default" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print" | "break" | "continue" | "while" | "state" | "watch" | "computed" | "screen" | "guard" | "reset") ~ !(ASCII_ALPHANUMERIC | "_") }
 // Identifiers can start with letter or underscore (underscore prefix for internal/bridge functions)
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
@@ -631,6 +631,96 @@ test_case = { named_test | anonymous_test }
 named_test = { string ~ ":" ~ expression ~ "=" ~ expression }
 anonymous_test = { expression ~ "=" ~ expression }
 
+// ============================================================================
+// STATE MANAGEMENT
+// State is a first-class language concept with persistent memory, observability,
+// and explicit scoping (app-level vs screen-level)
+// ============================================================================
+
+// State block - declares persistent state variables
+// Top-level state: = app scope, state: inside screen: = screen scope
+state_block = { "state" ~ ":" ~ indented_state_declarations }
+indented_state_declarations = {
+    NEWLINE ~ (empty_line)* ~
+    INDENT+ ~ state_declaration ~
+    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ (state_declaration | computed_block))*
+}
+
+// State declaration with optional guard clause
+// Example: integer count = 0
+// Example with guard: integer count = 0
+//                         guard value >= 0 else "Cannot be negative"
+state_declaration = {
+    type_ ~ WHITESPACE* ~ identifier ~ WHITESPACE* ~ "=" ~ WHITESPACE* ~ single_line_expression ~
+    guard_clause?
+}
+
+// Guard clause - validates state before mutation
+// Example: guard value >= 0 else "Count cannot be negative"
+guard_clause = {
+    NEWLINE ~ (empty_line)* ~ INDENT+ ~ INDENT+ ~
+    "guard" ~ WHITESPACE+ ~ expression ~ WHITESPACE+ ~ "else" ~ WHITESPACE+ ~ string
+}
+
+// Computed block - derived state that auto-updates when dependencies change
+// Must be inside state: block
+computed_block = { "computed" ~ ":" ~ indented_computed_declarations }
+indented_computed_declarations = {
+    NEWLINE ~ (empty_line)* ~
+    INDENT+ ~ computed_declaration ~
+    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ computed_declaration)*
+}
+
+// Computed declaration - type, name, and expression body
+// Example: string fullName
+//              return firstName + " " + lastName
+computed_declaration = {
+    type_ ~ WHITESPACE* ~ identifier ~
+    computed_body
+}
+computed_body = {
+    NEWLINE ~ (empty_line)* ~
+    INDENT+ ~ statement ~
+    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ statement)*
+}
+
+// Watch block - react to state changes
+// Example: watch count:
+//              print("Count changed")
+// Example: watch (count, username):
+//              print("State changed")
+watch_block = { "watch" ~ WHITESPACE* ~ watch_targets ~ ":" ~ indented_block }
+watch_targets = {
+    "(" ~ WHITESPACE* ~ identifier ~ (WHITESPACE* ~ "," ~ WHITESPACE* ~ identifier)* ~ WHITESPACE* ~ ")" |
+    identifier
+}
+
+// Reset statement - reset state to initial value
+// Example: reset count
+// Example: reset state
+reset_stmt = { "reset" ~ WHITESPACE+ ~ (("state" ~ !(ASCII_ALPHANUMERIC | "_")) | identifier) }
+
+// Screen block - defines a UI screen with its own state scope
+// Example: screen Home:
+//              state:
+//                  integer count = 0
+//              functions:
+//                  void increment()
+//                      count = count + 1
+screen_block = { "screen" ~ WHITESPACE+ ~ identifier ~ ":" ~ indented_screen_body }
+indented_screen_body = {
+    NEWLINE ~ (empty_line)* ~
+    screen_body_item ~
+    (NEWLINE ~ (empty_line)* ~ screen_body_item)*
+}
+screen_body_item = {
+    INDENT+ ~ (state_block | watch_block | functions_block | class_functions_block)
+}
+
+// ============================================================================
+// END STATE MANAGEMENT
+// ============================================================================
+
 // Class definition with "is" inheritance
 class_field = { type_ ~ WHITESPACE* ~ identifier ~ ("=" ~ expression)? }
 class_body_item = { class_functions_block | constructor | class_field }
@@ -680,7 +770,7 @@ private_block = { "private" ~ ":" ~ indented_private_list }
 indented_private_list = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ private_item ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ private_item)* }
 private_item = { identifier | function_in_block }
 
-// Update statements to include async features and imports
+// Update statements to include async features, imports, and state management
 // Critical fix: Add function_call before expression to prevent parameter parsing confusion
 // Method calls must come before assignment to avoid grammar ambiguity with property_access
 statement = {
@@ -691,6 +781,7 @@ statement = {
     apply_block |
     standalone_on_error |
     on_error_block |
+    reset_stmt |
     function_call |
     method_call |
     assignment |
@@ -712,7 +803,8 @@ statement = {
 }
 
 // Program with proper newline handling
-program_item = { import_block | import_stmt | private_block | framework_block | start_function | implicit_start_function | functions_block | tests_block | class_decl | apply_block }
+// State management blocks: state_block (app-level), watch_block (top-level observers), screen_block (UI screens)
+program_item = { import_block | import_stmt | private_block | state_block | watch_block | screen_block | framework_block | start_function | implicit_start_function | functions_block | tests_block | class_decl | apply_block }
 program = { SOI ~ (empty_line)* ~ (program_item ~ (empty_line)*)* ~ EOI }
 
 // Start function - the entry point of a Clean Language program

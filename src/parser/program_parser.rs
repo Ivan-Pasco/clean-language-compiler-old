@@ -55,6 +55,9 @@ pub fn parse_program_ast(pair: Pair<Rule>) -> Result<Program, CompilerError> {
                 start_function,
                 tests: Vec::new(),
                 screens: Vec::new(),
+                state: None,
+                watch_blocks: Vec::new(),
+                screen_blocks: Vec::new(),
                 location: None,
             })
         }

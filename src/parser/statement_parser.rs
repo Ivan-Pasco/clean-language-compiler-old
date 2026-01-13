@@ -2,7 +2,7 @@ use super::expression_parser::{parse_expression, parse_start_expression};
 use super::type_parser::parse_type;
 use super::Rule;
 use super::{convert_to_ast_location, get_location};
-use crate::ast::{Expression, Statement};
+use crate::ast::{Expression, ResetTarget, Statement};
 use crate::error::CompilerError;
 use pest::iterators::Pair;
 
@@ -37,6 +37,7 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
         Rule::method_apply_block => parse_method_apply_block_statement(inner, ast_location),
         Rule::constant_apply_block => parse_constant_apply_block_statement(inner, ast_location),
         Rule::framework_block => parse_framework_block_statement(inner, ast_location),
+        Rule::reset_stmt => parse_reset_statement(inner, ast_location),
         Rule::background_stmt => parse_background_statement(inner, ast_location),
         Rule::later_assignment => parse_later_assignment_statement(inner, ast_location),
         Rule::import_block => parse_import_block_statement(inner, ast_location),
@@ -1042,4 +1043,34 @@ fn clean_framework_block_content(raw_content: &str) -> String {
         .join("\n")
         .trim()
         .to_string()
+}
+
+// ============================================================================
+// STATE MANAGEMENT PARSERS
+// ============================================================================
+
+/// Parse reset statement: reset count OR reset state
+fn parse_reset_statement(
+    pair: Pair<Rule>,
+    ast_location: crate::ast::SourceLocation,
+) -> Result<Statement, CompilerError> {
+    let mut parts = pair.into_inner();
+
+    // The grammar captures either "state" keyword or an identifier
+    let target = if let Some(target_pair) = parts.next() {
+        let target_str = target_pair.as_str();
+        if target_str == "state" {
+            ResetTarget::AllState
+        } else {
+            ResetTarget::Variable(target_str.to_string())
+        }
+    } else {
+        // Default to all state if no target specified
+        ResetTarget::AllState
+    };
+
+    Ok(Statement::ResetStmt {
+        target,
+        location: Some(ast_location),
+    })
 }

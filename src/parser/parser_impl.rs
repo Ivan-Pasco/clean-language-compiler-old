@@ -279,6 +279,9 @@ impl ErrorRecoveringParser {
             start_function,
             tests: Vec::new(),
             screens: Vec::new(),
+            state: None,
+            watch_blocks: Vec::new(),
+            screen_blocks: Vec::new(),
             location: None,
         };
 
@@ -430,6 +433,9 @@ impl ErrorRecoveringParser {
                 start_function: Some(start_func),
                 tests: Vec::new(),
                 screens: Vec::new(),
+                state: None,
+                watch_blocks: Vec::new(),
+                screen_blocks: Vec::new(),
                 location: None,
             });
         }
@@ -523,6 +529,9 @@ impl ErrorRecoveringParser {
                     start_function,
                     tests: Vec::new(),
                     screens: Vec::new(),
+                    state: None,
+                    watch_blocks: Vec::new(),
+                    screen_blocks: Vec::new(),
                     location: None,
                 })
             }
@@ -543,6 +552,9 @@ impl ErrorRecoveringParser {
                     start_function: None,
                     tests: Vec::new(),
                     screens: Vec::new(),
+                    state: None,
+                    watch_blocks: Vec::new(),
+                    screen_blocks: Vec::new(),
                     location: None,
                 })
             }
@@ -841,6 +853,9 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                     tests,
                     screens: Vec::new(),
                     statements: Vec::new(),
+                    state: None,
+                    watch_blocks: Vec::new(),
+                    screen_blocks: Vec::new(),
                     location: None,
                 };
 
@@ -872,6 +887,9 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
     let mut imports = Vec::new();
     let mut tests = Vec::new();
     let mut top_level_statements = Vec::new();
+    let mut state: Option<crate::ast::StateBlock> = None;
+    let mut watch_blocks: Vec<crate::ast::WatchBlock> = Vec::new();
+    let mut screen_blocks: Vec<Statement> = Vec::new();
 
     for pair in pairs {
         if pair.as_rule() == Rule::program {
@@ -910,6 +928,21 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
                                 Rule::tests_block => {
                                     let test_cases = parse_tests_block(program_item_inner)?;
                                     tests.extend(test_cases);
+                                }
+                                Rule::state_block => {
+                                    // Parse app-level state block
+                                    let state_block = parse_state_block(program_item_inner)?;
+                                    state = Some(state_block);
+                                }
+                                Rule::watch_block => {
+                                    // Parse top-level watch block
+                                    let watch_block = parse_watch_block(program_item_inner)?;
+                                    watch_blocks.push(watch_block);
+                                }
+                                Rule::screen_block => {
+                                    // Parse screen block
+                                    let screen_stmt = parse_screen_block(program_item_inner)?;
+                                    screen_blocks.push(screen_stmt);
                                 }
                                 Rule::statement => {
                                     let stmt = parse_statement(program_item_inner)?;
@@ -981,6 +1014,9 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
         start_function,
         tests,
         screens: Vec::new(),
+        state,
+        watch_blocks,
+        screen_blocks,
         location: None,
     };
 
@@ -1848,6 +1884,259 @@ impl ErrorRecoveringParser {
         }
     }
 }
+
+// ============================================================================
+// STATE MANAGEMENT PARSERS
+// ============================================================================
+
+/// Parse a state block (app-level or screen-level)
+pub fn parse_state_block(pair: Pair<Rule>) -> Result<crate::ast::StateBlock, CompilerError> {
+    use crate::ast::{StateBlock, StateScope};
+
+    let location = Some(convert_to_ast_location(&get_location(&pair)));
+    let mut declarations = Vec::new();
+    let mut computed = Vec::new();
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::indented_state_declarations => {
+                for decl_pair in inner.into_inner() {
+                    match decl_pair.as_rule() {
+                        Rule::state_declaration => {
+                            let decl = parse_state_declaration(decl_pair)?;
+                            declarations.push(decl);
+                        }
+                        Rule::computed_block => {
+                            let computed_decls = parse_computed_block(decl_pair)?;
+                            computed.extend(computed_decls);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(StateBlock {
+        declarations,
+        computed,
+        scope: StateScope::App, // Default to app scope; screen scope set by parent
+        location,
+    })
+}
+
+/// Parse a single state declaration
+fn parse_state_declaration(
+    pair: Pair<Rule>,
+) -> Result<crate::ast::StateDeclaration, CompilerError> {
+    let location = Some(convert_to_ast_location(&get_location(&pair)));
+    let mut type_ = crate::ast::Type::Any;
+    let mut name = String::new();
+    let mut initializer = crate::ast::Expression::Literal(crate::ast::Value::Null);
+    let mut guard = None;
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::type_ => {
+                type_ = parse_type(inner)?;
+            }
+            Rule::identifier => {
+                name = inner.as_str().to_string();
+            }
+            Rule::single_line_expression => {
+                initializer = parse_expression(inner)?;
+            }
+            Rule::guard_clause => {
+                guard = Some(parse_guard_clause(inner)?);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(crate::ast::StateDeclaration {
+        name,
+        type_,
+        initializer,
+        guard,
+        location,
+    })
+}
+
+/// Parse a guard clause
+fn parse_guard_clause(pair: Pair<Rule>) -> Result<crate::ast::GuardClause, CompilerError> {
+    let location = Some(convert_to_ast_location(&get_location(&pair)));
+    let mut condition = crate::ast::Expression::Literal(crate::ast::Value::Boolean(true));
+    let mut error_message = String::new();
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::expression => {
+                condition = parse_expression(inner)?;
+            }
+            Rule::string => {
+                // Extract string content without quotes
+                let s = inner.as_str();
+                error_message = s[1..s.len() - 1].to_string();
+            }
+            _ => {}
+        }
+    }
+
+    Ok(crate::ast::GuardClause {
+        condition,
+        error_message,
+        location,
+    })
+}
+
+/// Parse a computed block (computed state declarations)
+fn parse_computed_block(
+    pair: Pair<Rule>,
+) -> Result<Vec<crate::ast::ComputedDeclaration>, CompilerError> {
+    let mut computed = Vec::new();
+
+    for inner in pair.into_inner() {
+        if inner.as_rule() == Rule::indented_computed_declarations {
+            for decl_pair in inner.into_inner() {
+                if decl_pair.as_rule() == Rule::computed_declaration {
+                    let decl = parse_computed_declaration(decl_pair)?;
+                    computed.push(decl);
+                }
+            }
+        }
+    }
+
+    Ok(computed)
+}
+
+/// Parse a single computed declaration
+fn parse_computed_declaration(
+    pair: Pair<Rule>,
+) -> Result<crate::ast::ComputedDeclaration, CompilerError> {
+    let location = Some(convert_to_ast_location(&get_location(&pair)));
+    let mut type_ = crate::ast::Type::Any;
+    let mut name = String::new();
+    let mut body = Vec::new();
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::type_ => {
+                type_ = parse_type(inner)?;
+            }
+            Rule::identifier => {
+                name = inner.as_str().to_string();
+            }
+            Rule::computed_body => {
+                // Parse statements in the computed body
+                for stmt_pair in inner.into_inner() {
+                    if stmt_pair.as_rule() == Rule::statement {
+                        let stmt = parse_statement(stmt_pair)?;
+                        body.push(stmt);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(crate::ast::ComputedDeclaration {
+        name,
+        type_,
+        body,
+        location,
+    })
+}
+
+/// Parse a watch block
+pub fn parse_watch_block(pair: Pair<Rule>) -> Result<crate::ast::WatchBlock, CompilerError> {
+    let location = Some(convert_to_ast_location(&get_location(&pair)));
+    let mut targets = Vec::new();
+    let mut body = Vec::new();
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::watch_targets => {
+                for target_pair in inner.into_inner() {
+                    if target_pair.as_rule() == Rule::identifier {
+                        targets.push(target_pair.as_str().to_string());
+                    }
+                }
+            }
+            Rule::simple_indented_block | Rule::indented_block => {
+                // Parse the body statements
+                for stmt_pair in inner.into_inner() {
+                    if stmt_pair.as_rule() == Rule::statement {
+                        let stmt = parse_statement(stmt_pair)?;
+                        body.push(stmt);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(crate::ast::WatchBlock {
+        targets,
+        body,
+        location,
+    })
+}
+
+/// Parse a screen block
+pub fn parse_screen_block(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
+    let location = Some(convert_to_ast_location(&get_location(&pair)));
+    let mut name = String::new();
+    let mut state = None;
+    let mut watch_blocks = Vec::new();
+    let mut functions = Vec::new();
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::identifier => {
+                name = inner.as_str().to_string();
+            }
+            Rule::indented_screen_body => {
+                for body_item in inner.into_inner() {
+                    if body_item.as_rule() == Rule::screen_body_item {
+                        for item_inner in body_item.into_inner() {
+                            match item_inner.as_rule() {
+                                Rule::state_block => {
+                                    let mut state_block = parse_state_block(item_inner)?;
+                                    // Set scope to screen
+                                    state_block.scope = crate::ast::StateScope::Screen;
+                                    state = Some(state_block);
+                                }
+                                Rule::watch_block => {
+                                    let watch_block = parse_watch_block(item_inner)?;
+                                    watch_blocks.push(watch_block);
+                                }
+                                Rule::functions_block | Rule::class_functions_block => {
+                                    let block_functions = parse_functions_block(item_inner)?;
+                                    functions.extend(block_functions);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Statement::ScreenBlockStmt {
+        name,
+        state,
+        watch_blocks,
+        functions,
+        location,
+    })
+}
+
+// ============================================================================
+// END STATE MANAGEMENT PARSERS
+// ============================================================================
 
 #[cfg(test)]
 mod tests {

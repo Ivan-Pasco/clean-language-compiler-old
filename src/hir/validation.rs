@@ -879,6 +879,8 @@ mod tests {
             start_function: None,
             imports: vec![],
             tests: vec![],
+            state: None,
+            watch_blocks: vec![],
             location: test_location(),
         };
 
@@ -910,6 +912,8 @@ mod tests {
             start_function: None,
             imports: vec![],
             tests: vec![],
+            state: None,
+            watch_blocks: vec![],
             location: test_location(),
         };
 
@@ -957,6 +961,8 @@ mod tests {
             start_function: None,
             imports: vec![],
             tests: vec![],
+            state: None,
+            watch_blocks: vec![],
             location: test_location(),
         };
 
@@ -996,6 +1002,8 @@ mod tests {
             start_function: None,
             imports: vec![],
             tests: vec![],
+            state: None,
+            watch_blocks: vec![],
             location: test_location(),
         };
 
@@ -1028,6 +1036,8 @@ mod tests {
             start_function: None,
             imports: vec![],
             tests: vec![],
+            state: None,
+            watch_blocks: vec![],
             location: test_location(),
         };
 

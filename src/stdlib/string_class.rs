@@ -190,35 +190,12 @@ impl StringClass {
     #[allow(dead_code)]
     fn register_formatting_operations(
         &self,
-        codegen: &mut CodeGenerator,
+        _codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
-        // String.trim(string text) -> string
-        register_stdlib_function(
-            codegen,
-            "string.trim",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_trim(),
-        )?;
-
-        // String.trimStart(string text) -> string
-        register_stdlib_function(
-            codegen,
-            "string.trimStart",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_trim_start(),
-        )?;
-
-        // String.trimEnd(string text) -> string
-        register_stdlib_function(
-            codegen,
-            "string.trimEnd",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_trim_end(),
-        )?;
-
+        // NOTE: Trim functions (string.trim, string.trimStart, string.trimEnd) are now provided
+        // by host imports registered in builtin_generator.rs and implemented in host_functions.rs.
+        // The host implementations use Rust's native string.trim() which is more reliable.
+        // Do NOT register stub implementations here - they would override the host imports.
         Ok(())
     }
 
@@ -227,23 +204,14 @@ impl StringClass {
         &self,
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
-        // String.replace(string text, string oldValue, string newValue) -> string
-        register_stdlib_function(
-            codegen,
-            "string.replace",
-            &[WasmType::I32, WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_replace(),
-        )?;
+        // NOTE: string.replace is registered as an import in mod.rs via register_string_replace_import()
+        // Do NOT register a stdlib function for it here - it would shadow the import and use the
+        // broken stub implementation that just returns the original string unchanged.
+        // The host import properly implements string replacement.
 
-        // String.replaceAll(string text, string oldValue, string newValue) -> string
-        register_stdlib_function(
-            codegen,
-            "string.replaceAll",
-            &[WasmType::I32, WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_replace_all(),
-        )?;
+        // NOTE: string.replaceAll also uses the host import (same function as string.replace since
+        // the host implementation replaces all occurrences by default)
+        // Do NOT register a stdlib function for it here - it would shadow the import
 
         // String.split(string text, string delimiter) -> list<string>
         // NOTE: string.split is registered as an import in builtin_generator.rs

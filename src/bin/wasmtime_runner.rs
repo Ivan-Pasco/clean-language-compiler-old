@@ -528,6 +528,236 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "string_to_int", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "string_to_float", |_: i32| -> f64 { 0.0 })?;
 
+    // String trim functions
+    linker.func_wrap(
+        "env",
+        "string_trim",
+        |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            // Extract string content first (immutable borrow)
+            let trimmed_string = {
+                if let Some(memory) = caller.get_export("memory") {
+                    if let Some(memory) = memory.into_memory() {
+                        let data = memory.data(&caller);
+                        if ptr as usize + 4 > data.len() {
+                            return 0;
+                        }
+                        let len = u32::from_le_bytes([
+                            data[ptr as usize],
+                            data[ptr as usize + 1],
+                            data[ptr as usize + 2],
+                            data[ptr as usize + 3],
+                        ]) as usize;
+                        if ptr as usize + 4 + len > data.len() {
+                            return 0;
+                        }
+                        match std::str::from_utf8(&data[ptr as usize + 4..ptr as usize + 4 + len]) {
+                            Ok(s) => s.trim().to_string(),
+                            Err(_) => return 0,
+                        }
+                    } else {
+                        return 0;
+                    }
+                } else {
+                    return 0;
+                }
+            };
+            // Now allocate with mutable borrow
+            if let Some(memory) = caller.get_export("memory") {
+                if let Some(memory) = memory.into_memory() {
+                    return allocate_string_in_memory(&memory, &mut caller, &trimmed_string);
+                }
+            }
+            0
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "string_trim_start",
+        |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            let trimmed_string = {
+                if let Some(memory) = caller.get_export("memory") {
+                    if let Some(memory) = memory.into_memory() {
+                        let data = memory.data(&caller);
+                        if ptr as usize + 4 > data.len() {
+                            return 0;
+                        }
+                        let len = u32::from_le_bytes([
+                            data[ptr as usize],
+                            data[ptr as usize + 1],
+                            data[ptr as usize + 2],
+                            data[ptr as usize + 3],
+                        ]) as usize;
+                        if ptr as usize + 4 + len > data.len() {
+                            return 0;
+                        }
+                        match std::str::from_utf8(&data[ptr as usize + 4..ptr as usize + 4 + len]) {
+                            Ok(s) => s.trim_start().to_string(),
+                            Err(_) => return 0,
+                        }
+                    } else {
+                        return 0;
+                    }
+                } else {
+                    return 0;
+                }
+            };
+            if let Some(memory) = caller.get_export("memory") {
+                if let Some(memory) = memory.into_memory() {
+                    return allocate_string_in_memory(&memory, &mut caller, &trimmed_string);
+                }
+            }
+            0
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "string_trim_end",
+        |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            let trimmed_string = {
+                if let Some(memory) = caller.get_export("memory") {
+                    if let Some(memory) = memory.into_memory() {
+                        let data = memory.data(&caller);
+                        if ptr as usize + 4 > data.len() {
+                            return 0;
+                        }
+                        let len = u32::from_le_bytes([
+                            data[ptr as usize],
+                            data[ptr as usize + 1],
+                            data[ptr as usize + 2],
+                            data[ptr as usize + 3],
+                        ]) as usize;
+                        if ptr as usize + 4 + len > data.len() {
+                            return 0;
+                        }
+                        match std::str::from_utf8(&data[ptr as usize + 4..ptr as usize + 4 + len]) {
+                            Ok(s) => s.trim_end().to_string(),
+                            Err(_) => return 0,
+                        }
+                    } else {
+                        return 0;
+                    }
+                } else {
+                    return 0;
+                }
+            };
+            if let Some(memory) = caller.get_export("memory") {
+                if let Some(memory) = memory.into_memory() {
+                    return allocate_string_in_memory(&memory, &mut caller, &trimmed_string);
+                }
+            }
+            0
+        },
+    )?;
+
+    // string_compare - Compare two strings, return 1 if equal, 0 if not
+    linker.func_wrap(
+        "env",
+        "string_compare",
+        |mut caller: Caller<'_, ()>, ptr1: i32, ptr2: i32| -> i32 {
+            if let Some(memory) = caller.get_export("memory") {
+                if let Some(memory) = memory.into_memory() {
+                    let data = memory.data(&caller);
+
+                    // Read first string
+                    if ptr1 as usize + 4 > data.len() {
+                        return 0;
+                    }
+                    let len1 = u32::from_le_bytes([
+                        data[ptr1 as usize],
+                        data[ptr1 as usize + 1],
+                        data[ptr1 as usize + 2],
+                        data[ptr1 as usize + 3],
+                    ]) as usize;
+                    let start1 = ptr1 as usize + 4;
+                    let string1 = std::str::from_utf8(&data[start1..start1 + len1]).unwrap_or("");
+
+                    // Read second string
+                    if ptr2 as usize + 4 > data.len() {
+                        return 0;
+                    }
+                    let len2 = u32::from_le_bytes([
+                        data[ptr2 as usize],
+                        data[ptr2 as usize + 1],
+                        data[ptr2 as usize + 2],
+                        data[ptr2 as usize + 3],
+                    ]) as usize;
+                    let start2 = ptr2 as usize + 4;
+                    let string2 = std::str::from_utf8(&data[start2..start2 + len2]).unwrap_or("");
+
+                    return if string1 == string2 { 1 } else { 0 };
+                }
+            }
+            0
+        },
+    )?;
+
+    // string_replace - Replace all occurrences of search with replace in string
+    linker.func_wrap(
+        "env",
+        "string_replace",
+        |mut caller: Caller<'_, ()>, string_ptr: i32, search_ptr: i32, replace_ptr: i32| -> i32 {
+            if let Some(memory) = caller.get_export("memory") {
+                if let Some(memory) = memory.into_memory() {
+                    let data = memory.data(&caller);
+
+                    // Read source string
+                    if string_ptr as usize + 4 > data.len() {
+                        return 0;
+                    }
+                    let len1 = u32::from_le_bytes([
+                        data[string_ptr as usize],
+                        data[string_ptr as usize + 1],
+                        data[string_ptr as usize + 2],
+                        data[string_ptr as usize + 3],
+                    ]) as usize;
+                    let start1 = string_ptr as usize + 4;
+                    let source = std::str::from_utf8(&data[start1..start1 + len1])
+                        .unwrap_or("")
+                        .to_string();
+
+                    // Read search string
+                    if search_ptr as usize + 4 > data.len() {
+                        return 0;
+                    }
+                    let len2 = u32::from_le_bytes([
+                        data[search_ptr as usize],
+                        data[search_ptr as usize + 1],
+                        data[search_ptr as usize + 2],
+                        data[search_ptr as usize + 3],
+                    ]) as usize;
+                    let start2 = search_ptr as usize + 4;
+                    let search = std::str::from_utf8(&data[start2..start2 + len2])
+                        .unwrap_or("")
+                        .to_string();
+
+                    // Read replace string
+                    if replace_ptr as usize + 4 > data.len() {
+                        return 0;
+                    }
+                    let len3 = u32::from_le_bytes([
+                        data[replace_ptr as usize],
+                        data[replace_ptr as usize + 1],
+                        data[replace_ptr as usize + 2],
+                        data[replace_ptr as usize + 3],
+                    ]) as usize;
+                    let start3 = replace_ptr as usize + 4;
+                    let replace = std::str::from_utf8(&data[start3..start3 + len3])
+                        .unwrap_or("")
+                        .to_string();
+
+                    // Perform replacement
+                    let result = source.replace(&search, &replace);
+
+                    // Allocate and write result
+                    return allocate_string_in_memory(&memory, &mut caller, &result);
+                }
+            }
+            0
+        },
+    )?;
+
     // Add memory management functions
     linker.func_wrap(
         "memory_runtime",

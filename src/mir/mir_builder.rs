@@ -94,6 +94,9 @@ pub struct MirBuilder {
 
     /// All functions in the program for default parameter lookups
     all_functions: Vec<TastFunction>,
+
+    /// State variables with their global ValueIds and types
+    state_variables: HashMap<String, (ValueId, MirType)>,
 }
 
 /// Context for building a single function
@@ -150,6 +153,33 @@ struct LoopContext {
 impl MirBuilder {
     /// Create a new MIR builder
     pub fn new(symbol_table: std::sync::Arc<crate::resolver::GlobalSymbolTable>) -> Self {
+        // Scan symbol table for state variables and create their ValueIds
+        let mut state_variables = HashMap::new();
+        let mut next_state_id = 10000; // Start state variable IDs at a high number to avoid conflicts
+
+        let all_symbols: Vec<_> = symbol_table.accessible_symbols();
+        for symbol_id in all_symbols {
+            if let Some(symbol) = symbol_table.get_symbol(symbol_id) {
+                if let crate::resolver::SymbolKind::StateVariable { var_type, .. } = &symbol.kind {
+                    let mir_type = match var_type {
+                        crate::hir::HirType::Integer => MirType::I32,
+                        crate::hir::HirType::Number => MirType::F64,
+                        crate::hir::HirType::String => MirType::I32, // String pointer
+                        crate::hir::HirType::Boolean => MirType::I32,
+                        _ => MirType::I32, // Default to i32 for other types
+                    };
+                    let value_id = ValueId(next_state_id);
+                    next_state_id += 1;
+                    state_variables.insert(symbol.name.clone(), (value_id, mir_type));
+                    tracing::trace!(
+                        "Registered state variable '{}' with ValueId {:?}",
+                        symbol.name,
+                        value_id
+                    );
+                }
+            }
+        }
+
         Self {
             current_function: None,
             current_block: None,
@@ -164,6 +194,7 @@ impl MirBuilder {
             stats: MirBuildStats::default(),
             all_classes: Vec::new(),
             all_functions: Vec::new(),
+            state_variables,
         }
     }
 
@@ -2370,6 +2401,29 @@ impl MirBuilder {
                     if let Some(&value_id) = scope.get(name) {
                         return Ok(value_id);
                     }
+                }
+
+                // Check if this is a state variable
+                if let Some((value_id, mir_type)) = self.state_variables.get(name).cloned() {
+                    trace!(
+                        state_variable = %name,
+                        value_id = ?value_id,
+                        mir_type = ?mir_type,
+                        "Found state variable"
+                    );
+
+                    // Register the state variable as a local if not already registered
+                    if !context.function.locals.contains_key(&value_id) {
+                        let local = MirLocal {
+                            name: Some(format!("state_{}", name)),
+                            local_type: mir_type,
+                            is_mutable: true, // State variables are mutable
+                            location: expression.location.clone(),
+                        };
+                        context.function.locals.insert(value_id, local);
+                    }
+
+                    return Ok(value_id);
                 }
 
                 // If not found in scope and we're in a class method, check class fields

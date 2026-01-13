@@ -1163,6 +1163,18 @@ impl CodeGenerator {
                     location.clone(),
                 ));
             }
+            Statement::StateBlockStmt { .. } => {
+                // State blocks are handled at HIR level; this is exhaustive match only
+            }
+            Statement::WatchBlockStmt { .. } => {
+                // Watch blocks are handled at HIR level; this is exhaustive match only
+            }
+            Statement::ResetStmt { .. } => {
+                // Reset statements are handled at HIR level; this is exhaustive match only
+            }
+            Statement::ScreenBlockStmt { .. } => {
+                // Screen blocks are handled at HIR level; this is exhaustive match only
+            }
         }
         Ok(())
     }
@@ -5616,14 +5628,93 @@ impl CodeGenerator {
         Ok(())
     }
 
+    /// Register string trim function imports
+    /// These are host-provided functions that properly trim whitespace from strings
+    pub fn register_string_trim_imports(&mut self) -> Result<(), CompilerError> {
+        use crate::types::WasmType;
+
+        // Register trim function imports from host
+        // These are implemented in host_functions.rs and wasmtime_runner.rs
+        let trim_idx = self.register_import_function(
+            "env",
+            "string_trim",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+        let trim_start_idx = self.register_import_function(
+            "env",
+            "string_trim_start",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+        let trim_end_idx = self.register_import_function(
+            "env",
+            "string_trim_end",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+
+        // Add aliases for dot notation method calls (string.trim, string.trimStart, string.trimEnd)
+        self.add_function_alias("string.trim", trim_idx);
+        self.add_function_alias("string.trimStart", trim_start_idx);
+        self.add_function_alias("string.trimEnd", trim_end_idx);
+
+        Ok(())
+    }
+
+    /// Register string_compare function import
+    /// This is used for string equality comparisons (==, !=)
+    pub fn register_string_compare_import(&mut self) -> Result<(), CompilerError> {
+        use crate::types::WasmType;
+
+        // Register string_compare as an import that compares two strings
+        // Returns 1 if equal, 0 if not equal
+        let idx = self.register_import_function(
+            "env",
+            "string_compare",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+
+        // Add alias for internal use
+        self.add_function_alias("string.compare", idx);
+        self.add_function_alias("string_compare", idx);
+
+        Ok(())
+    }
+
+    /// Register string_replace function import
+    /// This is used for the string.replace() method
+    pub fn register_string_replace_import(&mut self) -> Result<(), CompilerError> {
+        use crate::types::WasmType;
+
+        // Register string_replace as an import that replaces all occurrences of a substring
+        // Parameters: (string_ptr: i32, search_ptr: i32, replace_ptr: i32) -> i32
+        let idx = self.register_import_function(
+            "env",
+            "string_replace",
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+
+        // Add aliases for internal use
+        self.add_function_alias("string.replace", idx);
+        self.add_function_alias("string_replace", idx);
+        self.add_function_alias("string_replace_impl", idx);
+
+        Ok(())
+    }
+
     /// Register string class operation functions using StringClass
     #[allow(dead_code)]
     fn register_string_class_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::string_class::StringClass;
 
         // NOTE: string.split import is registered separately via register_string_split_import()
-        // which is called earlier in the initialization sequence to ensure correct WASM indexing
-        // Do NOT register it here to avoid duplicate registration issues
+        // NOTE: string trim imports are registered separately via register_string_trim_imports()
+        // NOTE: string replace import is registered separately via register_string_replace_import()
+        // These are called earlier in the initialization sequence to ensure correct WASM indexing
+        // Do NOT register them here to avoid duplicate registration issues
 
         // Create a StringClass instance and register its functions
         debug!("Creating StringClass instance");

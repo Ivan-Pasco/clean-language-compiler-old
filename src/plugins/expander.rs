@@ -413,6 +413,9 @@ mod tests {
             start_function: None,
             tests: vec![],
             screens: vec![],
+            state: None,
+            watch_blocks: Vec::new(),
+            screen_blocks: Vec::new(),
             location: None,
         }
     }

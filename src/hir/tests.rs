@@ -26,6 +26,9 @@ fn test_program_with_functions(functions: Vec<Function>) -> Program {
         start_function: None,
         tests: vec![],
         screens: vec![],
+        state: None,
+        watch_blocks: Vec::new(),
+        screen_blocks: Vec::new(),
         location: Some(test_location()),
     }
 }
@@ -40,6 +43,9 @@ fn test_program_with_start(start_fn: Function) -> Program {
         start_function: Some(start_fn),
         tests: vec![],
         screens: vec![],
+        state: None,
+        watch_blocks: Vec::new(),
+        screen_blocks: Vec::new(),
         location: Some(test_location()),
     }
 }
@@ -54,6 +60,9 @@ fn test_program_with_classes(classes: Vec<Class>) -> Program {
         start_function: None,
         tests: vec![],
         screens: vec![],
+        state: None,
+        watch_blocks: Vec::new(),
+        screen_blocks: Vec::new(),
         location: Some(test_location()),
     }
 }
@@ -445,6 +454,9 @@ mod integration_tests {
             start_function: Some(start_fn),
             tests: vec![],
             screens: vec![],
+            state: None,
+            watch_blocks: Vec::new(),
+            screen_blocks: Vec::new(),
             location: Some(test_location()),
         };
 

@@ -292,9 +292,15 @@ impl CodeGenerator {
         if let Some(ends_with_idx) = self.get_function_index("string_ends_with") {
             self.add_function_alias("string.endsWith", ends_with_idx);
         }
-        self.register_import_function("env", "string.trim", vec![ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string.trimStart", vec![ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string.trimEnd", vec![ValType::I32], vec![ValType::I32])?;
+        // Trim functions - use underscore naming to match host functions
+        let trim_start_idx = self.register_import_function("env", "string_trim_start", vec![ValType::I32], vec![ValType::I32])?;
+        let trim_end_idx = self.register_import_function("env", "string_trim_end", vec![ValType::I32], vec![ValType::I32])?;
+        // Add aliases for dot notation static method calls (string.trimStart, etc.)
+        if let Some(trim_idx) = self.get_function_index("string_trim") {
+            self.add_function_alias("string.trim", trim_idx);
+        }
+        self.add_function_alias("string.trimStart", trim_start_idx);
+        self.add_function_alias("string.trimEnd", trim_end_idx);
         self.register_import_function("env", "string.replace", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
         // Use native substring implementation (alias to string_substring)
         if let Some(substring_idx) = self.get_function_index("string_substring") {
@@ -946,14 +952,12 @@ impl CodeGenerator {
                 Ok(WasmType::I32)
             },
             "trimStart" | "leftTrim" => {
-                // Use the regular trim function for now (implementation detail)
-                let func_index = self.get_function_index_or_error("string_trim")?;
+                let func_index = self.get_function_index_or_error("string_trim_start")?;
                 instructions.push(Instruction::Call(func_index));
                 Ok(WasmType::I32)
             },
             "trimEnd" | "rightTrim" => {
-                // Use the regular trim function for now (implementation detail)
-                let func_index = self.get_function_index_or_error("string_trim")?;
+                let func_index = self.get_function_index_or_error("string_trim_end")?;
                 instructions.push(Instruction::Call(func_index));
                 Ok(WasmType::I32)
             },

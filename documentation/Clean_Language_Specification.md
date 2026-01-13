@@ -20,6 +20,7 @@
 16. [Advanced Types](#advanced-types)
 17. [Asynchronous Programming](#asynchronous-programming)
 18. [Plugin System](#plugin-system)
+19. [State Management](#state-management)
 
 ## Overview
 
@@ -194,12 +195,13 @@ $name       // Special characters not allowed
 Reserved keywords in Clean Language:
 
 ```
-and        class       constructor  default     else        error
-false      for         from         function    if          import
-in         iterate     not          null        onError     or
-print      println     return       start       step        test
-tests      this        to           true        is          returns
-description while      input        unit        private     constant
+and        class       computed     constructor  default     else
+error      false       for          from         function    guard
+if         import      in           iterate      not         null
+onError    or          print        println      reset       return
+screen     start       state        step         test        tests
+this       to          true         watch        is          returns
+description while      input        unit         private     constant
 functions
 ```
 
@@ -3269,3 +3271,302 @@ impl FrameworkPlugin for MyPlugin {
 - **Type-safe**: Generated code is fully type-checked
 - **IDE Support**: Full autocomplete and diagnostics
 - **Composable**: Multiple plugins work together
+
+## State Management
+
+State is a first-class concept in Clean Language. It provides persistent memory that outlives function calls, with built-in observability and sequential update guarantees.
+
+### Core Principles
+
+1. **Persistent Memory**: State stores values beyond function execution. Variables are temporary; state is remembered.
+2. **Mutable**: State values are updated using normal assignment.
+3. **Observable**: The runtime detects all state changes and can react to them.
+4. **Explicit Scope**: State is declared in known scopes (app or screen level).
+5. **Sequential Updates**: State mutations are processed in order, preventing race conditions.
+6. **Async Compatible**: Async operations update state on completion, following sequential rules.
+7. **In-Memory Default**: State lives in memory. Persistence is optional via plugins.
+8. **First-Class**: State is recognized by the compiler and enforced by the runtime.
+
+### State Declaration
+
+State scope is determined by where it's declared. Use the `state:` block to define state variables.
+
+**App-level state** — declared at module level (persists for application lifetime):
+
+```clean
+state:
+    integer count = 0
+    string username = ""
+    boolean isLoggedIn = false
+```
+
+**Screen-level state** — declared inside a screen (persists for screen lifetime):
+
+```clean
+screen Home:
+    state:
+        string searchQuery = ""
+        list<string> results = []
+```
+
+**Rules:**
+- Top-level `state:` creates app-scoped state
+- `state:` inside `screen:` creates screen-scoped state
+- Initial values are required
+- **Names must be unique across all scopes** (no prefixes needed)
+
+### State Access
+
+Access state directly by name. No scope prefix is ever needed because names are unique.
+
+```clean
+state:
+    integer count = 0
+    string username = ""
+
+functions:
+    void showStatus()
+        integer current = count
+        string name = username
+        print("User: " + name + ", Count: " + current.toString())
+```
+
+### State Mutation
+
+Mutate state with standard assignment.
+
+```clean
+state:
+    integer count = 0
+
+functions:
+    void increment()
+        count = count + 1
+
+    void reset()
+        count = 0
+```
+
+### Observing State Changes
+
+Use `watch:` to react when state changes. The block runs automatically after the state is updated.
+
+```clean
+state:
+    integer count = 0
+
+watch count:
+    print("Count changed to: " + count.toString())
+
+functions:
+    void increment()
+        count = count + 1    // Triggers the watch block
+```
+
+**Watching multiple state variables:**
+
+```clean
+state:
+    string firstName = ""
+    string lastName = ""
+
+watch (firstName, lastName):
+    print("Name changed")
+```
+
+### Computed State
+
+Derived values that update automatically when their dependencies change. Declared inside a `computed:` block within `state:`.
+
+```clean
+state:
+    string firstName = ""
+    string lastName = ""
+
+    computed:
+        string fullName
+            return firstName + " " + lastName
+
+functions:
+    void setName(string first, string last)
+        firstName = first
+        lastName = last
+
+start()
+    setName("Alice", "Smith")
+    print(fullName)    // Prints: Alice Smith
+```
+
+**Rules:**
+- Computed state is read-only
+- Dependencies are tracked automatically
+- Re-evaluated only when dependencies change
+
+### State Guards
+
+Validate state before mutation. Guards run before assignment and reject invalid values.
+
+```clean
+state:
+    integer count = 0
+        guard value >= 0 else "Count cannot be negative"
+
+    string email = ""
+        guard isValidEmail(value) else "Invalid email format"
+
+functions:
+    void decrement()
+        count = count - 1    // Throws error if result < 0
+```
+
+**Rules:**
+- `guard` runs before the assignment happens
+- `value` refers to the proposed new value
+- Invalid assignments throw a runtime error with the provided message
+
+### State Reset
+
+Reset state to its initial value using the `reset` keyword.
+
+```clean
+state:
+    integer count = 0
+    string username = ""
+
+functions:
+    void clearCount()
+        reset count          // count returns to 0
+
+    void clearAll()
+        reset state          // all state returns to initial values
+```
+
+### State with Async
+
+Async functions can update state when they complete. Updates remain sequential.
+
+```clean
+state:
+    string username = ""
+    boolean isLoggedIn = false
+    boolean loading = false
+
+functions:
+    async void fetchUser(integer id)
+        loading = true
+        any user = await api.getUser(id)
+        username = user.name
+        isLoggedIn = true
+        loading = false
+```
+
+### State in Screens
+
+Screens have their own state scope. Screen state is destroyed when the screen is removed.
+
+```clean
+state:
+    string currentUser = ""    // App-level state
+
+screen Home:
+    state:
+        integer homeCount = 0      // Screen-level state
+        boolean homeLoading = false
+
+    watch homeCount:
+        print("Home count: " + homeCount.toString())
+
+    functions:
+        void increment()
+            homeCount = homeCount + 1
+
+        void showUser()
+            // Access app-level state directly (unique names)
+            print("Logged in as: " + currentUser)
+
+screen Settings:
+    state:
+        boolean settingsDarkMode = false    // Different screen, different state
+
+    functions:
+        void toggleDarkMode()
+            settingsDarkMode = not settingsDarkMode
+```
+
+### Complete Example
+
+```clean
+// App-level state
+state:
+    string user = ""
+    string theme = "light"
+
+    computed:
+        string greeting
+            return "Hello, " + user
+
+// React to user changes
+watch user:
+    print(greeting)
+
+// Core functions
+functions:
+    void setUser(string name)
+        user = name
+
+    void setTheme(string newTheme)
+        theme = newTheme
+
+    async void loadProfile()
+        any profile = await fetchProfile()
+        user = profile.name
+
+// Home screen with its own state
+screen Home:
+    state:
+        integer visitCount = 0
+            guard value >= 0 else "Cannot be negative"
+        list<string> recentItems = []
+
+    watch visitCount:
+        print("Visits: " + visitCount.toString())
+
+    functions:
+        void recordVisit()
+            visitCount = visitCount + 1
+
+        void addItem(string item)
+            recentItems.push(item)
+
+        void clearHistory()
+            reset recentItems
+
+// Entry point
+start()
+    setUser("Alice")       // Triggers watch, prints "Hello, Alice"
+```
+
+### Summary
+
+| Syntax | Purpose |
+|--------|---------|
+| `state:` (top-level) | App-scoped state |
+| `state:` (in screen) | Screen-scoped state |
+| `fieldName` | Access state by name |
+| `fieldName = value` | Mutate state |
+| `watch fieldName:` | React to state changes |
+| `watch (a, b):` | React to multiple state changes |
+| `computed:` | Define derived state |
+| `guard condition else msg` | Validate before mutation |
+| `reset fieldName` | Reset to initial value |
+| `reset state` | Reset all state in scope |
+
+### State vs Variables
+
+| Aspect | Variables | State |
+|--------|-----------|-------|
+| Lifetime | Function scope | App or screen lifetime |
+| Observability | Not observable | Observable via `watch:` |
+| Persistence | Lost after function returns | Persists until reset or scope ends |
+| Validation | None | Optional guards |
+| Declaration | `integer x = 0` | Inside `state:` block |

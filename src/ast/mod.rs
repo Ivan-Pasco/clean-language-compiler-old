@@ -578,6 +578,39 @@ pub enum Statement {
         node: Box<UiNode>,
         location: Option<SourceLocation>,
     },
+
+    // ========================================================================
+    // STATE MANAGEMENT STATEMENTS
+    // ========================================================================
+
+    // State block - declares persistent state variables
+    // Top-level state: = app scope, state: inside screen: = screen scope
+    StateBlockStmt {
+        state_block: StateBlock,
+        location: Option<SourceLocation>,
+    },
+
+    // Watch block - react to state changes
+    WatchBlockStmt {
+        watch_block: WatchBlock,
+        location: Option<SourceLocation>,
+    },
+
+    // Reset statement - reset state to initial value
+    // reset count (single variable) or reset state (all state in scope)
+    ResetStmt {
+        target: ResetTarget,
+        location: Option<SourceLocation>,
+    },
+
+    // Screen block - UI screen with its own state scope
+    ScreenBlockStmt {
+        name: String,
+        state: Option<StateBlock>,
+        watch_blocks: Vec<WatchBlock>,
+        functions: Vec<Function>,
+        location: Option<SourceLocation>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -816,6 +849,77 @@ pub struct FrameworkBlock {
     pub location: Option<SourceLocation>,
 }
 
+// ============================================================================
+// STATE MANAGEMENT AST TYPES
+// State is a first-class language concept with persistent memory, observability,
+// and explicit scoping (app-level vs screen-level)
+// ============================================================================
+
+/// State scope - determines lifetime and visibility of state
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+pub enum StateScope {
+    App,    // Application lifetime, visible everywhere
+    Screen, // Screen lifetime, visible only within screen
+}
+
+/// State block - declares persistent state variables
+/// Top-level state: = app scope, state: inside screen: = screen scope
+#[derive(Debug, Clone, PartialEq)]
+pub struct StateBlock {
+    pub declarations: Vec<StateDeclaration>,
+    pub computed: Vec<ComputedDeclaration>,
+    pub scope: StateScope,
+    pub location: Option<SourceLocation>,
+}
+
+/// Individual state declaration with type, name, initial value, and optional guard
+#[derive(Debug, Clone, PartialEq)]
+pub struct StateDeclaration {
+    pub name: String,
+    pub type_: Type,
+    pub initializer: Expression,
+    pub guard: Option<GuardClause>,
+    pub location: Option<SourceLocation>,
+}
+
+/// Guard clause - validates state before mutation
+/// Example: guard value >= 0 else "Count cannot be negative"
+#[derive(Debug, Clone, PartialEq)]
+pub struct GuardClause {
+    pub condition: Expression, // Condition to validate (uses 'value' for proposed new value)
+    pub error_message: String, // Error message if validation fails
+    pub location: Option<SourceLocation>,
+}
+
+/// Computed state declaration - derived values that auto-update when dependencies change
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComputedDeclaration {
+    pub name: String,
+    pub type_: Type,
+    pub body: Vec<Statement>, // Body that computes the value (must end with return)
+    pub location: Option<SourceLocation>,
+}
+
+/// Watch block - react to state changes
+/// Example: watch count: print("Count changed")
+#[derive(Debug, Clone, PartialEq)]
+pub struct WatchBlock {
+    pub targets: Vec<String>, // State variable names to watch
+    pub body: Vec<Statement>, // Code to execute when state changes
+    pub location: Option<SourceLocation>,
+}
+
+/// Reset target - what to reset
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResetTarget {
+    Variable(String), // Reset single state variable
+    AllState,         // Reset all state in current scope (reset state)
+}
+
+// ============================================================================
+// END STATE MANAGEMENT AST TYPES
+// ============================================================================
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum FunctionModifier {
     None,
@@ -933,7 +1037,10 @@ pub struct Program {
     pub classes: Vec<Class>,
     pub start_function: Option<Function>,
     pub tests: Vec<TestCase>,
-    pub screens: Vec<Screen>, // Clean UI screens
+    pub screens: Vec<Screen>,          // Clean UI screens (legacy)
+    pub state: Option<StateBlock>,     // App-level state
+    pub watch_blocks: Vec<WatchBlock>, // Top-level watch observers
+    pub screen_blocks: Vec<Statement>, // Screen blocks with state scope
     pub location: Option<SourceLocation>,
 }
 

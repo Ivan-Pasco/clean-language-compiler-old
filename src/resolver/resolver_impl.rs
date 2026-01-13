@@ -175,6 +175,63 @@ impl NameResolver {
             }
         }
 
+        // Register state variables (global scope)
+        if let Some(state_block) = &hir.state {
+            for state_decl in &state_block.declarations {
+                // Check for duplicates BEFORE creating the symbol
+                if self
+                    .symbol_table
+                    .has_symbol_in_current_scope(&state_decl.name)
+                {
+                    self.error(
+                        &format!(
+                            "State variable '{}' conflicts with existing symbol",
+                            state_decl.name
+                        ),
+                        state_decl.location.clone(),
+                    );
+                } else {
+                    let _symbol_id = self.symbol_table.create_symbol(
+                        state_decl.name.clone(),
+                        SymbolKind::StateVariable {
+                            var_type: state_decl.state_type.clone(),
+                            scope: state_block.scope,
+                            has_guard: state_decl.guard.is_some(),
+                        },
+                        self.symbol_table.current_scope_id(),
+                        state_decl.location.clone(),
+                    );
+                }
+            }
+
+            // Register computed state variables (read-only)
+            for computed_decl in &state_block.computed {
+                if self
+                    .symbol_table
+                    .has_symbol_in_current_scope(&computed_decl.name)
+                {
+                    self.error(
+                        &format!(
+                            "Computed state '{}' conflicts with existing symbol",
+                            computed_decl.name
+                        ),
+                        computed_decl.location.clone(),
+                    );
+                } else {
+                    let _symbol_id = self.symbol_table.create_symbol(
+                        computed_decl.name.clone(),
+                        SymbolKind::StateVariable {
+                            var_type: computed_decl.computed_type.clone(),
+                            scope: state_block.scope,
+                            has_guard: false, // Computed state doesn't have guards
+                        },
+                        self.symbol_table.current_scope_id(),
+                        computed_decl.location.clone(),
+                    );
+                }
+            }
+        }
+
         if self.errors.is_empty() {
             Ok(())
         } else {
