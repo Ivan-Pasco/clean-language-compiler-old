@@ -131,18 +131,21 @@ fn register_console_functions(linker: &mut Linker<()>) -> Result<(), CompilerErr
             )
         })?;
 
-    // input(prompt_ptr: i32, prompt_len: i32) -> string_ptr: i32
+    // input(prompt_ptr: i32) -> string_ptr: i32
+    // Takes a pointer to a length-prefixed string (prompt)
     linker
         .func_wrap(
             "env",
             "input",
-            |mut caller: Caller<'_, ()>, prompt_ptr: i32, prompt_len: i32| -> i32 {
-                // Extract prompt from memory
-                let prompt = extract_string_from_memory(&mut caller, prompt_ptr, prompt_len);
+            |mut caller: Caller<'_, ()>, prompt_ptr: i32| -> i32 {
+                // Extract prompt from length-prefixed string
+                let prompt = extract_length_prefixed_string(&mut caller, prompt_ptr);
 
                 // Get user input
-                print!("{prompt}");
-                io::stdout().flush().unwrap();
+                if !prompt.is_empty() {
+                    print!("{prompt}");
+                    io::stdout().flush().unwrap();
+                }
 
                 let mut input = String::new();
                 match io::stdin().read_line(&mut input) {
@@ -163,17 +166,19 @@ fn register_console_functions(linker: &mut Linker<()>) -> Result<(), CompilerErr
             )
         })?;
 
-    // input_integer(prompt_ptr: i32, prompt_len: i32) -> i32
+    // input_integer(prompt_ptr: i32) -> i32
     linker
         .func_wrap(
             "env",
             "input_integer",
-            |mut caller: Caller<'_, ()>, prompt_ptr: i32, prompt_len: i32| -> i32 {
-                let prompt = extract_string_from_memory(&mut caller, prompt_ptr, prompt_len);
+            |mut caller: Caller<'_, ()>, prompt_ptr: i32| -> i32 {
+                let prompt = extract_length_prefixed_string(&mut caller, prompt_ptr);
 
                 loop {
-                    print!("{prompt}");
-                    io::stdout().flush().unwrap();
+                    if !prompt.is_empty() {
+                        print!("{prompt}");
+                        io::stdout().flush().unwrap();
+                    }
 
                     let mut input = String::new();
                     match io::stdin().read_line(&mut input) {
@@ -202,17 +207,19 @@ fn register_console_functions(linker: &mut Linker<()>) -> Result<(), CompilerErr
             )
         })?;
 
-    // input_float(prompt_ptr: i32, prompt_len: i32) -> f64
+    // input_float(prompt_ptr: i32) -> f64
     linker
         .func_wrap(
             "env",
             "input_float",
-            |mut caller: Caller<'_, ()>, prompt_ptr: i32, prompt_len: i32| -> f64 {
-                let prompt = extract_string_from_memory(&mut caller, prompt_ptr, prompt_len);
+            |mut caller: Caller<'_, ()>, prompt_ptr: i32| -> f64 {
+                let prompt = extract_length_prefixed_string(&mut caller, prompt_ptr);
 
                 loop {
-                    print!("{prompt}");
-                    io::stdout().flush().unwrap();
+                    if !prompt.is_empty() {
+                        print!("{prompt}");
+                        io::stdout().flush().unwrap();
+                    }
 
                     let mut input = String::new();
                     match io::stdin().read_line(&mut input) {
@@ -241,12 +248,16 @@ fn register_console_functions(linker: &mut Linker<()>) -> Result<(), CompilerErr
             )
         })?;
 
-    // input_yesno(prompt_ptr: i32, prompt_len: i32) -> i32 (1 for yes, 0 for no)
-    linker.func_wrap("env", "input_yesno", |mut caller: Caller<'_, ()>, prompt_ptr: i32, prompt_len: i32| -> i32 {
-        let prompt = extract_string_from_memory(&mut caller, prompt_ptr, prompt_len);
+    // input_yesno(prompt_ptr: i32) -> i32 (1 for yes, 0 for no)
+    linker.func_wrap("env", "input_yesno", |mut caller: Caller<'_, ()>, prompt_ptr: i32| -> i32 {
+        let prompt = extract_length_prefixed_string(&mut caller, prompt_ptr);
 
         loop {
-            print!("{prompt} (y/n): ");
+            if !prompt.is_empty() {
+                print!("{prompt} (y/n): ");
+            } else {
+                print!("(y/n): ");
+            }
             io::stdout().flush().unwrap();
 
             let mut input = String::new();
@@ -313,11 +324,7 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
             "int_to_string",
             |mut caller: Caller<'_, ()>, value: i32| -> i32 {
                 let string_value = value.to_string();
-                // Debug logging disabled for production
-                // eprintln!("DEBUG: int_to_string called with value={}, string='{}'", value, string_value);
-                let ptr = allocate_string_in_memory(&mut caller, &string_value);
-                // eprintln!("DEBUG: int_to_string returning ptr={}", ptr);
-                ptr
+                allocate_string_in_memory(&mut caller, &string_value)
             },
         )
         .map_err(|e| {
@@ -335,11 +342,7 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
             "float_to_string",
             |mut caller: Caller<'_, ()>, value: f64| -> i32 {
                 let string_value = value.to_string();
-                // Debug logging disabled for production
-                // eprintln!("DEBUG: float_to_string called with value={}, string='{}'", value, string_value);
-                let ptr = allocate_string_in_memory(&mut caller, &string_value);
-                // eprintln!("DEBUG: float_to_string returning ptr={}", ptr);
-                ptr
+                allocate_string_in_memory(&mut caller, &string_value)
             },
         )
         .map_err(|e| {
@@ -1668,7 +1671,7 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
                                         "true" | "1" | "yes" | "on" => 1,
                                         "false" | "0" | "no" | "off" | "" => 0,
                                         _ => {
-                                            if string_value.len() > 0 {
+                                            if !string_value.is_empty() {
                                                 1
                                             } else {
                                                 0
@@ -1879,7 +1882,7 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
                 return 1; // Zero has 1 digit
             }
 
-            let abs_value = value.abs() as u32;
+            let abs_value = value.unsigned_abs();
             let mut digit_count = 0;
             let mut temp = abs_value;
 
@@ -2383,6 +2386,31 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
         .map_err(|e| {
             CompilerError::runtime_error(
                 format!("Failed to create string.replace function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // string_replace alias (underscore version)
+    linker
+        .func_wrap(
+            "env",
+            "string_replace",
+            |mut caller: Caller<'_, ()>,
+             string_ptr: i32,
+             search_ptr: i32,
+             replace_ptr: i32|
+             -> i32 {
+                let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
+                let search = extract_length_prefixed_string(&mut caller, search_ptr);
+                let replace = extract_length_prefixed_string(&mut caller, replace_ptr);
+                let result = string_val.replace(&search, &replace);
+                allocate_string_in_memory(&mut caller, &result)
+            },
+        )
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create string_replace function: {e}"),
                 None,
                 None,
             )
