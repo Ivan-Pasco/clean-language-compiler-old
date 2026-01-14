@@ -502,6 +502,13 @@ impl DeadCodeEliminationPass {
                 self.mark_operand_live(array, function);
                 self.mark_operand_live(index, function);
             }
+            MirOperation::GlobalLoad { .. } => {
+                // GlobalLoad reads from a WASM global - no operands to mark live
+            }
+            MirOperation::GlobalStore { value, .. } => {
+                // Mark the value being stored to the global as live
+                self.mark_operand_live(value, function);
+            }
         }
     }
 
@@ -549,6 +556,13 @@ impl OptimizationPass for DeadCodeEliminationPass {
                             self.mark_live(dest_id, function);
                         }
                         self.mark_operand_live(destination, function);
+                        self.mark_operand_live(value, function);
+                    }
+                    MirOperation::GlobalStore { value, .. } => {
+                        // GlobalStore instructions are always live (side effect - modifies global state)
+                        if let Some(dest_id) = instruction.dest {
+                            self.mark_live(dest_id, function);
+                        }
                         self.mark_operand_live(value, function);
                     }
                     MirOperation::Call { .. } => {

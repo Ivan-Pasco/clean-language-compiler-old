@@ -83,6 +83,14 @@ pub struct MirCodeGenerator<'a> {
 
     /// Current block nesting depth (for calculating br depths)
     current_block_depth: u32,
+
+    /// Mapping from state variable SymbolId to WASM global index
+    /// Global index 0 is reserved for heap pointer, state variables start at index 1
+    state_global_indices: HashMap<SymbolId, u32>,
+
+    /// State variable globals to be added to the global section during finalize_module
+    /// Each entry is (SymbolId, name, MirType) for deterministic ordering
+    state_globals: Vec<(SymbolId, String, MirType)>,
 }
 
 /// Context for loop code generation
@@ -157,6 +165,8 @@ impl MirCodeGenerator<'_> {
             pending_bridge_wrappers: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
+            state_global_indices: HashMap::new(),
+            state_globals: Vec::new(),
         }
     }
 
@@ -181,6 +191,8 @@ impl MirCodeGenerator<'_> {
             pending_bridge_wrappers: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
+            state_global_indices: HashMap::new(),
+            state_globals: Vec::new(),
         }
     }
 
@@ -410,6 +422,33 @@ impl MirCodeGenerator<'_> {
         // Functions need access to string pool during code generation
         self.setup_string_pool(&mir_program.string_pool)
             .map_err(|e| vec![e])?;
+
+        // Process state variables from MirProgram.globals
+        // Each state variable becomes a WASM global (index 0 is reserved for heap pointer)
+        // Collect and sort globals by SymbolId for deterministic ordering
+        let mut sorted_globals: Vec<_> = mir_program.globals.into_iter().collect();
+        sorted_globals.sort_by_key(|(symbol_id, _)| symbol_id.0);
+
+        // Global index 0 is heap pointer, state variables start at index 1
+        let mut next_global_index: u32 = 1;
+        for (symbol_id, global) in sorted_globals {
+            self.state_global_indices
+                .insert(symbol_id, next_global_index);
+            self.state_globals
+                .push((symbol_id, global.name.clone(), global.global_type.clone()));
+            debug_mir!(
+                name = %global.name,
+                symbol_id = ?symbol_id,
+                global_index = next_global_index,
+                global_type = ?global.global_type,
+                "Registered state variable as WASM global"
+            );
+            next_global_index += 1;
+        }
+        debug_mir!(
+            total_state_globals = self.state_globals.len(),
+            "State variable globals registered"
+        );
 
         // CRITICAL FIX: Build function symbol mapping for proper function resolution
         // This allows us to map SymbolId to function name during function calls
@@ -3278,6 +3317,84 @@ impl MirCodeGenerator<'_> {
                 }
             }
 
+            MirOperation::GlobalLoad {
+                global_id,
+                global_type,
+            } => {
+                debug_mir!(
+                    global_id = ?global_id,
+                    global_type = ?global_type,
+                    "Processing GlobalLoad operation"
+                );
+
+                // Look up the global index for this state variable
+                if let Some(&global_index) = self.state_global_indices.get(global_id) {
+                    self.current_instructions
+                        .push(Instruction::GlobalGet(global_index));
+                    debug_mir!(
+                        global_index = global_index,
+                        "Emitted GlobalGet for state variable"
+                    );
+
+                    // Store result if there's a destination
+                    if let Some(dest) = instruction.dest {
+                        self.store_to_local(dest)?;
+                        debug_mir!("GlobalLoad completed, stored to {:?}", dest);
+                    }
+                } else {
+                    return Err(CompilerError::Codegen {
+                        context: Box::new(crate::error::ErrorContext::new(
+                            format!(
+                                "State variable global not found for SymbolId {:?}",
+                                global_id
+                            ),
+                            None,
+                            crate::error::ErrorType::Codegen,
+                            Some(instruction.location.clone()),
+                        )),
+                    });
+                }
+            }
+
+            MirOperation::GlobalStore {
+                global_id,
+                value,
+                global_type,
+            } => {
+                debug_mir!(
+                    global_id = ?global_id,
+                    value = ?value,
+                    global_type = ?global_type,
+                    "Processing GlobalStore operation"
+                );
+
+                // Look up the global index for this state variable
+                if let Some(&global_index) = self.state_global_indices.get(global_id) {
+                    // Load the value to store
+                    self.load_operand(value)?;
+
+                    // Store to global
+                    self.current_instructions
+                        .push(Instruction::GlobalSet(global_index));
+                    debug_mir!(
+                        global_index = global_index,
+                        "Emitted GlobalSet for state variable"
+                    );
+                } else {
+                    return Err(CompilerError::Codegen {
+                        context: Box::new(crate::error::ErrorContext::new(
+                            format!(
+                                "State variable global not found for SymbolId {:?}",
+                                global_id
+                            ),
+                            None,
+                            crate::error::ErrorType::Codegen,
+                            Some(instruction.location.clone()),
+                        )),
+                    });
+                }
+            }
+
             _ => {
                 // Unsupported MIR operation
                 return Err(CompilerError::Codegen {
@@ -5442,6 +5559,7 @@ impl MirCodeGenerator<'_> {
             (string_end + 7) & !7
         };
         let mut global_section = wasm_encoder::GlobalSection::new();
+        // Global index 0: heap pointer
         global_section.global(
             wasm_encoder::GlobalType {
                 val_type: wasm_encoder::ValType::I32,
@@ -5449,6 +5567,39 @@ impl MirCodeGenerator<'_> {
             },
             &wasm_encoder::ConstExpr::i32_const(heap_start as i32),
         );
+
+        // Add state variable globals (indices start at 1)
+        for (symbol_id, name, mir_type) in &self.state_globals {
+            let (val_type, init_expr) = match mir_type {
+                MirType::I32 => (
+                    wasm_encoder::ValType::I32,
+                    wasm_encoder::ConstExpr::i32_const(0),
+                ),
+                MirType::F64 => (
+                    wasm_encoder::ValType::F64,
+                    wasm_encoder::ConstExpr::f64_const(0.0),
+                ),
+                // String pointers, booleans, and other i32-based types
+                _ => (
+                    wasm_encoder::ValType::I32,
+                    wasm_encoder::ConstExpr::i32_const(0),
+                ),
+            };
+            global_section.global(
+                wasm_encoder::GlobalType {
+                    val_type,
+                    mutable: true, // State variables are mutable
+                },
+                &init_expr,
+            );
+            debug_mir!(
+                name = %name,
+                symbol_id = ?symbol_id,
+                val_type = ?val_type,
+                "Added state variable global to WASM module"
+            );
+        }
+
         module.section(&global_section);
 
         // Export the heap pointer global so host can read it for debugging

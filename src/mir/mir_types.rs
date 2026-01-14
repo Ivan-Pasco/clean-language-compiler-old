@@ -298,6 +298,26 @@ pub enum MirOperation {
         /// The integer index
         index: MirOperand,
     },
+
+    /// Load from a global variable
+    /// Generates WASM global.get instruction
+    GlobalLoad {
+        /// Symbol ID of the global variable
+        global_id: SymbolId,
+        /// Type of the global (needed for proper WASM type)
+        global_type: MirType,
+    },
+
+    /// Store to a global variable
+    /// Generates WASM global.set instruction
+    GlobalStore {
+        /// Symbol ID of the global variable
+        global_id: SymbolId,
+        /// Value to store
+        value: MirOperand,
+        /// Type of the global (needed for proper WASM type)
+        global_type: MirType,
+    },
 }
 
 /// MIR terminator instructions (end basic blocks)

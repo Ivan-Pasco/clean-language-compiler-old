@@ -10,8 +10,8 @@ use crate::ast::SourceLocation;
 use crate::error::CompilerError;
 use crate::mir::mir_types::{
     AnyTypeTag, BasicBlockId, MirBasicBlock, MirBinaryOp, MirConstant, MirFunction,
-    MirFunctionAttributes, MirInstruction, MirLocal, MirOperand, MirOperation, MirParameter,
-    MirProgram, MirTerminator, MirType, MirUnaryOp, ValueId,
+    MirFunctionAttributes, MirGlobal, MirInstruction, MirLocal, MirOperand, MirOperation,
+    MirParameter, MirProgram, MirTerminator, MirType, MirUnaryOp, ValueId,
 };
 use crate::resolver::SymbolId;
 use crate::typechecker::tast::{
@@ -95,8 +95,9 @@ pub struct MirBuilder {
     /// All functions in the program for default parameter lookups
     all_functions: Vec<TastFunction>,
 
-    /// State variables with their global ValueIds and types
-    state_variables: HashMap<String, (ValueId, MirType)>,
+    /// State variables with their SymbolIds and types for global variable generation
+    /// Maps variable name -> (SymbolId, MirType)
+    state_variables: HashMap<String, (SymbolId, MirType)>,
 }
 
 /// Context for building a single function
@@ -153,9 +154,8 @@ struct LoopContext {
 impl MirBuilder {
     /// Create a new MIR builder
     pub fn new(symbol_table: std::sync::Arc<crate::resolver::GlobalSymbolTable>) -> Self {
-        // Scan symbol table for state variables and create their ValueIds
+        // Scan symbol table for state variables and store their SymbolIds for global variable generation
         let mut state_variables = HashMap::new();
-        let mut next_state_id = 10000; // Start state variable IDs at a high number to avoid conflicts
 
         let all_symbols: Vec<_> = symbol_table.accessible_symbols();
         for symbol_id in all_symbols {
@@ -168,13 +168,12 @@ impl MirBuilder {
                         crate::hir::HirType::Boolean => MirType::I32,
                         _ => MirType::I32, // Default to i32 for other types
                     };
-                    let value_id = ValueId(next_state_id);
-                    next_state_id += 1;
-                    state_variables.insert(symbol.name.clone(), (value_id, mir_type));
+                    state_variables.insert(symbol.name.clone(), (symbol_id, mir_type.clone()));
                     tracing::trace!(
-                        "Registered state variable '{}' with ValueId {:?}",
+                        "Registered state variable '{}' with SymbolId {:?}, type {:?}",
                         symbol.name,
-                        value_id
+                        symbol_id,
+                        mir_type
                     );
                 }
             }
@@ -381,6 +380,29 @@ impl MirBuilder {
 
         // Transfer string pool
         mir_program.string_pool = self.string_pool.clone();
+
+        // Add state variables to MirProgram.globals
+        for (name, (symbol_id, mir_type)) in &self.state_variables {
+            let global = MirGlobal {
+                symbol_id: *symbol_id,
+                name: name.clone(),
+                global_type: mir_type.clone(),
+                initializer: match mir_type {
+                    MirType::I32 => Some(MirConstant::Integer(0)),
+                    MirType::F64 => Some(MirConstant::Float(0.0)),
+                    _ => Some(MirConstant::Integer(0)), // Default for string pointers, etc.
+                },
+                is_mutable: true, // State variables are mutable
+                location: SourceLocation::new(0, 0, ""), // Synthetic global - no specific location
+            };
+            mir_program.globals.insert(*symbol_id, global);
+            trace!(
+                name = %name,
+                symbol_id = ?symbol_id,
+                mir_type = ?mir_type,
+                "Added state variable to MirProgram.globals"
+            );
+        }
 
         // Record build time
         self.stats.build_time_us = start_time.elapsed().as_micros() as u64;
@@ -1033,40 +1055,61 @@ impl MirBuilder {
                             value_id
                         };
 
-                        // CRITICAL FIX: For re-assignment of existing variables, we need to emit
-                        // a Copy instruction to actually update the variable's value in the WASM local.
-                        // Look up the original ValueId for this variable and emit a Copy to it.
-                        let original_value_id = context
-                            .scope_stack
-                            .iter()
-                            .rev()
-                            .find_map(|scope| scope.get(name).copied());
+                        // Check if this is a state variable assignment - emit GlobalStore
+                        if let Some((symbol_id, mir_type)) = self.state_variables.get(name).cloned()
+                        {
+                            trace!(
+                                var_name = %name,
+                                symbol_id = ?symbol_id,
+                                mir_type = ?mir_type,
+                                "Emitting GlobalStore for state variable assignment"
+                            );
+                            let store_instruction = MirInstruction {
+                                dest: None,
+                                operation: MirOperation::GlobalStore {
+                                    global_id: symbol_id,
+                                    value: MirOperand::Value(final_value_id),
+                                    global_type: mir_type,
+                                },
+                                location: location.clone(),
+                            };
+                            self.add_instruction(context, store_instruction);
+                        } else {
+                            // CRITICAL FIX: For re-assignment of existing local variables, we need to emit
+                            // a Copy instruction to actually update the variable's value in the WASM local.
+                            // Look up the original ValueId for this variable and emit a Copy to it.
+                            let original_value_id = context
+                                .scope_stack
+                                .iter()
+                                .rev()
+                                .find_map(|scope| scope.get(name).copied());
 
-                        if let Some(orig_id) = original_value_id {
-                            // This is a re-assignment - emit Copy instruction to update the variable
-                            // Only if the value IDs are different (avoid self-copy)
-                            if orig_id != final_value_id {
-                                trace!(
-                                    var_name = %name,
-                                    orig_id = orig_id.0,
-                                    new_value_id = final_value_id.0,
-                                    "Emitting Copy for variable re-assignment"
-                                );
-                                let copy_instruction = MirInstruction {
-                                    dest: Some(orig_id),
-                                    operation: MirOperation::Copy {
-                                        source: MirOperand::Value(final_value_id),
-                                    },
-                                    location: location.clone(),
-                                };
-                                self.add_instruction(context, copy_instruction);
+                            if let Some(orig_id) = original_value_id {
+                                // This is a re-assignment - emit Copy instruction to update the variable
+                                // Only if the value IDs are different (avoid self-copy)
+                                if orig_id != final_value_id {
+                                    trace!(
+                                        var_name = %name,
+                                        orig_id = orig_id.0,
+                                        new_value_id = final_value_id.0,
+                                        "Emitting Copy for variable re-assignment"
+                                    );
+                                    let copy_instruction = MirInstruction {
+                                        dest: Some(orig_id),
+                                        operation: MirOperation::Copy {
+                                            source: MirOperand::Value(final_value_id),
+                                        },
+                                        location: location.clone(),
+                                    };
+                                    self.add_instruction(context, copy_instruction);
+                                }
                             }
-                        }
 
-                        // Update variable in current scope (for SSA-style tracking)
-                        // Keep the original ValueId since we're copying to it
-                        // This ensures subsequent uses of 'name' still refer to the original local
-                        // (which now has the updated value)
+                            // Update variable in current scope (for SSA-style tracking)
+                            // Keep the original ValueId since we're copying to it
+                            // This ensures subsequent uses of 'name' still refer to the original local
+                            // (which now has the updated value)
+                        }
                     }
                     TastExpressionKind::PropertyAccess {
                         object,
@@ -2403,27 +2446,40 @@ impl MirBuilder {
                     }
                 }
 
-                // Check if this is a state variable
-                if let Some((value_id, mir_type)) = self.state_variables.get(name).cloned() {
+                // Check if this is a state variable - emit GlobalLoad instruction
+                if let Some((symbol_id, mir_type)) = self.state_variables.get(name).cloned() {
                     trace!(
                         state_variable = %name,
-                        value_id = ?value_id,
+                        symbol_id = ?symbol_id,
                         mir_type = ?mir_type,
-                        "Found state variable"
+                        "Found state variable, emitting GlobalLoad"
                     );
 
-                    // Register the state variable as a local if not already registered
-                    if !context.function.locals.contains_key(&value_id) {
-                        let local = MirLocal {
-                            name: Some(format!("state_{}", name)),
-                            local_type: mir_type,
-                            is_mutable: true, // State variables are mutable
-                            location: expression.location.clone(),
-                        };
-                        context.function.locals.insert(value_id, local);
-                    }
+                    // Create a new ValueId for the loaded value
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
 
-                    return Ok(value_id);
+                    // Register the result as a local for type tracking
+                    let local = MirLocal {
+                        name: Some(format!("loaded_state_{}", name)),
+                        local_type: mir_type.clone(),
+                        is_mutable: false, // This is a loaded value, not the actual global
+                        location: expression.location.clone(),
+                    };
+                    context.function.locals.insert(result_id, local);
+
+                    // Emit GlobalLoad instruction
+                    let load_instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::GlobalLoad {
+                            global_id: symbol_id,
+                            global_type: mir_type,
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, load_instruction);
+
+                    return Ok(result_id);
                 }
 
                 // If not found in scope and we're in a class method, check class fields
