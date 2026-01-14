@@ -22,6 +22,7 @@ mod binaryen_optimizer;
 // compiled as a module. The critical native functions (lastIndexOf, startsWith, etc.) are
 // registered via register_native_string_operations() below instead.
 pub mod bridge_generator;
+pub mod const_eval;
 mod instruction_generator;
 mod memory;
 pub mod mir_codegen;

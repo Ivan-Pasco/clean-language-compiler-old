@@ -37,6 +37,7 @@ pub struct ResolvedHirProgram {
     pub start_function: Option<ResolvedHirFunction>,
     pub imports: Vec<ResolvedHirImport>,
     pub tests: Vec<ResolvedHirTest>,
+    pub state: Option<ResolvedHirStateBlock>,
     pub symbol_table: GlobalSymbolTable,
     pub location: SourceLocation,
 }
@@ -122,6 +123,34 @@ pub struct ResolvedHirTest {
     pub name: String,
     pub description: Option<String>,
     pub body: ResolvedHirBlock,
+    pub location: SourceLocation,
+}
+
+/// Resolved state block with resolved expressions
+#[derive(Debug, Clone)]
+pub struct ResolvedHirStateBlock {
+    pub declarations: Vec<ResolvedHirStateDeclaration>,
+    pub scope: HirStateScope,
+    pub location: SourceLocation,
+}
+
+/// Resolved state declaration with resolved initializer and guard
+#[derive(Debug, Clone)]
+pub struct ResolvedHirStateDeclaration {
+    pub symbol_id: SymbolId,
+    pub name: String,
+    pub state_type: HirType,
+    pub initializer: ResolvedHirExpression,
+    pub guard: Option<ResolvedHirGuardClause>,
+    pub location: SourceLocation,
+}
+
+/// Resolved guard clause with resolved condition
+#[derive(Debug, Clone)]
+pub struct ResolvedHirGuardClause {
+    pub condition: ResolvedHirExpression,
+    pub value_symbol_id: SymbolId, // Symbol ID for the 'value' binding in guard conditions
+    pub error_message: String,
     pub location: SourceLocation,
 }
 

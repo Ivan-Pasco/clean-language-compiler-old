@@ -3886,15 +3886,19 @@ impl TokenParser {
                         other => crate::ast::Type::Object(other.to_string()),
                     };
 
+                    // Check for guard clause on next line
+                    // Guard syntax: guard <condition> else "message"
+                    let guard = self.try_parse_guard_clause(block_level)?;
+
                     declarations.push(StateDeclaration {
                         name: var_name,
                         type_,
                         initializer,
-                        guard: None, // Guards will be parsed later if present
+                        guard,
                         location: Some(location),
                     });
 
-                    // Skip newline after declaration
+                    // Skip newline after declaration (if guard didn't consume it)
                     if matches!(self.current_kind(), TokenKind::Newline) {
                         self.bump();
                     }
@@ -3931,5 +3935,73 @@ impl TokenParser {
             scope: StateScope::App, // Default to App scope for top-level state
             location: None,
         })
+    }
+
+    /// Try to parse a guard clause following a state declaration
+    /// Guard syntax: guard <condition> else "message"
+    /// Returns None if no guard is present, or the parsed GuardClause
+    fn try_parse_guard_clause(
+        &mut self,
+        block_level: usize,
+    ) -> Result<Option<crate::ast::GuardClause>, CompilerError> {
+        // Save cursor position to revert if no guard found
+        let start_cursor = self.cursor;
+
+        // Skip newline if present
+        if matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump();
+        }
+
+        // Check for deeper indentation (guard should be indented more than the declaration)
+        if let TokenKind::Indent(level) = self.current_kind() {
+            if *level > block_level {
+                self.bump(); // Consume indent
+
+                // Check for Guard keyword
+                if matches!(self.current_kind(), TokenKind::Guard) {
+                    let guard_location = self.current().location.clone();
+                    self.bump(); // Consume "guard"
+                    self.skip_whitespace();
+
+                    // Parse the condition expression
+                    let condition = self.parse_expression()?;
+                    self.skip_whitespace();
+
+                    // Expect "else" keyword
+                    if !matches!(self.current_kind(), TokenKind::Else) {
+                        return Err(CompilerError::parse_error(
+                            "Expected 'else' after guard condition".to_string(),
+                            Some(self.current().location.clone()),
+                            Some("Guard syntax: guard <condition> else \"message\"".to_string()),
+                        ));
+                    }
+                    self.bump(); // Consume "else"
+                    self.skip_whitespace();
+
+                    // Parse the error message (string literal)
+                    let error_message = if let TokenKind::StringLiteral(s) = self.current_kind() {
+                        let msg = s.clone();
+                        self.bump();
+                        msg
+                    } else {
+                        return Err(CompilerError::parse_error(
+                            "Expected string literal for guard error message".to_string(),
+                            Some(self.current().location.clone()),
+                            Some("Guard syntax: guard <condition> else \"message\"".to_string()),
+                        ));
+                    };
+
+                    return Ok(Some(crate::ast::GuardClause {
+                        condition,
+                        error_message,
+                        location: Some(guard_location),
+                    }));
+                }
+            }
+        }
+
+        // No guard found, revert cursor position
+        self.cursor = start_cursor;
+        Ok(None)
     }
 }

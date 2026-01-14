@@ -1,0 +1,21 @@
+// Test state guards - validation before mutation
+// Guards should prevent invalid state assignments
+
+state:
+	integer count = 0
+			guard value >= 0 else "Count cannot be negative"
+
+functions:
+	void increment()
+		count = count + 1
+
+	void decrement()
+		count = count - 1
+
+start()
+	print("Initial: " + count.toString())
+	increment()
+	increment()
+	print("After increments: " + count.toString())
+	decrement()
+	print("After decrement: " + count.toString())

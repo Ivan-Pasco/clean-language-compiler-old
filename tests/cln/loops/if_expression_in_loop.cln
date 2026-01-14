@@ -1,0 +1,13 @@
+functions:
+	void start()
+		integer i = 0
+		string result = ""
+
+		while i < 5
+			if i % 2 == 0
+				result = result + "even"
+			else
+				result = result + "odd"
+			i = i + 1
+
+		printl result

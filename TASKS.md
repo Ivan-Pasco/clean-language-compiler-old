@@ -1,59 +1,103 @@
 # Clean Language Compiler - Implementation Tasks
 
-## 🔴 CRITICAL: Invalid WASM Code Generation - If Statement Stack Imbalance
+## ✅ RESOLVED: Invalid WASM Code Generation - If Statement Stack Imbalance
 
 **Priority**: CRITICAL - Blocks plugin system and complex code compilation
 **Discovered**: January 10, 2026
-**Status**: 🔴 OPEN
+**Resolved**: January 14, 2026
+**Status**: ✅ COMPLETE
 
 ### Issue
-The compiler generates invalid WebAssembly that fails validation. Two types of errors occur:
+The compiler was generating invalid WebAssembly that failed validation with stack imbalance errors in if statements and while loops.
 
-1. **If Statement Stack Imbalance**: `type mismatch at end of 'if true' branch, expected [] but got [i32]`
-   - If statements with void block type are leaving values on the stack
-   - Both branches must leave stack in same state as before the if
+### Root Cause
+If statements inside loops weren't correctly handling control flow, leaving values on the stack.
 
-2. **Function Call Argument Mismatch**: `type mismatch in call, expected [i32, i32, i32] but got [i32, i32]`
-   - Some function calls missing arguments (likely string ptr/len pairs)
+### Solution Applied
+Fixed in these commits:
+- `d02ffe5` - "fix: nested if with else now correctly handles control flow"
+- `f68f255` - "fix: nested if return statements now properly terminate function"
 
-### Reproduction
-```bash
-# Compile frame.ui plugin
-cd plugins/frame.ui && ./build.sh
+### Verification Performed (January 14, 2026)
 
-# Validate - shows errors
-wasm-validate plugin.wasm
-```
+1. **While loop code generation** (`src/codegen/mod.rs:9715-9768`) is correctly structured:
+   - `block` for exit target
+   - `loop` for iteration
+   - Condition check with `br_if` to exit
+   - Body statements
+   - `br 0` to continue loop
 
-### Error Sample
-```
-plugin.wasm:000522a: error: type mismatch at end of `if true` branch, expected [] but got [i32]
-plugin.wasm:000aba7: error: type mismatch in call, expected [i32, i32, i32] but got [i32, i32]
-```
+2. **Assignment statements** correctly use `LocalSet` which consumes values from the stack
 
-### Root Cause Analysis
-- Expressions inside if blocks leave values on stack that aren't dropped
-- String operations in if blocks likely culprit (concatenation, method calls)
-- Function calls with string params may not expand to (ptr, len) pairs consistently
+3. **All tests pass**:
+   - Compiled 12 while loop and if statement test files
+   - All WASM files validated successfully with `wasm-validate`
+   - The frame.ui plugin (103KB WASM with many while loops) compiles and validates
 
-### Files to Investigate
-- `src/codegen/mod.rs` - Main WASM generation
-- `src/codegen/statements.rs` - If/else statement handling
-- `src/codegen/expressions.rs` - Expression generation
-- `src/codegen/function_calls.rs` - Function call argument handling
+### Regression Tests
+Test files created in `tests/cln/loops/`:
+- `while_stack_test.cln` - basic while loop with assignments
+- `while_with_if_test.cln` - while loop with nested if
+- `while_bounce_pattern.cln` - bouncing ball physics pattern
+- `if_expression_in_loop.cln` - string operations in if/else inside loop
 
-### Fix Required
-1. Track stack state in if blocks with void block type
-2. Emit `drop` instruction when expression leaves value in void context
-3. Ensure string function calls consistently expand to (ptr, len) pairs
+### Files Modified
+- `src/codegen/mod.rs` - Control flow handling in if statements
 
-### Detailed Prompt
-See: `system-documents/PROMPT_FIX_INVALID_WASM_IF_STATEMENTS.md`
+---
+
+## ✅ RESOLVED: State Block Initialization with Compile-Time Constant Folding
+
+**Priority**: MEDIUM - State management feature
+**Discovered**: January 14, 2026
+**Resolved**: January 14, 2026
+**Status**: ✅ COMPLETE
+
+### Issue
+State variables were always initialized to default values (0, 0.0, false) regardless of the initializer specified in the code.
+
+### Solution Applied
+1. **Compile-time constant evaluation** (`src/codegen/const_eval.rs`):
+   - Created `ConstValue` enum for compile-time constants
+   - Implemented `try_const_eval_tast()` for TAST expression evaluation
+   - Supports Integer, Float, Boolean, and String constants
+
+2. **MIR builder integration** (`src/mir/mir_builder.rs`):
+   - Added const evaluation during state variable processing
+   - Passes initializer values to MIR globals
+
+3. **WASM global emission** (`src/codegen/mir_codegen.rs`):
+   - Modified `state_globals` to include initializer values
+   - Updated WASM emission to use actual constant values instead of defaults
+
+4. **Guard clause support**:
+   - Added guard parsing in `src/parser/token_parser.rs`
+   - Added `value` symbol binding in resolver (`src/resolver/resolver_impl.rs`)
+   - Added type checking for guards (`src/typechecker/type_inference.rs`)
+   - Guards compile and type-check correctly (runtime enforcement pending)
 
 ### Verification
-```bash
-wasm-validate plugin.wasm  # Should pass with no output
-```
+Test files in `tests/cln/language/state_management/`:
+- `01_state_basic.cln` - Basic state variables
+- `02_state_const_init.cln` - Constant initializers (42, 3.14, true)
+- `03_state_expr_init.cln` - Negative initializers (-42, -3.14, false)
+- `04_state_guard.cln` - Guard clause parsing
+
+All tests compile and execute correctly with proper initial values.
+
+### Files Modified
+- `src/codegen/const_eval.rs` (new)
+- `src/codegen/mod.rs` - Added const_eval module
+- `src/mir/mir_builder.rs` - State variable const evaluation
+- `src/codegen/mir_codegen.rs` - WASM global initialization
+- `src/parser/token_parser.rs` - Guard clause parsing
+- `src/resolver/resolver_impl.rs` - Guard value binding
+- `src/resolver/mod.rs` - ResolvedHirGuardClause structure
+- `src/typechecker/type_inference.rs` - Guard type checking
+- `src/typechecker/tast.rs` - TastGuardClause structure
+
+### Remaining Work (Future Task)
+- Runtime guard enforcement: Emit guard condition checks before state variable assignments
 
 ---
 
@@ -589,7 +633,7 @@ Per CLAUDE.md mandate:
 
 ---
 
-**Last Updated**: January 3, 2026
+**Last Updated**: January 14, 2026
 **Current Version**: 0.20.21
-**Status**: IMPROVED - JSON parsing fully functional, nested objects supported, while loop bug verified fixed
+**Status**: IMPROVED - JSON parsing fully functional, nested objects supported, while loop stack imbalance resolved
 **Remaining**: 1 open issue (boolean toBoolean().toString() display), 236 #[allow(dead_code)] annotations (audit ongoing)

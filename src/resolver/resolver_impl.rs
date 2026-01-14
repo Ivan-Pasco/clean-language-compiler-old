@@ -59,12 +59,20 @@ impl NameResolver {
         let resolved_imports = self.resolve_imports(&hir.imports)?;
         let resolved_tests = self.resolve_tests(&hir.tests)?;
 
+        // Resolve state block if present
+        let resolved_state = if let Some(ref state_block) = hir.state {
+            Some(self.resolve_state_block(state_block)?)
+        } else {
+            None
+        };
+
         Ok(ResolvedHirProgram {
             functions: resolved_functions,
             classes: resolved_classes,
             start_function: resolved_start_function,
             imports: resolved_imports,
             tests: resolved_tests,
+            state: resolved_state,
             symbol_table: self.symbol_table.clone(),
             location: hir.location,
         })
@@ -695,6 +703,77 @@ impl NameResolver {
         }
 
         Ok(resolved_tests)
+    }
+
+    /// Resolve state block
+    fn resolve_state_block(
+        &mut self,
+        state_block: &HirStateBlock,
+    ) -> Result<ResolvedHirStateBlock, ()> {
+        let mut resolved_declarations = Vec::new();
+
+        for decl in &state_block.declarations {
+            // Look up symbol_id from symbol table
+            let symbol_id = self
+                .symbol_table
+                .lookup_symbol_in_scope(&decl.name, ScopeId(0))
+                .ok_or_else(|| {
+                    tracing::error!("Undefined state variable: {}", decl.name);
+                })?;
+
+            // Resolve the initializer expression
+            let resolved_initializer = self.resolve_expression(&decl.initializer)?;
+
+            // Resolve guard clause if present
+            // Guards use a special 'value' binding that represents the proposed new value
+            let resolved_guard = if let Some(ref guard) = decl.guard {
+                // Create a temporary scope for the guard context
+                let guard_scope = self
+                    .symbol_table
+                    .create_scope(Some(self.symbol_table.current_scope_id()), ScopeType::Block);
+                self.symbol_table.enter_scope(guard_scope);
+
+                // Add 'value' as a parameter in the guard scope with the state variable's type
+                let value_symbol_id = self.symbol_table.create_symbol(
+                    "value".to_string(),
+                    SymbolKind::Parameter {
+                        param_type: decl.state_type.clone(),
+                    },
+                    guard_scope,
+                    guard.location.clone(),
+                );
+
+                // Resolve the guard condition with 'value' available
+                let resolved_condition = self.resolve_expression(&guard.condition)?;
+
+                // Exit the guard scope
+                self.symbol_table.exit_scope();
+
+                Some(ResolvedHirGuardClause {
+                    condition: resolved_condition,
+                    value_symbol_id,
+                    error_message: guard.error_message.clone(),
+                    location: guard.location.clone(),
+                })
+            } else {
+                None
+            };
+
+            resolved_declarations.push(ResolvedHirStateDeclaration {
+                symbol_id,
+                name: decl.name.clone(),
+                state_type: decl.state_type.clone(),
+                initializer: resolved_initializer,
+                guard: resolved_guard,
+                location: decl.location.clone(),
+            });
+        }
+
+        Ok(ResolvedHirStateBlock {
+            declarations: resolved_declarations,
+            scope: state_block.scope,
+            location: state_block.location.clone(),
+        })
     }
 
     /// Resolve a block of statements

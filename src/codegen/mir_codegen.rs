@@ -89,8 +89,8 @@ pub struct MirCodeGenerator<'a> {
     state_global_indices: HashMap<SymbolId, u32>,
 
     /// State variable globals to be added to the global section during finalize_module
-    /// Each entry is (SymbolId, name, MirType) for deterministic ordering
-    state_globals: Vec<(SymbolId, String, MirType)>,
+    /// Each entry is (SymbolId, name, MirType, initializer) for deterministic ordering
+    state_globals: Vec<(SymbolId, String, MirType, Option<MirConstant>)>,
 }
 
 /// Context for loop code generation
@@ -434,13 +434,18 @@ impl MirCodeGenerator<'_> {
         for (symbol_id, global) in sorted_globals {
             self.state_global_indices
                 .insert(symbol_id, next_global_index);
-            self.state_globals
-                .push((symbol_id, global.name.clone(), global.global_type.clone()));
+            self.state_globals.push((
+                symbol_id,
+                global.name.clone(),
+                global.global_type.clone(),
+                global.initializer.clone(),
+            ));
             debug_mir!(
                 name = %global.name,
                 symbol_id = ?symbol_id,
                 global_index = next_global_index,
                 global_type = ?global.global_type,
+                initializer = ?global.initializer,
                 "Registered state variable as WASM global"
             );
             next_global_index += 1;
@@ -5569,17 +5574,31 @@ impl MirCodeGenerator<'_> {
         );
 
         // Add state variable globals (indices start at 1)
-        for (symbol_id, name, mir_type) in &self.state_globals {
-            let (val_type, init_expr) = match mir_type {
-                MirType::I32 => (
+        for (symbol_id, name, mir_type, initializer) in &self.state_globals {
+            let (val_type, init_expr) = match (mir_type, initializer) {
+                // Use const-evaluated initializer if available
+                (MirType::I32, Some(MirConstant::Integer(n))) => (
+                    wasm_encoder::ValType::I32,
+                    wasm_encoder::ConstExpr::i32_const(*n as i32),
+                ),
+                (MirType::F64, Some(MirConstant::Float(f))) => (
+                    wasm_encoder::ValType::F64,
+                    wasm_encoder::ConstExpr::f64_const(*f),
+                ),
+                (MirType::Bool, Some(MirConstant::Integer(n))) => (
+                    wasm_encoder::ValType::I32,
+                    wasm_encoder::ConstExpr::i32_const(*n as i32),
+                ),
+                // Default fallback for types without initializers
+                (MirType::I32 | MirType::Bool, _) => (
                     wasm_encoder::ValType::I32,
                     wasm_encoder::ConstExpr::i32_const(0),
                 ),
-                MirType::F64 => (
+                (MirType::F64, _) => (
                     wasm_encoder::ValType::F64,
                     wasm_encoder::ConstExpr::f64_const(0.0),
                 ),
-                // String pointers, booleans, and other i32-based types
+                // String pointers and other i32-based types
                 _ => (
                     wasm_encoder::ValType::I32,
                     wasm_encoder::ConstExpr::i32_const(0),
@@ -5596,6 +5615,7 @@ impl MirCodeGenerator<'_> {
                 name = %name,
                 symbol_id = ?symbol_id,
                 val_type = ?val_type,
+                initializer = ?initializer,
                 "Added state variable global to WASM module"
             );
         }

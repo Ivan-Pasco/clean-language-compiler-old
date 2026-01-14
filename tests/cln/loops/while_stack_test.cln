@@ -1,0 +1,9 @@
+functions:
+	void start()
+		integer i = 0
+		number x = 100.0
+		number vx = 5.0
+
+		while i < 10
+			x = x + vx
+			i = i + 1

@@ -190,6 +190,7 @@ impl IterativeNameResolver {
             start_function: resolved_start_function,
             imports: Vec::new(), // Import resolution handled by main resolver
             tests: Vec::new(),   // Test resolution handled by main resolver
+            state: None, // State resolution handled by main resolver
             symbol_table: self.symbol_table.clone(),
             location: hir.location,
         })

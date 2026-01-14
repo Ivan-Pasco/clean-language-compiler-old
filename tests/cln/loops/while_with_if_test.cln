@@ -1,0 +1,20 @@
+functions:
+	void start()
+		integer i = 0
+		number x = 400.0
+		number y = 100.0
+		number vy = 0.0
+
+		while i < 300
+			number dt = 0.016
+			number gravity = 400.0
+			vy = vy + gravity * dt
+			y = y + vy * dt
+
+			if y > 575.0
+				y = 575.0
+				vy = 0.0 - vy * 0.8
+
+			i = i + 1
+
+		printl y

@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 
 use crate::ast::SourceLocation;
+use crate::codegen::const_eval::{try_const_eval_tast, ConstValue};
 use crate::error::CompilerError;
 use crate::mir::mir_types::{
     AnyTypeTag, BasicBlockId, MirBasicBlock, MirBinaryOp, MirConstant, MirFunction,
@@ -382,26 +383,81 @@ impl MirBuilder {
         mir_program.string_pool = self.string_pool.clone();
 
         // Add state variables to MirProgram.globals
-        for (name, (symbol_id, mir_type)) in &self.state_variables {
-            let global = MirGlobal {
-                symbol_id: *symbol_id,
-                name: name.clone(),
-                global_type: mir_type.clone(),
-                initializer: match mir_type {
-                    MirType::I32 => Some(MirConstant::Integer(0)),
-                    MirType::F64 => Some(MirConstant::Float(0.0)),
-                    _ => Some(MirConstant::Integer(0)), // Default for string pointers, etc.
-                },
-                is_mutable: true, // State variables are mutable
-                location: SourceLocation::new(0, 0, ""), // Synthetic global - no specific location
-            };
-            mir_program.globals.insert(*symbol_id, global);
-            trace!(
-                name = %name,
-                symbol_id = ?symbol_id,
-                mir_type = ?mir_type,
-                "Added state variable to MirProgram.globals"
-            );
+        // If TAST has state declarations, use them with const evaluation
+        // Otherwise fall back to pre-registered state variables
+        if let Some(ref state_block) = tast.state {
+            for decl in &state_block.declarations {
+                let mir_type = MirType::from_concrete_type(&decl.state_type);
+
+                // Try to evaluate the initializer at compile time
+                let const_val = try_const_eval_tast(&decl.initializer);
+
+                // Convert ConstValue to MirConstant, or use default if not const-evaluable
+                // Note: MirConstant::Integer takes i64, codegen handles i32 truncation
+                let initializer = match (&const_val, &mir_type) {
+                    (ConstValue::Integer(n), MirType::I32) => Some(MirConstant::Integer(*n)),
+                    (ConstValue::Integer(n), MirType::F64) => Some(MirConstant::Float(*n as f64)),
+                    (ConstValue::Float(f), MirType::F64) => Some(MirConstant::Float(*f)),
+                    (ConstValue::Float(f), MirType::I32) => Some(MirConstant::Integer(*f as i64)),
+                    (ConstValue::Boolean(b), MirType::I32 | MirType::Bool) => {
+                        Some(MirConstant::Integer(if *b { 1 } else { 0 }))
+                    }
+                    // Strings require runtime initialization - use 0 (null ptr) as placeholder
+                    (ConstValue::String(_), _) => Some(MirConstant::Integer(0)),
+                    // Non-const expressions need runtime init - use default zero
+                    (ConstValue::NotConst, MirType::I32 | MirType::Bool) => {
+                        Some(MirConstant::Integer(0))
+                    }
+                    (ConstValue::NotConst, MirType::F64) => Some(MirConstant::Float(0.0)),
+                    // Default case (strings as Ptr, etc)
+                    _ => Some(MirConstant::Integer(0)),
+                };
+
+                let is_const = const_val.is_const()
+                    && !matches!(const_val, ConstValue::String(_))
+                    && !matches!(const_val, ConstValue::NotConst);
+
+                let global = MirGlobal {
+                    symbol_id: decl.symbol_id,
+                    name: decl.name.clone(),
+                    global_type: mir_type.clone(),
+                    initializer,
+                    is_mutable: true, // State variables are mutable
+                    location: decl.location.clone(),
+                };
+                mir_program.globals.insert(decl.symbol_id, global);
+
+                trace!(
+                    name = %decl.name,
+                    symbol_id = ?decl.symbol_id,
+                    mir_type = ?mir_type,
+                    const_evaluated = is_const,
+                    "Added state variable to MirProgram.globals with const evaluation"
+                );
+            }
+        } else {
+            // Fallback: use pre-registered state variables (legacy path)
+            for (name, (symbol_id, mir_type)) in &self.state_variables {
+                let global = MirGlobal {
+                    symbol_id: *symbol_id,
+                    name: name.clone(),
+                    global_type: mir_type.clone(),
+                    initializer: match mir_type {
+                        MirType::I32 => Some(MirConstant::Integer(0)),
+                        MirType::F64 => Some(MirConstant::Float(0.0)),
+                        _ => Some(MirConstant::Integer(0)),
+                    },
+                    is_mutable: true,
+                    location: SourceLocation::new(0, 0, ""),
+                };
+                mir_program.globals.insert(*symbol_id, global);
+                trace!(
+                    name = %name,
+                    symbol_id = ?symbol_id,
+                    mir_type = ?mir_type,
+                    "Added state variable to MirProgram.globals (legacy path)"
+                );
+            }
         }
 
         // Record build time

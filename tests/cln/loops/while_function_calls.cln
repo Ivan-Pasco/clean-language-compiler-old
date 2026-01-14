@@ -1,0 +1,11 @@
+functions:
+	void start()
+		integer i = 0
+		number x = 100.0
+
+		while i < 10
+			number result = math.sqrt(x)
+			x = x + result
+			i = i + 1
+
+		printl x

@@ -16,6 +16,7 @@ pub struct TastProgram {
     pub start_function: Option<TastFunction>,
     pub imports: Vec<TastImport>,
     pub tests: Vec<TastTest>,
+    pub state: Option<TastStateBlock>,
     pub type_env: HashMap<SymbolId, ConcreteType>,
     pub location: SourceLocation,
     /// Symbol table with all symbols (builtins + user-defined)
@@ -317,6 +318,41 @@ pub struct TastTest {
     pub name: String,
     pub body: TastBlock,
     pub is_async: bool,
+    pub location: SourceLocation,
+}
+
+/// Type-checked state block
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastStateBlock {
+    pub declarations: Vec<TastStateDeclaration>,
+    pub scope: TastStateScope,
+    pub location: SourceLocation,
+}
+
+/// State scope level
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TastStateScope {
+    App,
+    Screen,
+}
+
+/// Type-checked state declaration
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastStateDeclaration {
+    pub symbol_id: SymbolId,
+    pub name: String,
+    pub state_type: ConcreteType,
+    pub initializer: TastExpression,
+    pub guard: Option<TastGuardClause>,
+    pub location: SourceLocation,
+}
+
+/// Type-checked guard clause
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastGuardClause {
+    pub condition: TastExpression,
+    pub value_symbol_id: crate::resolver::SymbolId, // Symbol ID for the 'value' binding
+    pub error_message: String,
     pub location: SourceLocation,
 }
 

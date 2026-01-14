@@ -6,16 +6,17 @@
 use super::constraint_solver::{ConstraintSolver, SolverResult};
 use super::tast::{
     BinaryOperator, ConcreteType, TastBlock, TastClass, TastExpression, TastExpressionKind,
-    TastField, TastFunction, TastLiteral, TastParameter, TastProgram, TastStatement,
-    TypeConstraint, UnaryOperator, Visibility,
+    TastField, TastFunction, TastGuardClause, TastLiteral, TastParameter, TastProgram,
+    TastStateBlock, TastStateDeclaration, TastStateScope, TastStatement, TypeConstraint,
+    UnaryOperator, Visibility,
 };
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
-use crate::hir::{HirBinaryOp, HirType, HirUnaryOp};
+use crate::hir::{HirBinaryOp, HirStateScope, HirType, HirUnaryOp};
 use crate::resolver::{
     GlobalSymbolTable, ResolvedHirBlock, ResolvedHirClass, ResolvedHirExpression,
     ResolvedHirFunction, ResolvedHirLValue, ResolvedHirMethod, ResolvedHirProgram,
-    ResolvedHirStatement, SymbolId, SymbolKind,
+    ResolvedHirStateBlock, ResolvedHirStatement, SymbolId, SymbolKind,
 };
 use std::collections::HashMap;
 
@@ -1112,12 +1113,26 @@ impl<'a> TypeInference<'a> {
             None
         };
 
+        // Type-check state block if present
+        let tast_state = if let Some(ref state_block) = program.state {
+            match self.infer_state_block(state_block) {
+                Ok(tast_state) => Some(tast_state),
+                Err(error) => {
+                    self.errors.push(error);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let result = TastProgram {
             functions: tast_functions,
             classes: tast_classes,
             start_function: tast_start_function,
             imports: Vec::new(), // Would convert imports here
             tests: Vec::new(),   // Would convert tests here
+            state: tast_state,
             type_env: self.type_env.clone(),
             location: program.location.clone(),
             // CRITICAL FIX: Pass symbol table through to MIR for dynamic SymbolId resolution
@@ -1510,6 +1525,91 @@ impl<'a> TypeInference<'a> {
             is_abstract: false,             // Would get from HIR
             visibility: Visibility::Public, // Would get from HIR
             location: class.location.clone(),
+        })
+    }
+
+    /// Type-check state block and all its declarations
+    fn infer_state_block(
+        &mut self,
+        state_block: &ResolvedHirStateBlock,
+    ) -> Result<TastStateBlock, CompilerError> {
+        let mut tast_declarations = Vec::new();
+
+        for decl in &state_block.declarations {
+            // Symbol ID already resolved
+            let symbol_id = decl.symbol_id;
+
+            // Convert HIR type to concrete type
+            let state_type = self.hir_type_to_concrete(&decl.state_type);
+
+            // Type-check the initializer expression
+            let initializer = self.infer_expression(&decl.initializer)?;
+
+            // Verify initializer type matches declared type
+            if !initializer.expr_type.is_assignable_to(&state_type) {
+                return Err(CompilerError::type_error(
+                    format!(
+                        "Type mismatch in state variable '{}': expected {}, found {}",
+                        decl.name, state_type, initializer.expr_type
+                    ),
+                    Some(format!(
+                        "Consider changing the initializer to match type {}",
+                        state_type
+                    )),
+                    Some(decl.location.clone()),
+                ));
+            }
+
+            // Type-check guard clause if present
+            let guard = if let Some(ref resolved_guard) = decl.guard {
+                // Add 'value' to the type environment with the state variable's type
+                // This allows the guard condition to reference 'value' (the proposed new value)
+                self.type_env
+                    .insert(resolved_guard.value_symbol_id, state_type.clone());
+
+                let guard_condition = self.infer_expression(&resolved_guard.condition)?;
+
+                // Guard condition must be boolean
+                if guard_condition.expr_type != ConcreteType::Boolean {
+                    return Err(CompilerError::type_error(
+                        format!(
+                            "Guard condition for state variable '{}' must be boolean, found {}",
+                            decl.name, guard_condition.expr_type
+                        ),
+                        Some("Guard conditions must evaluate to true or false".to_string()),
+                        Some(resolved_guard.location.clone()),
+                    ));
+                }
+
+                Some(TastGuardClause {
+                    condition: guard_condition,
+                    value_symbol_id: resolved_guard.value_symbol_id,
+                    error_message: resolved_guard.error_message.clone(),
+                    location: resolved_guard.location.clone(),
+                })
+            } else {
+                None
+            };
+
+            tast_declarations.push(TastStateDeclaration {
+                symbol_id,
+                name: decl.name.clone(),
+                state_type,
+                initializer,
+                guard,
+                location: decl.location.clone(),
+            });
+        }
+
+        let scope = match state_block.scope {
+            HirStateScope::App => TastStateScope::App,
+            HirStateScope::Screen => TastStateScope::Screen,
+        };
+
+        Ok(TastStateBlock {
+            declarations: tast_declarations,
+            scope,
+            location: state_block.location.clone(),
         })
     }
 
