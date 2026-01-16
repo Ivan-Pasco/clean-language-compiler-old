@@ -2006,6 +2006,18 @@ impl TokenParser {
 
         let mut import_items = Vec::new();
 
+        // Check for file path import: import "path/to/file.cln"
+        if let TokenKind::StringLiteral(path) = self.current_kind() {
+            let file_path = path.clone();
+            self.bump(); // consume string literal
+            import_items.push(ImportItem {
+                name: file_path,
+                alias: None,
+                is_file_import: true,
+            });
+            return Ok(import_items);
+        }
+
         // Check for import: block syntax vs. single import
         if self.eat(&TokenKind::Colon) {
             // Block syntax: import:\n\tmath\n\tstring.concat\n\t...
@@ -2056,13 +2068,25 @@ impl TokenParser {
         Ok(import_items)
     }
 
-    /// Parse a single import item with support for "Module.symbol" syntax
+    /// Parse a single import item with support for "Module.symbol" syntax and file paths
     /// Examples:
     ///   Math → whole module
     ///   math.sqrt → specific symbol
     ///   Utils as U → module alias
     ///   Json.decode as jd → symbol alias
+    ///   "path/to/file.cln" → file path import
     fn parse_import_item(&mut self) -> Result<ImportItem, CompilerError> {
+        // Check for file path import (string literal)
+        if let TokenKind::StringLiteral(path) = self.current_kind() {
+            let file_path = path.clone();
+            self.bump(); // consume string literal
+            return Ok(ImportItem {
+                name: file_path,
+                alias: None,
+                is_file_import: true,
+            });
+        }
+
         let mut name = String::new();
 
         // Parse first identifier
@@ -2096,7 +2120,11 @@ impl TokenParser {
             None
         };
 
-        Ok(ImportItem { name, alias })
+        Ok(ImportItem {
+            name,
+            alias,
+            is_file_import: false,
+        })
     }
 
     /// Parse a private: block listing function names to mark as private

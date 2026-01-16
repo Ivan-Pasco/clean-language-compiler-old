@@ -746,18 +746,24 @@ constructor_parameter = { type_? ~ WHITESPACE* ~ parameter_name }
 // import: Math.sqrt              # single symbol
 // import: Utils as U             # module alias
 // import: Json.decode as jd      # symbol alias
+// import "path/to/file.cln"      # file path import (relative to current file)
 
 // Module name allows keywords in import context (math, string, list, etc.)
 module_name = @{ (ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")*) | ("string" | "integer" | "number" | "boolean" | "list" | "matrix" | "void" | "any") }
 
+// File path import - import "path/to/file.cln"
+file_path_import = { "\"" ~ file_path_inner ~ "\"" }
+file_path_inner = @{ (!("\"") ~ ANY)* }
+
 import_item = {
+    file_path_import |                                       // "app/data/models.cln"
     (module_name ~ "." ~ module_name ~ "as" ~ module_name) |  // Math.sqrt as msqrt
     (module_name ~ "." ~ module_name) |                      // Math.sqrt
     (module_name ~ "as" ~ module_name) |                     // Utils as U
     module_name                                              // Math
 }
 import_list = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ import_item ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ import_item)* }
-import_stmt = { ("import" ~ identifier) | ("import" ~ ":" ~ import_item) }
+import_stmt = { ("import" ~ file_path_import) | ("import" ~ identifier) | ("import" ~ ":" ~ import_item) }
 
 // Async expressions and statements
 start_expr = { "start" ~ WHITESPACE* ~ expression }

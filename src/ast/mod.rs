@@ -628,8 +628,13 @@ pub struct ConstantAssignment {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportItem {
+    /// Module name (e.g., "Math", "math.sqrt") or file path (e.g., "app/data/models.cln")
     pub name: String,
+    /// Optional alias for the import
     pub alias: Option<String>,
+    /// True if this is a file path import (import "path/to/file.cln")
+    /// False if this is a module import (import Math)
+    pub is_file_import: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

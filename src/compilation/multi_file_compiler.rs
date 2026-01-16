@@ -14,6 +14,15 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Represents an extracted import with additional metadata
+#[derive(Debug, Clone)]
+struct ExtractedImport {
+    /// Module name or file path
+    name: String,
+    /// True if this is a file path import
+    is_file_import: bool,
+}
+
 /// Configuration for the multi-file compiler
 #[derive(Debug, Clone)]
 pub struct MultiFileCompilerConfig {
@@ -972,30 +981,49 @@ impl MultiFileCompiler {
             // Quick parse to extract imports (only Stages 1-2, minimal parsing)
             match self.extract_imports(&source, &file_path) {
                 Ok(imports) => {
+                    // Convert ExtractedImport to String for set_imports
+                    let import_names: Vec<String> =
+                        imports.iter().map(|i| i.name.clone()).collect();
+
                     // Update the module with its imports
                     if let Some(m) = unit.get_module_mut(current_id) {
-                        m.set_imports(imports.clone());
+                        m.set_imports(import_names);
                     }
 
                     // Process each import
-                    for import_name in imports {
+                    for import in imports {
                         // Skip standard library modules (they're built-in)
-                        if Self::is_builtin_module(&import_name) {
+                        if !import.is_file_import && Self::is_builtin_module(&import.name) {
                             continue;
                         }
 
-                        // Find the module file
-                        match self.find_module_file(&import_name, search_paths) {
+                        // Find the module file based on import type
+                        let find_result = if import.is_file_import {
+                            // File import: resolve relative to the importing file's directory
+                            self.find_file_import(&import.name, &file_path)
+                        } else {
+                            // Module import: search in standard paths
+                            self.find_module_file(&import.name, search_paths)
+                        };
+
+                        match find_result {
                             Ok((module_path, module_source)) => {
+                                // Derive module name from file path for file imports
+                                let module_name = if import.is_file_import {
+                                    Self::derive_module_name(&module_path)
+                                } else {
+                                    import.name.clone()
+                                };
+
                                 // Add the module if not already present
-                                let dep_id = if !unit.has_module(&import_name) {
+                                let dep_id = if !unit.has_module(&module_name) {
                                     unit.add_module(
-                                        import_name.clone(),
+                                        module_name.clone(),
                                         module_path.clone(),
                                         module_source,
                                     )
                                 } else {
-                                    *unit.module_by_name.get(&import_name).unwrap()
+                                    *unit.module_by_name.get(&module_name).unwrap()
                                 };
 
                                 // Add to graph
@@ -1033,6 +1061,54 @@ impl MultiFileCompiler {
         }
     }
 
+    /// Find a file import by resolving the path relative to the importing file's directory
+    fn find_file_import(
+        &self,
+        import_path: &str,
+        importing_file: &Path,
+    ) -> Result<(PathBuf, String), CompilerError> {
+        // Get the directory of the importing file
+        let base_dir = importing_file.parent().unwrap_or(Path::new("."));
+
+        // Resolve the import path relative to the base directory
+        let full_path = base_dir.join(import_path);
+
+        // Check if the file exists
+        if full_path.exists() {
+            let source = fs::read_to_string(&full_path).map_err(|e| {
+                CompilerError::io_error(
+                    format!(
+                        "Failed to read imported file '{}': {}",
+                        full_path.display(),
+                        e
+                    ),
+                    None,
+                    Some(SourceLocation {
+                        file: importing_file.to_string_lossy().to_string(),
+                        line: 1,
+                        column: 1,
+                    }),
+                )
+            })?;
+            return Ok((full_path, source));
+        }
+
+        // File not found - build helpful error message
+        Err(CompilerError::module_error(
+            format!("Imported file '{}' not found", import_path),
+            Some(format!(
+                "Resolved path: {} (relative to {})",
+                full_path.display(),
+                base_dir.display()
+            )),
+            Some(SourceLocation {
+                file: importing_file.to_string_lossy().to_string(),
+                line: 1,
+                column: 1,
+            }),
+        ))
+    }
+
     /// Extract import statements from source code
     ///
     /// This does a quick parse to find import declarations without full AST building
@@ -1040,7 +1116,7 @@ impl MultiFileCompiler {
         &self,
         source: &str,
         file_path: &Path,
-    ) -> Result<Vec<String>, CompilerError> {
+    ) -> Result<Vec<ExtractedImport>, CompilerError> {
         // Stage 1: Tokenize
         let source_code =
             SourceCode::new(source.to_string(), file_path.to_string_lossy().to_string());
@@ -1061,22 +1137,31 @@ impl MultiFileCompiler {
         let mut parser = SpecificationParser::new(tokens, file_path.to_string_lossy().to_string());
         let ast = parser.parse_program()?;
 
-        // Extract import names from AST
-        let imports: Vec<String> = ast
-            .imports
-            .iter()
-            .map(|import| {
-                // Handle qualified imports like "Math.sqrt" - extract the module name
-                let name = &import.name;
-                if let Some(dot_pos) = name.find('.') {
-                    name[..dot_pos].to_string()
+        // Extract imports from AST, preserving file import flag
+        let mut seen = HashSet::new();
+        let mut imports = Vec::new();
+
+        for import in &ast.imports {
+            let key = if import.is_file_import {
+                // For file imports, use the full path as key
+                import.name.clone()
+            } else {
+                // For module imports, extract the module name (before the dot)
+                if let Some(dot_pos) = import.name.find('.') {
+                    import.name[..dot_pos].to_string()
                 } else {
-                    name.clone()
+                    import.name.clone()
                 }
-            })
-            .collect::<HashSet<_>>() // Deduplicate
-            .into_iter()
-            .collect();
+            };
+
+            if !seen.contains(&key) {
+                seen.insert(key.clone());
+                imports.push(ExtractedImport {
+                    name: key,
+                    is_file_import: import.is_file_import,
+                });
+            }
+        }
 
         Ok(imports)
     }

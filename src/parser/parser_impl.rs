@@ -1652,6 +1652,7 @@ pub fn parse_import_statement(pair: Pair<Rule>) -> Result<Statement, CompilerErr
                 let import = ImportItem {
                     name: module_name,
                     alias: None,
+                    is_file_import: false,
                 };
                 imports.push(import);
             }
@@ -1692,16 +1693,28 @@ fn parse_import_item(pair: Pair<Rule>) -> Result<ImportItem, CompilerError> {
         if parts.len() == 2 {
             let name = parts[0].trim().to_string();
             let alias = Some(parts[1].trim().to_string());
-            return Ok(ImportItem { name, alias });
+            return Ok(ImportItem {
+                name,
+                alias,
+                is_file_import: false,
+            });
         }
     } else if import_text.contains('.') {
         // Single symbol import like "Math.sqrt"
         let name = import_text.to_string();
-        return Ok(ImportItem { name, alias: None });
+        return Ok(ImportItem {
+            name,
+            alias: None,
+            is_file_import: false,
+        });
     } else {
         // Simple module import like "Math"
         let name = identifiers[0].clone();
-        return Ok(ImportItem { name, alias: None });
+        return Ok(ImportItem {
+            name,
+            alias: None,
+            is_file_import: false,
+        });
     }
 
     Err(CompilerError::parse_error(

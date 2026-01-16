@@ -915,14 +915,24 @@ fn compile_file(input_file: &str, output_file: &str) -> Result<(), CompilerError
 fn compile_file_with_opt(input_file: &str, output_file: &str, opt_level: u8) -> Result<(), CompilerError> {
     println!("🔨 Compiling {input_file} → {output_file}");
 
-    // Read the input file
-    let source = read_source_file(input_file)?;
+    // Get the input file path and its directory for search paths
+    let input_path = std::path::Path::new(input_file);
+    let search_paths = if let Some(parent) = input_path.parent() {
+        if parent.as_os_str().is_empty() {
+            vec![std::path::PathBuf::from(".")]
+        } else {
+            vec![parent.to_path_buf()]
+        }
+    } else {
+        vec![std::path::PathBuf::from(".")]
+    };
 
-    // Compile with external plugin support
-    // This automatically detects `import:` blocks and loads plugins from ~/.cleen/plugins/
-    // If no imports are found, it compiles as pure Clean Language
+    // Use multi-file compilation to support file path imports
+    // This automatically handles `import "path/to/file.cln"` syntax
+    // as well as module imports like `import Math`
     let wasm_binary =
-        clean_language_compiler::compile_with_external_plugins_and_opt_level(&source, input_file, opt_level).map_err(|errors| {
+        clean_language_compiler::compile_multi_file(input_path, search_paths, opt_level).map_err(|errors| {
+            let source = fs::read_to_string(input_file).unwrap_or_default();
             for error in &errors {
                 display_error(error, &source, input_file);
             }

@@ -739,30 +739,40 @@ async fn handle_compile(
         );
     }
 
-    let source = fs::read_to_string(&input)?;
+    // Get the input file path and its directory for search paths
+    let input_path = Path::new(&input);
+    let search_paths = if let Some(parent) = input_path.parent() {
+        if parent.as_os_str().is_empty() {
+            vec![PathBuf::from(".")]
+        } else {
+            vec![parent.to_path_buf()]
+        }
+    } else {
+        vec![PathBuf::from(".")]
+    };
 
     tracing::debug!(
-        source_len = source.len(),
+        input = %input,
         opt_level = opt_level,
         plugins = plugins,
         target = %target,
-        "Calling compile function"
+        search_paths = ?search_paths,
+        "Starting multi-file compilation"
     );
-    tracing::trace!(source_content = %source, "Source code to compile");
 
-    // Always use plugin-aware compilation that auto-detects import: blocks
-    // This function automatically loads external plugins from ~/.cleen/plugins/
-    // when `import:` blocks are present in the source, otherwise compiles as pure Clean
-    let _ = plugins; // Ignore the flag, always enable plugin detection
-    let wasm_binary = match clean_language_compiler::compile_with_external_plugins_and_opt_level(
-        &source, &input, opt_level,
-    ) {
-        Ok(binary) => binary,
-        Err(errors) => {
-            output_config.report_errors(&errors, Some(&source));
-            return Err(format!("Compilation failed with {} errors", errors.len()).into());
-        }
-    };
+    // Use multi-file compilation to support file path imports
+    // This automatically handles `import "path/to/file.cln"` syntax
+    // as well as module imports like `import Math`
+    let _ = plugins; // Ignore the flag for now, multi-file compilation handles imports
+    let wasm_binary =
+        match clean_language_compiler::compile_multi_file(input_path, search_paths, opt_level) {
+            Ok(binary) => binary,
+            Err(errors) => {
+                let source = fs::read_to_string(&input).unwrap_or_default();
+                output_config.report_errors(&errors, Some(&source));
+                return Err(format!("Compilation failed with {} errors", errors.len()).into());
+            }
+        };
 
     // Note: Tests are not currently supported in the 7-stage pipeline
     if test {

@@ -871,6 +871,7 @@ fn parse_import_block_statement(
                                 crate::ast::ImportItem {
                                     name: first_part.to_string(),
                                     alias: Some(alias.to_string()),
+                                    is_file_import: false,
                                 }
                             } else {
                                 // Format: ModuleName.symbol or ModuleName.symbol as alias
@@ -881,17 +882,20 @@ fn parse_import_block_statement(
                                         crate::ast::ImportItem {
                                             name: symbol_name,
                                             alias: Some(alias.to_string()),
+                                            is_file_import: false,
                                         }
                                     } else {
                                         crate::ast::ImportItem {
                                             name: symbol_name,
                                             alias: None,
+                                            is_file_import: false,
                                         }
                                     }
                                 } else {
                                     crate::ast::ImportItem {
                                         name: symbol_name,
                                         alias: None,
+                                        is_file_import: false,
                                     }
                                 }
                             }
@@ -900,6 +904,7 @@ fn parse_import_block_statement(
                             crate::ast::ImportItem {
                                 name: first_part.to_string(),
                                 alias: None,
+                                is_file_import: false,
                             }
                         };
 
@@ -940,6 +945,7 @@ fn parse_private_block_statement(
                                         private_items.push(crate::ast::ImportItem {
                                             name: format!("private:{}", item.as_str()),
                                             alias: None,
+                                            is_file_import: false,
                                         });
                                     }
                                     Rule::function_in_block => {
@@ -948,6 +954,7 @@ fn parse_private_block_statement(
                                         private_items.push(crate::ast::ImportItem {
                                             name: "private:function".to_string(),
                                             alias: None,
+                                            is_file_import: false,
                                         });
                                     }
                                     _ => {}
