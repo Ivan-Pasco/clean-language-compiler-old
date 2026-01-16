@@ -2,7 +2,7 @@
 #![allow(clippy::uninlined_format_args)]
 #![allow(clippy::needless_borrow)]
 
-use clean_language_compiler::compile_with_file;
+use clean_language_compiler::compile_with_external_plugins;
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -74,8 +74,8 @@ fn compile_file(input_file: &str, output_file: &str) -> Result<(), Box<dyn std::
     // Read the input file
     let source = fs::read_to_string(input_file)?;
 
-    // Use the 7-stage pipeline for compilation
-    let wasm_binary = match compile_with_file(&source, input_file) {
+    // Use the 7-stage pipeline for compilation with plugin support
+    let wasm_binary = match compile_with_external_plugins(&source, input_file) {
         Ok(binary) => binary,
         Err(errors) => {
             eprintln!("❌ Compilation failed with {} errors:", errors.len());

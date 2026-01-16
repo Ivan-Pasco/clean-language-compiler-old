@@ -1,0 +1,108 @@
+// Test: Real-world game loop pattern combining both bugs
+// This pattern is common in frame.canvas games
+// Tests: unused return values + nested if-else
+
+state:
+	integer canvasId = 0
+	number ballX = 400.0
+	number ballY = 300.0
+	number ballVelX = 200.0
+	number ballVelY = 150.0
+	number paddleX = 350.0
+	integer score = 0
+	integer lives = 3
+	boolean gameOver = false
+	boolean paused = false
+
+functions:
+	// Simulate bridge functions that return integers
+	integer clearCanvas(integer id)
+		return 0
+
+	integer drawCircle(integer id, number x, number y, number r)
+		return 0
+
+	integer drawRect(integer id, number x, number y, number w, number h)
+		return 0
+
+	integer drawText(integer id, number x, number y)
+		return 0
+
+	integer present(integer id)
+		return 0
+
+	integer checkKeyDown(integer keyCode)
+		return 0
+
+	integer checkCollision(number x1, number y1, number x2, number y2)
+		return 0
+
+	void resetBall()
+		ballX = 400.0
+		ballY = 300.0
+		ballVelX = 200.0
+		ballVelY = 150.0
+
+	void updateBall(number dt)
+		ballX = ballX + ballVelX * dt
+		ballY = ballY + ballVelY * dt
+
+		// Wall collisions
+		if ballX < 10.0
+			ballVelX = 0.0 - ballVelX
+		if ballX > 790.0
+			ballVelX = 0.0 - ballVelX
+		if ballY < 10.0
+			ballVelY = 0.0 - ballVelY
+
+		// Ball falls off bottom - NESTED IF-ELSE BUG
+		if ballY > 590.0
+			lives = lives - 1
+			if lives <= 0
+				gameOver = true
+			else
+				resetBall()
+
+	void updatePaddle(number dt)
+		// UNUSED RETURN VALUE BUG
+		integer leftDown = checkKeyDown(37)
+		if leftDown == 1
+			paddleX = paddleX - 300.0 * dt
+
+		integer rightDown = checkKeyDown(39)
+		if rightDown == 1
+			paddleX = paddleX + 300.0 * dt
+
+	void checkPaddleCollision()
+		// UNUSED RETURN VALUE from collision check
+		integer hit = checkCollision(ballX, ballY, paddleX, 550.0)
+		if hit == 1
+			ballVelY = 0.0 - ballVelY
+			score = score + 10
+
+	void draw()
+		// ALL THESE HAVE UNUSED RETURNS - BUG
+		integer r1 = clearCanvas(canvasId)
+		integer r2 = drawRect(canvasId, paddleX, 550.0, 100.0, 20.0)
+		integer r3 = drawCircle(canvasId, ballX, ballY, 10.0)
+		integer r4 = drawText(canvasId, 20.0, 30.0)
+		integer r5 = present(canvasId)
+
+	void gameLoop(number dt)
+		if gameOver == false
+			if paused == false
+				updateBall(dt)
+				updatePaddle(dt)
+				checkPaddleCollision()
+			else
+				// Paused - just wait
+				integer dummy = 0
+		else
+			// Game over - could show message
+			integer dummy = 0
+		draw()
+
+start()
+	gameLoop(0.016)
+	gameLoop(0.016)
+	gameLoop(0.016)

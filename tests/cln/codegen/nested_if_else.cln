@@ -1,0 +1,52 @@
+// Test: Nested if-else in void functions should not generate unreachable
+
+state:
+	integer lives = 3
+	boolean gameOver = false
+	number ballY = 650.0
+
+functions:
+	void resetBall()
+		ballY = 300.0
+
+	void simpleIfElse()
+		if lives > 0
+			lives = lives - 1
+		else
+			gameOver = true
+
+	void nestedIfElse()
+		if ballY > 600.0
+			lives = lives - 1
+			if lives <= 0
+				gameOver = true
+			else
+				resetBall()
+
+	void deeplyNested()
+		if lives > 0
+			if ballY > 500.0
+				if gameOver == false
+					lives = lives - 1
+				else
+					resetBall()
+			else
+				gameOver = true
+
+	void ifWithReturn()
+		if lives <= 0
+			return
+		lives = lives - 1
+
+	void ifElseWithReturns()
+		if lives <= 0
+			return
+		else
+			return
+
+start()
+	simpleIfElse()
+	nestedIfElse()
+	deeplyNested()
+	ifWithReturn()
+	ifElseWithReturns()

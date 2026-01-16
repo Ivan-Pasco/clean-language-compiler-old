@@ -1,0 +1,30 @@
+// Test: Function calls with unused return values should compile
+// The compiler must emit 'drop' for unused returns
+
+functions:
+	integer getValue()
+		return 42
+
+	void useValue()
+		integer x = getValue()
+
+	void ignoreValue()
+		getValue()
+
+	void multipleIgnored()
+		getValue()
+		getValue()
+		getValue()
+		integer x = 1
+
+	void mixedUsage()
+		getValue()
+		integer a = getValue()
+		getValue()
+		integer b = getValue()
+
+start()
+	useValue()
+	ignoreValue()
+	multipleIgnored()
+	mixedUsage()

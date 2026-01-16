@@ -831,7 +831,11 @@ impl MirCodeGenerator<'_> {
 
         // CRITICAL FIX: For non-void functions, ensure all paths return
         // If the function returns a value and doesn't end with a Return instruction, add Unreachable
-        let is_non_void = !matches!(function.return_type, MirType::Void);
+        // CRITICAL FIX: Check for both Void and Ptr(Void)
+        // Ptr(Void) represents a void function (no return value) in some code paths
+        let is_void_return = matches!(function.return_type, MirType::Void)
+            || matches!(&function.return_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
+        let is_non_void = !is_void_return;
         let last_instruction_is_return = self
             .current_instructions
             .last()
@@ -932,7 +936,12 @@ impl MirCodeGenerator<'_> {
         };
 
         match &block.terminator {
-            MirTerminator::Return { .. } | MirTerminator::Unreachable => true,
+            // CRITICAL FIX: Only explicit Return counts as "directly returns"
+            // MirTerminator::Unreachable is a placeholder for void functions ending naturally
+            // and should NOT be considered a direct return - it does NOT guarantee the function
+            // has returned a value or terminated execution
+            MirTerminator::Return { .. } => true,
+            MirTerminator::Unreachable => false,
             MirTerminator::Branch {
                 true_block,
                 false_block,
@@ -5640,8 +5649,13 @@ impl MirCodeGenerator<'_> {
         for (name, &index) in &self.wasm_generator.function_map {
             // Skip internal functions (starting with __) EXCEPT route handlers
             // Route handlers (__route_handler_N) MUST be exported for frame-runtime
+            // Also export _frame_callback for canvas animation support
             let is_route_handler = name.starts_with("__route_handler_");
-            if is_route_handler || (!name.starts_with("__") && !name.starts_with("_")) {
+            let is_frame_callback = name == "_frame_callback";
+            if is_route_handler
+                || is_frame_callback
+                || (!name.starts_with("__") && !name.starts_with("_"))
+            {
                 self.wasm_generator.export_section.export(
                     name,
                     wasm_encoder::ExportKind::Func,
