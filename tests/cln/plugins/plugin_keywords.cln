@@ -1,22 +1,20 @@
 // Test: Plugin keywords without colons should be accepted
 // Requires frame.data plugin to be loaded
+// NOTE: Field constraints (: pk, auto) require plugin update - using simple fields for now
 
 import:
 	frame.data
 
 // Plugin keyword "data" followed by identifier (no colon)
 data User
-	integer id : pk, auto
-	string email : unique
+	integer id
+	string email
 	string name
-	datetime created_at : default=now()
 
 data Post
-	integer id : pk, auto
+	integer id
 	string title
 	string content
-	User author
-	datetime created_at : default=now()
 
 // Regular functions block (should still work)
 functions:

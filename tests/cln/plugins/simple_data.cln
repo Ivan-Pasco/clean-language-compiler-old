@@ -1,0 +1,10 @@
+// Simple test for data keyword
+import:
+	frame.data
+
+data User
+	integer id
+	string name
+
+start()
+	print("Test")

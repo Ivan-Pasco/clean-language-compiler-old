@@ -97,6 +97,43 @@ use crate::error::CompilerError;
 /// Compiler version (from Cargo.toml)
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Compilation target determines what imports and features are included
+///
+/// Different targets optimize the generated WASM for specific use cases:
+/// - `Server`: Full HTTP server imports (_req_*, _session_*, _auth_*)
+/// - `Plugin`: Minimal imports for WASM plugins (no server functions)
+/// - `Standalone`: Standard CLI/library compilation
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompilationTarget {
+    /// Server target - includes all HTTP server, session, and auth imports
+    /// Use this when compiling Clean Language web applications
+    #[default]
+    Server,
+    /// Plugin target - excludes server-specific imports
+    /// Use this when compiling WASM plugins that don't need server functions
+    Plugin,
+    /// Standalone target - standard compilation for CLI/library code
+    /// Includes basic HTTP client but no server functions
+    Standalone,
+}
+
+impl CompilationTarget {
+    /// Returns true if server imports (_req_*, _session_*, _auth_*) should be included
+    pub fn include_server_imports(&self) -> bool {
+        matches!(self, CompilationTarget::Server)
+    }
+
+    /// Parse a target from string
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "server" => Some(CompilationTarget::Server),
+            "plugin" => Some(CompilationTarget::Plugin),
+            "standalone" => Some(CompilationTarget::Standalone),
+            _ => None,
+        }
+    }
+}
+
 /// Minimum compatible compiler version for plugins
 /// Plugins should check compatibility using semver rules
 pub const MIN_PLUGIN_VERSION: &str = "0.14.0";
@@ -478,6 +515,138 @@ pub fn compile_with_external_plugins_and_opt_level(
 
     // Compile with loaded plugins
     compile_with_plugins_and_opt_level(source, file_path, &registry, opt_level)
+}
+
+/// Compiles Clean Language source code with a specific compilation target
+///
+/// This function allows specifying a compilation target to control which imports
+/// are included in the generated WASM:
+/// - `Server`: Full HTTP server imports (_req_*, _session_*, _auth_*)
+/// - `Plugin`: Minimal imports for WASM plugins (no server functions)
+/// - `Standalone`: Standard CLI/library compilation
+///
+/// # Arguments
+/// * `source` - The Clean Language source code
+/// * `file_path` - Path for error reporting
+/// * `target` - Compilation target (Server, Plugin, or Standalone)
+/// * `opt_level` - Optimization level (0-3)
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
+/// * `Err(Vec<CompilerError>)` - Compilation errors
+///
+/// # Example
+/// ```ignore
+/// use clean_language_compiler::{compile_with_target, CompilationTarget};
+///
+/// // Compile plugin with minimal imports
+/// let wasm = compile_with_target(source, "plugin.cln", CompilationTarget::Plugin, 2)?;
+/// ```
+pub fn compile_with_target(
+    source: &str,
+    file_path: &str,
+    target: CompilationTarget,
+    opt_level: u8,
+) -> Result<Vec<u8>, Vec<CompilerError>> {
+    use crate::lexer::specification_lexer::SpecificationLexer;
+    use crate::mir::lower_tast_to_mir_with_opt_level;
+    use crate::resolver::Resolver;
+    use crate::typechecker::TypeChecker;
+
+    tracing::info!(
+        opt_level = opt_level,
+        target = ?target,
+        "Starting compilation with target"
+    );
+
+    // Stage 1: Lexical Analysis
+    let source_code = crate::lexer::specification_lexer::SourceCode::new(
+        source.to_string(),
+        file_path.to_string(),
+    );
+    let mut lexer = SpecificationLexer::new(&source_code);
+    let tokens = lexer
+        .tokenize()
+        .map_err(|e| vec![CompilerError::LexError(e)])?;
+
+    // Stage 2: Parsing to AST
+    use crate::parser::SpecificationParser;
+    let mut parser = SpecificationParser::new(tokens, file_path.to_string());
+    let ast = parser.parse_program().map_err(|e| vec![e])?;
+
+    // Stage 3: AST to HIR
+    use crate::hir::hir_builder::HirBuilder;
+    let mut hir_builder = HirBuilder::new();
+    let hir_result = hir_builder.build_hir(ast).map_err(|e| vec![e])?;
+
+    // Stage 4: Name and Module Resolution
+    let resolution_result = Resolver::resolve(hir_result.hir)?;
+    let resolved_hir = resolution_result.resolved_hir;
+
+    // Stage 5: Type Inference and Checking
+    let type_result = TypeChecker::check(resolved_hir)?;
+
+    // Stage 6: TAST to MIR Lowering
+    let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, opt_level)?;
+
+    // Stage 7: WASM Code Generation with specific target
+    use crate::codegen::mir_codegen::MirCodeGenerator;
+    let mut mir_codegen = MirCodeGenerator::with_target(target);
+
+    let codegen_result = mir_codegen
+        .generate(mir_result.program)
+        .map_err(|errors| errors)?;
+
+    tracing::info!(
+        bytes = codegen_result.wasm_bytes.len(),
+        target = ?target,
+        "Compilation complete with target"
+    );
+
+    Ok(codegen_result.wasm_bytes)
+}
+
+/// Compiles Clean Language source code for use as a WASM plugin
+///
+/// This is a convenience function that compiles with `CompilationTarget::Plugin`,
+/// which excludes server-specific imports (_req_*, _session_*, _auth_*) to produce
+/// a minimal WASM module suitable for use as a plugin.
+///
+/// # Arguments
+/// * `source` - The Clean Language source code
+/// * `file_path` - Path for error reporting
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes (with minimal imports)
+/// * `Err(Vec<CompilerError>)` - Compilation errors
+///
+/// # Example
+/// ```ignore
+/// use clean_language_compiler::compile_for_plugin;
+///
+/// let wasm = compile_for_plugin(source, "my_plugin.cln")?;
+/// // Result: ~67 imports instead of ~83
+/// ```
+pub fn compile_for_plugin(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
+    compile_with_target(source, file_path, CompilationTarget::Plugin, 2)
+}
+
+/// Compiles Clean Language source code for use as a WASM plugin with custom optimization level
+///
+/// # Arguments
+/// * `source` - The Clean Language source code
+/// * `file_path` - Path for error reporting
+/// * `opt_level` - Optimization level (0-3)
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes (with minimal imports)
+/// * `Err(Vec<CompilerError>)` - Compilation errors
+pub fn compile_for_plugin_with_opt_level(
+    source: &str,
+    file_path: &str,
+    opt_level: u8,
+) -> Result<Vec<u8>, Vec<CompilerError>> {
+    compile_with_target(source, file_path, CompilationTarget::Plugin, opt_level)
 }
 
 /// Extracts plugin names from `import:` blocks in source code

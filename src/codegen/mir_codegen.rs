@@ -91,6 +91,12 @@ pub struct MirCodeGenerator<'a> {
     /// State variable globals to be added to the global section during finalize_module
     /// Each entry is (SymbolId, name, MirType, initializer) for deterministic ordering
     state_globals: Vec<(SymbolId, String, MirType, Option<MirConstant>)>,
+
+    /// Compilation target - determines which imports to include
+    /// Server: includes _req_*, _session_*, _auth_* imports
+    /// Plugin: excludes server-specific imports for minimal plugin size
+    /// Standalone: standard CLI/library compilation
+    target: crate::CompilationTarget,
 }
 
 /// Context for loop code generation
@@ -167,6 +173,7 @@ impl MirCodeGenerator<'_> {
             current_block_depth: 0,
             state_global_indices: HashMap::new(),
             state_globals: Vec::new(),
+            target: crate::CompilationTarget::Server, // Default to Server for backwards compatibility
         }
     }
 
@@ -193,7 +200,40 @@ impl MirCodeGenerator<'_> {
             current_block_depth: 0,
             state_global_indices: HashMap::new(),
             state_globals: Vec::new(),
+            target: crate::CompilationTarget::Standalone, // Minimal uses Standalone
         }
+    }
+
+    /// Create a new MIR code generator with a specific compilation target
+    pub fn with_target(target: crate::CompilationTarget) -> Self {
+        Self {
+            wasm_generator: CodeGenerator::new(),
+            value_to_local: HashMap::new(),
+            block_labels: HashMap::new(),
+            next_local_index: 0,
+            next_block_label: 0,
+            current_instructions: Vec::new(),
+            current_function: None,
+            string_pool: None,
+            value_to_string_index: HashMap::new(),
+            function_symbol_map: HashMap::new(),
+            symbol_to_function_index: HashMap::new(),
+            function_signatures: HashMap::new(),
+            value_to_type: HashMap::new(),
+            temp_local_types: HashMap::new(),
+            bridge_functions: Vec::new(),
+            pending_bridge_wrappers: Vec::new(),
+            loop_context_stack: Vec::new(),
+            current_block_depth: 0,
+            state_global_indices: HashMap::new(),
+            state_globals: Vec::new(),
+            target,
+        }
+    }
+
+    /// Set the compilation target
+    pub fn set_target(&mut self, target: crate::CompilationTarget) {
+        self.target = target;
     }
 
     /// Set plugin bridge functions to be registered as WASM imports
@@ -256,17 +296,13 @@ impl MirCodeGenerator<'_> {
                 .map(|f| f.name.clone())
                 .collect();
 
-            // Always include HTTP server imports when building for server target (default)
-            // This enables _http_route, _session_*, _auth_* and other server functions
-            // Bridge functions from plugins can disable specific imports via expand_strings
+            // Include HTTP server imports based on compilation target:
+            // - Server target: includes _http_route, _session_*, _auth_* imports
+            // - Plugin target: excludes server imports for minimal plugin size
+            // - Standalone target: excludes server imports for CLI/library code
             //
-            // SIMPLIFIED: Always include server imports since they're needed for:
-            // - Web framework plugins using _http_route, _req_*
-            // - Session management using _session_*
-            // - Authentication using _auth_*
-            // The overhead is minimal (just import declarations) and prevents
-            // hard-to-debug "function not found" errors during codegen.
-            let include_server_imports = true;
+            // Previously always true, now respects self.target setting
+            let include_server_imports = self.target.include_server_imports();
 
             debug_mir!(
                 "DEBUG MIR: Registering HTTP imports (skipping {} for plugin expand_strings, server_imports={})",
