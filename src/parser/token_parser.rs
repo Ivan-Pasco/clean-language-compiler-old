@@ -10,9 +10,9 @@
 //! - Error recovery with diagnostic generation
 
 use crate::ast::{
-    BinaryOperator, Class, ConstantAssignment, Constructor, Expression, Field, Function,
-    FunctionModifier, FunctionSyntax, ImportItem, Parameter, Program, SourceLocation, Statement,
-    TestCase, Type, UnaryOperator, Value, VariableAssignment, Visibility,
+    BinaryOperator, Class, ConstantAssignment, Constructor, Expression, Field, FrameworkAttribute,
+    Function, FunctionModifier, FunctionSyntax, ImportItem, Parameter, Program, SourceLocation,
+    Statement, TestCase, Type, UnaryOperator, Value, VariableAssignment, Visibility,
 };
 use crate::error::CompilerError;
 use crate::lexer::specification_token::{Token, TokenKind, TokenStream};
@@ -1495,8 +1495,14 @@ impl TokenParser {
             }
         };
 
-        // Combine keyword and declaration name: "data User"
-        let full_block_name = format!("{} {}", keyword, decl_name);
+        // Keep keyword as name, put decl_name in attributes
+        // This allows plugins to check "block_name == 'data'" properly
+        let block_name = keyword.clone();
+        let attributes = vec![FrameworkAttribute {
+            name: decl_name,
+            value: None,
+            location: Some(start_location.clone()),
+        }];
 
         self.skip_whitespace();
 
@@ -1625,15 +1631,15 @@ impl TokenParser {
         let content = content_lines.join("\n");
 
         debug!(
-            block_name = %full_block_name,
+            block_name = %block_name,
             content_len = content.len(),
             "Parsed plugin declaration block"
         );
 
         Ok(Statement::FrameworkBlock {
-            name: full_block_name,
+            name: block_name,
             content,
-            attributes: vec![],
+            attributes,
             location: Some(start_location),
         })
     }
@@ -1676,10 +1682,15 @@ impl TokenParser {
             _ => None,
         };
 
-        // Combine block_name and block_arg for the full name
-        let full_block_name = match block_arg {
-            Some(arg) => format!("{} {}", block_name, arg),
-            None => block_name,
+        // Keep block_name as name, put block_arg in attributes if present
+        // This allows plugins to check "block_name == 'data'" properly
+        let attributes = match block_arg {
+            Some(arg) => vec![FrameworkAttribute {
+                name: arg,
+                value: None,
+                location: Some(start_location.clone()),
+            }],
+            None => vec![],
         };
 
         // Expect colon
@@ -1816,16 +1827,16 @@ impl TokenParser {
         let content = content_lines.join("\n");
 
         debug!(
-            block_name = %full_block_name,
+            block_name = %block_name,
             line_count = content_lines.len(),
             "Parsed framework block"
         );
         trace!(content = %content, "Framework block content");
 
         Ok(Statement::FrameworkBlock {
-            name: full_block_name,
+            name: block_name,
             content,
-            attributes: vec![], // Attributes parsed via @decorator syntax
+            attributes,
             location: Some(start_location),
         })
     }
