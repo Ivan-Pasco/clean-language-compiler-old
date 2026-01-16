@@ -268,7 +268,14 @@ pub fn compile_with_plugins_and_opt_level(
     // Stage 2: Parsing to AST - use token-driven parser (rustc-style)
     tracing::debug!("Starting Stage 2: Parsing to AST");
     use crate::parser::SpecificationParser;
-    let mut parser = SpecificationParser::new(tokens, file_path.to_string());
+    // Get plugin keywords so the parser recognizes plugin-defined syntax (e.g., "data User")
+    let plugin_keywords = registry.get_all_block_keywords();
+    tracing::debug!(
+        plugin_keywords = ?plugin_keywords,
+        "Passing plugin keywords to parser"
+    );
+    let mut parser =
+        SpecificationParser::with_plugin_keywords(tokens, file_path.to_string(), plugin_keywords);
     let parsed_ast = parser.parse_program().map_err(|e| vec![e])?;
     tracing::debug!(
         functions = parsed_ast.functions.len(),

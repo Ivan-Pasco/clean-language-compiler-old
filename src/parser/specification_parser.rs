@@ -10,6 +10,8 @@ use crate::lexer::specification_token::TokenStream;
 pub struct SpecificationParser {
     token_stream: TokenStream,
     file_path: String,
+    /// Plugin-defined keywords that don't require colons (e.g., "data" from frame.data)
+    plugin_keywords: Vec<String>,
 }
 
 impl SpecificationParser {
@@ -17,6 +19,25 @@ impl SpecificationParser {
         Self {
             token_stream,
             file_path,
+            plugin_keywords: Vec::new(),
+        }
+    }
+
+    /// Create a parser with plugin-defined keywords
+    ///
+    /// Plugin keywords are recognized as framework block starters even without
+    /// a trailing colon. For example, with `plugin_keywords = ["data"]`:
+    /// - `data User` is parsed as a framework block (plugin keyword)
+    /// - `endpoints:` is parsed as a framework block (has colon)
+    pub fn with_plugin_keywords(
+        token_stream: TokenStream,
+        file_path: String,
+        plugin_keywords: Vec<String>,
+    ) -> Self {
+        Self {
+            token_stream,
+            file_path,
+            plugin_keywords,
         }
     }
 
@@ -25,10 +46,18 @@ impl SpecificationParser {
     /// This method uses the new TokenParser that consumes tokens directly,
     /// following the architecture of rustc's parser (see rust-lang/rustc-dev-guide).
     pub fn parse_program(&mut self) -> Result<Program, CompilerError> {
-        let mut parser = TokenParser::new(
-            std::mem::take(&mut self.token_stream),
-            self.file_path.clone(),
-        );
+        let mut parser = if self.plugin_keywords.is_empty() {
+            TokenParser::new(
+                std::mem::take(&mut self.token_stream),
+                self.file_path.clone(),
+            )
+        } else {
+            TokenParser::with_plugin_keywords(
+                std::mem::take(&mut self.token_stream),
+                self.file_path.clone(),
+                std::mem::take(&mut self.plugin_keywords),
+            )
+        };
 
         parser.parse_program()
     }

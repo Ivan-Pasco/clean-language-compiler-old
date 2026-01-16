@@ -9160,6 +9160,188 @@ impl CodeGenerator {
             self.function_map
                 .insert("_req_path".to_string(), self.function_count);
             self.function_count += 1;
+
+            // _req_cookie(namePtr: i32, nameLen: i32) -> i32 (returns string pointer)
+            let req_cookie_type =
+                self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_req_cookie",
+                wasm_encoder::EntityType::Function(req_cookie_type),
+            );
+            self.http_import_indices
+                .insert("_req_cookie".to_string(), self.function_count);
+            self.function_map
+                .insert("_req_cookie".to_string(), self.function_count);
+            self.function_count += 1;
+
+            // =========================================
+            // Protected route registration
+            // =========================================
+
+            // _http_route_protected(methodPtr: i32, methodLen: i32, pathPtr: i32, pathLen: i32, handlerIdx: i32, rolePtr: i32, roleLen: i32) -> i32
+            if !skip_functions.contains("_http_route_protected") {
+                let route_protected_type = self.add_function_type(
+                    &[
+                        WasmType::I32,
+                        WasmType::I32, // method
+                        WasmType::I32,
+                        WasmType::I32, // path
+                        WasmType::I32, // handler_idx
+                        WasmType::I32,
+                        WasmType::I32, // role
+                    ],
+                    Some(WasmType::I32),
+                )?;
+                self.import_section.import(
+                    "env",
+                    "_http_route_protected",
+                    wasm_encoder::EntityType::Function(route_protected_type),
+                );
+                self.http_import_indices
+                    .insert("_http_route_protected".to_string(), self.function_count);
+                self.function_map
+                    .insert("_http_route_protected".to_string(), self.function_count);
+                self.function_count += 1;
+            }
+
+            // =========================================
+            // Session management functions
+            // =========================================
+
+            // _session_create(user_id: i32, rolePtr: i32, roleLen: i32, claimsPtr: i32, claimsLen: i32) -> i32 (returns session_id string pointer)
+            let session_create_type = self.add_function_type(
+                &[
+                    WasmType::I32, // user_id (Clean Language integer = i32)
+                    WasmType::I32,
+                    WasmType::I32, // role
+                    WasmType::I32,
+                    WasmType::I32, // claims
+                ],
+                Some(WasmType::I32),
+            )?;
+            self.import_section.import(
+                "env",
+                "_session_create",
+                wasm_encoder::EntityType::Function(session_create_type),
+            );
+            self.http_import_indices
+                .insert("_session_create".to_string(), self.function_count);
+            self.function_map
+                .insert("_session_create".to_string(), self.function_count);
+            self.function_count += 1;
+
+            // _session_get() -> i32 (returns session JSON string pointer)
+            let session_get_type = self.add_function_type(&[], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_session_get",
+                wasm_encoder::EntityType::Function(session_get_type),
+            );
+            self.http_import_indices
+                .insert("_session_get".to_string(), self.function_count);
+            self.function_map
+                .insert("_session_get".to_string(), self.function_count);
+            self.function_count += 1;
+
+            // _session_destroy() -> i32 (returns 1 if destroyed, 0 if not)
+            let session_destroy_type = self.add_function_type(&[], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_session_destroy",
+                wasm_encoder::EntityType::Function(session_destroy_type),
+            );
+            self.http_import_indices
+                .insert("_session_destroy".to_string(), self.function_count);
+            self.function_map
+                .insert("_session_destroy".to_string(), self.function_count);
+            self.function_count += 1;
+
+            // _session_set_cookie(cookiePtr: i32, cookieLen: i32) -> i32
+            let session_set_cookie_type =
+                self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_session_set_cookie",
+                wasm_encoder::EntityType::Function(session_set_cookie_type),
+            );
+            self.http_import_indices
+                .insert("_session_set_cookie".to_string(), self.function_count);
+            self.function_map
+                .insert("_session_set_cookie".to_string(), self.function_count);
+            self.function_count += 1;
+
+            // =========================================
+            // Authentication context functions
+            // =========================================
+
+            // _auth_get_session() -> i32 (returns session JSON string pointer)
+            let auth_get_session_type = self.add_function_type(&[], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_auth_get_session",
+                wasm_encoder::EntityType::Function(auth_get_session_type),
+            );
+            self.http_import_indices
+                .insert("_auth_get_session".to_string(), self.function_count);
+            self.function_map
+                .insert("_auth_get_session".to_string(), self.function_count);
+            self.function_count += 1;
+
+            // _auth_require_auth() -> i32 (returns 1 if authenticated, 0 if not)
+            let auth_require_auth_type = self.add_function_type(&[], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_auth_require_auth",
+                wasm_encoder::EntityType::Function(auth_require_auth_type),
+            );
+            self.http_import_indices
+                .insert("_auth_require_auth".to_string(), self.function_count);
+            self.function_map
+                .insert("_auth_require_auth".to_string(), self.function_count);
+            self.function_count += 1;
+
+            // _auth_require_role(rolePtr: i32, roleLen: i32) -> i32 (returns 1 if has role, 0 if not)
+            let auth_require_role_type =
+                self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_auth_require_role",
+                wasm_encoder::EntityType::Function(auth_require_role_type),
+            );
+            self.http_import_indices
+                .insert("_auth_require_role".to_string(), self.function_count);
+            self.function_map
+                .insert("_auth_require_role".to_string(), self.function_count);
+            self.function_count += 1;
+
+            // _auth_can(permissionPtr: i32, permissionLen: i32) -> i32
+            let auth_can_type =
+                self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_auth_can",
+                wasm_encoder::EntityType::Function(auth_can_type),
+            );
+            self.http_import_indices
+                .insert("_auth_can".to_string(), self.function_count);
+            self.function_map
+                .insert("_auth_can".to_string(), self.function_count);
+            self.function_count += 1;
+
+            // _auth_has_any_role(rolesJsonPtr: i32, rolesJsonLen: i32) -> i32
+            let auth_has_any_role_type =
+                self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
+            self.import_section.import(
+                "env",
+                "_auth_has_any_role",
+                wasm_encoder::EntityType::Function(auth_has_any_role_type),
+            );
+            self.http_import_indices
+                .insert("_auth_has_any_role".to_string(), self.function_count);
+            self.function_map
+                .insert("_auth_has_any_role".to_string(), self.function_count);
+            self.function_count += 1;
         } // end if include_server_imports
 
         Ok(())

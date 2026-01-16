@@ -16,6 +16,7 @@ use crate::ast::{
 };
 use crate::error::CompilerError;
 use crate::lexer::specification_token::{Token, TokenKind, TokenStream};
+use std::collections::HashSet;
 use tracing::{debug, trace, warn};
 
 /// Token-driven parser for Clean Language
@@ -26,6 +27,8 @@ pub struct TokenParser {
     file_path: String,
     errors: Vec<CompilerError>,
     paren_depth: usize, // Track parenthesis depth for multiline expression support
+    /// Plugin-defined keywords that don't require colons (e.g., "data" from frame.data)
+    plugin_keywords: HashSet<String>,
 }
 
 impl TokenParser {
@@ -36,6 +39,28 @@ impl TokenParser {
             file_path,
             errors: Vec::new(),
             paren_depth: 0,
+            plugin_keywords: HashSet::new(),
+        }
+    }
+
+    /// Create a parser with plugin-defined keywords
+    ///
+    /// Plugin keywords are recognized as framework block starters even without
+    /// a trailing colon. For example, with `plugin_keywords = ["data"]`:
+    /// - `data User` is parsed as a framework block (plugin keyword)
+    /// - `endpoints:` is parsed as a framework block (has colon)
+    pub fn with_plugin_keywords(
+        token_stream: TokenStream,
+        file_path: String,
+        plugin_keywords: Vec<String>,
+    ) -> Self {
+        Self {
+            tokens: token_stream.tokens,
+            cursor: 0,
+            file_path,
+            errors: Vec::new(),
+            paren_depth: 0,
+            plugin_keywords: plugin_keywords.into_iter().collect(),
         }
     }
 
@@ -144,20 +169,31 @@ impl TokenParser {
                     }
                 }
                 TokenKind::Identifier(name) => {
+                    // Check if this is a plugin keyword (e.g., "data" from frame.data plugin)
+                    let is_plugin_keyword = self.plugin_keywords.contains(name);
+
                     // Check if this is a framework block
-                    // Patterns: "identifier:", "identifier string:", "identifier identifier:"
+                    // Patterns:
+                    // - "identifier:" (colon-based framework block)
+                    // - "identifier string:" or "identifier identifier:" (with colon)
+                    // - "plugin_keyword identifier" (plugin keyword without colon)
                     let is_framework_block = match self.peek_kind() {
                         Some(&TokenKind::Colon) => true,
                         Some(&TokenKind::StringLiteral(_)) | Some(&TokenKind::Identifier(_)) => {
-                            // Check if second token is followed by colon
-                            matches!(self.look_ahead(2).kind, TokenKind::Colon)
+                            // Plugin keyword followed by identifier: "data User"
+                            if is_plugin_keyword {
+                                true
+                            } else {
+                                // Check if second token is followed by colon
+                                matches!(self.look_ahead(2).kind, TokenKind::Colon)
+                            }
                         }
                         _ => false,
                     };
 
                     if is_framework_block {
-                        debug!(block_name = %name, "Found framework block");
-                        match self.parse_framework_block() {
+                        debug!(block_name = %name, is_plugin_keyword, "Found framework block");
+                        match self.parse_framework_block_or_plugin(is_plugin_keyword) {
                             Ok(stmt) => statements.push(stmt),
                             Err(e) => self.errors.push(e),
                         }
@@ -1403,6 +1439,203 @@ impl TokenParser {
     fn parse_method(&mut self) -> Result<Function, CompilerError> {
         // Methods are just functions within a class
         self.parse_function()
+    }
+
+    /// Parse a framework block or plugin declaration
+    ///
+    /// Framework blocks use colon: "identifier:", "identifier string:", "identifier identifier:"
+    /// Plugin declarations don't require colon: "data User" (when "data" is a plugin keyword)
+    fn parse_framework_block_or_plugin(
+        &mut self,
+        is_plugin_keyword: bool,
+    ) -> Result<Statement, CompilerError> {
+        if !is_plugin_keyword {
+            // Standard framework block with colon
+            return self.parse_framework_block();
+        }
+
+        // Plugin keyword without colon (e.g., "data User")
+        let start_location = self.current().location.clone();
+
+        // Get the plugin keyword (first identifier, e.g., "data")
+        let keyword = if let TokenKind::Identifier(name) = self.current_kind() {
+            name.clone()
+        } else {
+            return Err(CompilerError::parse_error(
+                "Expected plugin keyword".to_string(),
+                Some(start_location),
+                None,
+            ));
+        };
+
+        self.bump(); // Consume keyword
+        self.skip_whitespace();
+
+        // Get the declaration name (e.g., "User" in "data User")
+        let decl_name = match self.current_kind() {
+            TokenKind::Identifier(name) => {
+                let n = name.clone();
+                self.bump();
+                n
+            }
+            TokenKind::StringLiteral(s) => {
+                let n = s.clone();
+                self.bump();
+                n
+            }
+            _ => {
+                return Err(CompilerError::parse_error(
+                    format!("Expected identifier after plugin keyword '{}'", keyword),
+                    Some(self.current().location.clone()),
+                    Some(format!(
+                        "Plugin keyword '{}' should be followed by an identifier",
+                        keyword
+                    )),
+                ));
+            }
+        };
+
+        // Combine keyword and declaration name: "data User"
+        let full_block_name = format!("{} {}", keyword, decl_name);
+
+        self.skip_whitespace();
+
+        // Optional colon (some plugin declarations might still use it)
+        if matches!(self.current_kind(), TokenKind::Colon) {
+            self.bump();
+            self.skip_whitespace();
+        }
+
+        // Expect newline
+        self.eat(&TokenKind::Newline);
+        self.skip_whitespace();
+
+        // Collect indented content (same logic as parse_framework_block)
+        let mut content_lines = Vec::new();
+
+        // Determine the block's indentation level
+        let block_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            if let TokenKind::Indent(level) = self.current_kind() {
+                *level
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+
+        // Collect all lines that are indented at or deeper than block_indent_level
+        while !self.is_at_end() {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for dedent that exits the block
+            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                if *dedent_level < block_indent_level {
+                    break;
+                } else {
+                    self.bump();
+                    continue;
+                }
+            }
+
+            // Consume indent
+            if let TokenKind::Indent(indent_level) = self.current_kind() {
+                if *indent_level < block_indent_level {
+                    break;
+                }
+                self.bump();
+            }
+
+            // Collect line content with smart spacing (same logic as parse_framework_block)
+            let mut line_text = String::new();
+            let mut prev_kind: Option<TokenKind> = None;
+
+            while !self.is_at_end()
+                && !matches!(
+                    self.current_kind(),
+                    TokenKind::Newline | TokenKind::Dedent(_)
+                )
+            {
+                let token = self.current();
+                let curr_kind = token.kind.clone();
+
+                // Determine if we need a space before this token
+                let needs_space = if let Some(ref prev) = prev_kind {
+                    let should_skip_space = matches!(
+                        (&curr_kind, prev),
+                        (_, TokenKind::LeftBrace)
+                            | (TokenKind::RightBrace, _)
+                            | (TokenKind::Dot, _)
+                            | (_, TokenKind::Dot)
+                            | (TokenKind::Greater, TokenKind::Minus)
+                            | (TokenKind::Divide, _)
+                            | (_, TokenKind::Divide)
+                            | (_, TokenKind::InterpolationStart)
+                            | (TokenKind::InterpolationMid, _)
+                            | (_, TokenKind::InterpolationMid)
+                            | (TokenKind::InterpolationEnd, _)
+                    );
+                    !should_skip_space
+                } else {
+                    false
+                };
+
+                if needs_space && !line_text.is_empty() {
+                    line_text.push(' ');
+                }
+
+                // Handle interpolation tokens - reconstruct the curly braces
+                match &curr_kind {
+                    TokenKind::InterpolationStart => {
+                        line_text.push_str(&token.text);
+                        line_text.push('{');
+                    }
+                    TokenKind::InterpolationMid => {
+                        line_text.push('}');
+                        line_text.push_str(&token.text);
+                        line_text.push('{');
+                    }
+                    TokenKind::InterpolationEnd => {
+                        line_text.push('}');
+                        line_text.push_str(&token.text);
+                    }
+                    _ => {
+                        line_text.push_str(&token.text);
+                    }
+                }
+
+                prev_kind = Some(curr_kind);
+                self.bump();
+            }
+
+            if !line_text.is_empty() {
+                content_lines.push(line_text);
+            }
+
+            // Consume newline
+            if matches!(self.current_kind(), TokenKind::Newline) {
+                self.bump();
+            }
+        }
+
+        let content = content_lines.join("\n");
+
+        debug!(
+            block_name = %full_block_name,
+            content_len = content.len(),
+            "Parsed plugin declaration block"
+        );
+
+        Ok(Statement::FrameworkBlock {
+            name: full_block_name,
+            content,
+            attributes: vec![],
+            location: Some(start_location),
+        })
     }
 
     /// Parse a framework block (e.g., endpoints:, data, component, screen "Name":)

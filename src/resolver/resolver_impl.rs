@@ -2443,6 +2443,94 @@ impl NameResolver {
             Some(HirType::String),
             builtin_location.clone(),
         );
+        // _req_cookie(name: string) -> string
+        self.register_builtin_fn(
+            "_req_cookie",
+            vec![HirType::String],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+
+        // Protected route registration
+        // _http_route_protected(method: string, path: string, handler_idx: integer, required_role: string) -> integer
+        self.register_builtin_fn(
+            "_http_route_protected",
+            vec![
+                HirType::String,
+                HirType::String,
+                HirType::Integer,
+                HirType::String,
+            ],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // Session management functions
+        // _session_create(user_id: integer, role: string, claims: string) -> string
+        self.register_builtin_fn(
+            "_session_create",
+            vec![HirType::Integer, HirType::String, HirType::String],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        // _session_get() -> string
+        self.register_builtin_fn(
+            "_session_get",
+            vec![],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        // _session_destroy() -> integer
+        self.register_builtin_fn(
+            "_session_destroy",
+            vec![],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        // _session_set_cookie(cookie: string) -> integer
+        self.register_builtin_fn(
+            "_session_set_cookie",
+            vec![HirType::String],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // Authentication context functions
+        // _auth_get_session() -> string
+        self.register_builtin_fn(
+            "_auth_get_session",
+            vec![],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        // _auth_require_auth() -> integer
+        self.register_builtin_fn(
+            "_auth_require_auth",
+            vec![],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        // _auth_require_role(role: string) -> integer
+        self.register_builtin_fn(
+            "_auth_require_role",
+            vec![HirType::String],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        // _auth_can(permission: string) -> integer
+        self.register_builtin_fn(
+            "_auth_can",
+            vec![HirType::String],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        // _auth_has_any_role(roles_json: string) -> integer
+        self.register_builtin_fn(
+            "_auth_has_any_role",
+            vec![HirType::String],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
 
         // Validator namespace functions
         // validator.create() -> Integer (pointer to validation rules)

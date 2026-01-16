@@ -256,12 +256,17 @@ impl MirCodeGenerator<'_> {
                 .map(|f| f.name.clone())
                 .collect();
 
-            // Only include HTTP server imports if web framework plugin is loaded
-            // (detected by presence of _http_route or similar bridge functions)
-            let include_server_imports = self
-                .bridge_functions
-                .iter()
-                .any(|f| f.name.starts_with("_http_") || f.name.starts_with("_req_"));
+            // Always include HTTP server imports when building for server target (default)
+            // This enables _http_route, _session_*, _auth_* and other server functions
+            // Bridge functions from plugins can disable specific imports via expand_strings
+            //
+            // SIMPLIFIED: Always include server imports since they're needed for:
+            // - Web framework plugins using _http_route, _req_*
+            // - Session management using _session_*
+            // - Authentication using _auth_*
+            // The overhead is minimal (just import declarations) and prevents
+            // hard-to-debug "function not found" errors during codegen.
+            let include_server_imports = true;
 
             debug_mir!(
                 "DEBUG MIR: Registering HTTP imports (skipping {} for plugin expand_strings, server_imports={})",
@@ -5884,8 +5889,66 @@ impl MirCodeGenerator<'_> {
                 ],
                 Some(WasmType::I32),
             ),
+            // _http_route_protected: (string method, string path, integer handler_idx, string role) -> i32
+            (
+                "_http_route_protected",
+                vec![
+                    BuiltinType::String,
+                    BuiltinType::String,
+                    BuiltinType::Integer,
+                    BuiltinType::String,
+                ],
+                Some(WasmType::I32),
+            ),
+            // Request context access functions
             // _req_param: (string param_name) -> string (pointer)
             ("_req_param", vec![BuiltinType::String], Some(WasmType::I32)),
+            // _req_query: (string query_name) -> string (pointer)
+            ("_req_query", vec![BuiltinType::String], Some(WasmType::I32)),
+            // _req_header: (string header_name) -> string (pointer)
+            (
+                "_req_header",
+                vec![BuiltinType::String],
+                Some(WasmType::I32),
+            ),
+            // _req_cookie: (string cookie_name) -> string (pointer)
+            (
+                "_req_cookie",
+                vec![BuiltinType::String],
+                Some(WasmType::I32),
+            ),
+            // Session management functions
+            // _session_create: (integer user_id, string role, string claims) -> string (session_id)
+            (
+                "_session_create",
+                vec![
+                    BuiltinType::Integer,
+                    BuiltinType::String,
+                    BuiltinType::String,
+                ],
+                Some(WasmType::I32),
+            ),
+            // _session_set_cookie: (string cookie) -> i32
+            (
+                "_session_set_cookie",
+                vec![BuiltinType::String],
+                Some(WasmType::I32),
+            ),
+            // Authentication context functions
+            // _auth_require_role: (string role) -> i32
+            (
+                "_auth_require_role",
+                vec![BuiltinType::String],
+                Some(WasmType::I32),
+            ),
+            // _auth_can: (string permission) -> i32
+            ("_auth_can", vec![BuiltinType::String], Some(WasmType::I32)),
+            // _auth_has_any_role: (string roles_json) -> i32
+            (
+                "_auth_has_any_role",
+                vec![BuiltinType::String],
+                Some(WasmType::I32),
+            ),
         ];
 
         for (func_name, param_types, wasm_return) in http_server_functions {

@@ -1353,6 +1353,73 @@ impl SemanticAnalyzer {
         // _req_path() -> string
         self.function_table
             .insert("_req_path".to_string(), vec![(vec![], Type::String, 0)]);
+        // _req_cookie(name: string) -> string
+        self.function_table.insert(
+            "_req_cookie".to_string(),
+            vec![(vec![Type::String], Type::String, 1)],
+        );
+
+        // Protected route registration
+        // _http_route_protected(method: string, path: string, handler_idx: integer, required_role: string) -> integer
+        self.function_table.insert(
+            "_http_route_protected".to_string(),
+            vec![(
+                vec![Type::String, Type::String, Type::Integer, Type::String],
+                Type::Integer,
+                4,
+            )],
+        );
+
+        // Session management functions
+        // _session_create(user_id: integer, role: string, claims: string) -> string (session_id)
+        self.function_table.insert(
+            "_session_create".to_string(),
+            vec![(
+                vec![Type::Integer, Type::String, Type::String],
+                Type::String,
+                3,
+            )],
+        );
+        // _session_get() -> string (session JSON or empty)
+        self.function_table
+            .insert("_session_get".to_string(), vec![(vec![], Type::String, 0)]);
+        // _session_destroy() -> integer (1 if destroyed, 0 if no session)
+        self.function_table.insert(
+            "_session_destroy".to_string(),
+            vec![(vec![], Type::Integer, 0)],
+        );
+        // _session_set_cookie(cookie: string) -> integer
+        self.function_table.insert(
+            "_session_set_cookie".to_string(),
+            vec![(vec![Type::String], Type::Integer, 1)],
+        );
+
+        // Authentication context functions
+        // _auth_get_session() -> string (session JSON or "null")
+        self.function_table.insert(
+            "_auth_get_session".to_string(),
+            vec![(vec![], Type::String, 0)],
+        );
+        // _auth_require_auth() -> integer (1 if authenticated, 0 if not)
+        self.function_table.insert(
+            "_auth_require_auth".to_string(),
+            vec![(vec![], Type::Integer, 0)],
+        );
+        // _auth_require_role(role: string) -> integer (1 if has role, 0 if not)
+        self.function_table.insert(
+            "_auth_require_role".to_string(),
+            vec![(vec![Type::String], Type::Integer, 1)],
+        );
+        // _auth_can(permission: string) -> integer (1 if allowed, 0 if not)
+        self.function_table.insert(
+            "_auth_can".to_string(),
+            vec![(vec![Type::String], Type::Integer, 1)],
+        );
+        // _auth_has_any_role(roles_json: string) -> integer (1 if has any role, 0 if not)
+        self.function_table.insert(
+            "_auth_has_any_role".to_string(),
+            vec![(vec![Type::String], Type::Integer, 1)],
+        );
 
         // Register method-style functions for type-based method calls
         self.register_method_style_functions();

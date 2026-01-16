@@ -406,6 +406,29 @@ impl PluginRegistry {
         keywords
     }
 
+    /// Get all block keywords that plugins handle
+    ///
+    /// Returns just the block handler names (e.g., "data", "endpoints", "screen")
+    /// without the additional DSL keywords. This is used by the parser to recognize
+    /// plugin-defined keywords that don't require colons.
+    ///
+    /// # Returns
+    /// A vector of block keyword strings that plugins handle
+    ///
+    /// # Example
+    /// ```ignore
+    /// let registry = PluginRegistry::builder()
+    ///     .add(DataPlugin::new())  // Handles "data"
+    ///     .add(HttpPlugin::new())  // Handles "endpoints"
+    ///     .build()?;
+    ///
+    /// let keywords = registry.get_all_block_keywords();
+    /// // Returns: ["data", "endpoints"]
+    /// ```
+    pub fn get_all_block_keywords(&self) -> Vec<String> {
+        self.handlers.keys().cloned().collect()
+    }
+
     /// Get completions for a specific block type
     ///
     /// Delegates to the plugin that handles the given block type.
