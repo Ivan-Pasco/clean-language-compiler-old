@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use clean_language_compiler::compile_with_file;
-use clean_language_compiler::plugins::PluginRegistry;
+use clean_language_compiler::plugins::{LanguageRegistry, PluginDiscovery, PluginRegistry};
 use dashmap::DashMap;
 use ropey::Rope;
 use tower_lsp::jsonrpc::Result;
@@ -25,11 +25,13 @@ use tracing::{debug, info, warn};
 mod completion;
 mod diagnostics;
 mod formatting;
+mod grammar_generator;
 mod hover;
 
 use completion::CompletionProvider;
 use diagnostics::DiagnosticsProvider;
 use formatting::FormattingProvider;
+pub use grammar_generator::GrammarGenerator;
 use hover::HoverProvider;
 
 #[derive(Debug)]
@@ -47,9 +49,12 @@ struct Backend {
     diagnostics_provider: Arc<DiagnosticsProvider>,
     hover_provider: Arc<HoverProvider>,
     formatting_provider: Arc<FormattingProvider>,
-    /// Plugin registry for dynamic DSL support
+    /// Plugin registry for dynamic DSL support (WASM plugins)
     #[allow(dead_code)]
     plugin_registry: Arc<PluginRegistry>,
+    /// Language registry for static plugin definitions (plugin.toml)
+    #[allow(dead_code)]
+    language_registry: Arc<LanguageRegistry>,
 }
 
 #[tower_lsp::async_trait]
@@ -341,6 +346,21 @@ impl LanguageServer for Backend {
 
 impl Backend {
     fn new(client: Client) -> Self {
+        // Discover plugins from global and project directories
+        let discovery = PluginDiscovery::new();
+        let manifests = discovery.discover_all().unwrap_or_default();
+
+        // Build the language registry from discovered plugin manifests
+        let language_registry = Arc::new(LanguageRegistry::from_manifests(&manifests));
+
+        if !manifests.is_empty() {
+            info!(
+                "Loaded language definitions from {} plugins: {:?}",
+                manifests.len(),
+                manifests.keys().collect::<Vec<_>>()
+            );
+        }
+
         // Create the plugin registry (can be extended with plugins at runtime)
         let plugin_registry = Arc::new(
             PluginRegistry::builder()
@@ -348,28 +368,81 @@ impl Backend {
                 .expect("Failed to build plugin registry"),
         );
 
-        // Create providers with plugin support
-        let completion_provider =
-            Arc::new(CompletionProvider::with_plugins(Arc::clone(&plugin_registry)));
-        let hover_provider = Arc::new(HoverProvider::with_plugins(Arc::clone(&plugin_registry)));
+        // Create providers with both plugin and language registry support
+        let completion_provider = Arc::new(CompletionProvider::with_language_registry(
+            Arc::clone(&plugin_registry),
+            Arc::clone(&language_registry),
+        ));
+
+        let hover_provider = Arc::new(HoverProvider::with_language_registry(
+            Arc::clone(&plugin_registry),
+            Arc::clone(&language_registry),
+        ));
+
+        let diagnostics_provider =
+            Arc::new(DiagnosticsProvider::with_language_registry(Arc::clone(
+                &language_registry,
+            )));
 
         Self {
             client,
             documents: Arc::new(DashMap::new()),
             completion_provider,
-            diagnostics_provider: Arc::new(DiagnosticsProvider::new()),
+            diagnostics_provider,
             hover_provider,
             formatting_provider: Arc::new(FormattingProvider::new()),
             plugin_registry,
+            language_registry,
         }
     }
 
-    /// Create a backend with a specific plugin registry
+    /// Create a backend with specific registries
+    #[allow(dead_code)]
+    fn with_registries(
+        client: Client,
+        plugin_registry: Arc<PluginRegistry>,
+        language_registry: Arc<LanguageRegistry>,
+    ) -> Self {
+        let completion_provider = Arc::new(CompletionProvider::with_language_registry(
+            Arc::clone(&plugin_registry),
+            Arc::clone(&language_registry),
+        ));
+
+        let hover_provider = Arc::new(HoverProvider::with_language_registry(
+            Arc::clone(&plugin_registry),
+            Arc::clone(&language_registry),
+        ));
+
+        let diagnostics_provider =
+            Arc::new(DiagnosticsProvider::with_language_registry(Arc::clone(
+                &language_registry,
+            )));
+
+        Self {
+            client,
+            documents: Arc::new(DashMap::new()),
+            completion_provider,
+            diagnostics_provider,
+            hover_provider,
+            formatting_provider: Arc::new(FormattingProvider::new()),
+            plugin_registry,
+            language_registry,
+        }
+    }
+
+    /// Create a backend with a specific plugin registry (legacy method)
     #[allow(dead_code)]
     fn with_plugins(client: Client, registry: Arc<PluginRegistry>) -> Self {
-        let completion_provider =
-            Arc::new(CompletionProvider::with_plugins(Arc::clone(&registry)));
-        let hover_provider = Arc::new(HoverProvider::with_plugins(Arc::clone(&registry)));
+        let language_registry = Arc::new(LanguageRegistry::new());
+
+        let completion_provider = Arc::new(CompletionProvider::with_language_registry(
+            Arc::clone(&registry),
+            Arc::clone(&language_registry),
+        ));
+        let hover_provider = Arc::new(HoverProvider::with_language_registry(
+            Arc::clone(&registry),
+            Arc::clone(&language_registry),
+        ));
 
         Self {
             client,
@@ -379,6 +452,7 @@ impl Backend {
             hover_provider,
             formatting_provider: Arc::new(FormattingProvider::new()),
             plugin_registry: registry,
+            language_registry,
         }
     }
 

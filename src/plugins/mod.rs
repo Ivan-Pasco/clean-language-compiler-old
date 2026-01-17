@@ -73,14 +73,25 @@
  * ```
  */
 
+mod app_config;
+mod discovery;
 mod expander;
+pub mod language_registry;
 pub mod plugin_abi;
 mod registry;
 mod wasm_adapter;
 mod wasm_loader;
 
+pub use app_config::AppConfig;
+pub use discovery::{DiscoveryError, PluginDiscovery};
 pub use expander::PluginExpander;
-pub use plugin_abi::{BridgeFunction, PluginAbi, PluginBridge, PluginManifest, PLUGIN_ABI_VERSION};
+pub use language_registry::{
+    BlockInfo, CompletionSnippet, FunctionInfo, KeywordInfo, LanguageRegistry, TypeInfo,
+};
+pub use plugin_abi::{
+    BridgeFunction, PluginAbi, PluginBridge, PluginCompletionDef, PluginFunctionDef, PluginKeyword,
+    PluginLanguage, PluginManifest, PluginTypeDef, PLUGIN_ABI_VERSION,
+};
 pub use registry::{PluginError, PluginRegistry, PluginRegistryBuilder};
 pub use wasm_adapter::WasmPluginAdapter;
 pub use wasm_loader::WasmPluginLoader;
@@ -178,6 +189,59 @@ pub struct PluginLspContext<'a> {
     pub column: usize,
     /// The word being typed (for completion filtering)
     pub prefix: &'a str,
+    /// Stack of nested blocks (innermost last)
+    /// E.g., ["data", "User", "validations"] for a nested structure
+    pub block_stack: Vec<&'a str>,
+    /// File path being edited (for path-based plugin activation)
+    pub file_path: Option<&'a std::path::Path>,
+    /// The plugin that owns this file/context (if determined)
+    pub owning_plugin: Option<&'a str>,
+}
+
+impl<'a> PluginLspContext<'a> {
+    /// Create a new context with minimal required fields
+    pub fn new(block_name: &'a str, block_content: &'a str, prefix: &'a str) -> Self {
+        Self {
+            block_name,
+            block_content,
+            line: 0,
+            column: 0,
+            prefix,
+            block_stack: Vec::new(),
+            file_path: None,
+            owning_plugin: None,
+        }
+    }
+
+    /// Set the position within the block
+    pub fn at_position(mut self, line: usize, column: usize) -> Self {
+        self.line = line;
+        self.column = column;
+        self
+    }
+
+    /// Set the block stack
+    pub fn with_block_stack(mut self, stack: Vec<&'a str>) -> Self {
+        self.block_stack = stack;
+        self
+    }
+
+    /// Set the file path
+    pub fn with_file_path(mut self, path: &'a std::path::Path) -> Self {
+        self.file_path = Some(path);
+        self
+    }
+
+    /// Set the owning plugin
+    pub fn with_owning_plugin(mut self, plugin: &'a str) -> Self {
+        self.owning_plugin = Some(plugin);
+        self
+    }
+
+    /// Get the current context (innermost block in the stack)
+    pub fn current_context(&self) -> &str {
+        self.block_stack.last().copied().unwrap_or(self.block_name)
+    }
 }
 
 /// Trait for framework plugins that expand DSL blocks into Clean AST
@@ -529,13 +593,7 @@ mod tests {
         assert_eq!(plugin.get_keywords(), &["KEYWORD1", "KEYWORD2", "KEYWORD3"]);
 
         // Test completions
-        let ctx = PluginLspContext {
-            block_name: "testblock",
-            block_content: "",
-            line: 0,
-            column: 0,
-            prefix: "test",
-        };
+        let ctx = PluginLspContext::new("testblock", "", "test");
         let completions = plugin.get_completions(&ctx);
         assert_eq!(completions.len(), 1);
         assert_eq!(completions[0].label, "KEYWORD1");

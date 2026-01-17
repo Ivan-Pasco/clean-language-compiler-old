@@ -16,6 +16,9 @@ pub struct PluginManifest {
     /// Bridge functions that the plugin expects the runtime to provide
     #[serde(default)]
     pub bridge: PluginBridge,
+    /// Language definitions for LSP support (static, no WASM required)
+    #[serde(default)]
+    pub language: PluginLanguage,
 }
 
 /// Basic plugin information
@@ -119,6 +122,123 @@ fn default_bridge_module() -> String {
 pub struct PluginBridge {
     #[serde(default)]
     pub functions: Vec<BridgeFunction>,
+}
+
+// ============================================================================
+// Language Server Protocol (LSP) Static Definitions
+// ============================================================================
+
+/// Language definitions for LSP support in plugin.toml
+///
+/// This section allows plugins to provide static language definitions
+/// that don't require WASM execution. The language server can use these
+/// definitions to provide completions, hover documentation, and diagnostics.
+///
+/// # Example in plugin.toml
+///
+/// ```toml
+/// [language]
+/// blocks = ["data"]
+/// owns_paths = ["app/data/"]
+///
+/// [[language.keywords]]
+/// name = "find"
+/// description = "Query records from a model"
+/// context = "expression"
+///
+/// [[language.types]]
+/// name = "Model"
+/// description = "Base type for data models"
+///
+/// [[language.functions]]
+/// name = "Data.tx"
+/// signature = "Data.tx: block"
+/// description = "Execute operations in a transaction"
+///
+/// [[language.completions]]
+/// trigger = "data "
+/// insert = "data ${1:ModelName}:\n\t${2:field}: ${3:type}"
+/// description = "Create a new data model"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginLanguage {
+    /// Block types this language definition applies to
+    #[serde(default)]
+    pub blocks: Vec<String>,
+    /// Keyword definitions with context and documentation
+    #[serde(default)]
+    pub keywords: Vec<PluginKeyword>,
+    /// Type definitions for the plugin's DSL
+    #[serde(default)]
+    pub types: Vec<PluginTypeDef>,
+    /// Function definitions for the plugin's DSL
+    #[serde(default)]
+    pub functions: Vec<PluginFunctionDef>,
+    /// Completion snippets for the plugin's DSL
+    #[serde(default)]
+    pub completions: Vec<PluginCompletionDef>,
+    /// Path patterns that this plugin "owns" (for file-based plugin activation)
+    /// E.g., ["app/data/", "app/models/"] means files in these directories
+    /// should activate this plugin's language features
+    #[serde(default)]
+    pub owns_paths: Vec<String>,
+}
+
+/// A keyword defined by a plugin for its DSL
+///
+/// Keywords can be context-sensitive, appearing only in certain locations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginKeyword {
+    /// The keyword name (e.g., "find", "where", "order")
+    pub name: String,
+    /// Human-readable description for hover and documentation
+    pub description: String,
+    /// The context where this keyword is valid
+    /// One of: "expression", "block", "directive", "config", "attribute", "any"
+    #[serde(default = "default_keyword_context")]
+    pub context: String,
+}
+
+/// Default keyword context is "any" (valid everywhere)
+fn default_keyword_context() -> String {
+    "any".to_string()
+}
+
+/// A type definition for the plugin's DSL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginTypeDef {
+    /// The type name (e.g., "Model", "Query", "Relationship")
+    pub name: String,
+    /// Human-readable description for hover and documentation
+    pub description: String,
+}
+
+/// A function definition for the plugin's DSL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginFunctionDef {
+    /// The function name (e.g., "Data.tx", "Model.find")
+    pub name: String,
+    /// Function signature for display (e.g., "Data.tx: block -> Result")
+    pub signature: String,
+    /// Human-readable description for hover and documentation
+    pub description: String,
+}
+
+/// A completion snippet defined by the plugin
+///
+/// Completions can have triggers (prefixes that activate them) and
+/// support VS Code snippet syntax with placeholders.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginCompletionDef {
+    /// The trigger text that activates this completion
+    /// E.g., "data " (note trailing space) or "find"
+    pub trigger: String,
+    /// The text to insert (supports VS Code snippet syntax)
+    /// E.g., "data ${1:ModelName}:\n\t${2:field}: ${3:type}"
+    pub insert: String,
+    /// Optional description shown in completion list
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 impl BridgeFunction {
@@ -295,5 +415,116 @@ mod tests {
         assert_eq!(BridgeFunction::parse_type("void"), BuiltinType::Void);
         assert_eq!(BridgeFunction::parse_type("i32"), BuiltinType::Integer);
         assert_eq!(BridgeFunction::parse_type("f64"), BuiltinType::Number);
+    }
+
+    #[test]
+    fn test_manifest_with_language() {
+        let toml_str = r#"
+            [plugin]
+            name = "frame.data"
+            version = "1.0.0"
+
+            [handles]
+            blocks = ["data"]
+
+            [language]
+            blocks = ["data"]
+            owns_paths = ["app/data/"]
+
+            [[language.keywords]]
+            name = "find"
+            description = "Query records from a model"
+            context = "expression"
+
+            [[language.keywords]]
+            name = "where"
+            description = "Filter query conditions"
+            context = "block"
+
+            [[language.types]]
+            name = "Model"
+            description = "Base type for data models"
+
+            [[language.functions]]
+            name = "Data.tx"
+            signature = "Data.tx: block"
+            description = "Execute operations in a transaction"
+
+            [[language.completions]]
+            trigger = "data "
+            insert = "data ${1:ModelName}:\n\t${2:field}: ${3:type}"
+            description = "Create a new data model"
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(manifest.plugin.name, "frame.data");
+        assert_eq!(manifest.language.blocks, vec!["data"]);
+        assert_eq!(manifest.language.owns_paths, vec!["app/data/"]);
+
+        // Test keywords
+        assert_eq!(manifest.language.keywords.len(), 2);
+        assert_eq!(manifest.language.keywords[0].name, "find");
+        assert_eq!(manifest.language.keywords[0].context, "expression");
+        assert_eq!(manifest.language.keywords[1].name, "where");
+        assert_eq!(manifest.language.keywords[1].context, "block");
+
+        // Test types
+        assert_eq!(manifest.language.types.len(), 1);
+        assert_eq!(manifest.language.types[0].name, "Model");
+
+        // Test functions
+        assert_eq!(manifest.language.functions.len(), 1);
+        assert_eq!(manifest.language.functions[0].name, "Data.tx");
+
+        // Test completions
+        assert_eq!(manifest.language.completions.len(), 1);
+        assert_eq!(manifest.language.completions[0].trigger, "data ");
+        assert!(manifest.language.completions[0]
+            .insert
+            .contains("ModelName"));
+    }
+
+    #[test]
+    fn test_language_defaults() {
+        let toml_str = r#"
+            [plugin]
+            name = "minimal.plugin"
+            version = "0.1.0"
+
+            [handles]
+            blocks = ["minimal"]
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        // Language should be default (empty)
+        assert!(manifest.language.blocks.is_empty());
+        assert!(manifest.language.keywords.is_empty());
+        assert!(manifest.language.types.is_empty());
+        assert!(manifest.language.functions.is_empty());
+        assert!(manifest.language.completions.is_empty());
+        assert!(manifest.language.owns_paths.is_empty());
+    }
+
+    #[test]
+    fn test_keyword_default_context() {
+        let toml_str = r#"
+            [plugin]
+            name = "test.plugin"
+            version = "1.0.0"
+
+            [handles]
+            blocks = ["test"]
+
+            [[language.keywords]]
+            name = "testkw"
+            description = "Test keyword without context"
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(manifest.language.keywords.len(), 1);
+        assert_eq!(manifest.language.keywords[0].context, "any"); // Default context
     }
 }

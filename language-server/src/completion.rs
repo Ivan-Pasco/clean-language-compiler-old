@@ -11,34 +11,55 @@
  */
 
 use clean_language_compiler::plugins::{
-    PluginCompletionItem, PluginCompletionKind, PluginLspContext, PluginRegistry,
+    LanguageRegistry, PluginCompletionItem, PluginCompletionKind, PluginLspContext, PluginRegistry,
 };
 use ropey::Rope;
+use std::path::Path;
 use std::sync::Arc;
 use tower_lsp::lsp_types::*;
 
 pub struct CompletionProvider {
-    /// Plugin registry for dynamic completions
+    /// Plugin registry for dynamic completions (WASM plugins)
     plugin_registry: Option<Arc<PluginRegistry>>,
+    /// Language registry for static completions (plugin.toml definitions)
+    language_registry: Option<Arc<LanguageRegistry>>,
 }
 
 impl CompletionProvider {
     pub fn new() -> Self {
         Self {
             plugin_registry: None,
+            language_registry: None,
         }
     }
 
-    /// Create a completion provider with plugin support
+    /// Create a completion provider with plugin support (WASM plugins only)
     pub fn with_plugins(registry: Arc<PluginRegistry>) -> Self {
         Self {
             plugin_registry: Some(registry),
+            language_registry: None,
+        }
+    }
+
+    /// Create a completion provider with both plugin and language registries
+    pub fn with_language_registry(
+        plugin_registry: Arc<PluginRegistry>,
+        language_registry: Arc<LanguageRegistry>,
+    ) -> Self {
+        Self {
+            plugin_registry: Some(plugin_registry),
+            language_registry: Some(language_registry),
         }
     }
 
     /// Set the plugin registry (for dynamic updates)
     pub fn set_plugin_registry(&mut self, registry: Arc<PluginRegistry>) {
         self.plugin_registry = Some(registry);
+    }
+
+    /// Set the language registry (for dynamic updates)
+    pub fn set_language_registry(&mut self, registry: Arc<LanguageRegistry>) {
+        self.language_registry = Some(registry);
     }
 
     pub async fn provide_completions(
@@ -67,9 +88,14 @@ impl CompletionProvider {
         // Check if we're inside a plugin block
         let text_str = text.to_string();
         if let Some(block_name) = self.detect_plugin_block_context(&text_str, line_idx) {
-            // Get plugin-specific completions
+            // Get plugin-specific completions from WASM plugins
             completions.extend(self.get_plugin_completions(&block_name, &text_str, line_idx, char_idx, prefix));
+            // Get completions from static language definitions
+            completions.extend(self.get_language_registry_completions(&block_name, prefix));
         }
+
+        // Get completions from language registry based on context
+        completions.extend(self.get_context_aware_completions(prefix));
 
         // Check for different completion contexts
         if self.is_after_dot(prefix) {
@@ -143,13 +169,8 @@ impl CompletionProvider {
             None => return Vec::new(),
         };
 
-        let ctx = PluginLspContext {
-            block_name,
-            block_content: text,
-            line,
-            column,
-            prefix,
-        };
+        let ctx = PluginLspContext::new(block_name, text, prefix)
+            .at_position(line, column);
 
         let plugin_completions = registry.get_completions(block_name, &ctx);
         plugin_completions
@@ -195,6 +216,159 @@ impl CompletionProvider {
             },
             ..Default::default()
         }
+    }
+
+    /// Get completions from static language registry definitions for a specific block
+    fn get_language_registry_completions(
+        &self,
+        _block_name: &str,
+        prefix: &str,
+    ) -> Vec<CompletionItem> {
+        let registry = match &self.language_registry {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+
+        let mut completions = Vec::new();
+
+        // Get keywords for this block context
+        for keyword in registry.keywords_for_context("block") {
+            if keyword.name.to_lowercase().starts_with(&prefix.to_lowercase()) {
+                completions.push(CompletionItem {
+                    label: keyword.name.clone(),
+                    kind: Some(CompletionItemKind::KEYWORD),
+                    detail: Some(format!("Keyword ({})", keyword.plugin_name)),
+                    documentation: Some(Documentation::String(keyword.description.clone())),
+                    insert_text: Some(keyword.name.clone()),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // Get types from the registry
+        for type_name in registry.all_types() {
+            if type_name.to_lowercase().starts_with(&prefix.to_lowercase()) {
+                if let Some(type_info) = registry.get_type(type_name) {
+                    completions.push(CompletionItem {
+                        label: type_name.to_string(),
+                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                        detail: Some(format!("Type ({})", type_info.plugin_name)),
+                        documentation: Some(Documentation::String(type_info.description.clone())),
+                        insert_text: Some(type_name.to_string()),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+
+        // Get functions from the registry
+        for func_name in registry.all_functions() {
+            if func_name.to_lowercase().starts_with(&prefix.to_lowercase()) {
+                if let Some(func_info) = registry.get_function(func_name) {
+                    completions.push(CompletionItem {
+                        label: func_name.to_string(),
+                        kind: Some(CompletionItemKind::FUNCTION),
+                        detail: Some(func_info.signature.clone()),
+                        documentation: Some(Documentation::String(func_info.description.clone())),
+                        insert_text: Some(format!("{}()", func_name)),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+
+        // Get snippet completions
+        for snippet in registry.get_completions(prefix) {
+            completions.push(CompletionItem {
+                label: snippet.trigger.clone(),
+                kind: Some(CompletionItemKind::SNIPPET),
+                detail: snippet.description.clone(),
+                documentation: Some(Documentation::String(format!(
+                    "Plugin: {}",
+                    snippet.plugin_name
+                ))),
+                insert_text: Some(snippet.insert.clone()),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                ..Default::default()
+            });
+        }
+
+        completions
+    }
+
+    /// Get context-aware completions from language registry
+    fn get_context_aware_completions(&self, prefix: &str) -> Vec<CompletionItem> {
+        let registry = match &self.language_registry {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+
+        let mut completions = Vec::new();
+
+        // Add block-level completions (e.g., "data:", "endpoints:")
+        for block_name in registry.all_blocks() {
+            if block_name.to_lowercase().starts_with(&prefix.to_lowercase()) {
+                if let Some(block_info) = registry.get_block(block_name) {
+                    completions.push(CompletionItem {
+                        label: format!("{}:", block_name),
+                        kind: Some(CompletionItemKind::KEYWORD),
+                        detail: Some(format!("Block ({})", block_info.plugin_name)),
+                        documentation: block_info
+                            .description
+                            .as_ref()
+                            .map(|d| Documentation::String(d.clone())),
+                        insert_text: Some(format!("{}:\n\t${{1:content}}", block_name)),
+                        insert_text_format: Some(InsertTextFormat::SNIPPET),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+
+        // Add expression-context keywords
+        for keyword in registry.keywords_for_context("expression") {
+            if keyword.name.to_lowercase().starts_with(&prefix.to_lowercase()) {
+                completions.push(CompletionItem {
+                    label: keyword.name.clone(),
+                    kind: Some(CompletionItemKind::KEYWORD),
+                    detail: Some(format!("Keyword ({})", keyword.plugin_name)),
+                    documentation: Some(Documentation::String(keyword.description.clone())),
+                    insert_text: Some(keyword.name.clone()),
+                    ..Default::default()
+                });
+            }
+        }
+
+        completions
+    }
+
+    /// Provide completions with file path context for path-based plugin activation
+    pub async fn provide_completions_with_path(
+        &self,
+        text: &Rope,
+        position: Position,
+        file_path: Option<&Path>,
+    ) -> Vec<CompletionItem> {
+        let mut completions = self.provide_completions(text, position).await;
+
+        // Check if file path matches a plugin's owned paths
+        if let (Some(path), Some(registry)) = (file_path, &self.language_registry) {
+            if let Some(path_str) = path.to_str() {
+                if let Some(plugin_name) = registry.plugin_for_path(path_str) {
+                    // Boost completions from the owning plugin
+                    for completion in &mut completions {
+                        if let Some(detail) = &completion.detail {
+                            if detail.contains(plugin_name) {
+                                // This completion is from the owning plugin, boost its sort order
+                                completion.sort_text = Some(format!("0_{}", completion.label));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        completions
     }
 
     fn is_after_dot(&self, prefix: &str) -> bool {

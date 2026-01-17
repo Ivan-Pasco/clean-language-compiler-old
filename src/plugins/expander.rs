@@ -410,6 +410,7 @@ mod tests {
             functions: vec![],
             classes: vec![],
             imports: vec![],
+            plugins: vec![],
             start_function: None,
             tests: vec![],
             screens: vec![],

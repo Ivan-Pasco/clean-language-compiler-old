@@ -5,33 +5,53 @@
  * including plugin-provided documentation for DSL blocks.
  */
 
-use clean_language_compiler::plugins::PluginRegistry;
+use clean_language_compiler::plugins::{LanguageRegistry, PluginRegistry};
 use ropey::Rope;
 use std::sync::Arc;
 use tower_lsp::lsp_types::*;
 
 pub struct HoverProvider {
-    /// Plugin registry for dynamic hover information
+    /// Plugin registry for dynamic hover information (WASM plugins)
     plugin_registry: Option<Arc<PluginRegistry>>,
+    /// Language registry for static hover information (plugin.toml definitions)
+    language_registry: Option<Arc<LanguageRegistry>>,
 }
 
 impl HoverProvider {
     pub fn new() -> Self {
         Self {
             plugin_registry: None,
+            language_registry: None,
         }
     }
 
-    /// Create a hover provider with plugin support
+    /// Create a hover provider with plugin support (WASM plugins only)
     pub fn with_plugins(registry: Arc<PluginRegistry>) -> Self {
         Self {
             plugin_registry: Some(registry),
+            language_registry: None,
+        }
+    }
+
+    /// Create a hover provider with both plugin and language registries
+    pub fn with_language_registry(
+        plugin_registry: Arc<PluginRegistry>,
+        language_registry: Arc<LanguageRegistry>,
+    ) -> Self {
+        Self {
+            plugin_registry: Some(plugin_registry),
+            language_registry: Some(language_registry),
         }
     }
 
     /// Set the plugin registry (for dynamic updates)
     pub fn set_plugin_registry(&mut self, registry: Arc<PluginRegistry>) {
         self.plugin_registry = Some(registry);
+    }
+
+    /// Set the language registry (for dynamic updates)
+    pub fn set_language_registry(&mut self, registry: Arc<LanguageRegistry>) {
+        self.language_registry = Some(registry);
     }
 
     pub async fn provide_hover(&self, text: &Rope, position: Position) -> Option<Hover> {
@@ -81,9 +101,14 @@ impl HoverProvider {
     fn get_hover_info(&self, word: &str, line: &str, text: &Rope) -> Option<Hover> {
         // Check different categories of language elements
 
-        // First check plugins - they may provide hover for their keywords
+        // First check WASM plugins - they may provide hover for their keywords
         if let Some(plugin_info) = self.get_plugin_hover_info(word, text) {
             return Some(self.create_hover(plugin_info));
+        }
+
+        // Check static language registry definitions
+        if let Some(registry_info) = self.get_registry_hover(word) {
+            return Some(self.create_hover(registry_info));
         }
 
         // Keywords
@@ -111,6 +136,50 @@ impl HoverProvider {
         // Language constructs
         if let Some(construct_info) = self.get_construct_info(word, line) {
             return Some(self.create_hover(construct_info));
+        }
+
+        None
+    }
+
+    /// Get hover information from static language registry definitions
+    fn get_registry_hover(&self, word: &str) -> Option<String> {
+        let registry = self.language_registry.as_ref()?;
+
+        // Check if it's a block name
+        if let Some(block_info) = registry.get_block(word) {
+            return Some(format!(
+                "**{}:** Block\n\n{}\n\n*Plugin: {}*",
+                word,
+                block_info.description.as_deref().unwrap_or("Plugin-defined block"),
+                block_info.plugin_name
+            ));
+        }
+
+        // Check if it's a keyword
+        if let Some(keyword_info) = registry.get_keyword(word) {
+            return Some(format!(
+                "**{}** Keyword\n\n{}\n\n*Context: {} | Plugin: {}*",
+                word,
+                keyword_info.description,
+                keyword_info.context,
+                keyword_info.plugin_name
+            ));
+        }
+
+        // Check if it's a type
+        if let Some(type_info) = registry.get_type(word) {
+            return Some(format!(
+                "**{}** Type\n\n{}\n\n*Plugin: {}*",
+                word, type_info.description, type_info.plugin_name
+            ));
+        }
+
+        // Check if it's a function
+        if let Some(func_info) = registry.get_function(word) {
+            return Some(format!(
+                "**{}** Function\n\n```clean\n{}\n```\n\n{}\n\n*Plugin: {}*",
+                word, func_info.signature, func_info.description, func_info.plugin_name
+            ));
         }
 
         None
