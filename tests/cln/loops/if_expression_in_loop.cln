@@ -10,4 +10,4 @@ functions:
 				result = result + "odd"
 			i = i + 1
 
-		printl result
+		print(result) +

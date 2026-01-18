@@ -82,6 +82,7 @@ impl TokenParser {
         let mut classes = Vec::new();
         let mut tests = Vec::new();
         let mut imports = Vec::new();
+        let mut plugins = Vec::new();
         let mut statements = Vec::new();
         let screens = Vec::new(); // Always empty - screens handled as framework blocks by plugins
         let mut state: Option<crate::ast::StateBlock> = None;
@@ -164,6 +165,17 @@ impl TokenParser {
                                 "Parsed state block"
                             );
                             state = Some(state_block);
+                        }
+                        Err(e) => self.errors.push(e),
+                    }
+                }
+                TokenKind::Plugins => {
+                    // Parse plugins: block
+                    debug!("Parsing plugins: block");
+                    match self.parse_plugins_block() {
+                        Ok(mut plugin_names) => {
+                            debug!(plugin_count = plugin_names.len(), "Parsed plugins block");
+                            plugins.append(&mut plugin_names);
                         }
                         Err(e) => self.errors.push(e),
                     }
@@ -268,6 +280,7 @@ impl TokenParser {
 
         Ok(Program {
             imports,
+            plugins,
             statements,
             functions,
             classes,
@@ -898,10 +911,6 @@ impl TokenParser {
             TokenKind::Print => {
                 self.bump();
                 "print".to_string()
-            }
-            TokenKind::Println => {
-                self.bump();
-                "println".to_string()
             }
             _ => {
                 return Err(CompilerError::parse_error(
@@ -2106,6 +2115,22 @@ impl TokenParser {
             self.skip_whitespace();
         }
 
+        // Validate: reject plugin names in import: blocks
+        // Plugin names look like "frame.ui", "frame.data" (word.word format)
+        if Self::is_plugin_name(&name) {
+            return Err(CompilerError::parse_error(
+                format!(
+                    "Use 'plugins:' block for framework plugins like '{}'. Change 'import:' to 'plugins:'",
+                    name
+                ),
+                Some(first_token.location.clone()),
+                Some(format!(
+                    "Framework plugins should be declared in a plugins: block:\n\nplugins:\n    {}\n\nThe 'import:' block is for module imports, not plugins.",
+                    name
+                )),
+            ));
+        }
+
         // Check for alias (as ...)
         let alias = if let TokenKind::Identifier(id) = self.current_kind() {
             if id == "as" {
@@ -2466,20 +2491,6 @@ impl TokenParser {
                 // Not an apply block, restore and parse as regular print
                 self.cursor = saved_cursor;
                 self.parse_print()
-            }
-            TokenKind::Println => {
-                // Check if this is a println apply block: println:
-                let saved_cursor = self.cursor;
-                self.bump(); // consume println
-                self.skip_whitespace();
-                if self.check(&TokenKind::Colon) {
-                    // This is a println apply block
-                    self.cursor = saved_cursor; // restore to println token
-                    return self.parse_function_apply_block();
-                }
-                // Not an apply block, restore and parse as regular println
-                self.cursor = saved_cursor;
-                self.parse_println()
             }
             TokenKind::Error => self.parse_error_statement(),
             TokenKind::Constant => self.parse_constant_apply_block(),
@@ -3227,51 +3238,6 @@ impl TokenParser {
         Ok(Statement::Print {
             expression,
             newline: false,
-            location: Some(print_token.location),
-        })
-    }
-
-    fn parse_println(&mut self) -> Result<Statement, CompilerError> {
-        let print_token = self.expect(&TokenKind::Println)?;
-        self.skip_whitespace();
-
-        // Check if we have parentheses (function call style) with multiple arguments
-        let expression = if self.check(&TokenKind::LeftParen) {
-            self.bump(); // consume (
-            self.skip_whitespace();
-
-            // Parse comma-separated arguments
-            let mut arguments = Vec::new();
-            if !self.check(&TokenKind::RightParen) {
-                loop {
-                    arguments.push(self.parse_expression()?);
-                    self.skip_whitespace();
-
-                    if !self.eat(&TokenKind::Comma) {
-                        break;
-                    }
-                    self.skip_whitespace();
-                }
-            }
-
-            self.expect(&TokenKind::RightParen)?;
-
-            // If multiple arguments, create a function call expression
-            // If single argument, use it directly
-            if arguments.len() == 1 {
-                arguments.into_iter().next().unwrap()
-            } else {
-                // Create a function call to represent multi-arg println
-                Expression::Call("println".to_string(), arguments)
-            }
-        } else {
-            // No parentheses - parse single expression
-            self.parse_expression()?
-        };
-
-        Ok(Statement::Print {
-            expression,
-            newline: true,
             location: Some(print_token.location),
         })
     }
@@ -4275,5 +4241,125 @@ impl TokenParser {
         // No guard found, revert cursor position
         self.cursor = start_cursor;
         Ok(None)
+    }
+
+    /// Parse a plugins: block containing plugin names
+    ///
+    /// Syntax:
+    /// ```text
+    /// plugins:
+    ///     frame.ui
+    ///     frame.data
+    /// ```
+    fn parse_plugins_block(&mut self) -> Result<Vec<String>, CompilerError> {
+        // Consume "plugins" keyword
+        self.expect(&TokenKind::Plugins)?;
+        self.skip_whitespace();
+
+        // Consume ":"
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        let mut plugin_names: Vec<String> = Vec::new();
+
+        // Expect indentation for block body
+        if !matches!(self.current_kind(), TokenKind::Indent(_))
+            && !matches!(self.current_kind(), TokenKind::Newline)
+        {
+            return Err(CompilerError::parse_error(
+                "Expected indented plugin names after 'plugins:'".to_string(),
+                Some(self.current().location.clone()),
+                Some("Plugin names must be indented. Example:\nplugins:\n    frame.ui".to_string()),
+            ));
+        }
+
+        // Skip newline if present
+        if matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump();
+        }
+
+        // Get the indent level
+        let block_level = if let TokenKind::Indent(level) = self.current_kind() {
+            *level
+        } else {
+            1 // Default to level 1
+        };
+
+        // Consume the initial indent
+        if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            self.bump();
+        }
+
+        // Parse plugin names until we see a dedent or different token
+        loop {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for dedent (end of block)
+            if let TokenKind::Dedent(level) = self.current_kind() {
+                if *level < block_level {
+                    self.bump();
+                    break;
+                }
+            }
+
+            // Check for other top-level keywords that end the plugins block
+            if matches!(
+                self.current_kind(),
+                TokenKind::Functions
+                    | TokenKind::Class
+                    | TokenKind::Start
+                    | TokenKind::Tests
+                    | TokenKind::Import
+                    | TokenKind::State
+                    | TokenKind::Plugins
+            ) {
+                break;
+            }
+
+            // Parse a plugin name: identifier.identifier (e.g., frame.ui)
+            match self.current_kind() {
+                TokenKind::Identifier(first_part) => {
+                    let mut plugin_name = first_part.clone();
+                    self.bump();
+                    self.skip_whitespace();
+
+                    // Check for dot notation (plugin names must have dots)
+                    if self.eat(&TokenKind::Dot) {
+                        self.skip_whitespace();
+                        let second_part = self.expect_identifier()?;
+                        plugin_name.push('.');
+                        plugin_name.push_str(&second_part.text);
+                    }
+
+                    debug!(plugin_name = %plugin_name, "Parsed plugin name");
+                    plugin_names.push(plugin_name);
+                }
+                TokenKind::Newline => {
+                    self.bump();
+                }
+                TokenKind::Indent(_) => {
+                    self.bump();
+                }
+                TokenKind::Dedent(_) => {
+                    break;
+                }
+                _ => {
+                    // Unknown token, end the block
+                    break;
+                }
+            }
+        }
+
+        Ok(plugin_names)
+    }
+
+    /// Check if a name looks like a framework plugin name (e.g., "frame.ui", "frame.data")
+    /// Plugin names contain dots but don't end with ".cln" (which would be a file import)
+    fn is_plugin_name(name: &str) -> bool {
+        name.contains('.') && !name.ends_with(".cln")
     }
 }

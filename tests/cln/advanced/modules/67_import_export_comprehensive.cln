@@ -12,20 +12,20 @@ functions:
 		return a + b + c
 
 	void demonstrateModules()
-		printl("=== Import/Export Demonstration ===")
+		print("=== Import/Export Demonstration ===") +
 
 		// String operations
 		string text = processData("  hello world  ")
-		printl("Processed text: " + text)
+		print("Processed text: " + text) +
 
 		// List operations
 		list<integer> numbers = [1, 2, 3, 4, 5]
 		integer sum = calculateSum(numbers[0], numbers[1], numbers[2])
-		printl("Sum of first three: " + sum.toString())
+		print("Sum of first three: " + sum.toString() +)
 
 		// Math operations with integer
 		integer doubled = 21 * 2
-		printl("21 * 2 = " + doubled.toString())
+		print("21 * 2 = " + doubled.toString() +)
 
 	// Private helper functions (marked private below)
 	string internalHelper(string data)
@@ -41,4 +41,4 @@ private:
 
 start()
 	demonstrateModules()
-	printl("Import/export test completed successfully")
+	print("Import/export test completed successfully") +

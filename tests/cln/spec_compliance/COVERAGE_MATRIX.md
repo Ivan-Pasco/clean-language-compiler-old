@@ -130,7 +130,6 @@
 
 | Feature | Test File | Status |
 |---------|-----------|--------|
-| println: block | - | - |
 | print: block | - | - |
 | Method apply-blocks | - | - |
 | integer: block | apply_blocks/type_apply_blocks_spec.cln | ✅ |

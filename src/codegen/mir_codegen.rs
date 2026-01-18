@@ -2241,7 +2241,7 @@ impl MirCodeGenerator<'_> {
                     arguments.len()
                 );
                 match function_name.as_deref() {
-                    Some("print") | Some("printl") | Some("println") => {
+                    Some("print") | Some("printl") => {
                         debug_mir!(": Matched print function, loading {} arguments", arguments.len());
                         // CRITICAL FIX: For multi-argument print, we must call print ONCE PER ARGUMENT
                         // The print function takes (content_ptr, length) - only 2 params
@@ -2879,7 +2879,6 @@ impl MirCodeGenerator<'_> {
                                 if function_name == "testFunction"
                                     || function_name == "print"
                                     || function_name == "printl"
-                                    || function_name == "println"
                                     || function_name == "list.set"
                                     || function_name == "list.clear"
                                 {
@@ -2918,7 +2917,7 @@ impl MirCodeGenerator<'_> {
                         // These are builtin/stdlib functions that return nothing (modify in-place or have side effects only)
                         // NOTE: list.push is NOT void - it returns the list for chaining
                         let is_known_void_builtin = match function_name.as_deref() {
-                            Some("print") | Some("printl") | Some("println") => true,
+                            Some("print") | Some("printl") => true,
                             Some("list.set") | Some("list.clear") => true,
                             Some("mem_release") | Some("mem_retain") => true,
                             Some("mem_scope_push") | Some("mem_scope_pop") => true, // Scope-based memory management
@@ -4171,7 +4170,7 @@ impl MirCodeGenerator<'_> {
             // File functions that return I32 (string pointer or boolean)
             name if name.starts_with("file.") => Some(MirType::I32),
             // Void functions
-            "print" | "printl" | "println" => Some(MirType::Void),
+            "print" | "printl" => Some(MirType::Void),
             // Default - return None to indicate unknown
             _ => None,
         }
@@ -4839,10 +4838,6 @@ impl MirCodeGenerator<'_> {
         self.function_signatures.insert(
             SymbolId(1),
             create_builtin_signature("printl", 1, MirType::Void),
-        );
-        self.function_signatures.insert(
-            SymbolId(2),
-            create_builtin_signature("println", 2, MirType::Void),
         );
 
         // Register value-returning type conversion functions

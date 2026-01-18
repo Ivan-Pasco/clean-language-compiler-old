@@ -1037,6 +1037,7 @@ pub struct Class {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub imports: Vec<ImportItem>,
+    pub plugins: Vec<String>, // Framework plugins (e.g., "frame.ui", "frame.data")
     pub statements: Vec<Statement>,
     pub functions: Vec<Function>,
     pub classes: Vec<Class>,

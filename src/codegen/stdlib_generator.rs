@@ -150,10 +150,10 @@ impl StdlibGenerator {
         Ok(())
     }
 
-    /// Register console operations (print, println, input, etc.)
+    /// Register console operations (print, input, etc.)
+    /// Note: Use print("text") for no newline, print("text") + for newline
     pub fn register_console_operations(&mut self) -> Result<(), CompilerError> {
         self.register_function_meta("print", StdlibCategory::Console, "Print to console");
-        self.register_function_meta("println", StdlibCategory::Console, "Print line to console");
         Ok(())
     }
 

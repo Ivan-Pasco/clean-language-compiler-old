@@ -171,7 +171,6 @@ fn test_all_keywords() {
         ("onError", TokenKind::OnError),
         ("or", TokenKind::Or),
         ("print", TokenKind::Print),
-        ("println", TokenKind::Println),
         ("return", TokenKind::Return),
         ("start", TokenKind::Start),
         ("step", TokenKind::Step),

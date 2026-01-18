@@ -16,5 +16,5 @@ functions:
 
 			i = i + 1
 
-		printl y
-		printl vy
+		print(y) +
+		print(vy) +

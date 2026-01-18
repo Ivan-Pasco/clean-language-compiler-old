@@ -41,17 +41,17 @@ functions:
 			return "FAIL: Nested field returned '" + countValue + "' instead of '4'"
 
 start()
-	printl("=== JSON Field Access Bug Test ===")
-	printl("")
+	print("=== JSON Field Access Bug Test ===") +
+	print("") +
 
-	printl("Test 1: Simple object parsing")
-	printl(testSimpleJsonParsing())
-	printl("")
+	print("Test 1: Simple object parsing") +
+	print(testSimpleJsonParsing() +)
+	print("") +
 
-	printl("Test 2: Nested object parsing")
-	printl(testNestedJsonParsing())
-	printl("")
+	print("Test 2: Nested object parsing") +
+	print(testNestedJsonParsing() +)
+	print("") +
 
-	printl("=== Expected Results ===")
-	printl("Both tests should PASS, but currently both FAIL")
-	printl("This confirms the bug: JSON field access returns default values")
+	print("=== Expected Results ===") +
+	print("Both tests should PASS, but currently both FAIL") +
+	print("This confirms the bug: JSON field access returns default values") +

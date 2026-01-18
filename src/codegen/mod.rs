@@ -1510,7 +1510,7 @@ impl CodeGenerator {
                 }
 
                 // Special handling for print functions - they use type-safe dispatch
-                if func_name == "print" || func_name == "printl" || func_name == "println" {
+                if func_name == "print" || func_name == "printl" {
                     if args.len() != 1 {
                         return Err(CompilerError::detailed_type_error(
                             format!("Print function '{func_name}' called with wrong number of arguments"),
@@ -10203,7 +10203,7 @@ impl CodeGenerator {
             trace!("  Processing expression {}: {:?}", i, expression);
 
             // Special case for print functions - treat them as print statements
-            if function_name == "print" || function_name == "println" || function_name == "printl" {
+            if function_name == "print" || function_name == "printl" {
                 trace!("    -> Calling generate_print_statement");
                 self.generate_print_statement(expression, false, instructions)?;
             } else {

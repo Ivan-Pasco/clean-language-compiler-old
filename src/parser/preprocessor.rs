@@ -189,8 +189,7 @@ impl FunctionPreprocessor {
             // Special cases: these keywords with parentheses are not function declarations
             if parts.len() == 1 {
                 match parts[0] {
-                    "start" | "print" | "println" | "printl" | "error" | "return" | "if"
-                    | "while" => {
+                    "start" | "print" | "error" | "return" | "if" | "while" => {
                         return false;
                     }
                     _ => {}

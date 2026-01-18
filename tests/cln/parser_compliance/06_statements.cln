@@ -22,8 +22,8 @@ start()
 	print "Direct message"
 	print(count, message, active)
 	print(count)
-	println("With newline")
-	printl("Print line")
+	print("With newline") +
+	print("Print line") +
 
 	# Error statement
 	if count < 0

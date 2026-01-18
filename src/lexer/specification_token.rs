@@ -45,8 +45,7 @@ pub enum TokenKind {
     Not,         // not
     OnError,     // onError
     Or,          // or
-    Print,       // print
-    Println,     // println
+    Print,       // print (use print() + for newline)
     Return,      // return
     Start,       // start
     Step,        // step
@@ -64,6 +63,7 @@ pub enum TokenKind {
     Private,     // private
     Constant,    // constant
     Functions,   // functions
+    Plugins,     // plugins - Plugin loading block
     State,       // state - State management block
     Watch,       // watch - State change observer
     Computed,    // computed - Derived state value
@@ -171,7 +171,6 @@ impl fmt::Display for TokenKind {
             TokenKind::OnError => write!(f, "onError"),
             TokenKind::Or => write!(f, "or"),
             TokenKind::Print => write!(f, "print"),
-            TokenKind::Println => write!(f, "println"),
             TokenKind::Return => write!(f, "return"),
             TokenKind::Start => write!(f, "start"),
             TokenKind::Step => write!(f, "step"),
@@ -189,6 +188,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Private => write!(f, "private"),
             TokenKind::Constant => write!(f, "constant"),
             TokenKind::Functions => write!(f, "functions"),
+            TokenKind::Plugins => write!(f, "plugins"),
             TokenKind::State => write!(f, "state"),
             TokenKind::Watch => write!(f, "watch"),
             TokenKind::Computed => write!(f, "computed"),
@@ -382,7 +382,6 @@ impl Keywords {
             "onError" => Some(TokenKind::OnError),
             "or" => Some(TokenKind::Or),
             "print" => Some(TokenKind::Print),
-            "println" => Some(TokenKind::Println),
             "return" => Some(TokenKind::Return),
             "start" => Some(TokenKind::Start),
             "step" => Some(TokenKind::Step),
@@ -400,6 +399,7 @@ impl Keywords {
             "private" => Some(TokenKind::Private),
             "constant" => Some(TokenKind::Constant),
             "functions" => Some(TokenKind::Functions),
+            "plugins" => Some(TokenKind::Plugins),
             "state" => Some(TokenKind::State),
             "watch" => Some(TokenKind::Watch),
             "computed" => Some(TokenKind::Computed),
@@ -442,6 +442,7 @@ impl TokenKind {
             TokenKind::Else => "else".to_string(),
             TokenKind::Error => "error".to_string(),
             TokenKind::Functions => "functions".to_string(),
+            TokenKind::Plugins => "plugins".to_string(),
             TokenKind::State => "state".to_string(),
             TokenKind::Watch => "watch".to_string(),
             TokenKind::Computed => "computed".to_string(),

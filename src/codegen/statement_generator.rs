@@ -80,10 +80,10 @@ impl CodeGenerator {
                 Ok(())
             },
             Statement::FunctionApplyBlock { function_name, expressions, .. } => {
-                // Handle function apply-blocks: println: "Hello", "World"
+                // Handle function apply-blocks: print: "Hello", "World"
                 for expression in expressions {
                     // Special case for print functions - treat them as print statements
-                    if function_name == "print" || function_name == "println" || function_name == "printl" {
+                    if function_name == "print" || function_name == "printl" {
                         self.generate_print_statement(expression, instructions)?;
                     } else {
                         // Generate a function call for each expression

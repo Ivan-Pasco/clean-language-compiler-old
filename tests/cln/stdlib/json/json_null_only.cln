@@ -4,8 +4,8 @@
 functions:
 	void testParseNull()
 		integer data = json.textToData("null")
-		println("Parsed null")
+		print("Parsed null") +
 
 start()
 	testParseNull()
-	println("Test completed")
+	print("Test completed") +

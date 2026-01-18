@@ -2,8 +2,8 @@
 
 functions:
 	void testApplyBlocks()
-		// Test println apply block
-		println:
+		// Test print apply block
+		print:
 			"Line 1"
 			"Line 2"
 

@@ -56,34 +56,19 @@ impl StdlibPlugin for ConsolePlugin {
     }
 
     fn provided_functions(&self) -> Vec<FunctionMetadata> {
-        vec![
-            FunctionMetadata {
-                name: "print".to_string(),
-                signature: "print(message: string) -> void".to_string(),
-                description: "Print message to console".to_string(),
-                category: FunctionCategory::Console,
-                is_builtin: true,
-                is_async: false,
-                memory_requirements: MemoryRequirements {
-                    heap_bytes: Some(64),
-                    stack_depth: Some(1),
-                    allocates_memory: false,
-                },
+        vec![FunctionMetadata {
+            name: "print".to_string(),
+            signature: "print(message: string) -> void".to_string(),
+            description: "Print message to console".to_string(),
+            category: FunctionCategory::Console,
+            is_builtin: true,
+            is_async: false,
+            memory_requirements: MemoryRequirements {
+                heap_bytes: Some(64),
+                stack_depth: Some(1),
+                allocates_memory: false,
             },
-            FunctionMetadata {
-                name: "println".to_string(),
-                signature: "println(message: string) -> void".to_string(),
-                description: "Print message with newline".to_string(),
-                category: FunctionCategory::Console,
-                is_builtin: true,
-                is_async: false,
-                memory_requirements: MemoryRequirements {
-                    heap_bytes: Some(64),
-                    stack_depth: Some(1),
-                    allocates_memory: false,
-                },
-            },
-        ]
+        }]
     }
 
     fn priority(&self) -> i32 {

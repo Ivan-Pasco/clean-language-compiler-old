@@ -293,9 +293,8 @@ impl SemanticAnalyzer {
     /// Register built-in functions that are available in the global scope
     fn register_builtin_functions(&mut self) {
         // Register standard library functions
+        // Note: Use print("text") for no newline, print("text") + for newline
         self.register_builtin("print", vec![Type::String], Type::Void);
-        self.register_builtin("println", vec![Type::String], Type::Void);
-        self.register_builtin("printl", vec![Type::String], Type::Void);
 
         // Assertion functions (keep as traditional functions)
         self.register_builtin("mustBeTrue", vec![Type::Boolean], Type::Void);
@@ -364,14 +363,6 @@ impl SemanticAnalyzer {
         // Console functions - accessed directly without module prefix
         self.function_table.insert(
             "print".to_string(),
-            vec![(vec![Type::String], Type::Void, 1)],
-        );
-        self.function_table.insert(
-            "println".to_string(),
-            vec![(vec![Type::String], Type::Void, 1)],
-        );
-        self.function_table.insert(
-            "printl".to_string(),
             vec![(vec![Type::String], Type::Void, 1)],
         );
         self.function_table.insert(
@@ -3134,7 +3125,7 @@ impl SemanticAnalyzer {
                     // Found stdlib namespace variable, return Any for compatibility
                     Ok(Type::Any)
                 } else if self.function_table.contains_key(name) {
-                    // Check if this is a builtin function like print, println, etc.
+                    // Check if this is a builtin function like print, etc.
                     // Builtin functions can be used as variables (function references)
                     if let Some(function_overloads) = self.function_table.get(name) {
                         // Return a function type based on the first overload
@@ -3285,8 +3276,8 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                // Special handling for type-safe print functions
-                if name == "print" || name == "printl" || name == "println" {
+                // Special handling for type-safe print function
+                if name == "print" {
                     return self.check_print_function_call(name, args);
                 }
 

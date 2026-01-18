@@ -437,11 +437,11 @@ pub fn compile_with_plugins_and_opt_level(
 
 /// Compiles Clean Language source code with external WASM plugins loaded from ~/.cleen/plugins/
 ///
-/// This function automatically discovers plugins based on `import:` blocks in the source code.
+/// This function automatically discovers plugins based on `plugins:` blocks in the source code.
 /// Plugins must be installed using `cleen plugin add <name>` before they can be used.
 ///
 /// # Arguments
-/// * `source` - The Clean Language source code (may contain `import:` blocks)
+/// * `source` - The Clean Language source code (may contain `plugins:` blocks)
 /// * `file_path` - Path for error reporting
 ///
 /// # Returns
@@ -450,8 +450,8 @@ pub fn compile_with_plugins_and_opt_level(
 ///
 /// # Example
 /// ```ignore
-/// // Source code with import block:
-/// // import:
+/// // Source code with plugins block:
+/// // plugins:
 /// //     frame.web
 /// //     frame.data
 /// //
@@ -470,7 +470,7 @@ pub fn compile_with_external_plugins(
 /// Compiles Clean Language source code with external WASM plugins and custom optimization level
 ///
 /// # Arguments
-/// * `source` - The Clean Language source code (may contain `import:` blocks)
+/// * `source` - The Clean Language source code (may contain `plugins:` blocks)
 /// * `file_path` - Path for error reporting
 /// * `opt_level` - Optimization level (0-3)
 ///
@@ -482,16 +482,16 @@ pub fn compile_with_external_plugins_and_opt_level(
     file_path: &str,
     opt_level: u8,
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
-    // Extract import statements from source
-    let imports = extract_imports(source);
+    // Extract plugins from plugins: block in source
+    let plugin_names = extract_plugins(source);
 
-    if imports.is_empty() {
-        // No imports, compile without external plugins
-        tracing::debug!("No import: block found, compiling without external plugins");
+    if plugin_names.is_empty() {
+        // No plugins block, compile without external plugins
+        tracing::debug!("No plugins: block found, compiling without external plugins");
         return compile_pure(source, file_path);
     }
 
-    tracing::info!(imports = ?imports, "Loading external plugins");
+    tracing::info!(plugins = ?plugin_names, "Loading external plugins from plugins: block");
 
     // Load plugins using WasmPluginLoader
     let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
@@ -501,7 +501,7 @@ pub fn compile_with_external_plugins_and_opt_level(
         }]
     })?;
 
-    let registry = loader.load_plugins(&imports).map_err(|e| {
+    let registry = loader.load_plugins(&plugin_names).map_err(|e| {
         vec![CompilerError::PluginError {
             message: format!("Failed to load plugins: {}", e),
             location: None,
@@ -649,35 +649,35 @@ pub fn compile_for_plugin_with_opt_level(
     compile_with_target(source, file_path, CompilationTarget::Plugin, opt_level)
 }
 
-/// Extracts plugin names from `import:` blocks in source code
+/// Extracts plugin names from `plugins:` blocks in source code
 ///
 /// # Format
 /// ```clean
-/// import:
+/// plugins:
 ///     frame.web
 ///     frame.data
 /// ```
 ///
 /// # Returns
 /// Vector of plugin names (e.g., ["frame.web", "frame.data"])
-fn extract_imports(source: &str) -> Vec<String> {
-    let mut imports = Vec::new();
-    let mut in_import_block = false;
+fn extract_plugins(source: &str) -> Vec<String> {
+    let mut plugins = Vec::new();
+    let mut in_plugins_block = false;
 
     for line in source.lines() {
         let trimmed = line.trim();
 
-        // Check for import: block start
-        if trimmed == "import:" {
-            in_import_block = true;
+        // Check for plugins: block start
+        if trimmed == "plugins:" {
+            in_plugins_block = true;
             continue;
         }
 
-        // If in import block, collect plugin names
-        if in_import_block {
-            // Empty line or new block ends the import block
+        // If in plugins block, collect plugin names
+        if in_plugins_block {
+            // Empty line or new block ends the plugins block
             if trimmed.is_empty() || (trimmed.ends_with(':') && !trimmed.starts_with('\t')) {
-                in_import_block = false;
+                in_plugins_block = false;
                 continue;
             }
 
@@ -685,16 +685,16 @@ fn extract_imports(source: &str) -> Vec<String> {
             if line.starts_with('\t') || line.starts_with("    ") {
                 let plugin_name = trimmed.to_string();
                 if !plugin_name.is_empty() && !plugin_name.starts_with('#') {
-                    imports.push(plugin_name);
+                    plugins.push(plugin_name);
                 }
             } else {
                 // Non-indented line ends the block
-                in_import_block = false;
+                in_plugins_block = false;
             }
         }
     }
 
-    imports
+    plugins
 }
 
 /// Compiles a multi-file Clean Language program from an entry file

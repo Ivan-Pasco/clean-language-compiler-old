@@ -8,4 +8,4 @@ functions:
 			x = x + result
 			i = i + 1
 
-		printl x
+		print(x) +

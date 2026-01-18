@@ -13,35 +13,35 @@ functions:
 		// Test 1: Basic dot notation on JSON object
 		any data = json.textToData("\{\"name\": \"John\", \"age\": 30\}")
 		any name = data.name
-		printl("Test 1: Basic dot notation - retrieved name field")
+		print("Test 1: Basic dot notation - retrieved name field") +
 
 		// Test 2: Nested dot notation
 		any nested = json.textToData("\{\"user\": \{\"profile\": \{\"name\": \"Alice\"\}\}\}")
 		any user = nested.user
 		any profile = user.profile
 		any profileName = profile.name
-		printl("Test 2: Nested dot notation - accessed user.profile.name")
+		print("Test 2: Nested dot notation - accessed user.profile.name") +
 
 		// Test 3: Dot notation with numeric values
 		any numbers = json.textToData("\{\"count\": 42, \"price\": 19.99\}")
 		any count = numbers.count
 		any price = numbers.price
-		printl("Test 3: Numeric values - retrieved count and price")
+		print("Test 3: Numeric values - retrieved count and price") +
 
 		// Test 4: Dot notation with boolean values
 		any flags = json.textToData("\{\"active\": true, \"deleted\": false\}")
 		any active = flags.active
 		any deleted = flags.deleted
-		printl("Test 4: Boolean values - retrieved active and deleted flags")
+		print("Test 4: Boolean values - retrieved active and deleted flags") +
 
 		// Test 5: Dot notation with null value
 		any nullData = json.textToData("\{\"optional\": null\}")
 		any optional = nullData.optional
-		printl("Test 5: Null value - retrieved optional field")
+		print("Test 5: Null value - retrieved optional field") +
 
 		// Test 6: Non-existent field returns null
 		any empty = json.textToData("\{\}")
 		any missing = empty.nonexistent
-		printl("Test 6: Missing field - accessed non-existent field")
+		print("Test 6: Missing field - accessed non-existent field") +
 
-		printl("All dot notation tests completed!")
+		print("All dot notation tests completed!") +

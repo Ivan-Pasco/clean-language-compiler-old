@@ -3,4 +3,4 @@
 
 start()
 	any value = null
-	printl("Null value created successfully")
+	print("Null value created successfully") +

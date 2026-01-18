@@ -6,10 +6,10 @@ functions:
 		// Simple interpolation
 		string name = "World"
 		string greeting = "Hello, {name}!"
-		printl(greeting)
+		print(greeting) +
 
 		// Multiple expressions
 		integer x = 10
 		integer y = 20
 		string result = "The sum of {x} and {y} is {x + y}"
-		printl(result)
+		print(result) +

@@ -198,7 +198,7 @@ Reserved keywords in Clean Language:
 and        class       computed     constructor  default     else
 error      false       for          from         function    guard
 if         import      in           iterate      not         null
-onError    or          print        println      reset       return
+onError    or          print        reset        return
 screen     start       state        step         test        tests
 this       to          true         watch        is          returns
 description while      input        unit         private     constant
@@ -479,7 +479,7 @@ functions:
         // Process tasks (from front)
         iterate i in 1 to 3
             string currentTask = tasks.remove()  // Gets "Task 1", then "Task 2", etc.
-            println("Processing: " + currentTask)
+            print("Processing: " + currentTask) +
 ```
 
 **Modified Operations**:
@@ -506,7 +506,7 @@ functions:
         // Undo actions (remove from top)
         iterate i in 1 to 3
             string lastAction = actions.remove()  // Gets "Save file", then "Edit text", etc.
-            println("Undoing: " + lastAction)
+            print("Undoing: " + lastAction) +
 ```
 
 **Modified Operations**:
@@ -531,10 +531,10 @@ functions:
         visitors.add("Alice")    // Ignored (duplicate)
         visitors.add("Charlie")  // Added
         
-        println("Unique visitors: " + visitors.size().toString())  // Prints: 3
-        
+        print("Unique visitors: " + visitors.size().toString()) +  // Prints: 3
+
         if visitors.contains("Alice")
-            println("Alice has visited")
+            print("Alice has visited") +
 ```
 
 **Modified Operations**:
@@ -681,10 +681,10 @@ Apply-blocks are a core language feature where `identifier:` applies that identi
 
 ### Function Calls
 ```clean
-println:
+print:
     "Hello"
     "World"
-// Equivalent to: println("Hello"), println("World")
+// Equivalent to: print("Hello"), print("World")
 
 list.push:
     item1
@@ -1062,12 +1062,6 @@ print:
     variable_name
     (complex + expression)
     result.toString()
-
-println:
-    "Header:"
-    value1
-    value2
-    "Footer"
 ```
 
 The block syntax allows for cleaner formatting when printing multiple values sequentially, maintaining consistency with other Clean Language block constructs like `functions:`, `string:`, etc.
@@ -1105,20 +1099,20 @@ functions:
     void start()
         // Basic user interaction
         string userName = input("Enter your name: ")
-        println("Hello, " + userName + "!")
-        
+        print("Hello, " + userName + "!") +
+
         // Numeric calculations
         integer num1 = input.integer("First number: ")
         integer num2 = input.integer("Second number: ")
         integer sum = num1 + num2
-        println("Sum: " + sum.toString())
-        
+        print("Sum: " + sum.toString()) +
+
         // Decision making
         boolean wantsCoffee = input.yesNo("Would you like coffee? ")
         if wantsCoffee
-            println("Great! Coffee coming right up.")
+            print("Great! Coffee coming right up.") +
         else
-            println("No problem, maybe next time.")
+            print("No problem, maybe next time.") +
 ```
 
 ### Return Statement
@@ -2890,23 +2884,99 @@ import:
     Json.decode as jd   // symbol alias
 ```
 
+#### File Path Imports
+
+In addition to module-name imports, Clean Language supports **direct file path imports** using string literals. This is useful for importing files from specific locations without relying on module resolution.
+
+```clean
+// Import a file using its relative path
+import "app/data/models.cln"
+import "../lib/utils.cln"
+import "./helpers.cln"
+```
+
+**Key differences from module imports:**
+
+| Feature | Module Import | File Path Import |
+|---------|---------------|------------------|
+| Syntax | `import: module_name` | `import "path/to/file.cln"` |
+| Resolution | Search paths (`./`, `./lib/`, etc.) | Relative to importing file |
+| Nested paths | `data.models` → `data/models.cln` | `"data/models.cln"` (explicit) |
+
+**Path Resolution:**
+
+File path imports are resolved **relative to the directory of the importing file**, not the project root:
+
+```
+project/
+├── main.cln              # import "app/data/models.cln"
+├── app/
+│   ├── data/
+│   │   └── models.cln    # import "../../lib/utils.cln"
+│   └── services/
+│       └── api.cln
+└── lib/
+    └── utils.cln
+```
+
+```clean
+// file: main.cln
+import "app/data/models.cln"  // Resolves to ./app/data/models.cln
+
+start()
+    integer result = double(21)
+    print(result)
+```
+
+```clean
+// file: app/data/models.cln
+import "../../lib/utils.cln"  // Resolves to ./lib/utils.cln (relative to app/data/)
+
+functions:
+    integer double(integer x)
+        return x * 2
+
+    integer squareDouble(integer x)
+        integer doubled = double(x)
+        return square(doubled)  // From utils.cln
+```
+
+**Chained Imports:**
+
+File path imports can be chained - imported files can import other files:
+
+```clean
+// main.cln imports models.cln which imports utils.cln
+// All functions from all three files are available in the final WASM
+```
+
+**When to use each import style:**
+
+- **Module imports** (`import: utils`): For project modules in standard locations
+- **File path imports** (`import "path/file.cln"`): For explicit paths, external files, or non-standard project structures
+
 ### Multi-File Compilation
 
-The compiler automatically discovers and compiles all imported modules. The `build` command is the recommended way to compile multi-file projects:
+The compiler automatically discovers and compiles all imported modules (both module-name and file path imports). Both `build` and `compile` commands support multi-file compilation:
 
 ```bash
 # Build a multi-file project (resolves all imports)
 cln build main.cln
 
+# Compile also supports multi-file imports
+cln compile main.cln -o app.wasm
+
 # Build with custom output path
 cln build main.cln -o app.wasm
 
-# Build with library search paths
+# Build with library search paths (for module-name imports)
 cln build main.cln -L ./lib -L ./modules
 
 # Build with optimization level
 cln build main.cln -O3
 ```
+
+**Note:** File path imports (`import "path/file.cln"`) are resolved relative to the importing file and do not use `-L` search paths. Module-name imports (`import: module`) use the search paths.
 
 #### Module Resolution
 

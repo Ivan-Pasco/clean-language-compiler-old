@@ -254,8 +254,7 @@ impl HoverProvider {
 
     fn get_builtin_function_info(&self, word: &str, _line: &str) -> Option<String> {
         match word {
-            "print" => Some("**print()** Function\n\nPrints a message to the console.\n\n**Signature:**\n```clean\nprint(message: any)\n```\n\n**Examples:**\n```clean\nprint(\"Hello, World!\")\nprint(42)\nprint(variable)\n```".to_string()),
-            "println" => Some("**println()** Function\n\nPrints a message with a newline.\n\n**Signature:**\n```clean\nprintln(message: any)\n```\n\n**Examples:**\n```clean\nprintln(\"Line 1\")\nprintln(\"Line 2\")\n```".to_string()),
+            "print" => Some("**print()** Function\n\nPrints a message to the console.\n\n**Signature:**\n```clean\nprint(message: any)      // no newline\nprint(message: any) +    // with newline\n```\n\n**Examples:**\n```clean\nprint(\"Hello\")           // no newline\nprint(\"Hello, World!\") + // with newline\nprint(42) +\nprint(variable) +\n```".to_string()),
             "input" => Some("**input()** Function\n\nGets user input from console.\n\n**Signature:**\n```clean\ninput(prompt: string) -> string\n```\n\n**Example:**\n```clean\nstring name = input(\"Enter your name: \")\nprint(\"Hello, \" + name)\n```".to_string()),
             "error" => Some("**error()** Function\n\nPrints an error message.\n\n**Signature:**\n```clean\nerror(message: string)\n```\n\n**Example:**\n```clean\nerror(\"Something went wrong!\")\n```".to_string()),
             _ => None,

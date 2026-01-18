@@ -273,6 +273,7 @@ impl ErrorRecoveringParser {
         // Create a program from recovered parts
         let recovered_program = Program {
             imports,
+            plugins: Vec::new(),
             statements: Vec::new(),
             functions,
             classes,
@@ -427,6 +428,7 @@ impl ErrorRecoveringParser {
             let start_func = parse_start_function(pairs.into_iter().next().unwrap())?;
             return Ok(Program {
                 imports: Vec::new(),
+                plugins: Vec::new(),
                 statements: Vec::new(),
                 functions: Vec::new(),
                 classes: Vec::new(),
@@ -523,6 +525,7 @@ impl ErrorRecoveringParser {
 
                 Ok(Program {
                     imports: Vec::new(),
+                    plugins: Vec::new(),
                     statements: Vec::new(),
                     functions,
                     classes: Vec::new(),
@@ -546,6 +549,7 @@ impl ErrorRecoveringParser {
                 let class = parse_class(pairs.into_iter().next().unwrap())?;
                 Ok(Program {
                     imports: Vec::new(),
+                    plugins: Vec::new(),
                     statements: Vec::new(),
                     functions: Vec::new(),
                     classes: vec![class],
@@ -850,6 +854,7 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                     classes: Vec::new(),
                     start_function,
                     imports: Vec::new(),
+                    plugins: Vec::new(),
                     tests,
                     screens: Vec::new(),
                     statements: Vec::new(),
@@ -1008,6 +1013,7 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
     // }
     let program = Program {
         imports,
+        plugins: Vec::new(),
         statements: Vec::new(),
         functions,
         classes,

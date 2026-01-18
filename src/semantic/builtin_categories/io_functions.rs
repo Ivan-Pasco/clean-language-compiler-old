@@ -9,10 +9,8 @@ impl IoFunctions {
     pub fn get_functions() -> HashMap<String, Vec<(Vec<Type>, Type, usize)>> {
         let mut functions = HashMap::new();
         
-        // Core print functions
+        // Core print function (use print() + for newline)
         functions.insert("print".to_string(), vec![(vec![Type::String], Type::Void, 1)]);
-        functions.insert("println".to_string(), vec![(vec![Type::String], Type::Void, 1)]);
-        functions.insert("printl".to_string(), vec![(vec![Type::String], Type::Void, 1)]);
         
         // Test assertion functions
         functions.insert("mustBeTrue".to_string(), vec![(vec![Type::Boolean], Type::Void, 1)]);

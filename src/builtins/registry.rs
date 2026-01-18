@@ -67,7 +67,7 @@ impl BuiltinType {
 /// Categories for organizing builtin functions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinCategory {
-    IO,        // print, println, input
+    IO,        // print, input
     Math,      // abs, sqrt, pow, sin, cos, etc.
     String,    // string operations
     List,      // list operations
@@ -226,7 +226,8 @@ impl BuiltinRegistry {
         registry
     }
 
-    /// Register I/O functions (print, println, input, etc.)
+    /// Register I/O functions (print, input, etc.)
+    /// Note: Use print("text") for no newline, print("text") + for newline
     fn register_io_functions(&mut self) {
         let io_functions = vec![
             BuiltinFunction::new(
@@ -236,20 +237,6 @@ impl BuiltinRegistry {
                 BuiltinCategory::IO,
             )
             .with_wasm_import("env", "print"),
-            BuiltinFunction::new(
-                "println",
-                vec![BuiltinType::String],
-                BuiltinType::Void,
-                BuiltinCategory::IO,
-            )
-            .with_wasm_import("env", "println"),
-            BuiltinFunction::new(
-                "printl",
-                vec![BuiltinType::String],
-                BuiltinType::Void,
-                BuiltinCategory::IO,
-            )
-            .with_wasm_import("env", "printl"),
             BuiltinFunction::new(
                 "input",
                 vec![BuiltinType::String],
@@ -1274,7 +1261,7 @@ mod tests {
 
         // Check that basic functions exist
         assert!(registry.get_function("print").is_some());
-        assert!(registry.get_function("println").is_some());
+        assert!(registry.get_function("input").is_some());
         assert!(registry.get_function("abs").is_some());
 
         // Check classes

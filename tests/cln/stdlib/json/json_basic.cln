@@ -6,34 +6,34 @@ functions:
 	// Test json.textToData - parse JSON null
 	void testParseNull()
 		integer data = json.textToData("null")
-		println("Parsed null from JSON")
+		print("Parsed null from JSON") +
 
 	// Test json.textToData with boolean true
 	void testParseTrue()
 		integer data = json.textToData("true")
-		println("Parsed true from JSON")
+		print("Parsed true from JSON") +
 
 	// Test json.textToData with boolean false
 	void testParseFalse()
 		integer data = json.textToData("false")
-		println("Parsed false from JSON")
+		print("Parsed false from JSON") +
 
 	// Test json.tryTextToData - parse JSON with error handling
 	void testTryParse()
 		integer data = json.tryTextToData("true")
-		println("tryTextToData completed")
+		print("tryTextToData completed") +
 
 	// Test json.dataToText - convert data to JSON text
 	void testStringify()
 		integer data = json.textToData("null")
 		string jsonText = json.dataToText(data)
-		println("Stringified to JSON")
+		print("Stringified to JSON") +
 
 	// Test json.prettyDataToText - convert data to formatted JSON
 	void testPrettyStringify()
 		integer data = json.textToData("true")
 		string prettyJson = json.prettyDataToText(data)
-		println("Pretty JSON created")
+		print("Pretty JSON created") +
 
 start()
 	testParseNull()
@@ -42,4 +42,4 @@ start()
 	testTryParse()
 	testStringify()
 	testPrettyStringify()
-	println("All JSON tests completed")
+	print("All JSON tests completed") +

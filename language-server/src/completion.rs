@@ -600,12 +600,7 @@ impl CompletionProvider {
 
     fn get_builtin_function_completions(&self) -> Vec<CompletionItem> {
         vec![
-            self.create_function_completion("print", "Print to console", "print(${1:message})"),
-            self.create_function_completion(
-                "println",
-                "Print line to console",
-                "println(${1:message})",
-            ),
+            self.create_function_completion("print", "Print to console (use + for newline)", "print(${1:message})"),
             self.create_function_completion("input", "Get user input", "input(${1:prompt})"),
             self.create_function_completion("error", "Print error message", "error(${1:message})"),
         ]

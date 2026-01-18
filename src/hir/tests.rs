@@ -20,6 +20,7 @@ fn test_location() -> SourceLocation {
 fn test_program_with_functions(functions: Vec<Function>) -> Program {
     Program {
         imports: vec![],
+        plugins: vec![],
         statements: vec![],
         functions,
         classes: vec![],
@@ -37,6 +38,7 @@ fn test_program_with_functions(functions: Vec<Function>) -> Program {
 fn test_program_with_start(start_fn: Function) -> Program {
     Program {
         imports: vec![],
+        plugins: vec![],
         statements: vec![],
         functions: vec![],
         classes: vec![],
@@ -54,6 +56,7 @@ fn test_program_with_start(start_fn: Function) -> Program {
 fn test_program_with_classes(classes: Vec<Class>) -> Program {
     Program {
         imports: vec![],
+        plugins: vec![],
         statements: vec![],
         functions: vec![],
         classes,
@@ -448,6 +451,7 @@ mod integration_tests {
 
         let ast = Program {
             imports: vec![],
+            plugins: vec![],
             statements: vec![],
             functions: vec![add_fn],
             classes: vec![],
