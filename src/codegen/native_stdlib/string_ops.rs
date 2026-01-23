@@ -1056,6 +1056,521 @@ pub fn gen_substring(malloc_func: u32) -> Vec<Instruction<'static>> {
     ]
 }
 
+/// Helper: Check if a byte is whitespace (space, tab, newline, carriage return)
+/// Returns instructions that leave 1 on stack if whitespace, 0 otherwise
+/// Expects byte value on stack, consumes it
+fn gen_is_whitespace() -> Vec<Instruction<'static>> {
+    vec![
+        // Stack has: byte
+        // Check if byte == 32 (space) || byte == 9 (tab) || byte == 10 (newline) || byte == 13 (CR)
+        Instruction::LocalTee(100), // Save byte to temp local (will be declared)
+        Instruction::I32Const(32),  // space
+        Instruction::I32Eq,
+        Instruction::LocalGet(100),
+        Instruction::I32Const(9), // tab
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::LocalGet(100),
+        Instruction::I32Const(10), // newline
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::LocalGet(100),
+        Instruction::I32Const(13), // carriage return
+        Instruction::I32Eq,
+        Instruction::I32Or,
+    ]
+}
+
+/// Generate instructions for string.trimStart
+///
+/// Trims whitespace characters from the beginning of a string.
+/// Whitespace: space (32), tab (9), newline (10), carriage return (13)
+///
+/// Parameters:
+///   - local 0: str_ptr (input string)
+///
+/// Returns: i32 (pointer to new trimmed string)
+///
+/// Uses locals:
+///   - local 1: str_len
+///   - local 2: start_idx (first non-whitespace index)
+///   - local 3: new_len
+///   - local 4: new_ptr
+///   - local 5: i (loop counter)
+///   - local 6: temp byte
+pub fn gen_trim_start(malloc_func: u32) -> Vec<Instruction<'static>> {
+    vec![
+        // Get string length -> local 1
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: STRING_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(1), // str_len
+        // Find first non-whitespace character
+        // start_idx = 0
+        Instruction::I32Const(0),
+        Instruction::LocalSet(2), // start_idx
+        // Loop to find first non-whitespace
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        // if start_idx >= str_len, break (all whitespace)
+        Instruction::LocalGet(2), // start_idx
+        Instruction::LocalGet(1), // str_len
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+        // Load byte at start_idx
+        Instruction::LocalGet(0), // str_ptr
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(2), // start_idx
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(6), // temp byte
+        // Check if whitespace
+        Instruction::LocalGet(6),
+        Instruction::I32Const(32), // space
+        Instruction::I32Eq,
+        Instruction::LocalGet(6),
+        Instruction::I32Const(9), // tab
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::LocalGet(6),
+        Instruction::I32Const(10), // newline
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::LocalGet(6),
+        Instruction::I32Const(13), // carriage return
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        // If not whitespace, break
+        Instruction::I32Eqz,
+        Instruction::BrIf(1),
+        // start_idx++
+        Instruction::LocalGet(2),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(2),
+        Instruction::Br(0), // continue loop
+        Instruction::End,   // end loop
+        Instruction::End,   // end block
+        // Calculate new_len = str_len - start_idx
+        Instruction::LocalGet(1), // str_len
+        Instruction::LocalGet(2), // start_idx
+        Instruction::I32Sub,
+        Instruction::LocalSet(3), // new_len
+        // Allocate new string: malloc(4 + new_len)
+        Instruction::LocalGet(3),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::Call(malloc_func),
+        Instruction::LocalSet(4), // new_ptr
+        // Store length
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(3),
+        Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Copy bytes from str_ptr[4 + start_idx] to new_ptr[4]
+        // i = 0
+        Instruction::I32Const(0),
+        Instruction::LocalSet(5),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        // if i >= new_len, exit
+        Instruction::LocalGet(5),
+        Instruction::LocalGet(3),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+        // new_ptr[4 + i] = str_ptr[4 + start_idx + i]
+        Instruction::LocalGet(4),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(5),
+        Instruction::I32Add,
+        Instruction::LocalGet(0),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(2), // start_idx
+        Instruction::I32Add,
+        Instruction::LocalGet(5),
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::I32Store8(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        // i++
+        Instruction::LocalGet(5),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(5),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        // Return new pointer
+        Instruction::LocalGet(4),
+    ]
+}
+
+/// Generate instructions for string.trimEnd
+///
+/// Trims whitespace characters from the end of a string.
+///
+/// Parameters:
+///   - local 0: str_ptr (input string)
+///
+/// Returns: i32 (pointer to new trimmed string)
+///
+/// Uses locals:
+///   - local 1: str_len
+///   - local 2: end_idx (last non-whitespace index + 1 = new length)
+///   - local 3: new_ptr
+///   - local 4: i (loop counter)
+///   - local 5: temp byte
+pub fn gen_trim_end(malloc_func: u32) -> Vec<Instruction<'static>> {
+    vec![
+        // Get string length -> local 1
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: STRING_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(1), // str_len
+        // end_idx = str_len (will be decremented)
+        Instruction::LocalGet(1),
+        Instruction::LocalSet(2), // end_idx
+        // Loop to find last non-whitespace (search from end)
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        // if end_idx <= 0, break (all whitespace)
+        Instruction::LocalGet(2), // end_idx
+        Instruction::I32Const(0),
+        Instruction::I32LeS,
+        Instruction::BrIf(1),
+        // Load byte at end_idx - 1
+        Instruction::LocalGet(0), // str_ptr
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(2), // end_idx
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(5), // temp byte
+        // Check if whitespace
+        Instruction::LocalGet(5),
+        Instruction::I32Const(32), // space
+        Instruction::I32Eq,
+        Instruction::LocalGet(5),
+        Instruction::I32Const(9), // tab
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::LocalGet(5),
+        Instruction::I32Const(10), // newline
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::LocalGet(5),
+        Instruction::I32Const(13), // carriage return
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        // If not whitespace, break
+        Instruction::I32Eqz,
+        Instruction::BrIf(1),
+        // end_idx--
+        Instruction::LocalGet(2),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::LocalSet(2),
+        Instruction::Br(0), // continue loop
+        Instruction::End,   // end loop
+        Instruction::End,   // end block
+        // new_len = end_idx (already the count of non-trailing-whitespace chars)
+        // Allocate new string: malloc(4 + end_idx)
+        Instruction::LocalGet(2),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::Call(malloc_func),
+        Instruction::LocalSet(3), // new_ptr
+        // Store length
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(2), // end_idx = new length
+        Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Copy bytes from str_ptr[4] to new_ptr[4], for end_idx bytes
+        // i = 0
+        Instruction::I32Const(0),
+        Instruction::LocalSet(4),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        // if i >= end_idx, exit
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(2),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+        // new_ptr[4 + i] = str_ptr[4 + i]
+        Instruction::LocalGet(3),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(4),
+        Instruction::I32Add,
+        Instruction::LocalGet(0),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(4),
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::I32Store8(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        // i++
+        Instruction::LocalGet(4),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(4),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        // Return new pointer
+        Instruction::LocalGet(3),
+    ]
+}
+
+/// Generate instructions for string.trim
+///
+/// Trims whitespace characters from both ends of a string.
+///
+/// Parameters:
+///   - local 0: str_ptr (input string)
+///
+/// Returns: i32 (pointer to new trimmed string)
+///
+/// Uses locals:
+///   - local 1: str_len
+///   - local 2: start_idx
+///   - local 3: end_idx
+///   - local 4: new_len
+///   - local 5: new_ptr
+///   - local 6: i (loop counter)
+///   - local 7: temp byte
+pub fn gen_trim(malloc_func: u32) -> Vec<Instruction<'static>> {
+    vec![
+        // Get string length -> local 1
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: STRING_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(1), // str_len
+        // Find first non-whitespace (start_idx)
+        Instruction::I32Const(0),
+        Instruction::LocalSet(2), // start_idx = 0
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        // if start_idx >= str_len, break
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+        // Load byte
+        Instruction::LocalGet(0),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(2),
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(7), // temp byte
+        // Check whitespace
+        Instruction::LocalGet(7),
+        Instruction::I32Const(32),
+        Instruction::I32Eq,
+        Instruction::LocalGet(7),
+        Instruction::I32Const(9),
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::LocalGet(7),
+        Instruction::I32Const(10),
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::LocalGet(7),
+        Instruction::I32Const(13),
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::I32Eqz,
+        Instruction::BrIf(1), // not whitespace, break
+        // start_idx++
+        Instruction::LocalGet(2),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(2),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        // Find last non-whitespace (end_idx)
+        Instruction::LocalGet(1),
+        Instruction::LocalSet(3), // end_idx = str_len
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        // if end_idx <= start_idx, break
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(2),
+        Instruction::I32LeS,
+        Instruction::BrIf(1),
+        // Load byte at end_idx - 1
+        Instruction::LocalGet(0),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(7), // temp byte
+        // Check whitespace
+        Instruction::LocalGet(7),
+        Instruction::I32Const(32),
+        Instruction::I32Eq,
+        Instruction::LocalGet(7),
+        Instruction::I32Const(9),
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::LocalGet(7),
+        Instruction::I32Const(10),
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::LocalGet(7),
+        Instruction::I32Const(13),
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::I32Eqz,
+        Instruction::BrIf(1), // not whitespace, break
+        // end_idx--
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::LocalSet(3),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        // Calculate new_len = end_idx - start_idx
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(2),
+        Instruction::I32Sub,
+        Instruction::LocalSet(4), // new_len
+        // Handle case where new_len <= 0 (all whitespace)
+        Instruction::LocalGet(4),
+        Instruction::I32Const(0),
+        Instruction::I32LeS,
+        Instruction::If(BlockType::Result(ValType::I32)),
+        // Allocate empty string
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::Call(malloc_func),
+        Instruction::LocalSet(5),
+        Instruction::LocalGet(5),
+        Instruction::I32Const(0),
+        Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalGet(5),
+        Instruction::Else,
+        // Allocate new string: malloc(4 + new_len)
+        Instruction::LocalGet(4),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::Call(malloc_func),
+        Instruction::LocalSet(5), // new_ptr
+        // Store length
+        Instruction::LocalGet(5),
+        Instruction::LocalGet(4),
+        Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Copy bytes
+        Instruction::I32Const(0),
+        Instruction::LocalSet(6), // i = 0
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        // if i >= new_len, exit
+        Instruction::LocalGet(6),
+        Instruction::LocalGet(4),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+        // new_ptr[4 + i] = str_ptr[4 + start_idx + i]
+        Instruction::LocalGet(5),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(6),
+        Instruction::I32Add,
+        Instruction::LocalGet(0),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(2), // start_idx
+        Instruction::I32Add,
+        Instruction::LocalGet(6),
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::I32Store8(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        // i++
+        Instruction::LocalGet(6),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(6),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        // Return new_ptr
+        Instruction::LocalGet(5),
+        Instruction::End, // end if/else
+    ]
+}
+
 /// Get local variables needed for each string function
 pub fn get_locals(func_name: &str) -> Vec<(u32, ValType)> {
     match func_name {
@@ -1087,6 +1602,30 @@ pub fn get_locals(func_name: &str) -> Vec<(u32, ValType)> {
             (1, ValType::I32), // new_len
             (1, ValType::I32), // new_ptr
             (1, ValType::I32), // i
+        ],
+        "trim_start" => vec![
+            (1, ValType::I32), // str_len
+            (1, ValType::I32), // start_idx
+            (1, ValType::I32), // new_len
+            (1, ValType::I32), // new_ptr
+            (1, ValType::I32), // i
+            (1, ValType::I32), // temp byte
+        ],
+        "trim_end" => vec![
+            (1, ValType::I32), // str_len
+            (1, ValType::I32), // end_idx
+            (1, ValType::I32), // new_ptr
+            (1, ValType::I32), // i
+            (1, ValType::I32), // temp byte
+        ],
+        "trim" => vec![
+            (1, ValType::I32), // str_len
+            (1, ValType::I32), // start_idx
+            (1, ValType::I32), // end_idx
+            (1, ValType::I32), // new_len
+            (1, ValType::I32), // new_ptr
+            (1, ValType::I32), // i
+            (1, ValType::I32), // temp byte
         ],
         _ => vec![],
     }

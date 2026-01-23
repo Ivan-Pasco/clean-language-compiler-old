@@ -144,8 +144,8 @@ variable_assignment = { identifier ~ WHITESPACE* ~ "=" ~ WHITESPACE* ~ single_li
 method_apply_block = { method_call_chain ~ ":" ~ indented_expressions }
 method_call_chain = { identifier ~ ("." ~ identifier)+ }
 
-// Function apply-blocks: println: "Hello", "World" (catch-all for identifiers and specific keywords)
-function_name_in_apply_block = { "println" | "printl" | "print" | identifier }
+// Function apply-blocks: print: "Hello", "World" (catch-all for identifiers and specific keywords)
+function_name_in_apply_block = { "print" | identifier }
 function_apply_block = { !("functions" ~ ":") ~ function_name_in_apply_block ~ ":" ~ indented_expressions }
 // Fixed: Match only expressions at deeper indentation than parent statement
 indented_expressions = {

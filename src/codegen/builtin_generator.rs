@@ -213,7 +213,7 @@ impl CodeGenerator {
         self.register_import_function("env", "string.concat", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         // Native substring implementation (replaces host import)
         let malloc_idx = self.get_function_index("__malloc")
-            .ok_or_else(|| CompilerError::new("malloc not registered before substring"))?;
+            .ok_or_else(|| CompilerError::codegen_error("malloc not registered before substring", None, None))?;
         let substring_instructions = native_stdlib::string_ops::gen_substring(malloc_idx);
         self.register_function_with_locals(
             "string_substring",
@@ -229,7 +229,25 @@ impl CodeGenerator {
         self.register_import_function("env", "string_last_index_of_from", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_to_upper", vec![ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_to_lower", vec![ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string_trim", vec![ValType::I32], vec![ValType::I32])?;
+
+        // Native trim implementation (replaces host import)
+        let trim_instructions = native_stdlib::string_ops::gen_trim(malloc_idx);
+        let trim_locals = native_stdlib::string_ops::get_locals("trim");
+        let trim_local_types: Vec<WasmType> = trim_locals.iter().map(|(_, t)| match t {
+            ValType::I32 => WasmType::I32,
+            ValType::I64 => WasmType::I64,
+            ValType::F32 => WasmType::F32,
+            ValType::F64 => WasmType::F64,
+            _ => WasmType::I32,
+        }).collect();
+        self.register_function_with_locals(
+            "string_trim",
+            &[WasmType::I32],  // str_ptr
+            Some(WasmType::I32),  // returns new_ptr
+            &trim_local_types,
+            &trim_instructions,
+        )?;
+
         self.register_import_function("env", "string_replace", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
         self.register_import_function("env", "string_split", vec![ValType::I32, ValType::I32], vec![ValType::I32])?;
         // Register string.split to map directly to string_split runtime function
@@ -292,9 +310,46 @@ impl CodeGenerator {
         if let Some(ends_with_idx) = self.get_function_index("string_ends_with") {
             self.add_function_alias("string.endsWith", ends_with_idx);
         }
-        // Trim functions - use underscore naming to match host functions
-        let trim_start_idx = self.register_import_function("env", "string_trim_start", vec![ValType::I32], vec![ValType::I32])?;
-        let trim_end_idx = self.register_import_function("env", "string_trim_end", vec![ValType::I32], vec![ValType::I32])?;
+        // Trim functions - NATIVE implementations (no host imports needed)
+        let malloc_idx_for_trim = self.get_function_index("__malloc")
+            .ok_or_else(|| CompilerError::codegen_error("malloc not registered before trim functions", None, None))?;
+
+        // Native trim_start implementation
+        let trim_start_instructions = native_stdlib::string_ops::gen_trim_start(malloc_idx_for_trim);
+        let trim_start_locals = native_stdlib::string_ops::get_locals("trim_start");
+        let trim_start_local_types: Vec<WasmType> = trim_start_locals.iter().map(|(_, t)| match t {
+            ValType::I32 => WasmType::I32,
+            ValType::I64 => WasmType::I64,
+            ValType::F32 => WasmType::F32,
+            ValType::F64 => WasmType::F64,
+            _ => WasmType::I32,
+        }).collect();
+        let trim_start_idx = self.register_function_with_locals(
+            "string_trim_start",
+            &[WasmType::I32],  // str_ptr
+            Some(WasmType::I32),  // returns new_ptr
+            &trim_start_local_types,
+            &trim_start_instructions,
+        )?;
+
+        // Native trim_end implementation
+        let trim_end_instructions = native_stdlib::string_ops::gen_trim_end(malloc_idx_for_trim);
+        let trim_end_locals = native_stdlib::string_ops::get_locals("trim_end");
+        let trim_end_local_types: Vec<WasmType> = trim_end_locals.iter().map(|(_, t)| match t {
+            ValType::I32 => WasmType::I32,
+            ValType::I64 => WasmType::I64,
+            ValType::F32 => WasmType::F32,
+            ValType::F64 => WasmType::F64,
+            _ => WasmType::I32,
+        }).collect();
+        let trim_end_idx = self.register_function_with_locals(
+            "string_trim_end",
+            &[WasmType::I32],  // str_ptr
+            Some(WasmType::I32),  // returns new_ptr
+            &trim_end_local_types,
+            &trim_end_instructions,
+        )?;
+
         // Add aliases for dot notation static method calls (string.trimStart, etc.)
         if let Some(trim_idx) = self.get_function_index("string_trim") {
             self.add_function_alias("string.trim", trim_idx);

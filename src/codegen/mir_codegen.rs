@@ -330,13 +330,8 @@ impl MirCodeGenerator<'_> {
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: string.split import registered");
 
-            // CRITICAL: Register string trim imports BEFORE math operations
-            // Trim functions (trim, trimStart, trimEnd) are host imports
-            debug_mir!("DEBUG MIR: Registering string trim imports");
-            self.wasm_generator
-                .register_string_trim_imports()
-                .map_err(|e| vec![e])?;
-            debug_mir!("DEBUG MIR: String trim imports registered");
+            // NOTE: String trim functions are now NATIVE (not imports)
+            // They are registered after register_memory_operations() which provides malloc
 
             // CRITICAL: Register string_compare import for string equality comparisons
             debug_mir!("DEBUG MIR: Registering string_compare import");
@@ -420,6 +415,14 @@ impl MirCodeGenerator<'_> {
                 .register_memory_operations()
                 .map_err(|e| vec![e])?;
             debug_mir!("DEBUG MIR: Native memory operations registered");
+
+            // NATIVE: Register string trim functions (trim, trimStart, trimEnd)
+            // These require malloc which was just registered above
+            debug_mir!("DEBUG MIR: Registering native string trim functions");
+            self.wasm_generator
+                .register_string_trim_imports()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: Native string trim functions registered");
 
             // CRITICAL: Register native list operations (length, get, set, push, pop, etc.)
             debug_mir!("DEBUG MIR: Registering native list operations");

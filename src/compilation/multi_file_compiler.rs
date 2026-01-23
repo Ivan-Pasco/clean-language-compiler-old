@@ -10,9 +10,11 @@ use crate::hir::hir_builder::HirBuilder;
 use crate::hir::HirProgram;
 use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
 use crate::parser::SpecificationParser;
+use crate::plugins::{PluginExpander, PluginRegistry};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Represents an extracted import with additional metadata
 #[derive(Debug, Clone)]
@@ -24,7 +26,7 @@ struct ExtractedImport {
 }
 
 /// Configuration for the multi-file compiler
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MultiFileCompilerConfig {
     /// Search paths for finding imported modules
     pub search_paths: Vec<PathBuf>,
@@ -43,6 +45,26 @@ pub struct MultiFileCompilerConfig {
 
     /// Directory containing Clean components for HTML pages
     pub html_components_dir: Option<PathBuf>,
+
+    /// Plugin registry for framework block expansion
+    pub plugin_registry: Option<Arc<PluginRegistry>>,
+}
+
+impl std::fmt::Debug for MultiFileCompilerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MultiFileCompilerConfig")
+            .field("search_paths", &self.search_paths)
+            .field("opt_level", &self.opt_level)
+            .field("debug", &self.debug)
+            .field("html_pages_enabled", &self.html_pages_enabled)
+            .field("html_pages_dir", &self.html_pages_dir)
+            .field("html_components_dir", &self.html_components_dir)
+            .field(
+                "plugin_registry",
+                &self.plugin_registry.as_ref().map(|_| "..."),
+            )
+            .finish()
+    }
 }
 
 impl Default for MultiFileCompilerConfig {
@@ -59,6 +81,7 @@ impl Default for MultiFileCompilerConfig {
             html_pages_enabled: false,
             html_pages_dir: None,
             html_components_dir: None,
+            plugin_registry: None,
         }
     }
 }
@@ -102,6 +125,12 @@ impl MultiFileCompilerConfig {
     /// Set the HTML components directory
     pub fn with_html_components_dir<P: AsRef<Path>>(mut self, path: P) -> Self {
         self.html_components_dir = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Set the plugin registry for framework block expansion
+    pub fn with_plugin_registry(mut self, registry: Arc<PluginRegistry>) -> Self {
+        self.plugin_registry = Some(registry);
         self
     }
 }
@@ -351,6 +380,7 @@ impl MultiFileCompiler {
             html_pages_enabled: self.config.html_pages_enabled,
             html_pages_dir: self.config.html_pages_dir.clone(),
             html_components_dir: self.config.html_components_dir.clone(),
+            plugin_registry: self.config.plugin_registry.clone(),
         };
 
         let compiler = MultiFileCompiler::with_config(config);
@@ -1133,8 +1163,17 @@ impl MultiFileCompiler {
             )
         })?;
 
-        // Stage 2: Parse to AST
-        let mut parser = SpecificationParser::new(tokens, file_path.to_string_lossy().to_string());
+        // Stage 2: Parse to AST (use plugin keywords if available)
+        let plugin_keywords = if let Some(ref registry) = self.config.plugin_registry {
+            registry.get_all_block_keywords()
+        } else {
+            Vec::new()
+        };
+        let mut parser = SpecificationParser::with_plugin_keywords(
+            tokens,
+            file_path.to_string_lossy().to_string(),
+            plugin_keywords,
+        );
         let ast = parser.parse_program()?;
 
         // Extract imports from AST, preserving file import flag
@@ -1247,7 +1286,7 @@ impl MultiFileCompiler {
         }
     }
 
-    /// Parse a single module through Stages 1-3
+    /// Parse a single module through Stages 1-3 (with optional plugin expansion at Stage 2.5)
     fn parse_module_to_hir(
         &self,
         source: &str,
@@ -1260,8 +1299,40 @@ impl MultiFileCompiler {
         let tokens = lexer.tokenize().map_err(CompilerError::LexError)?;
 
         // Stage 2: Parse to AST
-        let mut parser = SpecificationParser::new(tokens, file_path.to_string_lossy().to_string());
-        let ast = parser.parse_program()?;
+        // Get plugin keywords so the parser recognizes plugin-defined syntax
+        let plugin_keywords = if let Some(ref registry) = self.config.plugin_registry {
+            registry.get_all_block_keywords()
+        } else {
+            Vec::new()
+        };
+        let mut parser = SpecificationParser::with_plugin_keywords(
+            tokens,
+            file_path.to_string_lossy().to_string(),
+            plugin_keywords,
+        );
+        let parsed_ast = parser.parse_program()?;
+
+        // Stage 2.5: Plugin Expansion - transform framework blocks into Clean AST
+        let ast = if let Some(ref registry) = self.config.plugin_registry {
+            tracing::debug!(
+                file = %file_path.display(),
+                "Starting Stage 2.5: Plugin Expansion for module"
+            );
+            let mut expander = PluginExpander::new(registry.as_ref());
+            expander.expand_program(parsed_ast).map_err(|e| {
+                CompilerError::syntax_error(
+                    e.to_string(),
+                    Some("Plugin expansion failed".to_string()),
+                    Some(SourceLocation {
+                        file: file_path.to_string_lossy().to_string(),
+                        line: 1,
+                        column: 1,
+                    }),
+                )
+            })?
+        } else {
+            parsed_ast
+        };
 
         // Stage 3: Build HIR
         let mut hir_builder = HirBuilder::new();

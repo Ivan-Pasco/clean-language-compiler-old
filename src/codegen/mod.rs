@@ -5629,35 +5629,86 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Register string trim function imports
-    /// These are host-provided functions that properly trim whitespace from strings
+    /// Register string trim functions as native WASM implementations
+    /// These are pure WASM functions that trim whitespace from strings without host imports
     pub fn register_string_trim_imports(&mut self) -> Result<(), CompilerError> {
         use crate::types::WasmType;
 
-        // Register trim function imports from host
-        // These are implemented in host_functions.rs and wasmtime_runner.rs
-        let trim_idx = self.register_import_function(
-            "env",
-            "string_trim",
+        // Get malloc function index - required for allocating new trimmed strings
+        let malloc_idx = self
+            .get_function_index("__malloc")
+            .or_else(|| self.get_function_index("malloc"))
+            .ok_or_else(|| {
+                CompilerError::codegen_error(
+                    "malloc not registered before trim functions",
+                    None,
+                    None,
+                )
+            })?;
+
+        // NATIVE: string_trim - trims whitespace from both ends
+        // Parameters: str_ptr (i32)
+        // Returns: pointer (i32) to new trimmed string
+        let trim_instructions = native_stdlib::string_ops::gen_trim(malloc_idx);
+        let trim_idx = self.register_function_with_locals(
+            "__string_trim",
             &[WasmType::I32],
             Some(WasmType::I32),
-        )?;
-        let trim_start_idx = self.register_import_function(
-            "env",
-            "string_trim_start",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-        )?;
-        let trim_end_idx = self.register_import_function(
-            "env",
-            "string_trim_end",
-            &[WasmType::I32],
-            Some(WasmType::I32),
+            &[
+                WasmType::I32, // str_len
+                WasmType::I32, // start_idx
+                WasmType::I32, // end_idx
+                WasmType::I32, // new_len
+                WasmType::I32, // new_ptr
+                WasmType::I32, // i
+                WasmType::I32, // temp byte
+            ],
+            &trim_instructions,
         )?;
 
-        // Add aliases for dot notation method calls (string.trim, string.trimStart, string.trimEnd)
+        // NATIVE: string_trim_start - trims whitespace from start
+        // Parameters: str_ptr (i32)
+        // Returns: pointer (i32) to new trimmed string
+        let trim_start_instructions = native_stdlib::string_ops::gen_trim_start(malloc_idx);
+        let trim_start_idx = self.register_function_with_locals(
+            "__string_trim_start",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            &[
+                WasmType::I32, // str_len
+                WasmType::I32, // start_idx
+                WasmType::I32, // new_len
+                WasmType::I32, // new_ptr
+                WasmType::I32, // i
+                WasmType::I32, // temp byte
+            ],
+            &trim_start_instructions,
+        )?;
+
+        // NATIVE: string_trim_end - trims whitespace from end
+        // Parameters: str_ptr (i32)
+        // Returns: pointer (i32) to new trimmed string
+        let trim_end_instructions = native_stdlib::string_ops::gen_trim_end(malloc_idx);
+        let trim_end_idx = self.register_function_with_locals(
+            "__string_trim_end",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            &[
+                WasmType::I32, // str_len
+                WasmType::I32, // end_idx
+                WasmType::I32, // new_ptr
+                WasmType::I32, // i
+                WasmType::I32, // temp byte
+            ],
+            &trim_end_instructions,
+        )?;
+
+        // Add aliases for both underscore and dot notation access patterns
+        self.add_function_alias("string_trim", trim_idx);
         self.add_function_alias("string.trim", trim_idx);
+        self.add_function_alias("string_trim_start", trim_start_idx);
         self.add_function_alias("string.trimStart", trim_start_idx);
+        self.add_function_alias("string_trim_end", trim_end_idx);
         self.add_function_alias("string.trimEnd", trim_end_idx);
 
         Ok(())

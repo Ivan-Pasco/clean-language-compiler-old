@@ -703,6 +703,10 @@ fn extract_plugins(source: &str) -> Vec<String> {
 /// other `.cln` files. It automatically discovers, loads, and compiles all
 /// transitively imported modules into a single WASM output.
 ///
+/// **Plugin Support:** If the entry file contains a `plugins:` block, plugins
+/// will be automatically loaded from `~/.cleen/plugins/` and framework blocks
+/// (like `endpoints:`, `data:`, `component:`) will be expanded.
+///
 /// # Arguments
 /// * `entry_path` - Path to the main/entry `.cln` file
 /// * `search_paths` - Additional paths to search for imported modules
@@ -730,6 +734,7 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
     use crate::mir::lower_tast_to_mir_with_opt_level;
     use crate::resolver::Resolver;
     use crate::typechecker::TypeChecker;
+    use std::sync::Arc;
 
     tracing::info!(
         entry = %entry_path.as_ref().display(),
@@ -737,10 +742,57 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
         "Starting multi-file compilation"
     );
 
+    // Step 0: Read entry file to extract plugins
+    let entry_source = std::fs::read_to_string(entry_path.as_ref()).map_err(|e| {
+        vec![CompilerError::io_error(
+            format!("Failed to read entry file: {}", e),
+            None,
+            None,
+        )]
+    })?;
+
+    // Extract plugin names from plugins: block
+    let plugin_names = extract_plugins(&entry_source);
+
+    // Load plugins if any are declared
+    let registry = if !plugin_names.is_empty() {
+        tracing::info!(plugins = ?plugin_names, "Loading plugins for multi-file compilation");
+
+        let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
+            vec![CompilerError::PluginError {
+                message: format!("Failed to create plugin loader: {}", e),
+                location: None,
+            }]
+        })?;
+
+        let reg = loader.load_plugins(&plugin_names).map_err(|e| {
+            vec![CompilerError::PluginError {
+                message: format!("Failed to load plugins: {}", e),
+                location: None,
+            }]
+        })?;
+
+        tracing::info!(
+            plugins = ?reg.registered_plugins(),
+            "Plugins loaded for multi-file compilation"
+        );
+
+        Some(Arc::new(reg))
+    } else {
+        tracing::debug!("No plugins: block found in entry file, compiling without plugins");
+        None
+    };
+
     // Step 1: Build the compilation unit (discovers and parses all modules)
-    let config = MultiFileCompilerConfig::default()
+    let mut config = MultiFileCompilerConfig::default()
         .with_search_paths(search_paths)
         .with_opt_level(opt_level);
+
+    // Add plugin registry if plugins were loaded
+    if let Some(ref reg) = registry {
+        config = config.with_plugin_registry(Arc::clone(reg));
+    }
+
     let compiler = MultiFileCompiler::with_config(config);
     let unit = compiler.build_from_file(&entry_path)?;
 
@@ -820,9 +872,22 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
         }
     };
 
-    // Stage 4: Resolution
-    tracing::debug!("Starting Stage 4: Resolution");
-    let resolution_result = Resolver::resolve(merged_hir)?;
+    // Get bridge functions from plugin registry for name resolution and code generation
+    let bridge_functions = registry
+        .as_ref()
+        .map(|r| r.bridge_functions().to_vec())
+        .unwrap_or_default();
+
+    // Stage 4: Resolution (with bridge functions if plugins are loaded)
+    tracing::debug!(
+        bridge_function_count = bridge_functions.len(),
+        "Starting Stage 4: Resolution"
+    );
+    let resolution_result = if bridge_functions.is_empty() {
+        Resolver::resolve(merged_hir)?
+    } else {
+        Resolver::resolve_with_bridge_functions(merged_hir, &bridge_functions)?
+    };
     let resolved_hir = resolution_result.resolved_hir;
 
     // Stage 5: Type checking
@@ -833,10 +898,20 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
     tracing::debug!("Starting Stage 6: TAST to MIR");
     let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, opt_level)?;
 
-    // Stage 7: WASM generation
+    // Stage 7: WASM generation (with bridge functions for WASM imports if plugins are loaded)
     tracing::debug!("Starting Stage 7: WASM generation");
     use crate::codegen::mir_codegen::MirCodeGenerator;
     let mut mir_codegen = MirCodeGenerator::default();
+
+    // Pass plugin bridge functions to the code generator for WASM import generation
+    if !bridge_functions.is_empty() {
+        tracing::debug!(
+            bridge_function_count = bridge_functions.len(),
+            "Passing bridge functions to MIR code generator"
+        );
+        mir_codegen.set_bridge_functions(bridge_functions);
+    }
+
     let codegen_result = mir_codegen.generate(mir_result.program)?;
 
     tracing::info!(
