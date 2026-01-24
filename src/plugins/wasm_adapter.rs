@@ -447,6 +447,131 @@ impl WasmPluginAdapter {
             },
         )?;
 
+        // =========================================
+        // DOT-NOTATION TRIM ALIASES
+        // For compatibility with WASM modules using dot notation
+        // =========================================
+
+        // env.string.trim - Alias for string_trim (dot notation)
+        linker.func_wrap(
+            "env",
+            "string.trim",
+            |mut caller: Caller<'_, PluginState>, str_ptr: i32| -> i32 {
+                let original = {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let data = memory.data(&caller);
+                    let len_start = str_ptr as usize;
+                    if len_start + 4 > data.len() {
+                        return 0;
+                    }
+                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
+                    let len = u32::from_le_bytes(len_bytes) as usize;
+                    let data_start = len_start + 4;
+                    if data_start + len > data.len() {
+                        return 0;
+                    }
+                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                };
+                let trimmed = original.trim();
+
+                let result = trimmed.as_bytes();
+                let result_len = result.len();
+                let state = caller.data_mut();
+                let ptr = state.allocate(result_len + 4);
+                let memory = caller
+                    .get_export("memory")
+                    .and_then(|e| e.into_memory())
+                    .unwrap();
+                let len_bytes = (result_len as u32).to_le_bytes();
+                let _ = memory.write(&mut caller, ptr, &len_bytes);
+                let _ = memory.write(&mut caller, ptr + 4, result);
+                ptr as i32
+            },
+        )?;
+
+        // env.string.trimStart - Alias for string_trim_start (dot notation)
+        linker.func_wrap(
+            "env",
+            "string.trimStart",
+            |mut caller: Caller<'_, PluginState>, str_ptr: i32| -> i32 {
+                let original = {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let data = memory.data(&caller);
+                    let len_start = str_ptr as usize;
+                    if len_start + 4 > data.len() {
+                        return 0;
+                    }
+                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
+                    let len = u32::from_le_bytes(len_bytes) as usize;
+                    let data_start = len_start + 4;
+                    if data_start + len > data.len() {
+                        return 0;
+                    }
+                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                };
+                let trimmed = original.trim_start();
+
+                let result = trimmed.as_bytes();
+                let result_len = result.len();
+                let state = caller.data_mut();
+                let ptr = state.allocate(result_len + 4);
+                let memory = caller
+                    .get_export("memory")
+                    .and_then(|e| e.into_memory())
+                    .unwrap();
+                let len_bytes = (result_len as u32).to_le_bytes();
+                let _ = memory.write(&mut caller, ptr, &len_bytes);
+                let _ = memory.write(&mut caller, ptr + 4, result);
+                ptr as i32
+            },
+        )?;
+
+        // env.string.trimEnd - Alias for string_trim_end (dot notation)
+        linker.func_wrap(
+            "env",
+            "string.trimEnd",
+            |mut caller: Caller<'_, PluginState>, str_ptr: i32| -> i32 {
+                let original = {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let data = memory.data(&caller);
+                    let len_start = str_ptr as usize;
+                    if len_start + 4 > data.len() {
+                        return 0;
+                    }
+                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
+                    let len = u32::from_le_bytes(len_bytes) as usize;
+                    let data_start = len_start + 4;
+                    if data_start + len > data.len() {
+                        return 0;
+                    }
+                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                };
+                let trimmed = original.trim_end();
+
+                let result = trimmed.as_bytes();
+                let result_len = result.len();
+                let state = caller.data_mut();
+                let ptr = state.allocate(result_len + 4);
+                let memory = caller
+                    .get_export("memory")
+                    .and_then(|e| e.into_memory())
+                    .unwrap();
+                let len_bytes = (result_len as u32).to_le_bytes();
+                let _ = memory.write(&mut caller, ptr, &len_bytes);
+                let _ = memory.write(&mut caller, ptr + 4, result);
+                ptr as i32
+            },
+        )?;
+
         // env.string_compare - Compare two strings
         // Returns 1 if equal, 0 if not equal
         linker.func_wrap(
