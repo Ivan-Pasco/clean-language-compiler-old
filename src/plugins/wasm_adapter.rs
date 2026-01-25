@@ -327,6 +327,104 @@ impl WasmPluginAdapter {
             },
         )?;
 
+        // env.string_concat - Underscore alias for string.concat
+        linker.func_wrap(
+            "env",
+            "string_concat",
+            |mut caller: Caller<'_, PluginState>, ptr1: i32, ptr2: i32| -> i32 {
+                // Read both strings
+                let (s1, s2) = {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let data = memory.data(&caller);
+
+                    // Read first string
+                    let len1_start = ptr1 as usize;
+                    let len1_bytes: [u8; 4] = data[len1_start..len1_start + 4].try_into().unwrap();
+                    let len1 = u32::from_le_bytes(len1_bytes) as usize;
+                    let s1 = data[len1_start + 4..len1_start + 4 + len1].to_vec();
+
+                    // Read second string
+                    let len2_start = ptr2 as usize;
+                    let len2_bytes: [u8; 4] = data[len2_start..len2_start + 4].try_into().unwrap();
+                    let len2 = u32::from_le_bytes(len2_bytes) as usize;
+                    let s2 = data[len2_start + 4..len2_start + 4 + len2].to_vec();
+
+                    (s1, s2)
+                };
+
+                // Concatenate
+                let mut result = s1;
+                result.extend(s2);
+                let result_len = result.len();
+
+                // Allocate and write result (length-prefixed)
+                let state = caller.data_mut();
+                let ptr = state.allocate(4 + result_len);
+
+                let memory = caller
+                    .get_export("memory")
+                    .and_then(|e| e.into_memory())
+                    .unwrap();
+                let len_bytes = (result_len as u32).to_le_bytes();
+                let _ = memory.write(&mut caller, ptr, &len_bytes);
+                let _ = memory.write(&mut caller, ptr + 4, &result);
+
+                ptr as i32
+            },
+        )?;
+
+        // env.native_string_concat - Native alias for string.concat
+        linker.func_wrap(
+            "env",
+            "native_string_concat",
+            |mut caller: Caller<'_, PluginState>, ptr1: i32, ptr2: i32| -> i32 {
+                // Read both strings
+                let (s1, s2) = {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let data = memory.data(&caller);
+
+                    // Read first string
+                    let len1_start = ptr1 as usize;
+                    let len1_bytes: [u8; 4] = data[len1_start..len1_start + 4].try_into().unwrap();
+                    let len1 = u32::from_le_bytes(len1_bytes) as usize;
+                    let s1 = data[len1_start + 4..len1_start + 4 + len1].to_vec();
+
+                    // Read second string
+                    let len2_start = ptr2 as usize;
+                    let len2_bytes: [u8; 4] = data[len2_start..len2_start + 4].try_into().unwrap();
+                    let len2 = u32::from_le_bytes(len2_bytes) as usize;
+                    let s2 = data[len2_start + 4..len2_start + 4 + len2].to_vec();
+
+                    (s1, s2)
+                };
+
+                // Concatenate
+                let mut result = s1;
+                result.extend(s2);
+                let result_len = result.len();
+
+                // Allocate and write result (length-prefixed)
+                let state = caller.data_mut();
+                let ptr = state.allocate(4 + result_len);
+
+                let memory = caller
+                    .get_export("memory")
+                    .and_then(|e| e.into_memory())
+                    .unwrap();
+                let len_bytes = (result_len as u32).to_le_bytes();
+                let _ = memory.write(&mut caller, ptr, &len_bytes);
+                let _ = memory.write(&mut caller, ptr + 4, &result);
+
+                ptr as i32
+            },
+        )?;
+
         // env.string.split - Split string (stub)
         linker.func_wrap(
             "env",
@@ -970,6 +1068,80 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string.endsWith",
+            |mut caller: Caller<'_, PluginState>, string_ptr: i32, suffix_ptr: i32| -> i32 {
+                let (string_val, suffix) = {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let data = memory.data(&caller);
+
+                    let len_start1 = string_ptr as usize;
+                    let len_bytes1: [u8; 4] = data[len_start1..len_start1 + 4].try_into().unwrap();
+                    let len1 = u32::from_le_bytes(len_bytes1) as usize;
+                    let data_start1 = len_start1 + 4;
+                    let s1 =
+                        String::from_utf8_lossy(&data[data_start1..data_start1 + len1]).to_string();
+
+                    let len_start2 = suffix_ptr as usize;
+                    let len_bytes2: [u8; 4] = data[len_start2..len_start2 + 4].try_into().unwrap();
+                    let len2 = u32::from_le_bytes(len_bytes2) as usize;
+                    let data_start2 = len_start2 + 4;
+                    let s2 =
+                        String::from_utf8_lossy(&data[data_start2..data_start2 + len2]).to_string();
+
+                    (s1, s2)
+                };
+
+                if string_val.ends_with(&suffix) {
+                    1
+                } else {
+                    0
+                }
+            },
+        )?;
+
+        // env.string_starts_with - Underscore alias for string.startsWith
+        linker.func_wrap(
+            "env",
+            "string_starts_with",
+            |mut caller: Caller<'_, PluginState>, string_ptr: i32, prefix_ptr: i32| -> i32 {
+                let (string_val, prefix) = {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let data = memory.data(&caller);
+
+                    let len_start1 = string_ptr as usize;
+                    let len_bytes1: [u8; 4] = data[len_start1..len_start1 + 4].try_into().unwrap();
+                    let len1 = u32::from_le_bytes(len_bytes1) as usize;
+                    let data_start1 = len_start1 + 4;
+                    let s1 =
+                        String::from_utf8_lossy(&data[data_start1..data_start1 + len1]).to_string();
+
+                    let len_start2 = prefix_ptr as usize;
+                    let len_bytes2: [u8; 4] = data[len_start2..len_start2 + 4].try_into().unwrap();
+                    let len2 = u32::from_le_bytes(len_bytes2) as usize;
+                    let data_start2 = len_start2 + 4;
+                    let s2 =
+                        String::from_utf8_lossy(&data[data_start2..data_start2 + len2]).to_string();
+
+                    (s1, s2)
+                };
+
+                if string_val.starts_with(&prefix) {
+                    1
+                } else {
+                    0
+                }
+            },
+        )?;
+
+        // env.string_ends_with - Underscore alias for string.endsWith
+        linker.func_wrap(
+            "env",
+            "string_ends_with",
             |mut caller: Caller<'_, PluginState>, string_ptr: i32, suffix_ptr: i32| -> i32 {
                 let (string_val, suffix) = {
                     let memory = caller
