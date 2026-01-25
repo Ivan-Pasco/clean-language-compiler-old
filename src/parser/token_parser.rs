@@ -86,6 +86,7 @@ impl TokenParser {
         let mut statements = Vec::new();
         let screens = Vec::new(); // Always empty - screens handled as framework blocks by plugins
         let mut state: Option<crate::ast::StateBlock> = None;
+        let mut externals: Vec<crate::ast::ExternalFunction> = Vec::new();
 
         while !self.is_at_end() {
             self.skip_whitespace();
@@ -181,6 +182,17 @@ impl TokenParser {
                     }
                 }
                 TokenKind::Identifier(name) => {
+                    // Check for special top-level blocks first
+                    // "external:" or "external \"module\":" is a WASM import block
+                    if name == "external" {
+                        debug!("Parsing external: block for WASM imports");
+                        match self.parse_external_block() {
+                            Ok(mut external_fns) => externals.append(&mut external_fns),
+                            Err(e) => self.errors.push(e),
+                        }
+                        continue;
+                    }
+
                     // Check if this is a plugin keyword (e.g., "data" from frame.data plugin)
                     let is_plugin_keyword = self.plugin_keywords.contains(name);
 
@@ -290,6 +302,7 @@ impl TokenParser {
             state,
             watch_blocks: Vec::new(),
             screen_blocks: Vec::new(),
+            externals,
             location: None,
         })
     }
@@ -4361,5 +4374,220 @@ impl TokenParser {
     /// Plugin names contain dots but don't end with ".cln" (which would be a file import)
     fn is_plugin_name(name: &str) -> bool {
         name.contains('.') && !name.ends_with(".cln")
+    }
+
+    /// Parse an external function block
+    ///
+    /// External blocks declare WASM imports (functions provided by the host runtime).
+    ///
+    /// Syntax:
+    /// ```clean
+    /// external:
+    ///     return_type function_name(params)
+    ///
+    /// external "module_name":
+    ///     return_type function_name(params)
+    /// ```
+    fn parse_external_block(&mut self) -> Result<Vec<crate::ast::ExternalFunction>, CompilerError> {
+        let start_location = self.current().location.clone();
+
+        // Consume "external" keyword
+        self.bump();
+        self.skip_whitespace();
+
+        // Optional module name: external "http":
+        let module = if let TokenKind::StringLiteral(s) = self.current_kind() {
+            let m = s.clone();
+            self.bump();
+            self.skip_whitespace();
+            m
+        } else {
+            "env".to_string() // Default WASM import module
+        };
+
+        // Consume ":"
+        if !self.eat(&TokenKind::Colon) {
+            return Err(CompilerError::parse_error(
+                "Expected ':' after 'external' or 'external \"module\"'".to_string(),
+                Some(self.current().location.clone()),
+                Some("External blocks must end with a colon. Example:\nexternal:\n    string get_value()".to_string()),
+            ));
+        }
+        self.skip_whitespace();
+
+        let mut externals: Vec<crate::ast::ExternalFunction> = Vec::new();
+
+        // Expect indentation for block body
+        if !matches!(self.current_kind(), TokenKind::Indent(_))
+            && !matches!(self.current_kind(), TokenKind::Newline)
+        {
+            return Err(CompilerError::parse_error(
+                "Expected indented function declarations after 'external:'".to_string(),
+                Some(self.current().location.clone()),
+                Some("External function declarations must be indented. Example:\nexternal:\n    string get_value()".to_string()),
+            ));
+        }
+
+        // Skip newline if present
+        if matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump();
+        }
+
+        // Get the indent level
+        let block_level = if let TokenKind::Indent(level) = self.current_kind() {
+            *level
+        } else {
+            1 // Default to level 1
+        };
+
+        // Consume the initial indent
+        if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            self.bump();
+        }
+
+        // Parse external function declarations until we see a dedent or different token
+        loop {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for dedent (end of block)
+            if let TokenKind::Dedent(level) = self.current_kind() {
+                if *level < block_level {
+                    self.bump();
+                    break;
+                }
+            }
+
+            // Check for other top-level keywords that end the external block
+            if matches!(
+                self.current_kind(),
+                TokenKind::Functions
+                    | TokenKind::Class
+                    | TokenKind::Start
+                    | TokenKind::Tests
+                    | TokenKind::Import
+                    | TokenKind::State
+                    | TokenKind::Plugins
+            ) {
+                break;
+            }
+
+            // Check for another identifier at top level (might be start of next block)
+            if let TokenKind::Identifier(name) = self.current_kind() {
+                // Check if it's followed by a colon or is a known top-level pattern
+                if matches!(self.peek_kind(), Some(&TokenKind::Colon))
+                    || name == "external"
+                    || name == "start"
+                {
+                    break;
+                }
+            }
+
+            // Parse an external function declaration: return_type name(params)
+            match self.current_kind() {
+                TokenKind::Identifier(type_name) => {
+                    // Check if this is "void" return type
+                    let return_type = if type_name == "void" {
+                        self.bump();
+                        crate::ast::Type::Void
+                    } else {
+                        self.parse_type()?
+                    };
+
+                    self.skip_whitespace();
+
+                    // Get function name
+                    let func_name = self.expect_identifier()?.text.clone();
+                    self.skip_whitespace();
+
+                    // Parse parameters using external format: type name (not name: type)
+                    self.expect(&TokenKind::LeftParen)?;
+                    let parameters = self.parse_external_parameter_list()?;
+
+                    debug!(
+                        func_name = %func_name,
+                        return_type = ?return_type,
+                        param_count = parameters.len(),
+                        module = %module,
+                        "Parsed external function declaration"
+                    );
+
+                    externals.push(crate::ast::ExternalFunction {
+                        name: func_name,
+                        parameters,
+                        return_type,
+                        module: module.clone(),
+                        location: Some(start_location.clone()),
+                    });
+                }
+                TokenKind::Newline => {
+                    self.bump();
+                }
+                TokenKind::Indent(_) => {
+                    self.bump();
+                }
+                TokenKind::Dedent(_) => {
+                    break;
+                }
+                _ => {
+                    // Unknown token, end the block
+                    break;
+                }
+            }
+        }
+
+        debug!(
+            external_count = externals.len(),
+            module = %module,
+            "Finished parsing external block"
+        );
+
+        Ok(externals)
+    }
+
+    /// Parse external function parameter list
+    ///
+    /// External functions use the C-style format: `type name`, not Clean's `name: type`.
+    /// Example: `string field_name, integer count` not `field_name: string, count: integer`
+    fn parse_external_parameter_list(
+        &mut self,
+    ) -> Result<Vec<crate::ast::Parameter>, CompilerError> {
+        let mut parameters = Vec::new();
+
+        self.skip_whitespace();
+
+        while !self.check(&TokenKind::RightParen) && !self.is_at_end() {
+            parameters.push(self.parse_external_parameter()?);
+            self.skip_whitespace();
+
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+            self.skip_whitespace();
+        }
+
+        self.expect(&TokenKind::RightParen)?;
+
+        Ok(parameters)
+    }
+
+    /// Parse a single external function parameter: `type name`
+    fn parse_external_parameter(&mut self) -> Result<crate::ast::Parameter, CompilerError> {
+        // Parse type first
+        let type_ = self.parse_type()?;
+        self.skip_whitespace();
+
+        // Parse parameter name
+        let name_token = self.expect_identifier()?;
+        let name = name_token.text.clone();
+
+        Ok(crate::ast::Parameter {
+            name,
+            type_,
+            default_value: None,
+        })
     }
 }

@@ -217,6 +217,7 @@ impl MirBuilder {
             debug_info: None,
             symbol_name_map: HashMap::new(),
             used_plugins: Vec::new(),
+            externals: Vec::new(),
         };
 
         // CRITICAL FIX: Populate symbol_name_map from SymbolTable for dynamic resolution
@@ -479,6 +480,32 @@ impl MirBuilder {
         if !critical_errors.is_empty() {
             return Err(critical_errors);
         }
+
+        // Convert external functions (WASM imports)
+        mir_program.externals = tast
+            .externals
+            .iter()
+            .enumerate()
+            .map(
+                |(ext_idx, ext)| crate::mir::mir_types::MirExternalFunction {
+                    name: ext.name.clone(),
+                    parameters: ext
+                        .parameters
+                        .iter()
+                        .enumerate()
+                        .map(|(param_idx, p)| MirParameter {
+                            value_id: ValueId(10000 + ext_idx * 100 + param_idx),
+                            name: p.name.clone(),
+                            param_type: MirType::from_concrete_type(&p.param_type),
+                            location: p.location.clone(),
+                        })
+                        .collect(),
+                    return_type: MirType::from_concrete_type(&ext.return_type),
+                    module: ext.module.clone(),
+                    location: ext.location.clone(),
+                },
+            )
+            .collect();
 
         Ok(MirBuildResult {
             program: mir_program,

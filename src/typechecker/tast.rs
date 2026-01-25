@@ -22,6 +22,18 @@ pub struct TastProgram {
     /// Symbol table with all symbols (builtins + user-defined)
     /// Used by MIR builder for dynamic SymbolId resolution
     pub symbol_table: Arc<GlobalSymbolTable>,
+    /// External functions (WASM imports from host)
+    pub externals: Vec<TastExternalFunction>,
+}
+
+/// Type-checked external function (WASM import)
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastExternalFunction {
+    pub name: String,
+    pub parameters: Vec<TastParameter>,
+    pub return_type: ConcreteType,
+    pub module: String,
+    pub location: SourceLocation,
 }
 
 /// Type-checked function with full type information

@@ -1126,6 +1126,31 @@ impl<'a> TypeInference<'a> {
             None
         };
 
+        // Convert external functions (WASM imports)
+        let tast_externals: Vec<crate::typechecker::tast::TastExternalFunction> = program
+            .externals
+            .iter()
+            .map(|ext| crate::typechecker::tast::TastExternalFunction {
+                name: ext.name.clone(),
+                parameters: ext
+                    .parameters
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, p)| crate::typechecker::tast::TastParameter {
+                        symbol_id: crate::resolver::SymbolId(10000 + idx),
+                        name: p.name.clone(),
+                        param_type: self.hir_type_to_concrete(&p.param_type),
+                        default_value: None,
+                        is_variadic: false,
+                        location: p.location.clone(),
+                    })
+                    .collect(),
+                return_type: self.hir_type_to_concrete(&ext.return_type),
+                module: ext.module.clone(),
+                location: ext.location.clone(),
+            })
+            .collect();
+
         let result = TastProgram {
             functions: tast_functions,
             classes: tast_classes,
@@ -1137,6 +1162,7 @@ impl<'a> TypeInference<'a> {
             location: program.location.clone(),
             // CRITICAL FIX: Pass symbol table through to MIR for dynamic SymbolId resolution
             symbol_table: std::sync::Arc::new(program.symbol_table.clone()),
+            externals: tast_externals,
         };
 
         // Type inference completed successfully

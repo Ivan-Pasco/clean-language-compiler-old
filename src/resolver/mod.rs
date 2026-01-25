@@ -40,6 +40,18 @@ pub struct ResolvedHirProgram {
     pub state: Option<ResolvedHirStateBlock>,
     pub symbol_table: GlobalSymbolTable,
     pub location: SourceLocation,
+    /// External functions (WASM imports from host)
+    pub externals: Vec<ResolvedHirExternalFunction>,
+}
+
+/// Resolved HIR External Function (WASM import)
+#[derive(Debug, Clone)]
+pub struct ResolvedHirExternalFunction {
+    pub name: String,
+    pub parameters: Vec<ResolvedHirParameter>,
+    pub return_type: HirType,
+    pub module: String,
+    pub location: SourceLocation,
 }
 
 /// Resolved HIR Function with resolved symbol references

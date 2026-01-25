@@ -1,0 +1,10 @@
+// Test: External functions with custom WASM module name
+// The module name becomes the WASM import module (e.g., "http")
+
+external "http":
+	string get(string url)
+	string post(string url, string body)
+
+start()
+	string response = get("https://example.com")
+	print(response)

@@ -1562,8 +1562,39 @@ impl SemanticAnalyzer {
         }
     }
 
+    /// Register external functions declared via `external:` blocks
+    ///
+    /// External functions are WASM imports declared directly in Clean source code.
+    /// They need to be registered in the function table so they can be called
+    /// like regular functions during semantic analysis.
+    pub fn register_external_functions(&mut self, externals: &[crate::ast::ExternalFunction]) {
+        for external in externals {
+            // Convert parameters to types
+            let param_types: Vec<Type> = external
+                .parameters
+                .iter()
+                .map(|p| p.type_.clone())
+                .collect();
+
+            tracing::debug!(
+                "Registering external function: {} with {} params",
+                external.name,
+                param_types.len()
+            );
+
+            // Register using the standard register_builtin method
+            self.register_builtin(&external.name, param_types, external.return_type.clone());
+        }
+    }
+
     pub fn analyze(&mut self, program: &Program) -> Result<Program, CompilerError> {
         // Debug output removed for cleaner logs
+
+        // Register external functions declared via `external:` blocks
+        // These must be registered FIRST so they are available for function call validation
+        if !program.externals.is_empty() {
+            self.register_external_functions(&program.externals);
+        }
 
         // WORKAROUND: Fix parsing issue where class methods are extracted as standalone functions
         if program.classes.is_empty() && !program.functions.is_empty() {

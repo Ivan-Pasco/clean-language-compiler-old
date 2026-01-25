@@ -59,6 +59,7 @@ pub fn parse_program_ast(pair: Pair<Rule>) -> Result<Program, CompilerError> {
                 state: None,
                 watch_blocks: Vec::new(),
                 screen_blocks: Vec::new(),
+                externals: Vec::new(),
                 location: None,
             })
         }

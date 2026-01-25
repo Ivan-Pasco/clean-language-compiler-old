@@ -1,0 +1,10 @@
+// Test: Basic external function declarations
+// External functions are provided by the WASM host runtime
+
+external:
+	string _req_body_field(string field_name)
+	void _http_respond(integer status, string content_type, string body)
+
+start()
+	string body = _req_body_field("data")
+	_http_respond(200, "application/json", body)

@@ -417,6 +417,7 @@ mod tests {
             state: None,
             watch_blocks: Vec::new(),
             screen_blocks: Vec::new(),
+            externals: Vec::new(),
             location: None,
         }
     }

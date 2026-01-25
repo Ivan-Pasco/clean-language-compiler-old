@@ -66,6 +66,9 @@ impl NameResolver {
             None
         };
 
+        // Resolve external functions (WASM imports)
+        let resolved_externals = self.resolve_externals(&hir.externals)?;
+
         Ok(ResolvedHirProgram {
             functions: resolved_functions,
             classes: resolved_classes,
@@ -75,6 +78,7 @@ impl NameResolver {
             state: resolved_state,
             symbol_table: self.symbol_table.clone(),
             location: hir.location,
+            externals: resolved_externals,
         })
     }
 
@@ -237,6 +241,39 @@ impl NameResolver {
                         computed_decl.location.clone(),
                     );
                 }
+            }
+        }
+
+        // Register external functions (WASM imports)
+        // External functions are treated like builtins - they have no body in Clean code
+        for external in &hir.externals {
+            if self
+                .symbol_table
+                .has_symbol_in_current_scope(&external.name)
+            {
+                self.error(
+                    &format!(
+                        "External function '{}' conflicts with existing symbol",
+                        external.name
+                    ),
+                    external.location.clone(),
+                );
+            } else {
+                let symbol_id = self.symbol_table.create_symbol(
+                    external.name.clone(),
+                    SymbolKind::Function {
+                        parameters: external
+                            .parameters
+                            .iter()
+                            .map(|p| p.param_type.clone())
+                            .collect(),
+                        return_type: Some(external.return_type.clone()),
+                    },
+                    self.symbol_table.current_scope_id(),
+                    external.location.clone(),
+                );
+                // Mark as builtin so it doesn't require a body
+                self.symbol_table.mark_as_builtin(symbol_id);
             }
         }
 
@@ -703,6 +740,41 @@ impl NameResolver {
         }
 
         Ok(resolved_tests)
+    }
+
+    /// Resolve external functions (WASM imports)
+    fn resolve_externals(
+        &mut self,
+        externals: &[crate::hir::HirExternalFunction],
+    ) -> Result<Vec<crate::resolver::ResolvedHirExternalFunction>, ()> {
+        let mut resolved_externals = Vec::new();
+
+        for external in externals {
+            // External function parameters - convert to resolved parameters
+            let resolved_parameters: Vec<ResolvedHirParameter> = external
+                .parameters
+                .iter()
+                .enumerate()
+                .map(|(idx, p)| ResolvedHirParameter {
+                    name: p.name.clone(),
+                    symbol_id: SymbolId(10000 + idx), // Synthetic ID for external params
+                    param_type: p.param_type.clone(),
+                    default_value: None,
+                    is_variadic: false,
+                    location: p.location.clone(),
+                })
+                .collect();
+
+            resolved_externals.push(crate::resolver::ResolvedHirExternalFunction {
+                name: external.name.clone(),
+                parameters: resolved_parameters,
+                return_type: external.return_type.clone(),
+                module: external.module.clone(),
+                location: external.location.clone(),
+            });
+        }
+
+        Ok(resolved_externals)
     }
 
     /// Resolve state block

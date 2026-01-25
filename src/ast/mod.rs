@@ -1034,6 +1034,22 @@ pub struct Class {
     pub location: Option<SourceLocation>,
 }
 
+/// External function declaration - a function provided by the WASM host (imported)
+/// These functions are declared in external: blocks and generate WASM import entries
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternalFunction {
+    /// Function name (e.g., "_req_body_field", "_http_respond")
+    pub name: String,
+    /// Function parameters
+    pub parameters: Vec<Parameter>,
+    /// Return type (Type::Void for functions that don't return)
+    pub return_type: Type,
+    /// WASM import module name (defaults to "env")
+    pub module: String,
+    /// Source location for error reporting
+    pub location: Option<SourceLocation>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub imports: Vec<ImportItem>,
@@ -1043,10 +1059,11 @@ pub struct Program {
     pub classes: Vec<Class>,
     pub start_function: Option<Function>,
     pub tests: Vec<TestCase>,
-    pub screens: Vec<Screen>,          // Clean UI screens (legacy)
-    pub state: Option<StateBlock>,     // App-level state
-    pub watch_blocks: Vec<WatchBlock>, // Top-level watch observers
-    pub screen_blocks: Vec<Statement>, // Screen blocks with state scope
+    pub screens: Vec<Screen>,             // Clean UI screens (legacy)
+    pub state: Option<StateBlock>,        // App-level state
+    pub watch_blocks: Vec<WatchBlock>,    // Top-level watch observers
+    pub screen_blocks: Vec<Statement>,    // Screen blocks with state scope
+    pub externals: Vec<ExternalFunction>, // External functions (WASM imports)
     pub location: Option<SourceLocation>,
 }
 

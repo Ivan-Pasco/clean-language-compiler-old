@@ -811,6 +811,7 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
         let mut start_function = None;
         let mut all_imports = Vec::new();
         let mut all_tests = Vec::new();
+        let mut all_externals = Vec::new();
         let mut root_location = None;
 
         // Process modules in compilation order (dependencies first)
@@ -844,6 +845,11 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
                             all_tests.push(test.clone());
                         }
                     }
+
+                    // Collect external functions (WASM imports)
+                    for external in &hir.externals {
+                        all_externals.push(external.clone());
+                    }
                 }
             }
         }
@@ -868,6 +874,7 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
             tests: all_tests,
             state: None, // Multi-file compilation doesn't merge state blocks yet
             watch_blocks: Vec::new(),
+            externals: all_externals,
             location,
         }
     };

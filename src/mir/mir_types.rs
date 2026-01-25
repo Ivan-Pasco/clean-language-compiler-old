@@ -48,6 +48,29 @@ pub struct MirProgram {
     /// Maps plugin name to whether it was explicitly imported or auto-detected
     #[allow(dead_code)]
     pub used_plugins: Vec<String>,
+
+    /// External functions (WASM imports from host)
+    /// These generate import entries during code generation
+    pub externals: Vec<MirExternalFunction>,
+}
+
+/// MIR External Function - a function provided by the WASM host (imported)
+#[derive(Debug, Clone)]
+pub struct MirExternalFunction {
+    /// Function name (e.g., "_req_body_field", "_http_respond")
+    pub name: String,
+
+    /// Function parameters with types
+    pub parameters: Vec<MirParameter>,
+
+    /// Return type (MirType::Void for functions that don't return)
+    pub return_type: MirType,
+
+    /// WASM import module name (defaults to "env")
+    pub module: String,
+
+    /// Source location for debugging
+    pub location: SourceLocation,
 }
 
 /// MIR function representation

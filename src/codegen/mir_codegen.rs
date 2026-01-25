@@ -97,6 +97,10 @@ pub struct MirCodeGenerator<'a> {
     /// Plugin: excludes server-specific imports for minimal plugin size
     /// Standalone: standard CLI/library compilation
     target: crate::CompilationTarget,
+
+    /// External function indices - WASM function indices for external functions
+    /// declared via `external:` blocks. Maps function name to WASM function index.
+    external_function_indices: HashMap<String, u32>,
 }
 
 /// Context for loop code generation
@@ -174,6 +178,7 @@ impl MirCodeGenerator<'_> {
             state_global_indices: HashMap::new(),
             state_globals: Vec::new(),
             target: crate::CompilationTarget::Server, // Default to Server for backwards compatibility
+            external_function_indices: HashMap::new(),
         }
     }
 
@@ -201,6 +206,7 @@ impl MirCodeGenerator<'_> {
             state_global_indices: HashMap::new(),
             state_globals: Vec::new(),
             target: crate::CompilationTarget::Standalone, // Minimal uses Standalone
+            external_function_indices: HashMap::new(),
         }
     }
 
@@ -228,6 +234,7 @@ impl MirCodeGenerator<'_> {
             state_global_indices: HashMap::new(),
             state_globals: Vec::new(),
             target,
+            external_function_indices: HashMap::new(),
         }
     }
 
@@ -357,6 +364,19 @@ impl MirCodeGenerator<'_> {
                 );
                 self.register_plugin_bridge_imports().map_err(|e| vec![e])?;
                 debug_mir!("DEBUG MIR: Plugin bridge function imports registered");
+            }
+
+            // CRITICAL: Register external functions declared via `external:` blocks
+            // These are WASM imports declared directly in Clean source code
+            // MUST be registered after plugin bridge imports but before internal functions
+            if !mir_program.externals.is_empty() {
+                debug_mir!(
+                    "DEBUG MIR: Registering {} external function imports",
+                    mir_program.externals.len()
+                );
+                self.register_external_function_imports(&mir_program.externals)
+                    .map_err(|e| vec![e])?;
+                debug_mir!("DEBUG MIR: External function imports registered");
             }
 
             // CRITICAL: Register math operations (abs, max, min, sqrt, pow, etc.)
@@ -6103,6 +6123,117 @@ impl MirCodeGenerator<'_> {
             BuiltinType::Namespace => WasmType::I32, // Namespace as i32
             BuiltinType::Any => WasmType::I32,  // Any as i32 pointer
         }
+    }
+
+    /// Convert MirType to WasmType for external function imports
+    ///
+    /// This converts MIR types to WASM types for registering external function imports.
+    /// External functions use Clean Language types (string, integer, etc.) which map to
+    /// WASM types (i32 for pointers/integers, f64 for numbers, etc.)
+    fn mir_type_to_wasm_type_for_import(mir_type: &MirType) -> crate::types::WasmType {
+        use crate::types::WasmType;
+
+        match mir_type {
+            // Integer types all map to i32
+            MirType::I8
+            | MirType::I16
+            | MirType::I32
+            | MirType::U8
+            | MirType::U16
+            | MirType::U32
+            | MirType::Bool => WasmType::I32,
+
+            // 64-bit integers map to i64
+            MirType::I64 | MirType::U64 => WasmType::I64,
+
+            // Floating point types
+            MirType::F32 => WasmType::F32,
+            MirType::F64 => WasmType::F64,
+
+            // Pointers are 32-bit addresses (strings, arrays, etc.)
+            MirType::Ptr(_) => WasmType::I32,
+
+            // String tuples (ptr+len) - as parameter, it's just the pointer
+            MirType::StringTuple => WasmType::I32,
+
+            // Any type is a pointer to boxed value
+            MirType::Any => WasmType::I32,
+
+            // Arrays and other complex types are pointers
+            MirType::Array(_, _) => WasmType::I32,
+
+            // Function types shouldn't appear in external function signatures
+            MirType::Function { .. } => WasmType::I32,
+
+            // Void type - shouldn't be used as a parameter type
+            MirType::Void => WasmType::I32,
+
+            // Struct/class types are pointers
+            MirType::Struct(_) => WasmType::I32,
+        }
+    }
+
+    /// Register external functions as WASM imports
+    ///
+    /// External functions declared via `external:` blocks are registered as WASM imports
+    /// so the runtime can provide their implementations. This is similar to plugin bridge
+    /// functions but declared directly in Clean source code.
+    ///
+    /// CRITICAL: This must be called AFTER plugin bridge imports and BEFORE any internal
+    /// functions are registered, because WASM requires all imports to come first.
+    fn register_external_function_imports(
+        &mut self,
+        externals: &[crate::mir::mir_types::MirExternalFunction],
+    ) -> Result<(), CompilerError> {
+        use crate::types::WasmType;
+
+        for external in externals {
+            // Convert parameter types to WASM types
+            let wasm_params: Vec<WasmType> = external
+                .parameters
+                .iter()
+                .map(|p| Self::mir_type_to_wasm_type_for_import(&p.param_type))
+                .collect();
+
+            // Convert return type to WASM type (None for void)
+            let wasm_return = match &external.return_type {
+                MirType::Void => None,
+                rt => Some(Self::mir_type_to_wasm_type_for_import(rt)),
+            };
+
+            tracing::debug!(
+                name = %external.name,
+                module = %external.module,
+                params = ?wasm_params,
+                returns = ?wasm_return,
+                "Registering external function as WASM import"
+            );
+
+            // Register the import and store the function index
+            let func_index = self.wasm_generator.register_import_function(
+                &external.module,
+                &external.name,
+                &wasm_params,
+                wasm_return,
+            )?;
+
+            // Store the function index for call resolution
+            self.external_function_indices
+                .insert(external.name.clone(), func_index);
+
+            // Also register in the function map for call resolution
+            self.wasm_generator
+                .function_map
+                .insert(external.name.clone(), func_index);
+
+            tracing::debug!(
+                name = %external.name,
+                func_index = func_index,
+                "External function registered with WASM index"
+            );
+        }
+
+        Ok(())
     }
 }
 

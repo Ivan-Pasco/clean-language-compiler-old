@@ -128,6 +128,13 @@ impl HirBuilder {
             .map(|wb| self.build_watch_block(wb))
             .collect::<Result<Vec<_>, _>>()?;
 
+        // Process external functions (WASM imports)
+        let externals = program
+            .externals
+            .iter()
+            .map(|ext| self.build_external_function(ext))
+            .collect::<Result<Vec<_>, _>>()?;
+
         let hir_program = HirProgram {
             functions,
             classes,
@@ -136,6 +143,7 @@ impl HirBuilder {
             tests,
             state,
             watch_blocks,
+            externals,
             location: program.location.unwrap_or_default(),
         };
 
@@ -169,6 +177,28 @@ impl HirBuilder {
             body,
             is_start: func.name == "start",
             location: func.location.clone().unwrap_or_default(),
+        })
+    }
+
+    /// Convert AST external function to HIR external function
+    fn build_external_function(
+        &mut self,
+        ext: &crate::ast::ExternalFunction,
+    ) -> Result<HirExternalFunction, CompilerError> {
+        let parameters = ext
+            .parameters
+            .iter()
+            .map(|param| self.build_parameter(param))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let return_type = self.build_type(&ext.return_type)?;
+
+        Ok(HirExternalFunction {
+            name: ext.name.clone(),
+            parameters,
+            return_type,
+            module: ext.module.clone(),
+            location: ext.location.clone().unwrap_or_default(),
         })
     }
 

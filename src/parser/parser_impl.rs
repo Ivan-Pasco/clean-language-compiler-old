@@ -283,6 +283,7 @@ impl ErrorRecoveringParser {
             state: None,
             watch_blocks: Vec::new(),
             screen_blocks: Vec::new(),
+            externals: Vec::new(),
             location: None,
         };
 
@@ -438,6 +439,7 @@ impl ErrorRecoveringParser {
                 state: None,
                 watch_blocks: Vec::new(),
                 screen_blocks: Vec::new(),
+                externals: Vec::new(),
                 location: None,
             });
         }
@@ -535,6 +537,7 @@ impl ErrorRecoveringParser {
                     state: None,
                     watch_blocks: Vec::new(),
                     screen_blocks: Vec::new(),
+                    externals: Vec::new(),
                     location: None,
                 })
             }
@@ -559,6 +562,7 @@ impl ErrorRecoveringParser {
                     state: None,
                     watch_blocks: Vec::new(),
                     screen_blocks: Vec::new(),
+                    externals: Vec::new(),
                     location: None,
                 })
             }
@@ -861,6 +865,7 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                     state: None,
                     watch_blocks: Vec::new(),
                     screen_blocks: Vec::new(),
+                    externals: Vec::new(),
                     location: None,
                 };
 
@@ -895,6 +900,7 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
     let mut state: Option<crate::ast::StateBlock> = None;
     let mut watch_blocks: Vec<crate::ast::WatchBlock> = Vec::new();
     let mut screen_blocks: Vec<Statement> = Vec::new();
+    let mut externals: Vec<crate::ast::ExternalFunction> = Vec::new();
 
     for pair in pairs {
         if pair.as_rule() == Rule::program {
@@ -948,6 +954,11 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
                                     // Parse screen block
                                     let screen_stmt = parse_screen_block(program_item_inner)?;
                                     screen_blocks.push(screen_stmt);
+                                }
+                                Rule::external_block => {
+                                    // Parse external function block (WASM imports)
+                                    let external_fns = parse_external_block(program_item_inner)?;
+                                    externals.extend(external_fns);
                                 }
                                 Rule::statement => {
                                     let stmt = parse_statement(program_item_inner)?;
@@ -1023,6 +1034,7 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
         state,
         watch_blocks,
         screen_blocks,
+        externals,
         location: None,
     };
 
@@ -1905,6 +1917,151 @@ impl ErrorRecoveringParser {
 }
 
 // ============================================================================
+// EXTERNAL FUNCTION PARSERS
+// ============================================================================
+
+/// Parse an external block that declares functions provided by the WASM host
+/// Syntax:
+///   external:          # imports from "env" module
+///       return_type function_name(params)
+///
+///   external "module": # imports from custom module
+///       return_type function_name(params)
+pub fn parse_external_block(
+    pair: Pair<Rule>,
+) -> Result<Vec<crate::ast::ExternalFunction>, CompilerError> {
+    let mut externals = Vec::new();
+    let mut module = "env".to_string(); // Default WASM module name
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => {
+                // Custom module name (e.g., external "http":)
+                let s = inner.as_str();
+                // Remove quotes from string
+                module = s[1..s.len() - 1].to_string();
+            }
+            Rule::indented_external_functions => {
+                for decl_pair in inner.into_inner() {
+                    if decl_pair.as_rule() == Rule::external_function_declaration {
+                        let external_fn =
+                            parse_external_function_declaration(decl_pair, module.clone())?;
+                        externals.push(external_fn);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(externals)
+}
+
+/// Parse a single external function declaration
+/// Syntax: return_type function_name(params)
+fn parse_external_function_declaration(
+    pair: Pair<Rule>,
+    module: String,
+) -> Result<crate::ast::ExternalFunction, CompilerError> {
+    use crate::ast::{ExternalFunction, Type};
+
+    let location = Some(convert_to_ast_location(&get_location(&pair)));
+    let mut return_type = Type::Void;
+    let mut name = String::new();
+    let mut parameters = Vec::new();
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::external_return_type => {
+                // Parse return type - handle "void" specially
+                let type_str = inner.as_str().trim();
+                if type_str == "void" {
+                    return_type = Type::Void;
+                } else {
+                    // Parse as a regular type
+                    return_type = parse_type_from_str(type_str)?;
+                }
+            }
+            Rule::function_name => {
+                name = inner.as_str().to_string();
+            }
+            Rule::parameter_list => {
+                parameters = parse_external_parameter_list(inner)?;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(ExternalFunction {
+        name,
+        parameters,
+        return_type,
+        module,
+        location,
+    })
+}
+
+/// Parse parameter list for external function declarations
+fn parse_external_parameter_list(
+    pair: Pair<Rule>,
+) -> Result<Vec<crate::ast::Parameter>, CompilerError> {
+    use crate::ast::Parameter;
+
+    let mut parameters = Vec::new();
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::parameter => {
+                // For external functions, we have type-only parameters or type name pairs
+                // Handle format: type name or just type (with name optional)
+                let text = inner.as_str().trim();
+                let parts: Vec<&str> = text.split_whitespace().collect();
+
+                let (param_type, param_name) = if parts.len() >= 2 {
+                    (parse_type_from_str(parts[0])?, parts[1].to_string())
+                } else if parts.len() == 1 {
+                    // Single word - assume it's a type with generated name
+                    (
+                        parse_type_from_str(parts[0])?,
+                        format!("arg{}", parameters.len()),
+                    )
+                } else {
+                    (crate::ast::Type::Any, format!("arg{}", parameters.len()))
+                };
+
+                parameters.push(Parameter {
+                    name: param_name,
+                    type_: param_type,
+                    default_value: None,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    Ok(parameters)
+}
+
+/// Helper function to parse a type from a string
+fn parse_type_from_str(type_str: &str) -> Result<crate::ast::Type, CompilerError> {
+    use crate::ast::Type;
+
+    match type_str.trim() {
+        "integer" => Ok(Type::Integer),
+        "number" => Ok(Type::Number),
+        "string" => Ok(Type::String),
+        "boolean" => Ok(Type::Boolean),
+        "any" => Ok(Type::Any),
+        "void" => Ok(Type::Void),
+        "null" => Ok(Type::Null),
+        _other => {
+            // Could be a class type or complex type
+            // For now, treat unknown types as any (generic external types)
+            Ok(Type::Any)
+        }
+    }
+}
+
 // STATE MANAGEMENT PARSERS
 // ============================================================================
 
