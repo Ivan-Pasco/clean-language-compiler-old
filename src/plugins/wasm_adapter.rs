@@ -310,18 +310,35 @@ impl WasmPluginAdapter {
                 let mut result = s1;
                 result.extend(s2);
                 let result_len = result.len();
+                let total_size = 4 + result_len;
 
                 // Allocate and write result (length-prefixed)
                 let state = caller.data_mut();
-                let ptr = state.allocate(4 + result_len);
+                let ptr = state.allocate(total_size);
 
                 let memory = caller
                     .get_export("memory")
                     .and_then(|e| e.into_memory())
                     .unwrap();
+
+                // Check if we need to grow memory
+                let current_size = memory.data_size(&caller);
+                let required_size = ptr + total_size;
+                if required_size > current_size {
+                    let pages_needed = ((required_size - current_size) + 65535) / 65536;
+                    if memory.grow(&mut caller, pages_needed as u64).is_err() {
+                        return 0; // Allocation failed
+                    }
+                }
+
+                // Write length and data
                 let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, ptr, &len_bytes);
-                let _ = memory.write(&mut caller, ptr + 4, &result);
+                if memory.write(&mut caller, ptr, &len_bytes).is_err() {
+                    return 0;
+                }
+                if memory.write(&mut caller, ptr + 4, &result).is_err() {
+                    return 0;
+                }
 
                 ptr as i32
             },
@@ -657,25 +674,36 @@ impl WasmPluginAdapter {
                 };
 
                 // Perform the replacement
-                eprintln!(
-                    "[Plugin Debug] string.replace called: source='{}', search='{}', replace='{}'",
-                    string_val, search, replace
-                );
                 let result = string_val.replace(&search, &replace);
-                eprintln!("[Plugin Debug] string.replace result: '{}'", result);
 
                 // Allocate and write result
                 let result_bytes = result.as_bytes();
                 let result_len = result_bytes.len();
+                let total_size = result_len + 4;
                 let state = caller.data_mut();
-                let ptr = state.allocate(result_len + 4);
+                let ptr = state.allocate(total_size);
                 let memory = caller
                     .get_export("memory")
                     .and_then(|e| e.into_memory())
                     .unwrap();
+
+                // Check if we need to grow memory
+                let current_size = memory.data_size(&caller);
+                let required_size = ptr + total_size;
+                if required_size > current_size {
+                    let pages_needed = ((required_size - current_size) + 65535) / 65536;
+                    if memory.grow(&mut caller, pages_needed as u64).is_err() {
+                        return 0;
+                    }
+                }
+
                 let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, ptr, &len_bytes);
-                let _ = memory.write(&mut caller, ptr + 4, result_bytes);
+                if memory.write(&mut caller, ptr, &len_bytes).is_err() {
+                    return 0;
+                }
+                if memory.write(&mut caller, ptr + 4, result_bytes).is_err() {
+                    return 0;
+                }
                 ptr as i32
             },
         )?;
@@ -751,15 +779,34 @@ impl WasmPluginAdapter {
                 // Allocate and write result
                 let result_bytes = substring.as_bytes();
                 let result_len = result_bytes.len();
+                let total_size = result_len + 4;
                 let state = caller.data_mut();
-                let result_ptr = state.allocate(result_len + 4);
+                let result_ptr = state.allocate(total_size);
                 let memory = caller
                     .get_export("memory")
                     .and_then(|e| e.into_memory())
                     .unwrap();
+
+                // Check if we need to grow memory
+                let current_size = memory.data_size(&caller);
+                let required_size = result_ptr + total_size;
+                if required_size > current_size {
+                    let pages_needed = ((required_size - current_size) + 65535) / 65536;
+                    if memory.grow(&mut caller, pages_needed as u64).is_err() {
+                        return 0;
+                    }
+                }
+
                 let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, result_ptr, &len_bytes);
-                let _ = memory.write(&mut caller, result_ptr + 4, result_bytes);
+                if memory.write(&mut caller, result_ptr, &len_bytes).is_err() {
+                    return 0;
+                }
+                if memory
+                    .write(&mut caller, result_ptr + 4, result_bytes)
+                    .is_err()
+                {
+                    return 0;
+                }
                 result_ptr as i32
             },
         )?;
