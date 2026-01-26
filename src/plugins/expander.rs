@@ -7,7 +7,7 @@
  */
 
 use super::{FrameworkBlock, PluginError, PluginRegistry};
-use crate::ast::{Class, Function, Program, Statement};
+use crate::ast::{Class, ExternalFunction, Function, Program, Statement};
 
 /// AST expander that transforms framework blocks into Clean Language code
 pub struct PluginExpander<'a> {
@@ -19,6 +19,8 @@ pub struct PluginExpander<'a> {
     pending_start: Option<Function>,
     /// Pending functions to add to the program
     pending_functions: Vec<Function>,
+    /// Pending external functions from plugin expansion
+    pending_externals: Vec<ExternalFunction>,
 }
 
 impl<'a> PluginExpander<'a> {
@@ -30,6 +32,7 @@ impl<'a> PluginExpander<'a> {
             statements_generated: 0,
             pending_start: None,
             pending_functions: Vec::new(),
+            pending_externals: Vec::new(),
         }
     }
 
@@ -69,9 +72,17 @@ impl<'a> PluginExpander<'a> {
         // Merge pending functions into program
         program.functions.extend(self.pending_functions.drain(..));
 
+        // Merge pending externals into program (deduplicate by name)
+        for ext in self.pending_externals.drain(..) {
+            if !program.externals.iter().any(|e| e.name == ext.name) {
+                program.externals.push(ext);
+            }
+        }
+
         tracing::debug!(
             blocks_expanded = self.blocks_expanded,
             statements_generated = self.statements_generated,
+            externals_added = program.externals.len(),
             "Plugin expansion complete"
         );
 
@@ -120,6 +131,9 @@ impl<'a> PluginExpander<'a> {
 
                         // Capture additional functions
                         self.pending_functions.extend(expansion.functions);
+
+                        // Capture external functions
+                        self.pending_externals.extend(expansion.externals);
 
                         // Add expanded statements
                         let expanded = self.expand_statements_full(expansion.statements)?;

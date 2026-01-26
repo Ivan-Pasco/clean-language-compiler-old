@@ -340,6 +340,7 @@ pub trait FrameworkPlugin: Send + Sync {
             statements: self.expand(block)?,
             start_function: None,
             functions: Vec::new(),
+            externals: Vec::new(),
         })
     }
 
@@ -493,6 +494,8 @@ pub struct PluginExpansion {
     pub start_function: Option<crate::ast::Function>,
     /// Optional functions to add to the program
     pub functions: Vec<crate::ast::Function>,
+    /// External functions (WASM imports) declared by the plugin
+    pub externals: Vec<crate::ast::ExternalFunction>,
 }
 
 #[cfg(test)]

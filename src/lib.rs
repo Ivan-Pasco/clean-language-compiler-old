@@ -229,6 +229,28 @@ pub fn compile_pure(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<Compil
     compile_with_plugins(source, file_path, &registry)
 }
 
+/// Parses a bridge function type string into an AST Type
+///
+/// Bridge functions in plugin.toml use string type names like "string", "integer", etc.
+/// This function converts those strings to the corresponding AST Type.
+fn parse_bridge_type(type_str: &str) -> ast::Type {
+    match type_str.to_lowercase().as_str() {
+        "string" => ast::Type::String,
+        "integer" | "int" | "i32" | "i64" => ast::Type::Integer,
+        "number" | "float" | "f64" => ast::Type::Number,
+        "boolean" | "bool" => ast::Type::Boolean,
+        "void" | "()" => ast::Type::Void,
+        "any" => ast::Type::Any,
+        // Handle generic types like "list<string>"
+        s if s.starts_with("list<") && s.ends_with('>') => {
+            let inner = &s[5..s.len() - 1];
+            ast::Type::List(Box::new(parse_bridge_type(inner)))
+        }
+        // Default to Any for unknown types
+        _ => ast::Type::Any,
+    }
+}
+
 /// Compiles Clean Language source code with custom plugin registry
 ///
 /// This is the main compilation entry point for frameworks that provide DSL plugins.
@@ -325,7 +347,7 @@ pub fn compile_with_plugins_and_opt_level(
     tracing::debug!("Starting Stage 2.5: Plugin Expansion");
     use crate::plugins::PluginExpander;
     let mut expander = PluginExpander::new(registry);
-    let ast = expander.expand_program(parsed_ast).map_err(|e| {
+    let mut ast = expander.expand_program(parsed_ast).map_err(|e| {
         vec![CompilerError::syntax_error(
             e.to_string(),
             Some("Plugin expansion failed".to_string()),
@@ -337,6 +359,53 @@ pub fn compile_with_plugins_and_opt_level(
         statements_generated = expander.statements_generated(),
         "Stage 2.5 complete: Plugin expansion finished"
     );
+
+    // Stage 2.6: Convert plugin bridge functions to external declarations
+    // This ensures bridge functions from plugin.toml are registered in the AST
+    // so they can be properly type-checked and resolved
+    let bridge_functions = registry.bridge_functions();
+    if !bridge_functions.is_empty() {
+        tracing::debug!(
+            bridge_function_count = bridge_functions.len(),
+            "Converting plugin bridge functions to external declarations"
+        );
+        for bf in bridge_functions {
+            // Skip if already declared (from parsed external: block or plugin expansion)
+            if ast.externals.iter().any(|e| e.name == bf.name) {
+                continue;
+            }
+
+            // Convert BridgeFunction to ExternalFunction
+            let parameters: Vec<crate::ast::Parameter> = bf
+                .params
+                .iter()
+                .enumerate()
+                .map(|(i, type_str)| crate::ast::Parameter {
+                    name: format!("arg{}", i),
+                    type_: parse_bridge_type(type_str),
+                    default_value: None,
+                })
+                .collect();
+
+            let external_fn = crate::ast::ExternalFunction {
+                name: bf.name.clone(),
+                parameters,
+                return_type: parse_bridge_type(&bf.returns),
+                module: bf.module.clone(),
+                location: None,
+            };
+
+            ast.externals.push(external_fn);
+            tracing::trace!(
+                name = %bf.name,
+                "Added external function from bridge"
+            );
+        }
+        tracing::debug!(
+            externals_count = ast.externals.len(),
+            "Stage 2.6 complete: Bridge functions converted to externals"
+        );
+    }
 
     // Stage 3: AST to HIR - validation and desugaring per specification
     tracing::debug!("Starting Stage 3: AST to HIR");

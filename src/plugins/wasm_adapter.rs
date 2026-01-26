@@ -2571,6 +2571,7 @@ impl WasmPluginAdapter {
                     statements: program.statements,
                     start_function: program.start_function,
                     functions: program.functions,
+                    externals: program.externals,
                 });
             }
             Err(e) => {
@@ -2612,6 +2613,7 @@ impl WasmPluginAdapter {
             statements: Vec::new(),
             start_function: program.start_function,
             functions: program.functions,
+            externals: program.externals,
         })
     }
 
