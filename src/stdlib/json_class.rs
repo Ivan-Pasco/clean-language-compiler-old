@@ -199,6 +199,23 @@ impl JsonClass {
         &self,
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
+        // Get required function indices for stringify operations
+        let malloc_index = codegen
+            .get_function_index("__malloc")
+            .expect("__malloc must be registered before JSON stringify functions");
+
+        let int_to_string_index = codegen
+            .get_function_index("int_to_string")
+            .expect("int_to_string must be registered before JSON stringify functions");
+
+        let float_to_string_index = codegen
+            .get_function_index("float_to_string")
+            .expect("float_to_string must be registered before JSON stringify functions");
+
+        let string_concat_index = codegen
+            .get_function_index("string.concat")
+            .expect("string.concat must be registered before JSON stringify functions");
+
         // json.dataToText(data: any) -> string
         // Convert data structure to JSON text
         register_stdlib_function_with_locals(
@@ -206,19 +223,44 @@ impl JsonClass {
             "json.dataToText",
             &[WasmType::I32],    // data pointer
             Some(WasmType::I32), // returns string pointer
-            &[WasmType::I32, WasmType::I32, WasmType::I32],
-            self.generate_data_to_text_instructions(),
+            &[
+                WasmType::I32, // Local 1: type_tag
+                WasmType::I32, // Local 2: value / temp
+                WasmType::I32, // Local 3: result_ptr
+                WasmType::I32, // Local 4: temp
+                WasmType::I32, // Local 5: string_ptr
+                WasmType::F64, // Local 6: f64_value
+            ],
+            self.generate_data_to_text_instructions(
+                malloc_index,
+                int_to_string_index,
+                float_to_string_index,
+                string_concat_index,
+            ),
         )?;
 
         // json.prettyDataToText(data: any) -> string
         // Convert data structure to formatted JSON text with indentation
+        // For now, same as dataToText (pretty printing to be added later)
         register_stdlib_function_with_locals(
             codegen,
             "json.prettyDataToText",
             &[WasmType::I32],    // data pointer
             Some(WasmType::I32), // returns formatted string pointer
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
-            self.generate_pretty_data_to_text_instructions(),
+            &[
+                WasmType::I32, // Local 1: type_tag
+                WasmType::I32, // Local 2: value / temp
+                WasmType::I32, // Local 3: result_ptr
+                WasmType::I32, // Local 4: temp
+                WasmType::I32, // Local 5: string_ptr
+                WasmType::F64, // Local 6: f64_value
+            ],
+            self.generate_data_to_text_instructions(
+                malloc_index,
+                int_to_string_index,
+                float_to_string_index,
+                string_concat_index,
+            ),
         )?;
 
         Ok(())
@@ -799,59 +841,309 @@ impl JsonClass {
     }
 
     /// Generate WASM instructions for json.dataToText
-    /// Converts a data structure back to JSON text
-    fn generate_data_to_text_instructions(&self) -> Vec<Instruction<'static>> {
-        // JSON Stringifier Implementation
-        // Takes a data pointer and returns a JSON string
-        //
-        // For now, implement basic handling:
-        // - 0 (null) -> "null"
-        // - 1 (false) -> "false"
-        // - 2 (true) -> "true"
-        // - Other pointers -> stringify based on type tag
-
+    /// Converts a boxed JSON value back to JSON text string
+    ///
+    /// Memory layout of boxed values (12 bytes each):
+    /// - Null (tag 0):    [tag=0, 0, 0]
+    /// - Integer (tag 1): [tag=1, i32_value, 0]
+    /// - Boolean (tag 2): [tag=2, bool (0/1), 0]
+    /// - Number (tag 3):  [tag=3, f64_lo, f64_hi] (8 bytes for f64)
+    /// - String (tag 4):  [tag=4, string_ptr, 0]
+    /// - List (tag 5):    [tag=5, array_ptr, 0]
+    /// - Object (tag 6):  [tag=6, object_ptr, 0]
+    ///
+    /// Parameters:
+    /// - Local 0: data pointer (parameter)
+    /// - Local 1: type_tag
+    /// - Local 2: value / temp
+    /// - Local 3: result_ptr
+    /// - Local 4: temp
+    /// - Local 5: string_ptr
+    /// - Local 6: f64_value
+    fn generate_data_to_text_instructions(
+        &self,
+        malloc_index: u32,
+        int_to_string_index: u32,
+        float_to_string_index: u32,
+        _string_concat_index: u32,
+    ) -> Vec<Instruction<'static>> {
         vec![
-            // Local 0: data pointer (parameter)
-            // Local 1: result string pointer
-            // Local 2: temp
-            // Local 3: temp
-
-            // Check if null
+            // Check if input pointer is null (0)
             Instruction::LocalGet(0),
             Instruction::I32Eqz,
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // Allocate and return "null" string
-            // For simplicity, return a fixed address where we'd store "null"
-            Instruction::I32Const(0), // Would be pointer to "null" string in data section
+            // Input is null pointer - allocate and return "null" string
+            // Allocate 8 bytes: 4 (length) + 4 (content "null")
+            Instruction::I32Const(8),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(3), // result_ptr
+            // Store length = 4
+            Instruction::I32Const(4),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store 'n' (110) at offset 4
+            Instruction::LocalGet(3),
+            Instruction::I32Const(110), // 'n'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            // Store 'u' (117) at offset 5
+            Instruction::LocalGet(3),
+            Instruction::I32Const(117), // 'u'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 5,
+                align: 0,
+                memory_index: 0,
+            }),
+            // Store 'l' (108) at offset 6
+            Instruction::LocalGet(3),
+            Instruction::I32Const(108), // 'l'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 6,
+                align: 0,
+                memory_index: 0,
+            }),
+            // Store 'l' (108) at offset 7
+            Instruction::LocalGet(3),
+            Instruction::I32Const(108), // 'l'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 7,
+                align: 0,
+                memory_index: 0,
+            }),
+            // Return result_ptr
+            Instruction::LocalGet(3),
             Instruction::Else,
-            // Check if boolean false (1)
+            // Input is not null - read type tag from offset 0
             Instruction::LocalGet(0),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(1), // type_tag
+            // Check type tag and handle each case
+            // Tag 0: Null (boxed null)
+            Instruction::LocalGet(1),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Boxed null - allocate and return "null" string
+            Instruction::I32Const(8),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(3),
+            Instruction::I32Const(4),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(0x6C6C756E), // "null" as i32 little-endian
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3),
+            Instruction::Else,
+            // Tag 1: Integer
+            Instruction::LocalGet(1),
             Instruction::I32Const(1),
             Instruction::I32Eq,
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            Instruction::I32Const(0), // Would be pointer to "false" string
-            Instruction::Else,
-            // Check if boolean true (2)
+            // Read i32 value from offset 4
             Instruction::LocalGet(0),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Call int_to_string
+            Instruction::Call(int_to_string_index),
+            Instruction::Else,
+            // Tag 2: Boolean
+            Instruction::LocalGet(1),
             Instruction::I32Const(2),
             Instruction::I32Eq,
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            Instruction::I32Const(0), // Would be pointer to "true" string
+            // Read boolean value from offset 4
+            Instruction::LocalGet(0),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(2), // bool value
+            // Check if true or false
+            Instruction::LocalGet(2),
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // true - allocate "true" string (4 chars)
+            Instruction::I32Const(8),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(3),
+            Instruction::I32Const(4),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(0x65757274), // "true" as i32 little-endian
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3),
             Instruction::Else,
-            // For other values, attempt to stringify
-            // This is a simplified implementation
-            Instruction::LocalGet(0), // Return the input for now
-            Instruction::End,         // true check
-            Instruction::End,         // false check
-            Instruction::End,         // null check
+            // false - allocate "false" string (5 chars)
+            Instruction::I32Const(9),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(3),
+            Instruction::I32Const(5),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store "fals" (4 bytes)
+            Instruction::LocalGet(3),
+            Instruction::I32Const(0x736C6166), // "fals" as i32 little-endian
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store 'e' at offset 8
+            Instruction::LocalGet(3),
+            Instruction::I32Const(101), // 'e'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 8,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3),
+            Instruction::End, // end of true/false check
+            Instruction::Else,
+            // Tag 3: Number (f64)
+            Instruction::LocalGet(1),
+            Instruction::I32Const(3),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Read f64 value from offset 4
+            Instruction::LocalGet(0),
+            Instruction::F64Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 3,
+                memory_index: 0,
+            }),
+            // Call float_to_string
+            Instruction::Call(float_to_string_index),
+            Instruction::Else,
+            // Tag 4: String
+            Instruction::LocalGet(1),
+            Instruction::I32Const(4),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Read string pointer from offset 4
+            // For JSON output, we should add quotes, but for now just return the string as-is
+            // since the database returns pre-formatted JSON strings
+            Instruction::LocalGet(0),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::Else,
+            // Tag 5: List/Array - return "[...]" placeholder
+            Instruction::LocalGet(1),
+            Instruction::I32Const(5),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // For now, return "[...]" - recursive stringify to be implemented
+            Instruction::I32Const(9),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(3),
+            Instruction::I32Const(5),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store "[...]"
+            Instruction::LocalGet(3),
+            Instruction::I32Const(0x2E2E2E5B), // "[..." as i32 little-endian
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(93), // ']'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 8,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3),
+            Instruction::Else,
+            // Tag 6: Object - return "{...}" placeholder
+            Instruction::LocalGet(1),
+            Instruction::I32Const(6),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // For now, return "{...}" - recursive stringify to be implemented
+            Instruction::I32Const(9),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(3),
+            Instruction::I32Const(5),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store "{...}"
+            Instruction::LocalGet(3),
+            Instruction::I32Const(0x2E2E2E7B), // "{..." as i32 little-endian
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(125), // '}'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 8,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3),
+            Instruction::Else,
+            // Unknown type - return empty string
+            Instruction::I32Const(4),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(3),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3),
+            Instruction::End, // end of tag 6 check
+            Instruction::End, // end of tag 5 check
+            Instruction::End, // end of tag 4 check
+            Instruction::End, // end of tag 3 check
+            Instruction::End, // end of tag 2 check
+            Instruction::End, // end of tag 1 check
+            Instruction::End, // end of tag 0 check
+            Instruction::End, // end of null pointer check
         ]
-    }
-
-    /// Generate WASM instructions for json.prettyDataToText
-    /// Same as dataToText but with indentation for readability
-    fn generate_pretty_data_to_text_instructions(&self) -> Vec<Instruction<'static>> {
-        // For now, same as dataToText (pretty printing would add indentation)
-        self.generate_data_to_text_instructions()
     }
 
     // ====================================================================================

@@ -845,13 +845,14 @@ pub fn gen_contains(index_of_func: u32) -> Vec<Instruction<'static>> {
 ///   - local 0: str1_ptr
 ///   - local 1: str2_ptr
 ///
-/// Returns: i32 (pointer to new concatenated string)
+/// Returns: i32 (pointer to new concatenated string, or 0 on overflow)
 ///
 /// Uses locals:
 ///   - local 2: len1
 ///   - local 3: len2
 ///   - local 4: new_ptr
 ///   - local 5: i (loop counter)
+///   - local 6: combined_len (for overflow checking)
 pub fn gen_concat(malloc_func: u32) -> Vec<Instruction<'static>> {
     vec![
         // Get len1 -> local 2
@@ -870,19 +871,45 @@ pub fn gen_concat(malloc_func: u32) -> Vec<Instruction<'static>> {
             memory_index: 0,
         }),
         Instruction::LocalSet(3),
-        // Allocate new string: malloc(4 + len1 + len2)
+        // OVERFLOW CHECK: Calculate combined_len = len1 + len2 -> local 6
         Instruction::LocalGet(2),
         Instruction::LocalGet(3),
         Instruction::I32Add,
+        Instruction::LocalSet(6),
+        // Check for overflow: if combined_len < len1, overflow occurred (unsigned comparison)
+        // If overflow, return 0 (null pointer) immediately
+        Instruction::LocalGet(6),
+        Instruction::LocalGet(2),
+        Instruction::I32LtU,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::Return,
+        Instruction::End,
+        // Check: combined_len > MAX_SAFE_SIZE (0x7FFFFFF8, leaves room for length prefix + alignment)
+        // If would overflow when adding 4, return 0 immediately
+        Instruction::LocalGet(6),
+        Instruction::I32Const(0x7FFFFFF8_u32 as i32),
+        Instruction::I32GtU,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::Return,
+        Instruction::End,
+        // No overflow - allocate new string: malloc(4 + combined_len)
+        Instruction::LocalGet(6),
         Instruction::I32Const(STRING_DATA_OFFSET as i32),
         Instruction::I32Add,
         Instruction::Call(malloc_func),
-        Instruction::LocalSet(4), // new_ptr
-        // Store combined length at new_ptr
+        Instruction::LocalSet(4),
+        // If allocation returned 0 (null), just return 0
         Instruction::LocalGet(4),
-        Instruction::LocalGet(2),
-        Instruction::LocalGet(3),
-        Instruction::I32Add,
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::Return,
+        Instruction::End,
+        // Store combined length at new_ptr (use pre-computed local 6)
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(6), // combined_len already computed with overflow check
         Instruction::I32Store(MemArg {
             offset: 0,
             align: 2,
