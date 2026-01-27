@@ -261,14 +261,9 @@ impl StringOperations {
         // Each pointer points to a length-prefixed string: [4-byte len][content]
         // It's registered in builtin_generator.rs, NOT here as a stdlib function.
 
-        // Register string comparison function
-        register_stdlib_function(
-            codegen,
-            "string.compare",
-            &[WasmType::I32, WasmType::I32], // string1, string2
-            Some(WasmType::I32),             // result (-1, 0, 1)
-            self.generate_string_compare(),
-        )?;
+        // NOTE: string.compare is an IMPORTED runtime function (2 params: ptr1, ptr2)
+        // It's registered via register_string_compare_import() in mir_codegen.rs
+        // DO NOT register an internal implementation here - it would overwrite the import alias
 
         // Register string replace function
         register_stdlib_function(
@@ -628,18 +623,8 @@ impl StringOperations {
     // Each pointer points to a length-prefixed string: [4-byte len][content]
     // It's registered in builtin_generator.rs and implemented in wasmtime_runner.rs, NOT here.
 
-    fn generate_string_compare(&self) -> Vec<Instruction> {
-        // Simplified string compare that just compares first byte for testing
-        vec![
-            // Consume the parameters to avoid stack mismatch
-            Instruction::LocalGet(0), // string1_ptr
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(1), // string2_ptr
-            Instruction::Drop,        // drop it
-            // Just return 0 for now (strings are equal)
-            Instruction::I32Const(0),
-        ]
-    }
+    // NOTE: string.compare is an IMPORTED runtime function - do not add an internal implementation here.
+    // The host function is registered via register_string_compare_import() and handles string equality.
 
     #[allow(clippy::vec_init_then_push)]
     fn generate_string_length(&self) -> Vec<Instruction> {

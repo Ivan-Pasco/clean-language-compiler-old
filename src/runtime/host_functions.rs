@@ -2552,6 +2552,81 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
             )
         })?;
 
+    // HTTP server stub functions (required for compilation but not implemented in standalone runner)
+    // Signatures must match what the codegen produces
+    linker
+        .func_wrap(
+            "env",
+            "_http_route",
+            |_: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        )
+        .ok();
+    linker
+        .func_wrap("env", "_http_listen", |_: i32| -> i32 { 0 })
+        .ok();
+    linker
+        .func_wrap("env", "_req_param", |_: i32, _: i32| -> i32 { 0 })
+        .ok();
+    linker
+        .func_wrap("env", "_req_query", |_: i32, _: i32| -> i32 { 0 })
+        .ok();
+    linker.func_wrap("env", "_req_body", || -> i32 { 0 }).ok();
+    linker
+        .func_wrap("env", "_req_header", |_: i32, _: i32| -> i32 { 0 })
+        .ok();
+    linker.func_wrap("env", "_req_method", || -> i32 { 0 }).ok();
+    linker.func_wrap("env", "_req_path", || -> i32 { 0 }).ok();
+    linker
+        .func_wrap("env", "_req_cookie", |_: i32, _: i32| -> i32 { 0 })
+        .ok();
+    linker
+        .func_wrap(
+            "env",
+            "_http_route_protected",
+            |_: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        )
+        .ok();
+    // Session: _session_create(user_id: i32, rolePtr: i32, roleLen: i32, claimsPtr: i32, claimsLen: i32) -> i32
+    linker
+        .func_wrap(
+            "env",
+            "_session_create",
+            |_: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        )
+        .ok();
+    // Session: _session_get() -> i32
+    linker
+        .func_wrap("env", "_session_get", || -> i32 { 0 })
+        .ok();
+    // Session: _session_destroy() -> i32
+    linker
+        .func_wrap("env", "_session_destroy", || -> i32 { 0 })
+        .ok();
+    // Session: _session_set_cookie(cookiePtr: i32, cookieLen: i32) -> i32
+    linker
+        .func_wrap("env", "_session_set_cookie", |_: i32, _: i32| -> i32 { 0 })
+        .ok();
+    // Auth: _auth_get_session() -> i32
+    linker
+        .func_wrap("env", "_auth_get_session", || -> i32 { 0 })
+        .ok();
+    // Auth: _auth_require_auth() -> i32
+    linker
+        .func_wrap("env", "_auth_require_auth", || -> i32 { 0 })
+        .ok();
+    // Auth: _auth_require_role(rolePtr: i32, roleLen: i32) -> i32
+    linker
+        .func_wrap("env", "_auth_require_role", |_: i32, _: i32| -> i32 { 0 })
+        .ok();
+    // Auth: _auth_can(permPtr: i32, permLen: i32) -> i32
+    linker
+        .func_wrap("env", "_auth_can", |_: i32, _: i32| -> i32 { 0 })
+        .ok();
+    // Auth: _auth_has_any_role(rolesPtr: i32, rolesLen: i32) -> i32
+    linker
+        .func_wrap("env", "_auth_has_any_role", |_: i32, _: i32| -> i32 { 0 })
+        .ok();
+
     Ok(())
 }
 
