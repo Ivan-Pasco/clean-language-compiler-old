@@ -1,0 +1,55 @@
+// Spec Section: String Comparison
+// Tests: String equality (==) and inequality (!=) with empty strings
+
+start()
+	// Test 1: String equality with non-empty strings
+	string hello = "hello"
+	string world = "world"
+	string hello2 = "hello"
+
+	boolean eq1 = hello == hello2
+	printl("hello == hello: " + eq1.toString())  // Should print true
+
+	boolean eq2 = hello == world
+	printl("hello == world: " + eq2.toString())  // Should print false
+
+	// Test 2: String inequality
+	boolean neq1 = hello != world
+	printl("hello != world: " + neq1.toString())  // Should print true
+
+	boolean neq2 = hello != hello2
+	printl("hello != hello: " + neq2.toString())  // Should print false
+
+	// Test 3: Empty string comparison
+	string empty = ""
+	string alsoEmpty = ""
+
+	boolean emptyEq = empty == alsoEmpty
+	printl("empty == empty: " + emptyEq.toString())  // Should print true
+
+	// Test 4: Empty string vs non-empty string (THE BUG CASE!)
+	boolean helloIsEmpty = hello == ""
+	printl("hello == empty: " + helloIsEmpty.toString())  // Should print false (BUG: was true)
+
+	boolean emptyIsHello = "" == hello
+	printl("empty == hello: " + emptyIsHello.toString())  // Should print false
+
+	// Test 5: Non-empty string not equal to empty
+	boolean helloNotEmpty = hello != ""
+	printl("hello != empty: " + helloNotEmpty.toString())  // Should print true
+
+	// Test 6: Comparing with variable of empty string
+	boolean helloEqEmpty = hello == empty
+	printl("hello == emptyVar: " + helloEqEmpty.toString())  // Should print false
+
+	// Test 7: Length check workaround comparison
+	integer len = hello.length()
+	printl("hello length: " + len.toString())  // Should print 5
+
+	if len == 0
+		printl("Length is zero")
+	else
+		printl("Length is not zero")  // Should print this
+
+	// Summary
+	printl("String comparison tests completed")

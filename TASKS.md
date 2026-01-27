@@ -1,5 +1,77 @@
 # Clean Language Compiler - Implementation Tasks
 
+## ✅ RESOLVED: Selective Bridge Function Imports
+
+**Priority**: ENHANCEMENT - Optimizes compiled WASM size
+**Discovered**: January 26, 2026
+**Resolved**: January 26, 2026
+**Status**: ✅ COMPLETE
+
+### Issue
+The compiler was importing ALL declared bridge functions from plugin.toml files, even if they weren't used in the code. This caused unnecessary bloat in the compiled WASM files.
+
+### Solution Applied
+Implemented selective bridge function imports in `src/codegen/mir_codegen.rs`:
+
+1. **Added tracking field**: `used_bridge_function_names: HashSet<String>` to track which bridge functions are actually called
+
+2. **Added collection method**: `collect_used_function_names_from_mir()` scans the MIR program and identifies all `MirOperation::Call` operations that reference bridge functions
+
+3. **Modified registration**: `register_plugin_bridge_imports()` now filters bridge functions to only import those that are actually used in the code
+
+### Benefits
+- Smaller compiled WASM files (no unused imports)
+- Faster WASM instantiation (fewer imports to resolve)
+- Cleaner WASM module structure
+
+### Files Modified
+- `src/codegen/mir_codegen.rs` - Added selective import logic
+
+---
+
+## ✅ RESOLVED: String Comparison with Empty String Always Returns TRUE
+
+**Priority**: CRITICAL - Breaks fundamental conditional logic
+**Discovered**: January 26, 2026
+**Resolved**: January 26, 2026
+**Status**: ✅ COMPLETE
+
+### Issue
+String comparison with an empty string literal (`str == ""`) always evaluated to TRUE, regardless of the actual string value. This caused incorrect behavior in any code that checked for empty strings.
+
+**Example of incorrect behavior:**
+```clean
+string value = "hello"
+if value == ""
+    printl("value is empty")  // This incorrectly printed!
+```
+
+### Root Cause
+In `src/codegen/instruction_generator.rs`, after calling the `string.compare` function (which returns 1 if strings are equal, 0 if not), the code was incorrectly applying `I32Eqz` for the Equal operator, which inverted the result:
+- `string.compare` returns 1 for equal strings
+- `I32Eqz` converts 1 → 0 (false) and 0 → 1 (true)
+- This caused "equal" results to become "not equal" and vice versa
+
+### Solution Applied
+Fixed the logic in `src/codegen/instruction_generator.rs` lines 255-265:
+- For **Equal** operator: Use the `string.compare` result directly (no additional instruction)
+- For **NotEqual** operator: Apply `I32Eqz` to invert the result
+
+### Verification
+Created test file `tests/cln/spec_compliance/expressions/string_comparison_spec.cln` with comprehensive tests:
+- String equality with non-empty strings
+- String inequality
+- Empty string comparison
+- Empty string vs non-empty string (the bug case)
+- Variable-to-variable comparisons
+
+All test cases now generate correct WASM code.
+
+### Files Modified
+- `src/codegen/instruction_generator.rs` - Fixed string comparison operator handling
+
+---
+
 ## ✅ RESOLVED: Invalid WASM Code Generation - If Statement Stack Imbalance
 
 **Priority**: CRITICAL - Blocks plugin system and complex code compilation

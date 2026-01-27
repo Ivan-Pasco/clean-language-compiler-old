@@ -253,13 +253,15 @@ impl InstructionGenerator {
                             self.get_function_index("string.compare")
                         {
                             instructions.push(Instruction::Call(string_compare_index));
+                            // string.compare returns 1 if equal, 0 if not equal
                             match op {
                                 ast::BinaryOperator::Equal => {
-                                    instructions.push(Instruction::I32Eqz)
+                                    // Result is already 1 if equal, 0 if not - use directly
+                                    // No additional instruction needed
                                 }
                                 ast::BinaryOperator::NotEqual => {
-                                    instructions.push(Instruction::I32Const(0));
-                                    instructions.push(Instruction::I32Eq);
+                                    // Invert the result: 1 (equal) -> 0 (not not-equal), 0 (not equal) -> 1 (is not-equal)
+                                    instructions.push(Instruction::I32Eqz);
                                 }
                                 ast::BinaryOperator::Less => {
                                     instructions.push(Instruction::I32Const(0));

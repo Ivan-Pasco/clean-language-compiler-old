@@ -71,6 +71,10 @@ pub struct MirCodeGenerator<'a> {
     /// These come from plugin.toml [bridge] sections
     bridge_functions: Vec<crate::plugins::BridgeFunction>,
 
+    /// Set of bridge function names actually used in the code
+    /// Used for selective imports - only import functions that are called
+    used_bridge_function_names: HashSet<String>,
+
     /// CRITICAL FIX: Pending wrapper functions to be registered AFTER ALL imports are done
     /// These are for expand_strings bridge functions that need wrapper functions
     /// to convert Clean Language strings (ptr) to raw format (ptr+4, len)
@@ -172,6 +176,7 @@ impl MirCodeGenerator<'_> {
             value_to_type: HashMap::new(),
             temp_local_types: HashMap::new(),
             bridge_functions: Vec::new(),
+            used_bridge_function_names: HashSet::new(),
             pending_bridge_wrappers: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
@@ -200,6 +205,7 @@ impl MirCodeGenerator<'_> {
             value_to_type: HashMap::new(),
             temp_local_types: HashMap::new(),
             bridge_functions: Vec::new(),
+            used_bridge_function_names: HashSet::new(),
             pending_bridge_wrappers: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
@@ -228,6 +234,7 @@ impl MirCodeGenerator<'_> {
             value_to_type: HashMap::new(),
             temp_local_types: HashMap::new(),
             bridge_functions: Vec::new(),
+            used_bridge_function_names: HashSet::new(),
             pending_bridge_wrappers: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
@@ -357,9 +364,15 @@ impl MirCodeGenerator<'_> {
             // CRITICAL: Register plugin bridge functions as WASM imports BEFORE any internal functions
             // These are declared in plugin.toml [bridge] sections
             // MUST be registered here because WASM requires all imports before internal functions
+            // OPTIMIZATION: Only import bridge functions that are actually used in the code
             if !self.bridge_functions.is_empty() {
+                // First, collect which bridge functions are actually used in the MIR
+                debug_mir!("DEBUG MIR: Collecting used bridge function names from MIR");
+                self.collect_used_function_names_from_mir(&mir_program);
+
                 debug_mir!(
-                    "DEBUG MIR: Registering {} plugin bridge function imports",
+                    "DEBUG MIR: Registering {} used bridge function imports (out of {} total)",
+                    self.used_bridge_function_names.len(),
                     self.bridge_functions.len()
                 );
                 self.register_plugin_bridge_imports().map_err(|e| vec![e])?;
@@ -5740,6 +5753,51 @@ impl MirCodeGenerator<'_> {
 
     /// Register plugin bridge functions as WASM imports
     ///
+    /// Collect all function names that are called in the MIR program
+    ///
+    /// This is used for selective bridge function imports - we only import
+    /// bridge functions that are actually used in the code.
+    fn collect_used_function_names_from_mir(&mut self, mir_program: &MirProgram) {
+        use crate::mir::mir_types::{MirOperand, MirOperation};
+
+        // Build a set of bridge function names for quick lookup
+        let bridge_function_names: HashSet<String> = self
+            .bridge_functions
+            .iter()
+            .map(|f| f.name.clone())
+            .collect();
+
+        // Scan all functions and their instructions for Call operations
+        for (_symbol_id, function) in &mir_program.functions {
+            for block in function.blocks.values() {
+                for instruction in &block.instructions {
+                    if let MirOperation::Call { function, .. } = &instruction.operation {
+                        match function {
+                            MirOperand::NamedFunction { name, .. } => {
+                                // Check if this is a bridge function
+                                if bridge_function_names.contains(name) {
+                                    self.used_bridge_function_names.insert(name.clone());
+                                }
+                            }
+                            MirOperand::Function(_symbol_id) => {
+                                // For SymbolId-based calls, we'd need to resolve the name
+                                // This path is typically for user-defined functions, not bridge functions
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::debug!(
+            total_bridge_functions = self.bridge_functions.len(),
+            used_bridge_functions = self.used_bridge_function_names.len(),
+            used_names = ?self.used_bridge_function_names,
+            "Collected used bridge function names from MIR"
+        );
+    }
+
     /// Bridge functions from plugin.toml [bridge] sections are registered as WASM imports
     /// so the runtime can provide their implementations.
     ///
@@ -5750,11 +5808,33 @@ impl MirCodeGenerator<'_> {
     /// CRITICAL: This function ONLY registers imports. Wrapper functions are stored in
     /// `pending_bridge_wrappers` and must be registered later by calling
     /// `register_pending_bridge_wrappers()` AFTER all stdlib imports are complete.
+    ///
+    /// OPTIMIZATION: Only imports bridge functions that are actually used in the code.
+    /// If no bridge functions are used, no imports are registered.
     fn register_plugin_bridge_imports(&mut self) -> Result<(), CompilerError> {
         use crate::builtins::registry::BuiltinType;
         use crate::types::WasmType;
 
-        for func in &self.bridge_functions.clone() {
+        // Filter to only include used bridge functions
+        let used_functions: Vec<_> = self
+            .bridge_functions
+            .iter()
+            .filter(|f| self.used_bridge_function_names.contains(&f.name))
+            .cloned()
+            .collect();
+
+        if used_functions.is_empty() {
+            tracing::debug!("No bridge functions are used in the code, skipping imports");
+            return Ok(());
+        }
+
+        tracing::debug!(
+            total = self.bridge_functions.len(),
+            used = used_functions.len(),
+            "Registering only used bridge function imports"
+        );
+
+        for func in &used_functions {
             let param_types = func.get_param_types();
             let return_type = func.get_return_type();
             let module = &func.module;
