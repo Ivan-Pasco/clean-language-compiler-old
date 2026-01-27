@@ -148,7 +148,7 @@ impl HoverProvider {
         // Check if it's a block name
         if let Some(block_info) = registry.get_block(word) {
             return Some(format!(
-                "**{}:** Block\n\n{}\n\n*Plugin: {}*",
+                "**📦 {}:** Block\n\n{}\n\n---\n📦 *Plugin: {}*",
                 word,
                 block_info.description.as_deref().unwrap_or("Plugin-defined block"),
                 block_info.plugin_name
@@ -158,7 +158,7 @@ impl HoverProvider {
         // Check if it's a keyword
         if let Some(keyword_info) = registry.get_keyword(word) {
             return Some(format!(
-                "**{}** Keyword\n\n{}\n\n*Context: {} | Plugin: {}*",
+                "**📦 {}** Keyword\n\n{}\n\n*Context: {}*\n\n---\n📦 *Plugin: {}*",
                 word,
                 keyword_info.description,
                 keyword_info.context,
@@ -169,7 +169,7 @@ impl HoverProvider {
         // Check if it's a type
         if let Some(type_info) = registry.get_type(word) {
             return Some(format!(
-                "**{}** Type\n\n{}\n\n*Plugin: {}*",
+                "**📦 {}** Type\n\n{}\n\n---\n📦 *Plugin: {}*",
                 word, type_info.description, type_info.plugin_name
             ));
         }
@@ -177,7 +177,7 @@ impl HoverProvider {
         // Check if it's a function
         if let Some(func_info) = registry.get_function(word) {
             return Some(format!(
-                "**{}** Function\n\n```clean\n{}\n```\n\n{}\n\n*Plugin: {}*",
+                "**📦 {}** Function\n\n```clean\n{}\n```\n\n{}\n\n---\n📦 *Plugin: {}*",
                 word, func_info.signature, func_info.description, func_info.plugin_name
             ));
         }
@@ -222,41 +222,41 @@ impl HoverProvider {
 
     fn get_keyword_info(&self, word: &str) -> Option<String> {
         match word {
-            "functions" => Some("**functions:** Block\n\nDefines a block containing function declarations.\n\n```clean\nfunctions:\n\tinteger add(integer a, integer b)\n\t\treturn a + b\n```".to_string()),
-            "class" => Some("**class** Keyword\n\nDefines a class with optional inheritance.\n\n```clean\nclass MyClass extends BaseClass\n\tfield: string\n\tconstructor(value: string)\n\t\tfield = value\n```".to_string()),
-            "start" => Some("**start()** Function\n\nEntry point function for Clean Language programs.\n\n```clean\nstart()\n\tprint(\"Hello, World!\")\n```".to_string()),
-            "if" => Some("**if** Statement\n\nConditional execution.\n\n```clean\nif condition\n\t// code block\nelse\n\t// alternative block\n```".to_string()),
-            "while" => Some("**while** Loop\n\nRepeats a block while condition is true.\n\n```clean\nwhile count < 10\n\tprint(count)\n\tcount = count + 1\n```".to_string()),
-            "for" => Some("**for** Loop\n\nIterates over collections.\n\n```clean\nfor item in collection\n\tprint(item)\n```".to_string()),
-            "return" => Some("**return** Statement\n\nReturns a value from a function.\n\n```clean\nreturn value\n```".to_string()),
-            "constants" => Some("**constants:** Block\n\nDefines constant values.\n\n```clean\nconstants:\n\tPI = 3.14159\n\tMAX_SIZE = 100\n```".to_string()),
-            "types" => Some("**types:** Block\n\nDefines custom type aliases.\n\n```clean\ntypes:\n\tUserId = integer\n\tUserName = string\n```".to_string()),
-            "extends" => Some("**extends** Keyword\n\nUsed in class inheritance.\n\n```clean\nclass Child extends Parent\n\t// child class body\n```".to_string()),
-            "base" => Some("**base()** Call\n\nCalls the parent class constructor.\n\n```clean\nconstructor(value: string)\n\tbase(value)\n```".to_string()),
-            "onError" => Some("**onError** Handler\n\nError handling mechanism.\n\n```clean\nonError error\n\tprint(\"Error occurred: \" + error)\n```".to_string()),
+            "functions" => Some("**functions:** Block\n\nDefines a block containing function declarations.\n\n```clean\nfunctions:\n\tinteger add(integer a, integer b)\n\t\treturn a + b\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "class" => Some("**class** Keyword\n\nDefines a class with optional inheritance.\n\n```clean\nclass MyClass extends BaseClass\n\tfield: string\n\tconstructor(value: string)\n\t\tfield = value\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "start" => Some("**start()** Function\n\nEntry point function for Clean Language programs.\n\n```clean\nstart()\n\tprint(\"Hello, World!\")\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "if" => Some("**if** Statement\n\nConditional execution.\n\n```clean\nif condition\n\t// code block\nelse\n\t// alternative block\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "while" => Some("**while** Loop\n\nRepeats a block while condition is true.\n\n```clean\nwhile count < 10\n\tprint(count)\n\tcount = count + 1\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "for" => Some("**for** Loop\n\nIterates over collections.\n\n```clean\nfor item in collection\n\tprint(item)\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "return" => Some("**return** Statement\n\nReturns a value from a function.\n\n```clean\nreturn value\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "constants" => Some("**constants:** Block\n\nDefines constant values.\n\n```clean\nconstants:\n\tPI = 3.14159\n\tMAX_SIZE = 100\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "types" => Some("**types:** Block\n\nDefines custom type aliases.\n\n```clean\ntypes:\n\tUserId = integer\n\tUserName = string\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "extends" => Some("**extends** Keyword\n\nUsed in class inheritance.\n\n```clean\nclass Child extends Parent\n\t// child class body\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "base" => Some("**base()** Call\n\nCalls the parent class constructor.\n\n```clean\nconstructor(value: string)\n\tbase(value)\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "onError" => Some("**onError** Handler\n\nError handling mechanism.\n\n```clean\nonError error\n\tprint(\"Error occurred: \" + error)\n```\n\n---\n⚡ *Built-in*".to_string()),
             _ => None,
         }
     }
 
     fn get_type_info(&self, word: &str) -> Option<String> {
         match word {
-            "integer" => Some("**integer** Type\n\nSigned integer number type.\n\n**Examples:**\n```clean\ninteger count = 42\ninteger negative = -10\n```\n\n**Methods:**\n- `toString()` - Convert to string\n- `abs()` - Absolute value".to_string()),
-            "number" => Some("**number** Type\n\nFloating-point number type.\n\n**Examples:**\n```clean\nnumber pi = 3.14159\nnumber temperature = -5.5\n```\n\n**Methods:**\n- `toString()` - Convert to string\n- `round()` - Round to nearest integer\n- `floor()` - Round down\n- `ceil()` - Round up".to_string()),
-            "string" => Some("**string** Type\n\nText string type.\n\n**Examples:**\n```clean\nstring name = \"Alice\"\nstring greeting = \"Hello, \" + name\n```\n\n**Methods:**\n- `length` - Get string length\n- `charAt(index)` - Get character at index\n- `substring(start, end)` - Extract substring\n- `indexOf(text)` - Find text position\n- `replace(old, new)` - Replace text".to_string()),
-            "boolean" => Some("**boolean** Type\n\nBoolean true/false type.\n\n**Examples:**\n```clean\nboolean isValid = true\nboolean isEmpty = false\n```\n\n**Values:**\n- `true`\n- `false`".to_string()),
-            "void" => Some("**void** Type\n\nRepresents no return value.\n\n**Usage:**\n```clean\nvoid printMessage(string msg)\n\tprint(msg)\n\t// no return statement needed\n```".to_string()),
-            "any" => Some("**any** Type\n\nAccepts any type of value.\n\n**Usage:**\n```clean\nany value = 42\nvalue = \"text\"\nvalue = true\n```\n\n**Note:** Use sparingly for type safety.".to_string()),
-            "list" => Some("**list<T>** Type\n\nDynamic array type.\n\n**Examples:**\n```clean\nlist<integer> numbers = [1, 2, 3]\nlist<string> names = [\"Alice\", \"Bob\"]\n```\n\n**Methods:**\n- `length` - Get list size\n- `push(item)` - Add item to end\n- `pop()` - Remove last item\n- `get(index)` - Get item at index".to_string()),
-            "matrix" => Some("**matrix<T>** Type\n\nTwo-dimensional array type.\n\n**Examples:**\n```clean\nmatrix<integer> grid = [[1, 2], [3, 4]]\n```\n\n**Usage:**\n- Multi-dimensional data\n- Mathematical operations".to_string()),
+            "integer" => Some("**integer** Type\n\nSigned integer number type.\n\n**Examples:**\n```clean\ninteger count = 42\ninteger negative = -10\n```\n\n**Methods:**\n- `toString()` - Convert to string\n- `abs()` - Absolute value\n\n---\n⚡ *Built-in*".to_string()),
+            "number" => Some("**number** Type\n\nFloating-point number type.\n\n**Examples:**\n```clean\nnumber pi = 3.14159\nnumber temperature = -5.5\n```\n\n**Methods:**\n- `toString()` - Convert to string\n- `round()` - Round to nearest integer\n- `floor()` - Round down\n- `ceil()` - Round up\n\n---\n⚡ *Built-in*".to_string()),
+            "string" => Some("**string** Type\n\nText string type.\n\n**Examples:**\n```clean\nstring name = \"Alice\"\nstring greeting = \"Hello, \" + name\n```\n\n**Methods:**\n- `length` - Get string length\n- `charAt(index)` - Get character at index\n- `substring(start, end)` - Extract substring\n- `indexOf(text)` - Find text position\n- `replace(old, new)` - Replace text\n\n---\n⚡ *Built-in*".to_string()),
+            "boolean" => Some("**boolean** Type\n\nBoolean true/false type.\n\n**Examples:**\n```clean\nboolean isValid = true\nboolean isEmpty = false\n```\n\n**Values:**\n- `true`\n- `false`\n\n---\n⚡ *Built-in*".to_string()),
+            "void" => Some("**void** Type\n\nRepresents no return value.\n\n**Usage:**\n```clean\nvoid printMessage(string msg)\n\tprint(msg)\n\t// no return statement needed\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "any" => Some("**any** Type\n\nAccepts any type of value.\n\n**Usage:**\n```clean\nany value = 42\nvalue = \"text\"\nvalue = true\n```\n\n**Note:** Use sparingly for type safety.\n\n---\n⚡ *Built-in*".to_string()),
+            "list" => Some("**list<T>** Type\n\nDynamic array type.\n\n**Examples:**\n```clean\nlist<integer> numbers = [1, 2, 3]\nlist<string> names = [\"Alice\", \"Bob\"]\n```\n\n**Methods:**\n- `length` - Get list size\n- `push(item)` - Add item to end\n- `pop()` - Remove last item\n- `get(index)` - Get item at index\n\n---\n⚡ *Built-in*".to_string()),
+            "matrix" => Some("**matrix<T>** Type\n\nTwo-dimensional array type.\n\n**Examples:**\n```clean\nmatrix<integer> grid = [[1, 2], [3, 4]]\n```\n\n**Usage:**\n- Multi-dimensional data\n- Mathematical operations\n\n---\n⚡ *Built-in*".to_string()),
             _ => None,
         }
     }
 
     fn get_builtin_function_info(&self, word: &str, _line: &str) -> Option<String> {
         match word {
-            "print" => Some("**print()** Function\n\nPrints a message to the console.\n\n**Signature:**\n```clean\nprint(message: any)      // no newline\nprint(message: any) +    // with newline\n```\n\n**Examples:**\n```clean\nprint(\"Hello\")           // no newline\nprint(\"Hello, World!\") + // with newline\nprint(42) +\nprint(variable) +\n```".to_string()),
-            "input" => Some("**input()** Function\n\nGets user input from console.\n\n**Signature:**\n```clean\ninput(prompt: string) -> string\n```\n\n**Example:**\n```clean\nstring name = input(\"Enter your name: \")\nprint(\"Hello, \" + name)\n```".to_string()),
-            "error" => Some("**error()** Function\n\nPrints an error message.\n\n**Signature:**\n```clean\nerror(message: string)\n```\n\n**Example:**\n```clean\nerror(\"Something went wrong!\")\n```".to_string()),
+            "print" => Some("**print()** Function\n\nPrints a message to the console.\n\n**Signature:**\n```clean\nprint(message: any)      // no newline\nprint(message: any) +    // with newline\n```\n\n**Examples:**\n```clean\nprint(\"Hello\")           // no newline\nprint(\"Hello, World!\") + // with newline\nprint(42) +\nprint(variable) +\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "input" => Some("**input()** Function\n\nGets user input from console.\n\n**Signature:**\n```clean\ninput(prompt: string) -> string\n```\n\n**Example:**\n```clean\nstring name = input(\"Enter your name: \")\nprint(\"Hello, \" + name)\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "error" => Some("**error()** Function\n\nPrints an error message.\n\n**Signature:**\n```clean\nerror(message: string)\n```\n\n**Example:**\n```clean\nerror(\"Something went wrong!\")\n```\n\n---\n⚡ *Built-in*".to_string()),
             _ => None,
         }
     }

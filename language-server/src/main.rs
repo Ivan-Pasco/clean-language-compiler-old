@@ -101,22 +101,24 @@ impl LanguageServer for Backend {
                                 work_done_progress_options: WorkDoneProgressOptions::default(),
                                 legend: SemanticTokensLegend {
                                     token_types: vec![
-                                        SemanticTokenType::KEYWORD,
-                                        SemanticTokenType::TYPE,
-                                        SemanticTokenType::FUNCTION,
-                                        SemanticTokenType::VARIABLE,
-                                        SemanticTokenType::STRING,
-                                        SemanticTokenType::NUMBER,
-                                        SemanticTokenType::COMMENT,
-                                        SemanticTokenType::OPERATOR,
-                                        SemanticTokenType::CLASS,
-                                        SemanticTokenType::PROPERTY,
+                                        SemanticTokenType::KEYWORD,      // 0 - blue
+                                        SemanticTokenType::TYPE,         // 1
+                                        SemanticTokenType::FUNCTION,     // 2 - blue (built-in)
+                                        SemanticTokenType::VARIABLE,     // 3
+                                        SemanticTokenType::STRING,       // 4
+                                        SemanticTokenType::NUMBER,       // 5
+                                        SemanticTokenType::COMMENT,      // 6
+                                        SemanticTokenType::OPERATOR,     // 7
+                                        SemanticTokenType::CLASS,        // 8
+                                        SemanticTokenType::PROPERTY,     // 9
+                                        SemanticTokenType::NAMESPACE,    // 10 - purple (plugin functions)
                                     ],
                                     token_modifiers: vec![
                                         SemanticTokenModifier::DECLARATION,
                                         SemanticTokenModifier::DEFINITION,
                                         SemanticTokenModifier::READONLY,
                                         SemanticTokenModifier::STATIC,
+                                        SemanticTokenModifier::DEFAULT_LIBRARY, // For plugin indicator
                                     ],
                                 },
                                 range: Some(true),
@@ -137,7 +139,7 @@ impl LanguageServer for Backend {
             },
             server_info: Some(ServerInfo {
                 name: "Clean Language Server".to_string(),
-                version: Some("0.7.0".to_string()),
+                version: Some("0.30.10".to_string()),
             }),
         })
     }
@@ -148,7 +150,7 @@ impl LanguageServer for Backend {
         self.client
             .log_message(
                 MessageType::INFO,
-                "Clean Language Server ready - integrated with compiler v0.8.5",
+                "Clean Language Server ready - integrated with compiler v0.30.10",
             )
             .await;
     }
@@ -571,22 +573,84 @@ impl Backend {
             "catch",
         ];
 
+        // Built-in functions (blue - token_type 2)
+        let builtin_functions = [
+            "print", "input", "error", "Math", "String", "Integer", "Array",
+        ];
+
+        // Plugin function prefixes (purple - token_type 10/NAMESPACE)
+        // These are functions from plugins that have a namespace prefix
+        let plugin_prefixes = [
+            "http.", "file.", "db.", "crypto.", "json.", "request.", "response.",
+            "route.", "session.", "auth.", "cache.", "email.", "queue.", "storage.",
+        ];
+
         let mut char_offset = 0u32;
+        let mut last_line = 0u32;
 
-        for word in line.split_whitespace() {
-            let word_start = line.find(word).unwrap_or(0) as u32;
+        // First pass: find plugin function calls (namespace.function pattern)
+        for plugin_prefix in &plugin_prefixes {
+            if let Some(pos) = line.find(plugin_prefix) {
+                // Find the end of the function call (up to '(' or whitespace)
+                let start = pos;
+                let rest = &line[pos..];
+                let end = rest.find(|c: char| c == '(' || c.is_whitespace())
+                    .map(|e| pos + e)
+                    .unwrap_or(pos + rest.len());
 
-            if keywords.contains(&word) {
-                data.push(SemanticToken {
-                    delta_line: if data.is_empty() { line_number } else { 0 },
-                    delta_start: word_start - char_offset,
-                    length: word.len() as u32,
-                    token_type: 0, // KEYWORD
-                    token_modifiers_bitset: 0,
-                });
+                let func_call = &line[start..end];
+                if !func_call.is_empty() {
+                    data.push(SemanticToken {
+                        delta_line: if data.is_empty() { line_number } else { line_number - last_line },
+                        delta_start: start as u32,
+                        length: func_call.len() as u32,
+                        token_type: 10, // NAMESPACE - purple for plugin functions
+                        token_modifiers_bitset: 0,
+                    });
+                    last_line = line_number;
+                }
+            }
+        }
+
+        // Second pass: keywords and built-in functions
+        for word in line.split(|c: char| !c.is_alphanumeric() && c != '_') {
+            if word.is_empty() {
+                continue;
             }
 
-            char_offset = word_start + word.len() as u32;
+            if let Some(pos) = line.find(word) {
+                let word_start = pos as u32;
+
+                if keywords.contains(&word) {
+                    data.push(SemanticToken {
+                        delta_line: if data.is_empty() { line_number } else { line_number - last_line },
+                        delta_start: if last_line == line_number { word_start - char_offset } else { word_start },
+                        length: word.len() as u32,
+                        token_type: 0, // KEYWORD - blue
+                        token_modifiers_bitset: 0,
+                    });
+                    last_line = line_number;
+                    char_offset = word_start + word.len() as u32;
+                } else if builtin_functions.contains(&word) {
+                    // Check if this is part of a plugin call (already handled)
+                    let is_plugin = plugin_prefixes.iter().any(|p| {
+                        line[..pos].ends_with(&p[..p.len()-1]) || // before dot
+                        line.get(pos.saturating_sub(1)..pos).map(|c| c == ".").unwrap_or(false)
+                    });
+
+                    if !is_plugin {
+                        data.push(SemanticToken {
+                            delta_line: if data.is_empty() { line_number } else { line_number - last_line },
+                            delta_start: if last_line == line_number { word_start - char_offset } else { word_start },
+                            length: word.len() as u32,
+                            token_type: 2, // FUNCTION - blue for built-in
+                            token_modifiers_bitset: 0,
+                        });
+                        last_line = line_number;
+                        char_offset = word_start + word.len() as u32;
+                    }
+                }
+            }
         }
     }
 
@@ -715,7 +779,7 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    info!("Starting Clean Language Server v0.8.5");
+    info!("Starting Clean Language Server v0.30.10");
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();

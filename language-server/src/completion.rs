@@ -194,12 +194,14 @@ impl CompletionProvider {
     }
 
     /// Convert a plugin completion item to an LSP completion item
+    /// Plugin items use MODULE icon (purple) to differentiate from built-in FUNCTION (blue)
     fn convert_plugin_completion(&self, item: PluginCompletionItem) -> CompletionItem {
         CompletionItem {
             label: item.label,
+            // Use MODULE for plugin functions (purple icon) vs FUNCTION for built-ins (blue icon)
             kind: Some(match item.kind {
                 PluginCompletionKind::Keyword => CompletionItemKind::KEYWORD,
-                PluginCompletionKind::Function => CompletionItemKind::FUNCTION,
+                PluginCompletionKind::Function => CompletionItemKind::MODULE, // Purple icon for plugin functions
                 PluginCompletionKind::Snippet => CompletionItemKind::SNIPPET,
                 PluginCompletionKind::Type => CompletionItemKind::TYPE_PARAMETER,
                 PluginCompletionKind::Property => CompletionItemKind::PROPERTY,
@@ -261,15 +263,19 @@ impl CompletionProvider {
             }
         }
 
-        // Get functions from the registry
+        // Get functions from the registry (plugin functions use MODULE icon - purple)
         for func_name in registry.all_functions() {
             if func_name.to_lowercase().starts_with(&prefix.to_lowercase()) {
                 if let Some(func_info) = registry.get_function(func_name) {
                     completions.push(CompletionItem {
                         label: func_name.to_string(),
-                        kind: Some(CompletionItemKind::FUNCTION),
+                        kind: Some(CompletionItemKind::MODULE), // Purple icon for plugin functions
                         detail: Some(func_info.signature.clone()),
-                        documentation: Some(Documentation::String(func_info.description.clone())),
+                        documentation: Some(Documentation::String(format!(
+                            "{}\n\n📦 Plugin: {}",
+                            func_info.description,
+                            func_info.plugin_name
+                        ))),
                         insert_text: Some(format!("{}()", func_name)),
                         ..Default::default()
                     });
@@ -305,18 +311,18 @@ impl CompletionProvider {
 
         let mut completions = Vec::new();
 
-        // Add block-level completions (e.g., "data:", "endpoints:")
+        // Add block-level completions (e.g., "data:", "endpoints:") - plugin blocks use MODULE icon
         for block_name in registry.all_blocks() {
             if block_name.to_lowercase().starts_with(&prefix.to_lowercase()) {
                 if let Some(block_info) = registry.get_block(block_name) {
                     completions.push(CompletionItem {
                         label: format!("{}:", block_name),
-                        kind: Some(CompletionItemKind::KEYWORD),
-                        detail: Some(format!("Block ({})", block_info.plugin_name)),
+                        kind: Some(CompletionItemKind::MODULE), // Purple icon for plugin blocks
+                        detail: Some(format!("📦 {}", block_info.plugin_name)),
                         documentation: block_info
                             .description
                             .as_ref()
-                            .map(|d| Documentation::String(d.clone())),
+                            .map(|d| Documentation::String(format!("{}\n\n📦 Plugin: {}", d, block_info.plugin_name))),
                         insert_text: Some(format!("{}:\n\t${{1:content}}", block_name)),
                         insert_text_format: Some(InsertTextFormat::SNIPPET),
                         ..Default::default()
