@@ -5779,9 +5779,15 @@ impl MirCodeGenerator<'_> {
                                     self.used_bridge_function_names.insert(name.clone());
                                 }
                             }
-                            MirOperand::Function(_symbol_id) => {
-                                // For SymbolId-based calls, we'd need to resolve the name
-                                // This path is typically for user-defined functions, not bridge functions
+                            MirOperand::Function(symbol_id) => {
+                                // CRITICAL FIX: Resolve SymbolId to function name using mir_program.symbol_name_map
+                                // This is necessary because bridge functions may be called via SymbolId
+                                // (not just NamedFunction) depending on how the semantic analyzer resolves them
+                                if let Some(name) = mir_program.symbol_name_map.get(symbol_id) {
+                                    if bridge_function_names.contains(name) {
+                                        self.used_bridge_function_names.insert(name.clone());
+                                    }
+                                }
                             }
                             _ => {}
                         }

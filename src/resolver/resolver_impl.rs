@@ -251,6 +251,21 @@ impl NameResolver {
                 .symbol_table
                 .has_symbol_in_current_scope(&external.name)
             {
+                // CRITICAL FIX: Allow external functions that match existing builtin functions
+                // This is necessary because plugin bridge functions may declare functions that
+                // are already registered as builtins (e.g., _http_route from frame.httpserver)
+                // We skip registration in this case since the builtin already provides the signature
+                if let Some(existing_symbol_id) = self.symbol_table.lookup_symbol(&external.name) {
+                    if self.symbol_table.is_builtin(existing_symbol_id) {
+                        // External function matches a builtin - skip registration, this is OK
+                        tracing::debug!(
+                            name = %external.name,
+                            "External function matches existing builtin, skipping registration"
+                        );
+                        continue;
+                    }
+                }
+                // Only error if it conflicts with a non-builtin symbol
                 self.error(
                     &format!(
                         "External function '{}' conflicts with existing symbol",
