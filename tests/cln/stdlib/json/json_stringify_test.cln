@@ -1,0 +1,23 @@
+// Test: JSON stringify with arrays and objects
+
+functions:
+	void testStringifyArray()
+		any data = json.textToData("[1, 2, 3]")
+		string result = json.dataToText(data)
+		printl(result)
+
+	void testStringifyObject()
+		any data = json.textToData("{\"name\": \"test\", \"value\": 42}")
+		string result = json.dataToText(data)
+		printl(result)
+
+	void testStringifyNested()
+		any data = json.textToData("{\"array\": [1, 2, 3], \"object\": {\"x\": 10}}")
+		string result = json.dataToText(data)
+		printl(result)
+
+start()
+	testStringifyArray()
+	testStringifyObject()
+	testStringifyNested()
+	printl("All tests completed")

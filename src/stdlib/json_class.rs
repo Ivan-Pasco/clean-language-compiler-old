@@ -216,6 +216,119 @@ impl JsonClass {
             .get_function_index("string.concat")
             .expect("string.concat must be registered before JSON stringify functions");
 
+        // Calculate what the function indices will be for mutual recursion
+        let base_idx = codegen.get_next_function_index();
+        let quote_string_idx_predicted = base_idx;
+        let stringify_value_idx_predicted = base_idx + 1;
+        let stringify_array_idx_predicted = base_idx + 2;
+        let stringify_object_idx_predicted = base_idx + 3;
+
+        // Register helper functions for recursive stringify
+
+        // 1. __json_quote_string(str_ptr: i32) -> i32
+        let quote_string_idx = register_stdlib_function_with_locals(
+            codegen,
+            "__json_quote_string",
+            &[WasmType::I32],    // str_ptr
+            Some(WasmType::I32), // returns quoted string
+            &[
+                WasmType::I32, // Local 1: orig_len
+                WasmType::I32, // Local 2: result_ptr
+            ],
+            self.generate_quote_string_instructions(malloc_index),
+        )?;
+
+        assert_eq!(
+            quote_string_idx, quote_string_idx_predicted,
+            "Function index prediction failed for __json_quote_string"
+        );
+
+        // 2. __json_stringify_value(boxed_ptr: i32) -> i32
+        let stringify_value_idx = register_stdlib_function_with_locals(
+            codegen,
+            "__json_stringify_value",
+            &[WasmType::I32],    // boxed_ptr
+            Some(WasmType::I32), // returns string
+            &[
+                WasmType::I32, // Local 1: type_tag
+                WasmType::I32, // Local 2: value/temp
+                WasmType::I32, // Local 3: result_ptr
+                WasmType::I32, // Local 4: temp
+                WasmType::I32, // Local 5: temp2
+                WasmType::F64, // Local 6: f64_value
+            ],
+            self.generate_stringify_value_instructions(
+                malloc_index,
+                int_to_string_index,
+                float_to_string_index,
+                quote_string_idx,
+                stringify_array_idx_predicted,
+                stringify_object_idx_predicted,
+            ),
+        )?;
+
+        assert_eq!(
+            stringify_value_idx, stringify_value_idx_predicted,
+            "Function index prediction failed for __json_stringify_value"
+        );
+
+        // 3. __json_stringify_array(array_ptr: i32) -> i32
+        let stringify_array_idx = register_stdlib_function_with_locals(
+            codegen,
+            "__json_stringify_array",
+            &[WasmType::I32],    // array_ptr
+            Some(WasmType::I32), // returns string
+            &[
+                WasmType::I32, // Local 1: count
+                WasmType::I32, // Local 2: i
+                WasmType::I32, // Local 3: result
+                WasmType::I32, // Local 4: elem_ptr
+                WasmType::I32, // Local 5: elem_str
+                WasmType::I32, // Local 6: temp
+                WasmType::I32, // Local 7: boxed_ptr
+            ],
+            self.generate_stringify_array_instructions(
+                malloc_index,
+                string_concat_index,
+                stringify_value_idx,
+            ),
+        )?;
+
+        assert_eq!(
+            stringify_array_idx, stringify_array_idx_predicted,
+            "Function index prediction failed for __json_stringify_array"
+        );
+
+        // 4. __json_stringify_object(object_ptr: i32) -> i32
+        let stringify_object_idx = register_stdlib_function_with_locals(
+            codegen,
+            "__json_stringify_object",
+            &[WasmType::I32],    // object_ptr
+            Some(WasmType::I32), // returns string
+            &[
+                WasmType::I32, // Local 1: count
+                WasmType::I32, // Local 2: i
+                WasmType::I32, // Local 3: result
+                WasmType::I32, // Local 4: key_ptr
+                WasmType::I32, // Local 5: val_ptr
+                WasmType::I32, // Local 6: key_str
+                WasmType::I32, // Local 7: val_str
+                WasmType::I32, // Local 8: temp
+                WasmType::I32, // Local 9: boxed_ptr
+            ],
+            self.generate_stringify_object_instructions(
+                malloc_index,
+                string_concat_index,
+                quote_string_idx,
+                stringify_value_idx,
+            ),
+        )?;
+
+        assert_eq!(
+            stringify_object_idx, stringify_object_idx_predicted,
+            "Function index prediction failed for __json_stringify_object"
+        );
+
         // json.dataToText(data: any) -> string
         // Convert data structure to JSON text
         register_stdlib_function_with_locals(
@@ -223,20 +336,8 @@ impl JsonClass {
             "json.dataToText",
             &[WasmType::I32],    // data pointer
             Some(WasmType::I32), // returns string pointer
-            &[
-                WasmType::I32, // Local 1: type_tag
-                WasmType::I32, // Local 2: value / temp
-                WasmType::I32, // Local 3: result_ptr
-                WasmType::I32, // Local 4: temp
-                WasmType::I32, // Local 5: string_ptr
-                WasmType::F64, // Local 6: f64_value
-            ],
-            self.generate_data_to_text_instructions(
-                malloc_index,
-                int_to_string_index,
-                float_to_string_index,
-                string_concat_index,
-            ),
+            &[],
+            self.generate_data_to_text_instructions(stringify_value_idx),
         )?;
 
         // json.prettyDataToText(data: any) -> string
@@ -247,20 +348,8 @@ impl JsonClass {
             "json.prettyDataToText",
             &[WasmType::I32],    // data pointer
             Some(WasmType::I32), // returns formatted string pointer
-            &[
-                WasmType::I32, // Local 1: type_tag
-                WasmType::I32, // Local 2: value / temp
-                WasmType::I32, // Local 3: result_ptr
-                WasmType::I32, // Local 4: temp
-                WasmType::I32, // Local 5: string_ptr
-                WasmType::F64, // Local 6: f64_value
-            ],
-            self.generate_data_to_text_instructions(
-                malloc_index,
-                int_to_string_index,
-                float_to_string_index,
-                string_concat_index,
-            ),
+            &[],
+            self.generate_data_to_text_instructions(stringify_value_idx),
         )?;
 
         Ok(())
@@ -862,77 +951,93 @@ impl JsonClass {
     /// - Local 6: f64_value
     fn generate_data_to_text_instructions(
         &self,
-        malloc_index: u32,
-        int_to_string_index: u32,
-        float_to_string_index: u32,
-        _string_concat_index: u32,
+        stringify_value_idx: u32,
     ) -> Vec<Instruction<'static>> {
         vec![
-            // Check if input pointer is null (0)
+            // Simply call __json_stringify_value with the boxed_ptr parameter
             Instruction::LocalGet(0),
-            Instruction::I32Eqz,
-            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // Input is null pointer - allocate and return "null" string
-            // Allocate 8 bytes: 4 (length) + 4 (content "null")
-            Instruction::I32Const(8),
-            Instruction::Call(malloc_index),
-            Instruction::LocalTee(3), // result_ptr
-            // Store length = 4
-            Instruction::I32Const(4),
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Store 'n' (110) at offset 4
-            Instruction::LocalGet(3),
-            Instruction::I32Const(110), // 'n'
-            Instruction::I32Store8(wasm_encoder::MemArg {
-                offset: 4,
-                align: 0,
-                memory_index: 0,
-            }),
-            // Store 'u' (117) at offset 5
-            Instruction::LocalGet(3),
-            Instruction::I32Const(117), // 'u'
-            Instruction::I32Store8(wasm_encoder::MemArg {
-                offset: 5,
-                align: 0,
-                memory_index: 0,
-            }),
-            // Store 'l' (108) at offset 6
-            Instruction::LocalGet(3),
-            Instruction::I32Const(108), // 'l'
-            Instruction::I32Store8(wasm_encoder::MemArg {
-                offset: 6,
-                align: 0,
-                memory_index: 0,
-            }),
-            // Store 'l' (108) at offset 7
-            Instruction::LocalGet(3),
-            Instruction::I32Const(108), // 'l'
-            Instruction::I32Store8(wasm_encoder::MemArg {
-                offset: 7,
-                align: 0,
-                memory_index: 0,
-            }),
-            // Return result_ptr
-            Instruction::LocalGet(3),
-            Instruction::Else,
-            // Input is not null - read type tag from offset 0
+            Instruction::Call(stringify_value_idx),
+        ]
+    }
+
+    fn generate_quote_string_instructions(&self, malloc_index: u32) -> Vec<Instruction<'static>> {
+        vec![
+            // Read original length from str_ptr
             Instruction::LocalGet(0),
             Instruction::I32Load(wasm_encoder::MemArg {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
             }),
-            Instruction::LocalSet(1), // type_tag
-            // Check type tag and handle each case
-            // Tag 0: Null (boxed null)
+            Instruction::LocalSet(1), // orig_len
+            // Allocate orig_len + 2 + 4 bytes (for quotes and length prefix)
             Instruction::LocalGet(1),
+            Instruction::I32Const(6), // 2 quotes + 4 length prefix
+            Instruction::I32Add,
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(2), // result_ptr
+            // Store new length (orig_len + 2)
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(1),
+            Instruction::I32Const(2),
+            Instruction::I32Add,
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store opening quote at offset 4
+            Instruction::LocalGet(2),
+            Instruction::I32Const(34), // '"'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            // Copy content from str_ptr+4 to result_ptr+5
+            Instruction::LocalGet(2),
+            Instruction::I32Const(5),
+            Instruction::I32Add,
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(1),
+            Instruction::MemoryCopy {
+                src_mem: 0,
+                dst_mem: 0,
+            },
+            // Store closing quote at offset 4 + 1 + orig_len
+            Instruction::LocalGet(2),
+            Instruction::I32Const(5),
+            Instruction::I32Add,
+            Instruction::LocalGet(1),
+            Instruction::I32Add,
+            Instruction::I32Const(34), // '"'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            // Return result_ptr
+            Instruction::LocalGet(2),
+        ]
+    }
+
+    fn generate_stringify_value_instructions(
+        &self,
+        malloc_index: u32,
+        int_to_string_index: u32,
+        float_to_string_index: u32,
+        quote_string_idx: u32,
+        stringify_array_idx: u32,
+        stringify_object_idx: u32,
+    ) -> Vec<Instruction<'static>> {
+        vec![
+            // Check if boxed_ptr is null (0)
+            Instruction::LocalGet(0),
             Instruction::I32Eqz,
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // Boxed null - allocate and return "null" string
+            // Return "null" string
             Instruction::I32Const(8),
             Instruction::Call(malloc_index),
             Instruction::LocalTee(3),
@@ -943,7 +1048,37 @@ impl JsonClass {
                 memory_index: 0,
             }),
             Instruction::LocalGet(3),
-            Instruction::I32Const(0x6C6C756E), // "null" as i32 little-endian
+            Instruction::I32Const(0x6C6C756E), // "null"
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3),
+            Instruction::Else,
+            // Read type tag
+            Instruction::LocalGet(0),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(1), // type_tag
+            // Tag 0: Null
+            Instruction::LocalGet(1),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            Instruction::I32Const(8),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(3),
+            Instruction::I32Const(4),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(0x6C6C756E),
             Instruction::I32Store(wasm_encoder::MemArg {
                 offset: 4,
                 align: 2,
@@ -956,14 +1091,12 @@ impl JsonClass {
             Instruction::I32Const(1),
             Instruction::I32Eq,
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // Read i32 value from offset 4
             Instruction::LocalGet(0),
             Instruction::I32Load(wasm_encoder::MemArg {
                 offset: 4,
                 align: 2,
                 memory_index: 0,
             }),
-            // Call int_to_string
             Instruction::Call(int_to_string_index),
             Instruction::Else,
             // Tag 2: Boolean
@@ -971,18 +1104,14 @@ impl JsonClass {
             Instruction::I32Const(2),
             Instruction::I32Eq,
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // Read boolean value from offset 4
             Instruction::LocalGet(0),
             Instruction::I32Load(wasm_encoder::MemArg {
                 offset: 4,
                 align: 2,
                 memory_index: 0,
             }),
-            Instruction::LocalSet(2), // bool value
-            // Check if true or false
-            Instruction::LocalGet(2),
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // true - allocate "true" string (4 chars)
+            // true
             Instruction::I32Const(8),
             Instruction::Call(malloc_index),
             Instruction::LocalTee(3),
@@ -993,7 +1122,7 @@ impl JsonClass {
                 memory_index: 0,
             }),
             Instruction::LocalGet(3),
-            Instruction::I32Const(0x65757274), // "true" as i32 little-endian
+            Instruction::I32Const(0x65757274), // "true"
             Instruction::I32Store(wasm_encoder::MemArg {
                 offset: 4,
                 align: 2,
@@ -1001,7 +1130,7 @@ impl JsonClass {
             }),
             Instruction::LocalGet(3),
             Instruction::Else,
-            // false - allocate "false" string (5 chars)
+            // false
             Instruction::I32Const(9),
             Instruction::Call(malloc_index),
             Instruction::LocalTee(3),
@@ -1011,15 +1140,13 @@ impl JsonClass {
                 align: 2,
                 memory_index: 0,
             }),
-            // Store "fals" (4 bytes)
             Instruction::LocalGet(3),
-            Instruction::I32Const(0x736C6166), // "fals" as i32 little-endian
+            Instruction::I32Const(0x736C6166), // "fals"
             Instruction::I32Store(wasm_encoder::MemArg {
                 offset: 4,
                 align: 2,
                 memory_index: 0,
             }),
-            // Store 'e' at offset 8
             Instruction::LocalGet(3),
             Instruction::I32Const(101), // 'e'
             Instruction::I32Store8(wasm_encoder::MemArg {
@@ -1028,21 +1155,19 @@ impl JsonClass {
                 memory_index: 0,
             }),
             Instruction::LocalGet(3),
-            Instruction::End, // end of true/false check
+            Instruction::End,
             Instruction::Else,
-            // Tag 3: Number (f64)
+            // Tag 3: Number
             Instruction::LocalGet(1),
             Instruction::I32Const(3),
             Instruction::I32Eq,
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // Read f64 value from offset 4
             Instruction::LocalGet(0),
             Instruction::F64Load(wasm_encoder::MemArg {
                 offset: 4,
                 align: 3,
                 memory_index: 0,
             }),
-            // Call float_to_string
             Instruction::Call(float_to_string_index),
             Instruction::Else,
             // Tag 4: String
@@ -1050,99 +1175,544 @@ impl JsonClass {
             Instruction::I32Const(4),
             Instruction::I32Eq,
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // Read string pointer from offset 4
-            // For JSON output, we should add quotes, but for now just return the string as-is
-            // since the database returns pre-formatted JSON strings
             Instruction::LocalGet(0),
             Instruction::I32Load(wasm_encoder::MemArg {
                 offset: 4,
                 align: 2,
                 memory_index: 0,
             }),
+            Instruction::Call(quote_string_idx),
             Instruction::Else,
-            // Tag 5: List/Array - return "[...]" placeholder
+            // Tag 5: List/Array
             Instruction::LocalGet(1),
             Instruction::I32Const(5),
             Instruction::I32Eq,
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // For now, return "[...]" - recursive stringify to be implemented
-            Instruction::I32Const(9),
-            Instruction::Call(malloc_index),
-            Instruction::LocalTee(3),
-            Instruction::I32Const(5),
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Store "[...]"
-            Instruction::LocalGet(3),
-            Instruction::I32Const(0x2E2E2E5B), // "[..." as i32 little-endian
-            Instruction::I32Store(wasm_encoder::MemArg {
+            Instruction::LocalGet(0),
+            Instruction::I32Load(wasm_encoder::MemArg {
                 offset: 4,
                 align: 2,
                 memory_index: 0,
             }),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(93), // ']'
-            Instruction::I32Store8(wasm_encoder::MemArg {
-                offset: 8,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalGet(3),
+            Instruction::Call(stringify_array_idx),
             Instruction::Else,
-            // Tag 6: Object - return "{...}" placeholder
+            // Tag 6: Object
             Instruction::LocalGet(1),
             Instruction::I32Const(6),
             Instruction::I32Eq,
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // For now, return "{...}" - recursive stringify to be implemented
-            Instruction::I32Const(9),
+            Instruction::LocalGet(0),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::Call(stringify_object_idx),
+            Instruction::Else,
+            // Unknown type - return "null"
+            Instruction::I32Const(8),
             Instruction::Call(malloc_index),
             Instruction::LocalTee(3),
-            Instruction::I32Const(5),
+            Instruction::I32Const(4),
             Instruction::I32Store(wasm_encoder::MemArg {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
             }),
-            // Store "{...}"
             Instruction::LocalGet(3),
-            Instruction::I32Const(0x2E2E2E7B), // "{..." as i32 little-endian
+            Instruction::I32Const(0x6C6C756E),
             Instruction::I32Store(wasm_encoder::MemArg {
                 offset: 4,
                 align: 2,
                 memory_index: 0,
             }),
             Instruction::LocalGet(3),
-            Instruction::I32Const(125), // '}'
+            Instruction::End, // end tag 6
+            Instruction::End, // end tag 5
+            Instruction::End, // end tag 4
+            Instruction::End, // end tag 3
+            Instruction::End, // end tag 2
+            Instruction::End, // end tag 1
+            Instruction::End, // end tag 0
+            Instruction::End, // end null check
+        ]
+    }
+
+    fn generate_stringify_array_instructions(
+        &self,
+        malloc_index: u32,
+        string_concat_index: u32,
+        stringify_value_idx: u32,
+    ) -> Vec<Instruction<'static>> {
+        vec![
+            // Read count from array_ptr[0]
+            Instruction::LocalGet(0),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(1), // count
+            // Check if count == 0
+            Instruction::LocalGet(1),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Return "[]"
+            Instruction::I32Const(6),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(6),
+            Instruction::I32Const(2),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(6),
+            Instruction::I32Const(91), // '['
             Instruction::I32Store8(wasm_encoder::MemArg {
-                offset: 8,
+                offset: 4,
                 align: 0,
                 memory_index: 0,
             }),
-            Instruction::LocalGet(3),
+            Instruction::LocalGet(6),
+            Instruction::I32Const(93), // ']'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 5,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(6),
             Instruction::Else,
-            // Unknown type - return empty string
-            Instruction::I32Const(4),
+            // Create "["
+            Instruction::I32Const(5),
             Instruction::Call(malloc_index),
-            Instruction::LocalTee(3),
-            Instruction::I32Const(0),
+            Instruction::LocalTee(3), // result
+            Instruction::I32Const(1),
             Instruction::I32Store(wasm_encoder::MemArg {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
             }),
             Instruction::LocalGet(3),
-            Instruction::End, // end of tag 6 check
-            Instruction::End, // end of tag 5 check
-            Instruction::End, // end of tag 4 check
-            Instruction::End, // end of tag 3 check
-            Instruction::End, // end of tag 2 check
-            Instruction::End, // end of tag 1 check
-            Instruction::End, // end of tag 0 check
-            Instruction::End, // end of null pointer check
+            Instruction::I32Const(91), // '['
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            // Initialize loop counter
+            Instruction::I32Const(0),
+            Instruction::LocalSet(2), // i = 0
+            // Loop over elements
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check if i >= count
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(1),
+            Instruction::I32GeU,
+            Instruction::BrIf(1), // break out of loop
+            // If i > 0, append ","
+            Instruction::LocalGet(2),
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Create ","
+            Instruction::I32Const(5),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(6),
+            Instruction::I32Const(1),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(6),
+            Instruction::I32Const(44), // ','
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            // result = string.concat(result, ",")
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(6),
+            Instruction::Call(string_concat_index),
+            Instruction::LocalSet(3),
+            Instruction::End,
+            // Load elem_ptr from array_ptr + 4 + i*4
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(2),
+            Instruction::I32Const(2),
+            Instruction::I32Shl, // i * 4
+            Instruction::I32Add,
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4), // elem_ptr
+            // Handle compact booleans: if elem_ptr == 1 (false) or == 2 (true), box them
+            Instruction::LocalGet(4),
+            Instruction::I32Const(1),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Box false
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(7), // boxed_ptr
+            Instruction::I32Const(2), // tag = Boolean
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(7),
+            Instruction::I32Const(0), // false
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(7),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(7),
+            Instruction::LocalSet(4), // update elem_ptr
+            Instruction::Else,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(2),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Box true
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(7), // boxed_ptr
+            Instruction::I32Const(2), // tag = Boolean
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1), // true
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(7),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(7),
+            Instruction::LocalSet(4), // update elem_ptr
+            Instruction::End,
+            Instruction::End,
+            // elem_str = stringify_value(elem_ptr)
+            Instruction::LocalGet(4),
+            Instruction::Call(stringify_value_idx),
+            Instruction::LocalSet(5), // elem_str
+            // result = string.concat(result, elem_str)
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(5),
+            Instruction::Call(string_concat_index),
+            Instruction::LocalSet(3),
+            // i++
+            Instruction::LocalGet(2),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(2),
+            Instruction::Br(0), // continue loop
+            Instruction::End,   // end loop
+            Instruction::End,   // end block
+            // Append "]"
+            Instruction::I32Const(5),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(6),
+            Instruction::I32Const(1),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(6),
+            Instruction::I32Const(93), // ']'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            // result = string.concat(result, "]")
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(6),
+            Instruction::Call(string_concat_index),
+            Instruction::End, // end count == 0 check
+        ]
+    }
+
+    fn generate_stringify_object_instructions(
+        &self,
+        malloc_index: u32,
+        string_concat_index: u32,
+        quote_string_idx: u32,
+        stringify_value_idx: u32,
+    ) -> Vec<Instruction<'static>> {
+        vec![
+            // Read count from object_ptr[0]
+            Instruction::LocalGet(0),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(1), // count
+            // Check if count == 0
+            Instruction::LocalGet(1),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Return "{}"
+            Instruction::I32Const(6),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(8),
+            Instruction::I32Const(2),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(8),
+            Instruction::I32Const(123), // '{'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(8),
+            Instruction::I32Const(125), // '}'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 5,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(8),
+            Instruction::Else,
+            // Create "{"
+            Instruction::I32Const(5),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(3), // result
+            Instruction::I32Const(1),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(123), // '{'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            // Initialize loop counter
+            Instruction::I32Const(0),
+            Instruction::LocalSet(2), // i = 0
+            // Loop over key-value pairs
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Check if i >= count
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(1),
+            Instruction::I32GeU,
+            Instruction::BrIf(1), // break out of loop
+            // If i > 0, append ","
+            Instruction::LocalGet(2),
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Create ","
+            Instruction::I32Const(5),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(8),
+            Instruction::I32Const(1),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(8),
+            Instruction::I32Const(44), // ','
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            // result = string.concat(result, ",")
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(8),
+            Instruction::Call(string_concat_index),
+            Instruction::LocalSet(3),
+            Instruction::End,
+            // Load key_ptr from object_ptr + 4 + i*8
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(2),
+            Instruction::I32Const(3),
+            Instruction::I32Shl, // i * 8
+            Instruction::I32Add,
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4), // key_ptr
+            // key_str = quote_string(key_ptr)
+            Instruction::LocalGet(4),
+            Instruction::Call(quote_string_idx),
+            Instruction::LocalSet(6), // key_str
+            // result = string.concat(result, key_str)
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(6),
+            Instruction::Call(string_concat_index),
+            Instruction::LocalSet(3),
+            // Append ":"
+            Instruction::I32Const(5),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(8),
+            Instruction::I32Const(1),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(8),
+            Instruction::I32Const(58), // ':'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            // result = string.concat(result, ":")
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(8),
+            Instruction::Call(string_concat_index),
+            Instruction::LocalSet(3),
+            // Load val_ptr from object_ptr + 8 + i*8
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(2),
+            Instruction::I32Const(3),
+            Instruction::I32Shl, // i * 8
+            Instruction::I32Add,
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(5), // val_ptr
+            // Handle compact booleans: if val_ptr == 1 (false) or == 2 (true), box them
+            Instruction::LocalGet(5),
+            Instruction::I32Const(1),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Box false
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(9), // boxed_ptr
+            Instruction::I32Const(2), // tag = Boolean
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(9),
+            Instruction::I32Const(0), // false
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(9),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(9),
+            Instruction::LocalSet(5), // update val_ptr
+            Instruction::Else,
+            Instruction::LocalGet(5),
+            Instruction::I32Const(2),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Box true
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(9), // boxed_ptr
+            Instruction::I32Const(2), // tag = Boolean
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(9),
+            Instruction::I32Const(1), // true
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(9),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(9),
+            Instruction::LocalSet(5), // update val_ptr
+            Instruction::End,
+            Instruction::End,
+            // val_str = stringify_value(val_ptr)
+            Instruction::LocalGet(5),
+            Instruction::Call(stringify_value_idx),
+            Instruction::LocalSet(7), // val_str
+            // result = string.concat(result, val_str)
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(7),
+            Instruction::Call(string_concat_index),
+            Instruction::LocalSet(3),
+            // i++
+            Instruction::LocalGet(2),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(2),
+            Instruction::Br(0), // continue loop
+            Instruction::End,   // end loop
+            Instruction::End,   // end block
+            // Append "}"
+            Instruction::I32Const(5),
+            Instruction::Call(malloc_index),
+            Instruction::LocalTee(8),
+            Instruction::I32Const(1),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(8),
+            Instruction::I32Const(125), // '}'
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            // result = string.concat(result, "}")
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(8),
+            Instruction::Call(string_concat_index),
+            Instruction::End, // end count == 0 check
         ]
     }
 

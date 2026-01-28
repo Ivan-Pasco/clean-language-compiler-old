@@ -1,0 +1,11 @@
+// Test: json.prettyDataToText
+
+functions:
+	void testPrettyStringify()
+		any data = json.textToData("{\"array\": [1, 2, 3], \"object\": {\"x\": 10}}")
+		string result = json.prettyDataToText(data)
+		printl(result)
+
+start()
+	testPrettyStringify()
+	printl("Pretty stringify test completed")

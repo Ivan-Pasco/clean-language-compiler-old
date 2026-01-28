@@ -1,0 +1,53 @@
+// Test: Comprehensive JSON stringify tests
+
+functions:
+	void testEmptyArray()
+		any data = json.textToData("[]")
+		string result = json.dataToText(data)
+		printl(result)
+
+	void testEmptyObject()
+		any data = json.textToData("{}")
+		string result = json.dataToText(data)
+		printl(result)
+
+	void testBooleans()
+		any data = json.textToData("[true, false]")
+		string result = json.dataToText(data)
+		printl(result)
+
+	void testNull()
+		any data = json.textToData("null")
+		string result = json.dataToText(data)
+		printl(result)
+
+	void testMixedTypes()
+		any data = json.textToData("{\"str\": \"hello\", \"num\": 42, \"bool\": true, \"null\": null}")
+		string result = json.dataToText(data)
+		printl(result)
+
+	void testDeeplyNested()
+		any data = json.textToData("{\"level1\": {\"level2\": {\"level3\": [1, 2, 3]}}}")
+		string result = json.dataToText(data)
+		printl(result)
+
+	void testArrayOfObjects()
+		any data = json.textToData("[{\"a\": 1}, {\"b\": 2}]")
+		string result = json.dataToText(data)
+		printl(result)
+
+	void testObjectWithArrays()
+		any data = json.textToData("{\"nums\": [1, 2], \"strs\": [\"a\", \"b\"]}")
+		string result = json.dataToText(data)
+		printl(result)
+
+start()
+	testEmptyArray()
+	testEmptyObject()
+	testBooleans()
+	testNull()
+	testMixedTypes()
+	testDeeplyNested()
+	testArrayOfObjects()
+	testObjectWithArrays()
+	printl("All comprehensive tests completed")
