@@ -11,7 +11,7 @@ functions:
 		error("This always fails")
 		return 0
 
-start()
+start:
 	// Test 1: Successful operation (no error)
 	integer success = riskyOperation(5)
 	print("Successful: " + success.toString())
@@ -21,7 +21,7 @@ start()
 	print("With onError default: " + safe.toString())
 
 	// Test 3: onError with computation
-	integer computed = alwaysFails() onError 42
-	print("Computed fallback: " + computed.toString())
+	integer fallbackResult = alwaysFails() onError 42
+	print("Computed fallback: " + fallbackResult.toString())
 
 	print("onError test completed")

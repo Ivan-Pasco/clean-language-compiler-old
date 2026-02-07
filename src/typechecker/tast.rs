@@ -46,7 +46,7 @@ pub struct TastFunction {
     pub body: TastBlock,
     pub generic_params: Vec<TypeParameter>,
     pub constraints: Vec<TypeConstraint>,
-    pub is_async: bool,
+    pub is_background: bool,
     pub is_static: bool,
     pub visibility: Visibility,
     pub location: SourceLocation,
@@ -170,6 +170,12 @@ pub enum TastStatement {
         variable: String,
         symbol_id: SymbolId,
         expression: TastExpression,
+        location: SourceLocation,
+    },
+    /// Require statement - contract precondition that must be true
+    /// Traps at runtime if condition is false
+    Require {
+        condition: TastExpression,
         location: SourceLocation,
     },
 }
@@ -329,7 +335,7 @@ pub struct TastImportedSymbol {
 pub struct TastTest {
     pub name: String,
     pub body: TastBlock,
-    pub is_async: bool,
+    pub is_background: bool,
     pub location: SourceLocation,
 }
 
@@ -337,6 +343,8 @@ pub struct TastTest {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TastStateBlock {
     pub declarations: Vec<TastStateDeclaration>,
+    /// State invariants checked at operation boundaries (after start:, frame:, handlers)
+    pub rules: Vec<TastExpression>,
     pub scope: TastStateScope,
     pub location: SourceLocation,
 }
@@ -392,7 +400,7 @@ pub enum ConcreteType {
     Function {
         parameters: Vec<ConcreteType>,
         return_type: Box<ConcreteType>,
-        is_async: bool,
+        is_background: bool,
     },
 
     /// Class type
@@ -567,12 +575,12 @@ impl ConcreteType {
                 ConcreteType::Function {
                     parameters: p1,
                     return_type: r1,
-                    is_async: a1,
+                    is_background: a1,
                 },
                 ConcreteType::Function {
                     parameters: p2,
                     return_type: r2,
-                    is_async: a2,
+                    is_background: a2,
                 },
             ) => {
                 a1 == a2 &&
@@ -669,9 +677,9 @@ impl std::fmt::Display for ConcreteType {
             ConcreteType::Function {
                 parameters,
                 return_type,
-                is_async,
+                is_background,
             } => {
-                let async_str = if *is_async { "async " } else { "" };
+                let async_str = if *is_background { "async " } else { "" };
                 let params = parameters
                     .iter()
                     .map(|p| p.to_string())

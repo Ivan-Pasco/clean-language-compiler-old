@@ -21,7 +21,7 @@ functions:
 		integer temp = a + b
 		temp * 2
 
-start()
+start:
 	// Test 1: Simple implicit return
 	integer result1 = addOne(5)
 	print("addOne(5): " + result1.toString())

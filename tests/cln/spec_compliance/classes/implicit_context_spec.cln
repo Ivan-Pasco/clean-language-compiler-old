@@ -45,7 +45,7 @@ class Rectangle
 			width = width * factor
 			height = height * factor
 
-start()
+start:
 	// Test 1: Direct field access in method
 	Point p = Point(3, 4)
 	integer pSum = p.sum()

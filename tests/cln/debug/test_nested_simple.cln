@@ -1,5 +1,5 @@
 // Test nested if without else
-start()
+start:
 	integer x = 10
 	integer y = 5
 

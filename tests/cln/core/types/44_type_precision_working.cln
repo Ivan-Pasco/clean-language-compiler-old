@@ -1,6 +1,6 @@
 // Test type precision modifiers
 
-start()
+start:
 	print("Type precision test completed")
 
 functions:

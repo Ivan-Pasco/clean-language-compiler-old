@@ -1,7 +1,7 @@
 // Spec Section: 9.1 - Conditional Statements (if/else)
 // Tests: Basic if, if-else, and if-else if chains
 
-start()
+start:
 	// Test 1: Basic if statement
 	integer x = 10
 	if x > 5

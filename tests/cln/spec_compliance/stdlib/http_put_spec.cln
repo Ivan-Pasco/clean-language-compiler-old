@@ -2,7 +2,7 @@
 // Tests: http.put() function for HTTP PUT requests
 // Requirement: Perform HTTP PUT request with data and return response
 
-start()
+start:
 	// Test case 1: Basic PUT request
 	string url = "https://httpbin.org/put"
 	string data = "id=1&name=updated"

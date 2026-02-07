@@ -102,7 +102,7 @@ functions:
 			integer dummy = 0
 		draw()
 
-start()
+start:
 	gameLoop(0.016)
 	gameLoop(0.016)
 	gameLoop(0.016)

@@ -20,7 +20,7 @@ functions:
 	void printAnyInt(any value)
 		print("Value: " + value.toString())
 
-start()
+start:
 	// Test 1: Identity function with integer
 	integer intResult = identityInt(42)
 	print("identityInt(42): " + intResult.toString())

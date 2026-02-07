@@ -68,7 +68,7 @@ functions:
 		print("abs(-25) = " + absNeg.toString())
 		print("abs(42) = " + absPos.toString())
 		print("abs(0) = " + absZero.toString())
-start()
+start:
 	print("Math Module Working Test")
 	print("========================")
 	testBasicMathOperations()

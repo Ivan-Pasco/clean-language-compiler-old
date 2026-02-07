@@ -104,7 +104,7 @@ functions:
 			print("  Max speed: " + vehicle.getMaxSpeed().toString() + " km/h")
 		print("")
 
-start()
+start:
 	print("Polymorphism Test - Vehicle System")
 	print("=================================")
 

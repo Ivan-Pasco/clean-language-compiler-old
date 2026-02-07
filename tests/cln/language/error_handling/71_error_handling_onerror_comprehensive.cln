@@ -126,7 +126,7 @@ functions:
 	void printValue(integer value)
 		print("Received value: " + value.toString())
 
-start()
+start:
 	print("Error Handling onError Comprehensive Test")
 	print("========================================")
 	testBasicOnErrorSyntax()

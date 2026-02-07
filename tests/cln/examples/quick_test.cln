@@ -9,6 +9,6 @@ class Point
 		integer getX()
 			return x
 
-start()
+start:
 	Point p = Point(5)
 	print("Test complete")

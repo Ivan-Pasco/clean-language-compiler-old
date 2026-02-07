@@ -227,7 +227,7 @@ impl TokenParser {
                         self.errors.push(CompilerError::parse_error(
                             format!("Unexpected identifier at top level: {:?}", name),
                             Some(token.location.clone()),
-                            Some("Expected 'functions:', 'class', 'start()', or framework block (e.g., 'endpoints:', 'screen \"Name\":')".to_string()),
+                            Some("Expected 'functions:', 'class', 'start:', or framework block (e.g., 'endpoints:', 'screen \"Name\":')".to_string()),
                         ));
                         self.bump();
                     }
@@ -501,8 +501,8 @@ impl TokenParser {
         })
     }
 
-    /// Parse start() function (special case - no 'function' keyword)
-    /// Example: start()
+    /// Parse start: block (entry point)
+    /// Example: start:
     ///             print("Hello")
     fn parse_start_function(&mut self) -> Result<Function, CompilerError> {
         let start_token = self.expect(&TokenKind::Start)?;
@@ -510,10 +510,8 @@ impl TokenParser {
 
         self.skip_whitespace();
 
-        // Expect ()
-        self.expect(&TokenKind::LeftParen)?;
-        self.skip_whitespace();
-        self.expect(&TokenKind::RightParen)?;
+        // Expect colon for block syntax
+        self.expect(&TokenKind::Colon)?;
 
         self.skip_whitespace();
         // DON'T skip indentation - let parse_block() handle it
@@ -525,7 +523,7 @@ impl TokenParser {
             name: "start".to_string(),
             type_parameters: Vec::new(),
             type_constraints: Vec::new(),
-            parameters: Vec::new(), // start() has no parameters
+            parameters: Vec::new(), // start: has no parameters
             return_type: Type::Void,
             body,
             description: None,
@@ -601,6 +599,18 @@ impl TokenParser {
                 TokenKind::Class | TokenKind::Functions | TokenKind::Tests | TokenKind::Import
             ) {
                 break;
+            }
+
+            // Check if Start is followed by Colon (top-level start: block, not a method name)
+            if matches!(self.current_kind(), TokenKind::Start) {
+                let saved = self.cursor;
+                self.bump();
+                self.skip_whitespace();
+                let is_block = self.check(&TokenKind::Colon);
+                self.cursor = saved;
+                if is_block {
+                    break;
+                }
             }
 
             // Also check if we see a Dedent that would exit the block
@@ -2506,6 +2516,7 @@ impl TokenParser {
                 self.parse_print()
             }
             TokenKind::Error => self.parse_error_statement(),
+            TokenKind::Require => self.parse_require(),
             TokenKind::Constant => self.parse_constant_apply_block(),
             // Allow Test keyword to be used as a class/type name
             TokenKind::Test => {
@@ -3003,6 +3014,21 @@ impl TokenParser {
         })
     }
 
+    /// Parse require statement: require <condition>
+    /// Declares a precondition that must be true at runtime
+    fn parse_require(&mut self) -> Result<Statement, CompilerError> {
+        let require_token = self.expect(&TokenKind::Require)?;
+        self.skip_whitespace();
+
+        // Parse the condition expression
+        let condition = self.parse_expression()?;
+
+        Ok(Statement::Require {
+            condition,
+            location: Some(require_token.location),
+        })
+    }
+
     fn parse_if(&mut self) -> Result<Statement, CompilerError> {
         // Capture the if statement's indentation level BEFORE consuming the if token
         let if_indent_level = self.get_current_indent_level();
@@ -3248,9 +3274,29 @@ impl TokenParser {
             self.parse_expression()?
         };
 
+        // Consume trailing '+' for print-with-newline: print("Hello") +
+        self.skip_whitespace();
+        let newline = if self.check(&TokenKind::Plus) {
+            let saved = self.cursor;
+            self.bump();
+            // Don't call skip_whitespace() here - it eats Newline tokens,
+            // hiding the line boundary from the match check below.
+            if matches!(
+                self.current_kind(),
+                TokenKind::Newline | TokenKind::Eof | TokenKind::Dedent(_) | TokenKind::Indent(_)
+            ) {
+                true
+            } else {
+                self.cursor = saved;
+                false
+            }
+        } else {
+            false
+        };
+
         Ok(Statement::Print {
             expression,
-            newline: false,
+            newline,
             location: Some(print_token.location),
         })
     }
@@ -4173,6 +4219,17 @@ impl TokenParser {
                 TokenKind::Dedent(_) => {
                     break;
                 }
+                TokenKind::Rules => {
+                    // Parse rules: block for state invariants
+                    let rules_block = self.parse_rules_block(block_level)?;
+                    return Ok(StateBlock {
+                        declarations,
+                        computed,
+                        rules: Some(rules_block),
+                        scope: StateScope::App,
+                        location: None,
+                    });
+                }
                 _ => {
                     // Unknown token, skip and continue
                     break;
@@ -4183,9 +4240,108 @@ impl TokenParser {
         Ok(StateBlock {
             declarations,
             computed,
+            rules: None,            // No rules block present
             scope: StateScope::App, // Default to App scope for top-level state
             location: None,
         })
+    }
+
+    /// Parse a rules: block containing state invariant expressions
+    fn parse_rules_block(
+        &mut self,
+        parent_block_level: usize,
+    ) -> Result<crate::ast::RulesBlock, CompilerError> {
+        let location = Some(self.current().location.clone());
+
+        // Consume "rules" keyword
+        self.expect(&TokenKind::Rules)?;
+        self.skip_whitespace();
+
+        // Consume ":"
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        let mut rules = Vec::new();
+
+        // Skip newline if present
+        if matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump();
+        }
+
+        // Get the indent level for rules (should be deeper than parent block)
+        let rules_level = if let TokenKind::Indent(level) = self.current_kind() {
+            *level
+        } else {
+            parent_block_level + 1
+        };
+
+        // Parse rule expressions until we leave this indent level
+        loop {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Skip any initial indent
+            if let TokenKind::Indent(level) = self.current_kind() {
+                if *level >= rules_level {
+                    self.bump();
+                } else {
+                    break; // Dedent past rules block
+                }
+            }
+
+            // Check for dedent (end of rules block)
+            if let TokenKind::Dedent(level) = self.current_kind() {
+                if *level < rules_level {
+                    self.bump();
+                    break;
+                }
+            }
+
+            // Check for top-level keywords that end the rules block
+            if matches!(
+                self.current_kind(),
+                TokenKind::Functions
+                    | TokenKind::Class
+                    | TokenKind::Start
+                    | TokenKind::Tests
+                    | TokenKind::Import
+                    | TokenKind::State
+            ) {
+                break;
+            }
+
+            // Skip newlines between rules
+            if matches!(self.current_kind(), TokenKind::Newline) {
+                self.bump();
+                continue;
+            }
+
+            // Parse a rule expression (must be boolean)
+            if !matches!(
+                self.current_kind(),
+                TokenKind::Newline | TokenKind::Indent(_) | TokenKind::Dedent(_)
+            ) {
+                let rule_expr = self.parse_expression()?;
+                rules.push(rule_expr);
+            }
+
+            // Skip trailing newline
+            if matches!(self.current_kind(), TokenKind::Newline) {
+                self.bump();
+            }
+
+            // Check for next line indent
+            if let TokenKind::Indent(level) = self.current_kind() {
+                if *level < rules_level {
+                    break; // End of rules block
+                }
+            }
+        }
+
+        Ok(crate::ast::RulesBlock { rules, location })
     }
 
     /// Try to parse a guard clause following a state declaration

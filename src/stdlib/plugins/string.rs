@@ -70,7 +70,7 @@ impl StdlibPlugin for StringPlugin {
                 description: "Concatenate two strings".to_string(),
                 category: FunctionCategory::String,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements {
                     heap_bytes: Some(128), // Estimated
                     stack_depth: Some(2),
@@ -83,7 +83,7 @@ impl StdlibPlugin for StringPlugin {
                 description: "Get string length".to_string(),
                 category: FunctionCategory::String,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements::default(),
             },
         ]

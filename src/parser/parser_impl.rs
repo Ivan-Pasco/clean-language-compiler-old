@@ -117,8 +117,8 @@ impl ErrorRecoveringParser {
             else if trimmed.starts_with("class ") {
                 self.recovery_points.push(byte_pos);
             }
-            // Start function
-            else if trimmed.starts_with("start()") {
+            // Start block
+            else if trimmed.starts_with("start:") {
                 self.recovery_points.push(byte_pos);
             }
             // Import statements
@@ -424,9 +424,9 @@ impl ErrorRecoveringParser {
 
     /// Parse a function segment with recovery
     fn parse_function_segment(&mut self, segment: &str) -> Result<Program, CompilerError> {
-        // Try to parse as start function first
-        if let Ok(pairs) = <CleanParser as Parser<Rule>>::parse(Rule::start_function, segment) {
-            let start_func = parse_start_function(pairs.into_iter().next().unwrap())?;
+        // Try to parse as start block first
+        if let Ok(pairs) = <CleanParser as Parser<Rule>>::parse(Rule::start_block, segment) {
+            let start_func = parse_start_block(pairs.into_iter().next().unwrap())?;
             return Ok(Program {
                 imports: Vec::new(),
                 plugins: Vec::new(),
@@ -481,8 +481,8 @@ impl ErrorRecoveringParser {
                 if !trimmed.is_empty() && !trimmed.starts_with("//") && line_indent == 0 {
                     // We've exited the functions block
                     in_functions_block = false;
-                    // Check if this is a start function
-                    if trimmed.starts_with("start()") {
+                    // Check if this is a start block
+                    if trimmed.starts_with("start:") {
                         in_start_function = true;
                         current_indent = line_indent;
                         start_function_lines.push(line.to_string());
@@ -499,7 +499,7 @@ impl ErrorRecoveringParser {
                     // We've exited the start function
                     in_start_function = false;
                 }
-            } else if trimmed.starts_with("start()") {
+            } else if trimmed.starts_with("start:") {
                 in_start_function = true;
                 current_indent = line_indent;
                 start_function_lines.push(line.to_string());
@@ -510,14 +510,13 @@ impl ErrorRecoveringParser {
         let preprocessor = super::preprocessor::FunctionPreprocessor::new(&functions_block_content);
         match preprocessor.process_functions_block(&functions_block_content) {
             Ok(functions) => {
-                // Parse start function if present
+                // Parse start block if present
                 let start_function = if !start_function_lines.is_empty() {
                     let start_source = start_function_lines.join("\n");
-                    match <CleanParser as Parser<Rule>>::parse(Rule::start_function, &start_source)
-                    {
-                        Ok(pairs) => Some(parse_start_function(pairs.into_iter().next().unwrap())?),
+                    match <CleanParser as Parser<Rule>>::parse(Rule::start_block, &start_source) {
+                        Ok(pairs) => Some(parse_start_block(pairs.into_iter().next().unwrap())?),
                         Err(_) => {
-                            // Failed to parse start function, continuing without it
+                            // Failed to parse start block, continuing without it
                             None
                         }
                     }
@@ -621,8 +620,8 @@ impl ErrorRecoveringParser {
                     location: self.calculate_location_from_segment(segment),
                 }));
             }
-        } else if trimmed.starts_with("start()") {
-            // Try to create a partial start function
+        } else if trimmed.starts_with("start:") {
+            // Try to create a partial start block
             return Some(PartialNode::Function(Function {
                 name: "start".to_string(),
                 type_parameters: Vec::new(),
@@ -736,25 +735,25 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                     function_count = functions.len(),
                     "Successfully preprocessed functions"
                 );
-                // Also look for start function in the source
-                let start_function = if let Some(start_match) = source.find("start()") {
-                    trace!(position = start_match, "Found start()");
-                    // Extract the start function text
+                // Also look for start block in the source
+                let start_function = if let Some(start_match) = source.find("start:") {
+                    trace!(position = start_match, "Found start:");
+                    // Extract the start block text
                     let start_source = &source[start_match..];
-                    // Find the end of the start function (next top-level item or end of file)
+                    // Find the end of the start block (next top-level item or end of file)
                     let lines: Vec<&str> = start_source.lines().collect();
-                    let mut start_function_lines = Vec::new();
+                    let mut start_block_lines = Vec::new();
                     let mut found_body = false;
 
                     for (i, line) in lines.iter().enumerate() {
                         if i == 0 {
-                            start_function_lines.push(line.to_string());
+                            start_block_lines.push(line.to_string());
                             continue;
                         }
 
                         let trimmed = line.trim();
                         if trimmed.is_empty() {
-                            start_function_lines.push(line.to_string());
+                            start_block_lines.push(line.to_string());
                             continue;
                         }
 
@@ -763,28 +762,26 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                             break;
                         }
 
-                        // If this line is indented, it's part of the start function
+                        // If this line is indented, it's part of the start block
                         if line.starts_with('\t') || line.starts_with(' ') {
                             found_body = true;
-                            start_function_lines.push(line.to_string());
+                            start_block_lines.push(line.to_string());
                         } else if found_body {
                             // Non-indented line after body means we're done
                             break;
                         }
                     }
 
-                    let start_source_text = start_function_lines.join("\n");
+                    let start_source_text = start_block_lines.join("\n");
 
                     match <CleanParser as Parser<Rule>>::parse(
-                        Rule::start_function,
+                        Rule::start_block,
                         &start_source_text,
                     ) {
-                        Ok(pairs) => {
-                            match parse_start_function(pairs.into_iter().next().unwrap()) {
-                                Ok(func) => Some(func),
-                                Err(_e) => None,
-                            }
-                        }
+                        Ok(pairs) => match parse_start_block(pairs.into_iter().next().unwrap()) {
+                            Ok(func) => Some(func),
+                            Err(_e) => None,
+                        },
                         Err(_e) => None,
                     }
                 } else {
@@ -924,12 +921,8 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
                                     functions.extend(block_functions);
                                 }
                                 // Standalone functions removed - all functions must be in functions: blocks per specification
-                                Rule::start_function => {
-                                    let func = parse_start_function(program_item_inner)?;
-                                    start_function = Some(func);
-                                }
-                                Rule::implicit_start_function => {
-                                    let func = parse_start_function(program_item_inner)?;
+                                Rule::start_block => {
+                                    let func = parse_start_block(program_item_inner)?;
                                     start_function = Some(func);
                                 }
                                 Rule::class_decl => {
@@ -1041,41 +1034,25 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
     Ok(program)
 }
 
-pub fn parse_start_function(pair: Pair<Rule>) -> Result<Function, CompilerError> {
+/// Parse a start block (entry point)
+/// Grammar: start_block = { "start" ~ ":" ~ simple_indented_block }
+pub fn parse_start_block(pair: Pair<Rule>) -> Result<Function, CompilerError> {
     let name = "start".to_string();
     let mut body = Vec::new();
     let location = Some(convert_to_ast_location(&get_location(&pair)));
 
     for inner in pair.into_inner() {
-        if inner.as_rule() == Rule::indented_block {
-            // indented_block contains either function_nested_block or simple_indented_block
-            for block_pair in inner.into_inner() {
-                match block_pair.as_rule() {
-                    Rule::simple_indented_block => {
-                        // simple_indented_block contains statement rules directly
-                        for stmt_pair in block_pair.into_inner() {
-                            if stmt_pair.as_rule() == Rule::statement {
-                                body.push(parse_statement(stmt_pair)?);
-                            }
-                        }
-                    }
-                    Rule::function_nested_block => {
-                        // function_nested_block contains statements directly
-                        for stmt_pair in block_pair.into_inner() {
-                            if stmt_pair.as_rule() == Rule::statement {
-                                body.push(parse_statement(stmt_pair)?);
-                            }
-                        }
-                    }
-                    _ => {
-                        // Skip other elements like NEWLINE, INDENT, etc.
-                    }
+        if inner.as_rule() == Rule::simple_indented_block {
+            // simple_indented_block contains statement rules directly
+            for stmt_pair in inner.into_inner() {
+                if stmt_pair.as_rule() == Rule::statement {
+                    body.push(parse_statement(stmt_pair)?);
                 }
             }
         }
     }
 
-    // Start function must always have void return type for WebAssembly compatibility
+    // Start block compiles to a void function for WebAssembly compatibility
     let return_type = Type::Void;
 
     Ok(Function {
@@ -1091,6 +1068,12 @@ pub fn parse_start_function(pair: Pair<Rule>) -> Result<Function, CompilerError>
         modifier: FunctionModifier::None,
         location,
     })
+}
+
+/// Legacy parse function for backwards compatibility during transition
+/// This wraps parse_start_block for code that still references the old name
+pub fn parse_start_function(pair: Pair<Rule>) -> Result<Function, CompilerError> {
+    parse_start_block(pair)
 }
 
 // parse_standalone_function removed - all functions must be in functions: blocks per specification
@@ -2072,6 +2055,7 @@ pub fn parse_state_block(pair: Pair<Rule>) -> Result<crate::ast::StateBlock, Com
     let location = Some(convert_to_ast_location(&get_location(&pair)));
     let mut declarations = Vec::new();
     let mut computed = Vec::new();
+    let mut rules = None;
 
     for inner in pair.into_inner() {
         match inner.as_rule() {
@@ -2090,6 +2074,9 @@ pub fn parse_state_block(pair: Pair<Rule>) -> Result<crate::ast::StateBlock, Com
                     }
                 }
             }
+            Rule::rules_block => {
+                rules = Some(parse_rules_block(inner)?);
+            }
             _ => {}
         }
     }
@@ -2097,9 +2084,28 @@ pub fn parse_state_block(pair: Pair<Rule>) -> Result<crate::ast::StateBlock, Com
     Ok(StateBlock {
         declarations,
         computed,
+        rules,
         scope: StateScope::App, // Default to app scope; screen scope set by parent
         location,
     })
+}
+
+/// Parse a rules block (state invariants)
+fn parse_rules_block(pair: Pair<Rule>) -> Result<crate::ast::RulesBlock, CompilerError> {
+    let location = Some(convert_to_ast_location(&get_location(&pair)));
+    let mut rules = Vec::new();
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::expression => {
+                let expr = parse_expression(inner)?;
+                rules.push(expr);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(crate::ast::RulesBlock { rules, location })
 }
 
 /// Parse a single state declaration

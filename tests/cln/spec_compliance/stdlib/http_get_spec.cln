@@ -2,7 +2,7 @@
 // Tests: http.get() function for HTTP GET requests
 // Requirement: Perform HTTP GET request and return response
 
-start()
+start:
 	// Test case 1: Basic GET request
 	string url = "https://httpbin.org/get"
 	string response = http.get(url)

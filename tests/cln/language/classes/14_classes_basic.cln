@@ -24,7 +24,7 @@ class Person
 		string toString()
 			return name + " is " + age.toString() + " years old"
 
-start()
+start:
 	Person person = Person("Alice", 25)
 	print(person.getName())
 	print(person.getAge())

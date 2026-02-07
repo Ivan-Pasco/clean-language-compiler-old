@@ -56,7 +56,7 @@ class Cat is Animal
 			else
 				return "outdoor cat"
 
-start()
+start:
 	Dog buddy = Dog("Buddy", 3, "Golden Retriever")
 	Cat whiskers = Cat("Whiskers", 2, true)
 

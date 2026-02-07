@@ -66,7 +66,7 @@ fn run_parser_tests() -> TestSuite {
 
     // Test basic parsing with correct Clean Language syntax
     let test_cases = vec![
-        ("minimal_start", "start()\n\tprint(42)"),
+        ("minimal_start", "start:\n\tprint(42)"),
         ("minimal_function", "functions:\n\tinteger add(integer a, integer b)\n\t\treturn a + b"),
         ("minimal_class", "class Calculator\n\tinteger value\n\tfunctions:\n\t\tvoid setValue(integer newValue)\n\t\t\tvalue = newValue"),
     ];
@@ -104,7 +104,7 @@ fn run_semantic_tests() -> TestSuite {
 
     // Test type checking with correct syntax
     let test_cases = vec![
-        ("valid_start", "start()\n\tprint(42)"),
+        ("valid_start", "start:\n\tprint(42)"),
         ("valid_function", "functions:\n\tinteger add(integer a, integer b)\n\t\treturn a + b"),
         ("valid_class", "class Calculator\n\tinteger value\n\tfunctions:\n\t\tvoid setValue(integer newValue)\n\t\t\tvalue = newValue"),
     ];
@@ -158,7 +158,7 @@ fn run_compilation_tests() -> TestSuite {
     let mut suite = TestSuite::new("Compilation Tests".to_string());
 
     let test_cases = vec![
-        ("simple_start", "start()\n\tprint(42)"),
+        ("simple_start", "start:\n\tprint(42)"),
         ("simple_function", "functions:\n\tinteger add(integer a, integer b)\n\t\treturn a + b"),
         ("simple_class", "class Calculator\n\tinteger value\n\tfunctions:\n\t\tvoid setValue(integer newValue)\n\t\t\tvalue = newValue"),
     ];

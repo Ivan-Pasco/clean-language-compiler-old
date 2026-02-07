@@ -10,7 +10,7 @@ functions:
 			return "Error occurred"
 		return "Success"
 
-start()
+start:
 	string result1 = riskyOperation(false) onError "Default"
 	print(result1)
 

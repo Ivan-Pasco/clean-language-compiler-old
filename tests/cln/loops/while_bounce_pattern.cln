@@ -1,5 +1,5 @@
 functions:
-	void start()
+start:
 		integer i = 0
 		number y = 100.0
 		number vy = 0.0

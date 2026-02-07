@@ -18,7 +18,7 @@ functions:
 	any getElement(list<any> items, integer index)
 		return items.get(index)
 
-start()
+start:
 	// Test 1: Generic return with integer
 	any result1 = wrap(42)
 	print("Wrapped integer: " + result1.toString())

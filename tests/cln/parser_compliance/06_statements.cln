@@ -1,7 +1,7 @@
 # Parser Compliance Test - Statements
 # This test verifies all statement types are properly parsed
 
-start()
+start:
 	# Variable declarations (type-first)
 	integer count = 0
 	string message = "hello"

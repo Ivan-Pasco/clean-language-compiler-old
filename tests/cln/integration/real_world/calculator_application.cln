@@ -92,7 +92,7 @@ functions:
 		)
 		print("(2^3) * sqrt(9) = " + scientificResult.toString())
 
-	void start()
+start:
 		print("Calculator Application - Real-world Integration Test")
 		print("================================================")
 

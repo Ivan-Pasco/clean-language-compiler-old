@@ -2,7 +2,7 @@
 // Tests matrix literals, arithmetic, and methods according to Clean Language Specification
 
 functions:
-	void start()
+start:
 		// Matrix literal creation
 		matrix<integer> mat1 = [[1, 2], [3, 4]]
 		matrix<integer> mat2 = [[5, 6], [7, 8]]

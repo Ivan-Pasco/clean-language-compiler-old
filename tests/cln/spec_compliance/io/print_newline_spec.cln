@@ -2,7 +2,7 @@
 // Tests: print with newline (parentheses syntax)
 // Requirement: print() outputs with newline
 
-start()
+start:
 	// Test case 1: Basic print with newline
 	print("Line 1")
 	print("Line 2")

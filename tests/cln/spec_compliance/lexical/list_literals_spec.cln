@@ -1,7 +1,7 @@
 // Spec Section: 2.2 - Literals (List Literals)
 // Tests: List literal syntax for various types
 
-start()
+start:
 	// Test 1: Integer list literals
 	list<integer> numbers = [1, 2, 3, 4, 5]
 	print("Integer list created")

@@ -1,7 +1,7 @@
 // Test file for newly implemented host functions
 // Tests math functions, memory management, and property access
 
-start()
+start:
 	print("Testing newly implemented host functions...")
 
 	// Test math functions

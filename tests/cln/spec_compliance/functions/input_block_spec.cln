@@ -23,7 +23,7 @@ functions:
 	string formatMessage(string name, integer age)
 		return "Hello " + name + ", you are " + age.toString() + " years old"
 
-start()
+start:
 	// Test with regular parameters (working)
 	integer sum = calculate(10, 20)
 	print("Calculate result: " + sum.toString())

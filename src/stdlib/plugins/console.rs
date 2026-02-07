@@ -9,14 +9,14 @@ use std::any::Any;
 #[allow(dead_code)]
 pub struct ConsolePlugin {
     buffer_size: usize,
-    async_mode: bool,
+    background_mode: bool,
 }
 
 impl ConsolePlugin {
     pub fn new() -> Self {
         Self {
             buffer_size: 1024,
-            async_mode: false,
+            background_mode: false,
         }
     }
 }
@@ -62,7 +62,7 @@ impl StdlibPlugin for ConsolePlugin {
             description: "Print message to console".to_string(),
             category: FunctionCategory::Console,
             is_builtin: true,
-            is_async: false,
+            is_background: false,
             memory_requirements: MemoryRequirements {
                 heap_bytes: Some(64),
                 stack_depth: Some(1),

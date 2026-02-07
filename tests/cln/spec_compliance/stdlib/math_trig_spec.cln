@@ -1,7 +1,7 @@
 // Spec Section: 14.1.2 - Math Trigonometric Functions
 // Tests: Trigonometric functions from math module
 
-start()
+start:
 	// Test 1: math.sin
 	number angle1 = 0.0
 	number sin0 = math.sin(angle1)

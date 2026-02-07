@@ -13,7 +13,7 @@ functions:
 	string joinStrings(string first, string second)
 		return first + second
 
-start()
+start:
 	integer sum = add(5, 10)
 	number product = multiply(3.14, 2.0)
 	string text = joinStrings("Hello, ", "World!")

@@ -3,7 +3,7 @@
 // Dependencies: none
 // Expected: PASS
 
-start()
+start:
 	// Test precision modifiers for integers
 	integer:8 small_int = 42
 	integer:16 medium_int = 1000

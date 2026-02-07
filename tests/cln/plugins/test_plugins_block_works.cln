@@ -7,5 +7,5 @@ plugins:
 state:
 	integer count = 0
 
-start()
+start:
 	print("test")

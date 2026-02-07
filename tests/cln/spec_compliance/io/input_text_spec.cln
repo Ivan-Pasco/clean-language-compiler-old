@@ -2,7 +2,7 @@
 // Tests: input() function for text input
 // Requirement: Basic string input from user with prompt
 
-start()
+start:
 	// Test case 1: Basic input with prompt
 	string name = input("Enter your name: ")
 	print("Hello, " + name)

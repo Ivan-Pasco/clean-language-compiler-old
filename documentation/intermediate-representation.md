@@ -74,6 +74,11 @@ pub enum HIRItem {
     Class(HIRClass),
     DataType(HIRDataType),
     Import(HIRImport),
+    StartBlock(HIRBlock),              // start: entry point
+    StateBlock(HIRStateBlock),         // state: block with declarations, guards, computed, rules
+    TestBlock(HIRTestBlock),           // tests: block
+    WatchBlock(HIRWatchBlock),         // watch variable: reactive block
+    BuildBlock(HIRBuildBlock),         // build: configuration block (rules checking)
 }
 
 #[derive(Debug, Clone)]
@@ -90,7 +95,7 @@ pub struct HIRFunction {
 
 #[derive(Debug, Clone)]
 pub struct FunctionAttributes {
-    pub is_async: bool,
+    pub is_background: bool,
     pub is_static: bool,
     pub visibility: Visibility,
     pub inline_hint: InlineHint,
@@ -102,6 +107,74 @@ pub enum InlineHint {
     Auto,
     Always,
 }
+
+/// State block with declarations, guards, computed values, and rules
+#[derive(Debug, Clone)]
+pub struct HIRStateBlock {
+    pub node_id: NodeId,
+    pub span: Span,
+    pub declarations: Vec<HIRStateDeclaration>,
+    pub computed: Vec<HIRComputedDeclaration>,
+    pub rules: Vec<HIRExpression>,       // State invariants checked at operation boundaries
+    pub scope: HIRStateScope,
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRStateDeclaration {
+    pub name: Symbol,
+    pub ty: Type,
+    pub initializer: HIRExpression,
+    pub guard: Option<HIRGuardClause>,   // guard value >= 0 else "error"
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRGuardClause {
+    pub condition: HIRExpression,        // Uses 'value' for proposed new value
+    pub error_message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRComputedDeclaration {
+    pub name: Symbol,
+    pub ty: Type,
+    pub body: HIRBlock,                  // Must end with return
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRWatchBlock {
+    pub targets: Vec<Symbol>,            // State variable names to watch
+    pub body: HIRBlock,
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRTestBlock {
+    pub name: String,
+    pub tests: Vec<HIRTestCase>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRTestCase {
+    pub description: String,
+    pub body: HIRBlock,
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRBuildBlock {
+    pub rules_mode: RulesMode,           // true, false, or "development"
+}
+
+#[derive(Debug, Clone)]
+pub enum RulesMode {
+    Always,       // rules = true
+    Never,        // rules = false
+    Development,  // rules = "development"
+}
+
+#[derive(Debug, Clone)]
+pub enum HIRStateScope {
+    App,          // Top-level state:
+    Screen,       // state: inside screen:
+}
 ```
 
 **HIR Features:**
@@ -109,6 +182,8 @@ pub enum InlineHint {
 - **Type Information**: Complete type annotations
 - **Desugaring**: Complex syntax reduced to core constructs
 - **Attribute Collection**: Metadata for optimization decisions
+- **State Management**: First-class state blocks with guards, computed values, and rules
+- **Build Configuration**: Inline build settings for rules checking mode
 
 ### 2. HIR Expressions
 
@@ -125,6 +200,25 @@ pub enum HIRExpression {
     Index(HIRIndex),
     Cast(HIRCast),
     Block(HIRBlock),
+    ListLiteral(Vec<HIRExpression>),               // [1, 2, 3]
+    MatrixLiteral(Vec<Vec<HIRExpression>>),         // [[1, 2], [3, 4]]
+    StringInterpolation(Vec<HIRStringPart>),        // "Hello ${name}"
+    StartExpression(Box<HIRExpression>),            // start functionCall() — background execution
+    DefaultExpression {                             // value default fallback — null-coalescing
+        value: Box<HIRExpression>,
+        fallback: Box<HIRExpression>,
+    },
+    RequiredAssertion(Box<HIRExpression>),          // value! — not-null assertion
+    OnError {                                       // riskyCall() onError fallback
+        expression: Box<HIRExpression>,
+        fallback: Box<HIRExpression>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum HIRStringPart {
+    Literal(String),
+    Expression(HIRExpression),
 }
 
 #[derive(Debug, Clone)]
@@ -183,11 +277,17 @@ pub enum HIRStatement {
     Block(HIRBlock),
     If(HIRIf),
     While(HIRWhile),
-    For(HIRFor),
+    Iterate(HIRIterate),               // iterate — Clean's loop keyword (not 'for')
     Return(HIRReturn),
-    Break(HIRBreak),
-    Continue(HIRContinue),
+    LaterAssignment(HIRLaterAssign),   // later data = start fetchData()
+    Background(HIRExpression),         // background logAction() — fire and forget
+    Error(HIRError),                   // error("message") — raise an error
+    Require(HIRRequire),               // require condition — precondition check
+    Reset(HIRReset),                   // reset count / reset state
 }
+
+// Note: Clean Language does not support break or continue keywords.
+// To exit a while loop early, modify the condition variable or use a boolean flag.
 
 #[derive(Debug, Clone)]
 pub struct HIRIf {
@@ -205,15 +305,14 @@ pub struct HIRWhile {
     pub span: Span,
     pub condition: Box<HIRExpression>,
     pub body: HIRBlock,
-    pub loop_id: LoopId,  // For break/continue targeting
+    pub loop_id: LoopId,
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRFor {
+pub struct HIRIterate {
     pub node_id: NodeId,
     pub span: Span,
     pub variable: Symbol,
-    pub iterable: Box<HIRExpression>,
     pub body: HIRBlock,
     pub loop_id: LoopId,
     pub iteration_kind: IterationKind,
@@ -223,7 +322,41 @@ pub struct HIRFor {
 pub enum IterationKind {
     Range { start: Box<HIRExpression>, end: Box<HIRExpression>, step: Option<Box<HIRExpression>> },
     Collection { collection: Box<HIRExpression> },
-    Iterator { iterator: Box<HIRExpression> },
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRLaterAssign {
+    pub node_id: NodeId,
+    pub span: Span,
+    pub variable: Symbol,
+    pub expression: Box<HIRExpression>,  // Must be a StartExpression
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRError {
+    pub node_id: NodeId,
+    pub span: Span,
+    pub message: Box<HIRExpression>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRRequire {
+    pub node_id: NodeId,
+    pub span: Span,
+    pub condition: Box<HIRExpression>,
+}
+
+#[derive(Debug, Clone)]
+pub enum HIRResetTarget {
+    Variable(Symbol),  // reset count
+    AllState,          // reset state
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRReset {
+    pub node_id: NodeId,
+    pub span: Span,
+    pub target: HIRResetTarget,
 }
 ```
 
@@ -356,11 +489,13 @@ pub enum Type {
     String,
     List(Box<Type>),
     Matrix(Box<Type>),
+    Pairs(Box<Type>, Box<Type>),   // pairs<key, value> — associative container
     Function(FunctionType),
     Class(ClassId),
     DataType(DataTypeId),
     Tuple(Vec<Type>),
     Any,      // Dynamic type for JSON values and runtime-typed data
+    Null,     // The null type — absence of a value, compatible with any nullable context
     Never,    // For functions that never return
     Unit,     // For void/empty return
 }
@@ -369,7 +504,7 @@ pub enum Type {
 pub struct FunctionType {
     pub parameters: Vec<Type>,
     pub return_type: Box<Type>,
-    pub is_async: bool,
+    pub is_background: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

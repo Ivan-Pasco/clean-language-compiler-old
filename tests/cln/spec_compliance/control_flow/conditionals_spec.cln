@@ -1,7 +1,7 @@
 // Spec Section: 8.1 - Conditionals
 // Tests if, if-else, and if-else if-else chains
 
-start()
+start:
 	integer x = 10
 
 	// Test 1: Basic if statement

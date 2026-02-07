@@ -359,8 +359,12 @@ pub enum MirTerminator {
     /// Return from function
     Return { value: Option<MirOperand> },
 
-    /// Unreachable code
+    /// Unreachable code (placeholder for void functions)
     Unreachable,
+
+    /// Trap: explicit contract violation (require/rules failure)
+    /// Unlike Unreachable, this ALWAYS generates WASM unreachable instruction
+    Trap,
 }
 
 /// MIR operand (source of operations)

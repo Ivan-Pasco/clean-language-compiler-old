@@ -2,7 +2,7 @@
 // Tests: Range expressions in iterate statements
 // Requirement: Support various range patterns
 
-start()
+start:
 	// Test case 1: Basic range (inclusive)
 	print("Range 1 to 5:")
 	iterate i in 1 to 5

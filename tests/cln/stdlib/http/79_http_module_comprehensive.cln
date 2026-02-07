@@ -1,7 +1,7 @@
 // Test 79: Comprehensive HTTP Module Operations
 // Tests all HTTP methods: GET, POST, PUT, PATCH, DELETE
 
-start()
+start:
 	// Test GET request - fetch data from server
 	string getUserData = http.get("https://jsonplaceholder.typicode.com/users/1")
 	print("GET user data received: ")

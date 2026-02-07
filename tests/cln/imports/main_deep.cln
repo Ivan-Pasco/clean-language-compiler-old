@@ -4,7 +4,7 @@
 import:
 	math_helpers
 
-start()
+start:
 	integer sq = square(5)
 	print(sq)
 	integer quad = quadruple(3)

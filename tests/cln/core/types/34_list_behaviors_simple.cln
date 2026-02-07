@@ -14,7 +14,7 @@ functions:
 		boolean notEmpty = list.isNotEmpty(myList)
 		print("Is not empty: " + notEmpty.toString())
 
-start()
+start:
 	print("List Behavior Simple Test")
 	testListBehaviors()
 	print("Test completed")

@@ -13,7 +13,7 @@ functions:
 	boolean isEven(integer n)
 		return n % 2 == 0
 
-start()
+start:
 	integer result = add(5, 3)
 	string greeting = greet("World")
 	boolean even = isEven(4)

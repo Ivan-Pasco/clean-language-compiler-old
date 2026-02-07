@@ -31,7 +31,7 @@ functions:
 		// Simple read operation
 		string finalContent = file.read("test_file.txt")
 		print("Final content length > 0: " + (finalContent.length() > 0).toString())
-start()
+start:
 	print("File Module Comprehensive Test")
 	print("=============================")
 	testBasicFileOperations()

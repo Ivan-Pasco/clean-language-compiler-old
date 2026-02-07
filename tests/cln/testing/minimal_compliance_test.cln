@@ -13,7 +13,7 @@ class Point
 		integer getX()
 			return x
 
-start()
+start:
 	Point p = Point(3, 4)
 	integer value = p.getX()
 	print("Test complete")

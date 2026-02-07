@@ -1,7 +1,7 @@
 // Spec Section: 2.4 - String Interpolation
 // Tests: String interpolation with ${} syntax
 
-start()
+start:
 	// Test 1: Basic variable interpolation
 	string name = "Alice"
 	string greeting = "Hello, ${name}!"

@@ -3,5 +3,5 @@
 // Spec Section: 6.1 - Start Function
 // Tests: Minimal program with integer variable declaration
 
-start()
+start:
 	integer x = 42

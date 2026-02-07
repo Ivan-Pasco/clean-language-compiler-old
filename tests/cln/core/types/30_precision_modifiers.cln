@@ -4,7 +4,7 @@
 // Tests: Integer and number types with arithmetic operations
 // Note: Clean Language doesn't support precision modifiers
 
-start()
+start:
 	// Test basic integer types
 	integer smallInt = 127
 	integer mediumInt = 32767

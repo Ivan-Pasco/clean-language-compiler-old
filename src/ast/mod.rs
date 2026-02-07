@@ -90,7 +90,7 @@ pub enum Type {
     Class { name: String, type_args: Vec<Type> },
     Function(Vec<Type>, Box<Type>),
 
-    // Async types
+    // Background types
     Future(Box<Type>),
 
     Any,
@@ -260,13 +260,13 @@ pub enum Expression {
         location: SourceLocation,
     },
 
-    // Async expressions
+    // Background expressions
     StartExpression {
         expression: Box<Expression>,
         location: SourceLocation,
     },
 
-    // Later assignment (for async)
+    // Later assignment (for background tasks)
     LaterAssignment {
         variable: String,
         expression: Box<Expression>,
@@ -366,6 +366,14 @@ pub struct FieldPattern {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
+    // Contract: Require statement - precondition that must be true
+    // Can only appear inside functions or class methods
+    // Always checked at runtime (cannot be disabled)
+    Require {
+        condition: Expression,
+        location: Option<SourceLocation>,
+    },
+
     // Variable declarations (type-first)
     VariableDecl {
         name: String,
@@ -505,7 +513,7 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
-    // Async statements
+    // Background statements
     LaterAssignment {
         variable: String,
         expression: Expression,
@@ -869,10 +877,12 @@ pub enum StateScope {
 
 /// State block - declares persistent state variables
 /// Top-level state: = app scope, state: inside screen: = screen scope
+/// May optionally contain a rules: block for state invariants
 #[derive(Debug, Clone, PartialEq)]
 pub struct StateBlock {
     pub declarations: Vec<StateDeclaration>,
     pub computed: Vec<ComputedDeclaration>,
+    pub rules: Option<RulesBlock>, // State invariants (requires build: block)
     pub scope: StateScope,
     pub location: Option<SourceLocation>,
 }
@@ -920,6 +930,35 @@ pub enum ResetTarget {
     Variable(String), // Reset single state variable
     AllState,         // Reset all state in current scope (reset state)
 }
+
+// ============================================================================
+// CONTRACT AST TYPES
+// Contracts provide runtime correctness guarantees:
+// - require: preconditions in functions/methods (always checked)
+// - rules: state invariants (configurable via build: block)
+// ============================================================================
+
+/// Require statement - declares a precondition that must be true
+/// Can only appear inside functions or class methods
+/// Always checked at runtime (cannot be disabled)
+#[derive(Debug, Clone, PartialEq)]
+pub struct RequireStatement {
+    pub condition: Expression,
+    pub location: Option<SourceLocation>,
+}
+
+/// Rules block - declares state invariants that must always be true
+/// Must appear inside state: block, after all state declarations
+/// Requires build: block to configure when rules are checked
+#[derive(Debug, Clone, PartialEq)]
+pub struct RulesBlock {
+    pub rules: Vec<Expression>,
+    pub location: Option<SourceLocation>,
+}
+
+// ============================================================================
+// END CONTRACT AST TYPES
+// ============================================================================
 
 // ============================================================================
 // END STATE MANAGEMENT AST TYPES

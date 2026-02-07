@@ -667,6 +667,17 @@ impl HirBuilder {
                 location: location.clone().unwrap_or_default(),
             }),
 
+            Statement::Require {
+                condition,
+                location,
+            } => {
+                let hir_condition = self.build_expression(condition)?;
+                Ok(HirStatement::Require {
+                    condition: hir_condition,
+                    location: location.clone().unwrap_or_default(),
+                })
+            }
+
             // TypeApplyBlock is handled in build_block() where it can expand into multiple statements
             _ => {
                 // For unsupported statements, create a dummy expression statement
@@ -1041,6 +1052,17 @@ impl HirBuilder {
             .map(|comp| self.build_computed_declaration(comp))
             .collect::<Result<Vec<_>, _>>()?;
 
+        // Convert rules from AST to HIR expressions
+        let rules = if let Some(ref rules_block) = state_block.rules {
+            rules_block
+                .rules
+                .iter()
+                .map(|expr| self.build_expression(expr))
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
+
         let scope = match state_block.scope {
             crate::ast::StateScope::App => HirStateScope::App,
             crate::ast::StateScope::Screen => HirStateScope::Screen,
@@ -1049,6 +1071,7 @@ impl HirBuilder {
         Ok(HirStateBlock {
             declarations,
             computed,
+            rules,
             scope,
             location: state_block.location.clone().unwrap_or_default(),
         })

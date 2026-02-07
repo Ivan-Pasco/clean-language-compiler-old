@@ -6,6 +6,6 @@ functions:
 		string result = json.prettyDataToText(data)
 		printl(result)
 
-start()
+start:
 	testPrettyStringify()
 	printl("Pretty stringify test completed")

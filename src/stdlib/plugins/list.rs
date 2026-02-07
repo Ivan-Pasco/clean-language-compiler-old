@@ -63,7 +63,7 @@ impl StdlibPlugin for ListPlugin {
                 description: "Add item to end of list".to_string(),
                 category: FunctionCategory::List,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements {
                     heap_bytes: Some(32),
                     stack_depth: Some(2),
@@ -76,7 +76,7 @@ impl StdlibPlugin for ListPlugin {
                 description: "Remove and return last item".to_string(),
                 category: FunctionCategory::List,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements::default(),
             },
         ]

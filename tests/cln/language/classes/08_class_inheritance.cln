@@ -35,7 +35,7 @@ class Dog is Animal
 		string speak()
 			return "Woof!"
 
-start()
+start:
 	Animal animal = Animal("Fluffy", 5)
 	Dog dog = Dog("Rex", 3, "Labrador")
 

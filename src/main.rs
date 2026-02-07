@@ -1041,7 +1041,7 @@ async fn handle_simple_test(verbose: bool) -> Result<(), Box<dyn std::error::Err
         println!("Verbose output enabled");
     }
 
-    let test_source = "start()\n\tinteger x = 42\n\tprint(x)\n";
+    let test_source = "start:\n\tinteger x = 42\n\tprint(x)\n";
 
     match compile_with_file(test_source, "simple_test.clean") {
         Ok(wasm_binary) => {
@@ -1475,7 +1475,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             description: "The parser encountered a token that doesn't fit the expected syntax.\n\
                          This usually happens when there's a typo, missing punctuation, or incorrect\n\
                          language construct usage.",
-            example: "start()\n\
+            example: "start:\n\
                       \tinteger x = // missing value here\n\
                       \tprint x",
             fix: "Check the line indicated for:\n\
@@ -1487,7 +1487,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Missing closing delimiter",
             description: "A parenthesis, bracket, or brace was opened but never closed.\n\
                          All delimiters must be properly balanced in Clean Language.",
-            example: "start()\n\
+            example: "start:\n\
                       \tprint(\"Hello world\"",
             fix: "Find the opening delimiter and add its matching close:\n\
                   - ( must be closed with )\n\
@@ -1498,7 +1498,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Invalid indentation",
             description: "Clean Language uses tabs for indentation. Spaces or mixed indentation\n\
                          will cause this error. Each nested block requires one additional tab.",
-            example: "start()\n\
+            example: "start:\n\
                         integer x = 5  // Using spaces instead of tab",
             fix: "Use tabs for indentation, not spaces.\n\
                   Configure your editor to insert tabs when pressing Tab.\n\
@@ -1510,7 +1510,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
                          - Unclosed quotes\n\
                          - Invalid escape sequences\n\
                          - Line breaks within single-line strings",
-            example: "start()\n\
+            example: "start:\n\
                       \tstring s = \"Hello  // missing closing quote",
             fix: "Ensure strings are properly quoted:\n\
                   - Single-line strings: use matching \" quotes\n\
@@ -1521,7 +1521,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             description: "A number literal is malformed. Clean Language supports:\n\
                          - Integers: 42, -17, 0\n\
                          - Floats: 3.14, -2.5, 1.0e10",
-            example: "start()\n\
+            example: "start:\n\
                       \tnumber x = 3.14.5  // Invalid: multiple decimal points",
             fix: "Check the number format:\n\
                   - Only one decimal point allowed\n\
@@ -1534,7 +1534,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
                          - An operator is missing its operand\n\
                          - A function call has empty arguments where one is required\n\
                          - An assignment is missing its right-hand side",
-            example: "start()\n\
+            example: "start:\n\
                       \tinteger x =   // missing expression after =",
             fix: "Provide a valid expression:\n\
                   - Literals: 42, \"text\", true\n\
@@ -1548,7 +1548,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
                          - Start with a letter or underscore\n\
                          - Contain only letters, numbers, and underscores\n\
                          - Not be a reserved keyword",
-            example: "start()\n\
+            example: "start:\n\
                       \tinteger 123abc = 5  // Cannot start with number",
             fix: "Use valid identifier names:\n\
                   - Good: myVar, _private, count123\n\
@@ -1560,7 +1560,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
                          at least one statement in their body.",
             example: "myFunc()\n\
                       // No body - next line is a different function\n\
-                      start()",
+                      start:",
             fix: "Add at least one statement to the function body:\n\
                   myFunc()\n\
                   \treturn 0\n\n\
@@ -1570,7 +1570,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Unexpected end of file",
             description: "The file ended unexpectedly while the parser was expecting more content.\n\
                          This usually means an unclosed block or incomplete statement.",
-            example: "start()\n\
+            example: "start:\n\
                       \tif x > 0\n\
                       \t\t// File ends here without closing the if block",
             fix: "Ensure all blocks and statements are complete:\n\
@@ -1583,7 +1583,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             description: "A reserved keyword is being used where an identifier is expected.\n\
                          Keywords like 'if', 'while', 'class', etc. cannot be used as variable\n\
                          or function names.",
-            example: "start()\n\
+            example: "start:\n\
                       \tinteger class = 5  // 'class' is a reserved keyword",
             fix: "Choose a different name that is not a keyword.\n\
                   Reserved keywords include: if, else, while, for, class, function,\n\
@@ -1596,7 +1596,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             description: "The type of an expression doesn't match what was expected.\n\
                          Clean Language is strongly typed - you cannot implicitly convert\n\
                          between incompatible types.",
-            example: "start()\n\
+            example: "start:\n\
                       \tinteger x = \"hello\"  // Cannot assign string to integer",
             fix: "Ensure types match or use explicit conversion:\n\
                   - Use type conversion: x.toInteger(), x.toString()\n\
@@ -1607,7 +1607,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Undefined variable",
             description: "A variable is being used that hasn't been declared.\n\
                          Variables must be declared with their type before use.",
-            example: "start()\n\
+            example: "start:\n\
                       \tprint undeclaredVar  // Variable not declared",
             fix: "Declare the variable before using it:\n\
                   integer myVar = 0\n\
@@ -1618,7 +1618,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Undefined function",
             description: "A function is being called that hasn't been defined.\n\
                          Functions must be defined before they are called.",
-            example: "start()\n\
+            example: "start:\n\
                       \tresult = unknownFunc()  // Function not defined",
             fix: "Define the function before calling it:\n\
                   unknownFunc() -> integer\n\
@@ -1629,7 +1629,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Invalid operation for type",
             description: "An operation was attempted that is not valid for the given type.\n\
                          For example, arithmetic on strings or string concatenation on booleans.",
-            example: "start()\n\
+            example: "start:\n\
                       \tstring s = \"hello\"\n\
                       \tinteger x = s + 5  // Cannot add integer to string",
             fix: "Use operations appropriate for the type:\n\
@@ -1665,7 +1665,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Cannot infer type",
             description: "The compiler cannot determine the type of an expression.\n\
                          This may happen with complex expressions or missing type annotations.",
-            example: "start()\n\
+            example: "start:\n\
                       \tx = someComplexExpression  // Type unclear",
             fix: "Provide an explicit type annotation:\n\
                   integer x = someComplexExpression\n\n\
@@ -1675,7 +1675,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Undefined method",
             description: "A method was called on a type that doesn't have that method.\n\
                          Check the available methods for the type you're using.",
-            example: "start()\n\
+            example: "start:\n\
                       \tinteger x = 42\n\
                       \tx.unknownMethod()  // Method doesn't exist on integer",
             fix: "Use a method that exists for the type:\n\
@@ -1687,7 +1687,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Undefined class",
             description: "A class is being used that hasn't been defined.\n\
                          Classes must be defined before they can be instantiated.",
-            example: "start()\n\
+            example: "start:\n\
                       \tp = UndefinedClass.new()  // Class not defined",
             fix: "Define the class before using it:\n\
                   class MyClass\n\
@@ -1700,7 +1700,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Incompatible types in comparison",
             description: "Two values of incompatible types are being compared.\n\
                          Comparisons require operands of the same type.",
-            example: "start()\n\
+            example: "start:\n\
                       \tif 5 == \"five\"  // Cannot compare integer and string\n\
                       \t\tprint \"equal\"",
             fix: "Convert values to the same type before comparing:\n\
@@ -1727,7 +1727,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Out of memory",
             description: "The program has exhausted available memory.\n\
                          This can happen with very large data structures or memory leaks.",
-            example: "start()\n\
+            example: "start:\n\
                       \tlist = []\n\
                       \twhile true\n\
                       \t\tlist.push(\"data\")  // Infinite list growth",
@@ -1740,7 +1740,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Null pointer access",
             description: "Attempted to access a null or undefined reference.\n\
                          This occurs when using an uninitialized or cleared variable.",
-            example: "start()\n\
+            example: "start:\n\
                       \tp = null\n\
                       \tprint p.value  // Accessing property of null",
             fix: "Check for null before accessing:\n\
@@ -1752,7 +1752,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Index out of bounds",
             description: "An array or list was accessed with an invalid index.\n\
                          Indices must be >= 0 and < length.",
-            example: "start()\n\
+            example: "start:\n\
                       \tarr = [1, 2, 3]\n\
                       \tprint arr[5]  // Only indices 0, 1, 2 are valid",
             fix: "Ensure index is within bounds:\n\
@@ -1777,7 +1777,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Division by zero",
             description: "Attempted to divide a number by zero.\n\
                          Division by zero is undefined in mathematics and programming.",
-            example: "start()\n\
+            example: "start:\n\
                       \tresult = 10 / 0  // Division by zero",
             fix: "Check the divisor before dividing:\n\
                   if divisor != 0\n\
@@ -1789,7 +1789,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Integer overflow",
             description: "An integer operation resulted in a value too large to represent.\n\
                          Clean Language integers have a maximum value.",
-            example: "start()\n\
+            example: "start:\n\
                       \tx = 2147483647\n\
                       \tx = x + 1  // Overflows 32-bit integer",
             fix: "Use appropriate numeric types:\n\
@@ -1801,7 +1801,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Invalid cast",
             description: "A type conversion failed because the value cannot be converted.\n\
                          Not all values can be converted between types.",
-            example: "start()\n\
+            example: "start:\n\
                       \ts = \"hello\"\n\
                       \tn = s.toInteger()  // \"hello\" cannot become integer",
             fix: "Validate values before conversion:\n\
@@ -1824,7 +1824,7 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             title: "Timeout exceeded",
             description: "An operation took longer than the allowed time limit.\n\
                          This prevents infinite loops from hanging the program.",
-            example: "start()\n\
+            example: "start:\n\
                       \twhile true\n\
                       \t\t// Infinite loop",
             fix: "Ensure operations complete in reasonable time:\n\

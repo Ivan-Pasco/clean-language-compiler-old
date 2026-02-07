@@ -22,7 +22,7 @@ functions:
 
 		print("Input method syntax test completed successfully!")
 
-start()
+start:
 
 	print("Input Method Syntax QA Test")
 	testInputMethods()

@@ -38,7 +38,7 @@ class Cat is Animal
 			else
 				return name + " is an outdoor cat"
 
-start()
+start:
 	// Test 1: Create parent class instance
 	Animal animal = Animal("Generic", 5)
 	string animalDesc = animal.describe()

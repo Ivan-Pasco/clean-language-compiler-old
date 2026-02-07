@@ -2,7 +2,7 @@
 // Bug: Previously generated: if { then } else { unreachable } end
 // Fix: Now generates: if { then } end (no else clause)
 
-start()
+start:
 	integer score1 = 85
 	if score1 <= 0
 		print("Score 1 is invalid")

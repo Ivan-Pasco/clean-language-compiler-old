@@ -23,7 +23,7 @@ functions:
 		getValue()
 		integer b = getValue()
 
-start()
+start:
 	useValue()
 	ignoreValue()
 	multipleIgnored()

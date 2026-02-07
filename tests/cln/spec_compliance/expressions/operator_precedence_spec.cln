@@ -1,7 +1,7 @@
 // Spec Section: 5.1 - Operator Precedence
 // Tests: Operator precedence from highest to lowest
 
-start()
+start:
 	// Test 1: Multiplication before addition
 	integer result1 = 2 + 3 * 4
 	print("2 + 3 * 4 = " + result1.toString())

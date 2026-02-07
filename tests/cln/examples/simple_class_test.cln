@@ -11,6 +11,6 @@ class Vehicle
 functions:
 	void testFunction(Vehicle vehicle)
 		print(vehicle.getInfo())
-start()
+start:
 	Vehicle car = Vehicle("Toyota")
 	testFunction(car)

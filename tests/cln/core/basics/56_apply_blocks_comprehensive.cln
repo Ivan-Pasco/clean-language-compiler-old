@@ -24,6 +24,6 @@ functions:
 
 		print("Count: " + count.toString())
 
-start()
+start:
 	testApplyBlocks()
 	print("completed")

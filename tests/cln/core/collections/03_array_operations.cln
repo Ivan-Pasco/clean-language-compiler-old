@@ -3,7 +3,7 @@
 // Dependencies: none
 // Expected: PASS
 
-start()
+start:
 	// Basic array creation
 	list<integer> numbers = [1, 2, 3, 4, 5]
 	list<number> floats = [1.1, 2.2, 3.3]

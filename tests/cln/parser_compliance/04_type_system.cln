@@ -1,7 +1,7 @@
 // Parser Compliance Test - Type System
 // This test verifies all type declarations and complex type constructs
 
-start()
+start:
 	// Core types
 	boolean bool_val = true
 	integer int_val = 42

@@ -2,7 +2,7 @@
 // Tests: http.patch() function for HTTP PATCH requests
 // Requirement: Perform HTTP PATCH request for partial updates
 
-start()
+start:
 	// Test case 1: Basic PATCH request
 	string url = "https://httpbin.org/patch"
 	string data = "field=newValue"

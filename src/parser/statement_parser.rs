@@ -29,6 +29,7 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
             location: Some(ast_location),
         }),
         Rule::error_stmt => parse_error_statement(inner, ast_location),
+        Rule::require_stmt => parse_require_statement(inner, ast_location),
         Rule::on_error_block => parse_on_error_block_statement(inner, ast_location),
         Rule::standalone_on_error => parse_standalone_on_error_statement(inner, ast_location),
         Rule::apply_block => parse_apply_block_statement(inner, ast_location),
@@ -502,6 +503,23 @@ fn parse_error_statement(
 
     Ok(Statement::Error {
         message,
+        location: Some(ast_location),
+    })
+}
+
+/// Parse require statement: require <condition>
+/// Declares a precondition that must be true at runtime
+fn parse_require_statement(
+    pair: Pair<Rule>,
+    ast_location: crate::ast::SourceLocation,
+) -> Result<Statement, CompilerError> {
+    // require <expression>
+    let mut inner = pair.into_inner();
+    let condition_expr = inner.next().unwrap();
+    let condition = parse_expression(condition_expr)?;
+
+    Ok(Statement::Require {
+        condition,
         location: Some(ast_location),
     })
 }

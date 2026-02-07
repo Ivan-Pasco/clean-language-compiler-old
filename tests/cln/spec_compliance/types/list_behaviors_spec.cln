@@ -1,7 +1,7 @@
 // Spec Section: 2 - Type System
 // Tests: List behavior modifiers (line, pile, unique)
 
-start()
+start:
 	// Test 1: Line behavior (FIFO queue)
 	list<integer> queue = []
 	queue.type = "line"

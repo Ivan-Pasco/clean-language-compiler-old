@@ -20,5 +20,5 @@ functions:
 		string result4 = math.min(math.sqrt(y), x).toString()
 		print("math.min(math.sqrt(25.0) +, 16.0).toString() = " + result4)
 
-start()
+start:
 	testChainedMethodCalls()

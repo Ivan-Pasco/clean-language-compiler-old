@@ -17,7 +17,7 @@ functions:
 			return 0
 		return 42  // Simplified - would parse actual number
 
-start()
+start:
 	print("=== Error Handling onError Specification Test ===")
 
 	// Test 1: Basic onError with default value

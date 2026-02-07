@@ -1,7 +1,7 @@
 // Spec Section: 6.1 - Variable Declaration
 // Tests: Type-first variable declarations
 
-start()
+start:
 	// Test 1: Integer declaration with initialization
 	integer x = 10
 	print("Integer x = " + x.toString())

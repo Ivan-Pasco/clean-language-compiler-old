@@ -2,7 +2,7 @@
 // Tests: http.post() function for HTTP POST requests
 // Requirement: Perform HTTP POST request with data and return response
 
-start()
+start:
 	// Test case 1: Basic POST request
 	string url = "https://httpbin.org/post"
 	string data = "name=test"

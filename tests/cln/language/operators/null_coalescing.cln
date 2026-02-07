@@ -5,7 +5,7 @@
 // Expected: PASS
 // BOOK: null-coalescing - Tests for the default operator
 
-start()
+start:
 	// Test 1: null default value returns fallback
 	integer test1 = null default 42
 	print(test1)

@@ -82,7 +82,7 @@ functions:
 		string grade = conditional.string(gradeA, "A", conditional.string(gradeB, "B", conditional.string(gradeC, "C", "F")))
 		print("Score " + score.toString() + " gets grade: " + grade)
 
-start()
+start:
 
 	print("Clean Language Conditional Expressions Test")
 	print("==========================================")

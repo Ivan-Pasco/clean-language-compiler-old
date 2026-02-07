@@ -45,6 +45,6 @@ functions:
 		string msg1 = formatMessage()
 		print("Default message: " + msg1)
 
-start()
+start:
 	testDefaultParameters()
 	print("Default parameters test completed successfully")

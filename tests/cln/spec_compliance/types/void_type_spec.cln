@@ -24,7 +24,7 @@ functions:
 		integer sum = a + b
 		print("Sum: " + sum.toString())
 
-start()
+start:
 	// Test 1: Call void function with string
 	printMessage("Hello from void function")
 

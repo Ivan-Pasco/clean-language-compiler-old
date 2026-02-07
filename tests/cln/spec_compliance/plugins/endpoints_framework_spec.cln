@@ -16,7 +16,7 @@ functions:
 	string createUser()
 		return "Create new user"
 
-start()
+start:
 	print("Framework blocks endpoints test")
 	print("Endpoints plugin DSL supported")
 	print("Framework test completed")

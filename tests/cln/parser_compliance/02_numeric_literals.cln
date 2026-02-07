@@ -1,7 +1,7 @@
 // Parser Compliance Test - Numeric Literals
 // This test verifies all numeric literal formats are properly parsed
 
-start()
+start:
 	// Decimal integers
 	integer decimal_pos = 42
 	integer decimal_neg = -17

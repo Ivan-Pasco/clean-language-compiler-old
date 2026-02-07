@@ -1,9 +1,9 @@
-start()
+start:
 	integer maxResult = math.max(5, 3)
-	print(maxResult.toString() +)
+	print(maxResult.toString()) +
 
 	number floatMax = math.max(5.5, 3.2)
-	print(floatMax.toString() +)
+	print(floatMax.toString()) +
 
 	integer length = string.length("hello")
-	print(length.toString() +)
+	print(length.toString()) +

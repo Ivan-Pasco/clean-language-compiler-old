@@ -19,11 +19,11 @@ pub fn parse_program_ast(pair: Pair<Rule>) -> Result<Program, CompilerError> {
                         let block_functions = parser_impl::parse_functions_block(inner_pair)?;
                         functions.extend(block_functions);
                     }
-                    Rule::start_function => {
-                        // Parse start function using the existing parser_impl
-                        let function = parser_impl::parse_start_function(inner_pair)?;
+                    Rule::start_block => {
+                        // Parse start block using the existing parser_impl
+                        let function = parser_impl::parse_start_block(inner_pair)?;
                         println!(
-                            "DEBUG PROGRAM_PARSER: Found start function '{}'",
+                            "DEBUG PROGRAM_PARSER: Found start block '{}'",
                             function.name
                         );
                         start_function = Some(function);

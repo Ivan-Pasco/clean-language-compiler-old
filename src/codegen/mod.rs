@@ -1176,6 +1176,14 @@ impl CodeGenerator {
             Statement::ScreenBlockStmt { .. } => {
                 // Screen blocks are handled at HIR level; this is exhaustive match only
             }
+            Statement::Require {
+                condition,
+                location,
+            } => {
+                // Generate code for require statement (precondition check)
+                // Evaluate condition, trap if false
+                self.generate_require_statement(condition, location, instructions)?;
+            }
         }
         Ok(())
     }
@@ -5753,6 +5761,9 @@ impl CodeGenerator {
         self.add_function_alias("string.replace", idx);
         self.add_function_alias("string_replace", idx);
         self.add_function_alias("string_replace_impl", idx);
+        // replaceAll uses the same host function (replaces all occurrences)
+        self.add_function_alias("string.replaceAll", idx);
+        self.add_function_alias("string_replaceAll", idx);
 
         Ok(())
     }
@@ -10484,6 +10495,29 @@ impl CodeGenerator {
         // For now, use Unreachable to halt execution
         // In a full implementation, this would jump to the nearest onError handler
         instructions.push(Instruction::Unreachable);
+
+        Ok(())
+    }
+
+    /// Generate code for require statement (precondition check)
+    /// require <condition> - traps if condition is false
+    fn generate_require_statement(
+        &mut self,
+        condition: &Expression,
+        _location: &Option<SourceLocation>,
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<(), CompilerError> {
+        // Evaluate the condition
+        self.generate_expression(condition, instructions)?;
+
+        // If condition is false (0), trap
+        // We use: if condition == 0 then trap
+        instructions.push(Instruction::I32Eqz); // Check if condition is zero
+
+        // If condition was false (now 1 after eqz), enter the if block and trap
+        instructions.push(Instruction::If(wasm_encoder::BlockType::Empty));
+        instructions.push(Instruction::Unreachable); // Trap on contract violation
+        instructions.push(Instruction::End);
 
         Ok(())
     }

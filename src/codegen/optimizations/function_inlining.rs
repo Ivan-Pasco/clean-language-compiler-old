@@ -589,7 +589,7 @@ mod tests {
                         arguments: vec![],
                     }),
                 ],
-                is_async: false,
+                is_background: false,
             },
         ];
 
@@ -609,7 +609,7 @@ mod tests {
                 Statement::Expression(Expression::IntegerLiteral(1)),
                 Statement::Return { value: Some(Expression::IntegerLiteral(2)) },
             ],
-            is_async: false,
+            is_background: false,
         };
 
         let size = inliner.estimate_function_size(&function);
@@ -626,7 +626,7 @@ mod tests {
                 params: vec![],
                 return_type: Type::Void,
                 body: vec![Statement::Return { value: Some(Expression::IntegerLiteral(42)) }],
-                is_async: false,
+                is_background: false,
             },
             call_count: 3,
             size_estimate: 1,

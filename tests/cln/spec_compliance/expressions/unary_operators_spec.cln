@@ -1,7 +1,7 @@
 // Spec Section: 5.3 - Unary Operators
 // Tests: Unary minus and logical not operators
 
-start()
+start:
 	// Test 1: Unary minus on integer literal
 	integer negInt = -42
 	print("Unary minus integer: " + negInt.toString())

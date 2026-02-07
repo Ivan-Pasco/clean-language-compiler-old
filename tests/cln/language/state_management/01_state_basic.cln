@@ -14,7 +14,7 @@ functions:
 		username = name
 		isLoggedIn = true
 
-start()
+start:
 	print("Initial count: " + count.toString())
 	increment()
 	increment()

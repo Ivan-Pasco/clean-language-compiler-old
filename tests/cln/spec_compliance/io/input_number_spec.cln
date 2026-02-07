@@ -2,7 +2,7 @@
 // Tests: input.float() function for floating-point input
 // Requirement: Number input with automatic conversion
 
-start()
+start:
 	// Test case 1: Basic number input
 	number height = input.number("Enter height: ")
 	print("Height: " + height.toString())

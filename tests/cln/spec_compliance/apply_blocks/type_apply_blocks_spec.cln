@@ -1,7 +1,7 @@
 // Spec Section: 4.2 - Variable Declaration Apply-Blocks
 // Tests: integer:, string:, number:, boolean: apply-blocks
 
-start()
+start:
 	// Test 1: Integer apply-block
 	integer:
 		count = 0

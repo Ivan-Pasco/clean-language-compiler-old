@@ -19,7 +19,7 @@ tests:
 	"multiply by zero": multiply(10, 0) = 0
 	"multiply by one": multiply(7, 1) = 7
 
-start()
+start:
 	// Test at runtime
 	integer sum = add(10, 20)
 	print("add(10, 20) = " + sum.toString())

@@ -1,5 +1,5 @@
 
-start()
+start:
 	// Test math functions - using proper lowercase namespace
 	number sqrt_result = math.sqrt(16.0)
 	// Use operator per specification

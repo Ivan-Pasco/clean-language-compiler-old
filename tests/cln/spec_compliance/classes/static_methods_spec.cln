@@ -26,7 +26,7 @@ class Calculator
 				return 0 - n
 			return n
 
-start()
+start:
 	// Test 1: Static method call - square
 	integer sq = Calculator.square(5)
 	print("Square of 5: " + sq.toString())

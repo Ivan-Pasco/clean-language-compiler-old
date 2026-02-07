@@ -1,7 +1,7 @@
 // Spec Section: 2.3 - Keywords
 // Tests: Reserved keywords in Clean Language
 
-start()
+start:
 	// Test 1: Boolean keywords
 	boolean trueVal = true
 	boolean falseVal = false

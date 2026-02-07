@@ -1,7 +1,7 @@
 // Apply-Blocks Specification Implementation Test
 // Simplified to supported syntax
 
-start()
+start:
 	print("Apply-blocks specification test completed")
 
 functions:

@@ -28,7 +28,7 @@ tests:
 	"subtraction": 10 - 3 = 7
 	"calculator pattern": 5 * 4 = 20
 
-start()
+start:
 	// Test Counter at runtime
 	Counter c = Counter()
 	print("Initial value: " + c.getValue().toString())

@@ -1,7 +1,7 @@
 // Spec Section: 3.1 - Core Types (integer)
 // Tests: integer type - 32-bit signed whole numbers
 
-start()
+start:
 	// Test 1: Integer declaration and initialization
 	integer zero = 0
 	integer positive = 42

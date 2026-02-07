@@ -2,7 +2,7 @@
 // Tests: Character-level string operations
 // Requirement: charAt and charCodeAt functions
 
-start()
+start:
 	// Test case 1: Get character at index
 	string text = "Hello"
 	string first = text.charAt(0)

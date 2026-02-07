@@ -3,5 +3,5 @@ functions:
 		string response = http.get("https://example.com") onError "Failed"
 		print("Response: " + response)
 
-start()
+start:
 	testHttpRequests()

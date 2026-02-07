@@ -1,7 +1,7 @@
 // Spec Section: 10 - Error Handling
 // Tests: Error propagation through function calls
 
-start()
+start:
 	// Test 1: Error propagates from nested function
 	integer result1 = outerFunction() onError 0
 	print("Outer function result: " + result1.toString())

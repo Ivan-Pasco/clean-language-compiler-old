@@ -77,7 +77,7 @@ functions:
 		print("Screen X: " + screenX.toString())
 		print("Screen Y: " + screenY.toString())
 
-start()
+start:
 	print("=== Type Precision Specification Test ===")
 	demonstrateIntegerPrecision()
 	print("")

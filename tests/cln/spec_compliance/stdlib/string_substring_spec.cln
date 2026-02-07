@@ -1,7 +1,7 @@
 // Spec Section: 7 - Standard Library
 // Tests: string.substring() - extract portion of string
 
-start()
+start:
 	// Test 1: Basic substring
 	string text = "Hello World"
 	string sub1 = string.substring(text, 0, 5)

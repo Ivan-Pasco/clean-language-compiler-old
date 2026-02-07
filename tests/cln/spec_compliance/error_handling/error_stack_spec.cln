@@ -26,7 +26,7 @@ functions:
 		integer result = riskyOperation(val) onError 0
 		return result
 
-start()
+start:
 	// Test case 1: Error propagation through call chain
 	integer chainResult = safeCallChain()
 	print("Call chain result: " + chainResult.toString())

@@ -159,7 +159,7 @@ functions:
 
 		print("User input: '" + userInput + "'")
 		print("Cleaned: '" + normalized + "'")
-start()
+start:
 	print("Standard Library String Module Test")
 	print("===================================")
 	testBasicStringOperations()

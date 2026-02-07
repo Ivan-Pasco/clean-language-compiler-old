@@ -7,7 +7,7 @@
    multi-line
    comment */
 
-start()
+start:
 	// Single-line comment inside function
 	integer x = 10  // Inline comment after code
 

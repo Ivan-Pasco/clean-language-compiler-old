@@ -1,7 +1,7 @@
 // Spec Section: String Comparison
 // Tests: String equality (==) and inequality (!=) with empty strings
 
-start()
+start:
 	// Test 1: String equality with non-empty strings
 	string hello = "hello"
 	string world = "world"

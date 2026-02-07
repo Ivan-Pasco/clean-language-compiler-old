@@ -5,7 +5,7 @@ functions:
 			return "Processing error"
 		return "Processed: " + data
 
-start()
+start:
 	string result1 = processDataAsync("test")
 	print(result1)
 

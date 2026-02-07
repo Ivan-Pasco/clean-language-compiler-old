@@ -3125,6 +3125,21 @@ impl SemanticAnalyzer {
                 // Screen blocks are handled at HIR level; this is exhaustive match only
                 Ok(())
             }
+            Statement::Require {
+                condition,
+                location,
+            } => {
+                // Check that the condition expression is a boolean
+                let condition_type = self.check_expression(condition)?;
+                if condition_type != Type::Boolean {
+                    return Err(CompilerError::type_error(
+                        format!("require condition must be boolean, got {}", condition_type),
+                        None,
+                        location.clone(),
+                    ));
+                }
+                Ok(())
+            }
         }
     }
 
@@ -6648,7 +6663,7 @@ impl SemanticAnalyzer {
         location: Option<SourceLocation>,
         visibility: Visibility,
         modifiers: Vec<FunctionModifier>,
-        is_async: bool,
+        is_background: bool,
     ) -> Result<(), CompilerError> {
         self.symbol_table
             .define_function(
@@ -6658,7 +6673,7 @@ impl SemanticAnalyzer {
                 location.clone(),
                 visibility,
                 modifiers,
-                is_async,
+                is_background,
             )
             .map_err(|err| {
                 CompilerError::type_error(

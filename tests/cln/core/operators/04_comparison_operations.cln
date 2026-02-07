@@ -1,7 +1,7 @@
 // Spec Section: 4.4 - Comparison Operators
 // Tests: Equality comparison operator (==)
 
-start()
+start:
 	integer x = 5
 	integer y = 10
 

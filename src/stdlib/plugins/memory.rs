@@ -70,7 +70,7 @@ impl StdlibPlugin for MemoryPlugin {
                 description: "Allocate memory block".to_string(),
                 category: FunctionCategory::Memory,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements {
                     heap_bytes: Some(0), // Variable
                     stack_depth: Some(1),
@@ -83,7 +83,7 @@ impl StdlibPlugin for MemoryPlugin {
                 description: "Deallocate memory block".to_string(),
                 category: FunctionCategory::Memory,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements::default(),
             },
         ]

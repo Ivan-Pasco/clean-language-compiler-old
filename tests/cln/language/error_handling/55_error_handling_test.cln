@@ -25,7 +25,7 @@ functions:
 
 		print("Error handling test completed")
 
-start()
+start:
 
 	print("Error Handling QA Test")
 	testErrorHandling()

@@ -1,5 +1,5 @@
 integer:
 	x = 5
 
-start()
+start:
 	print("test")

@@ -7,5 +7,5 @@ functions:
 		matrix<number> singleRow = [[1, 2, 3]]
 		matrix<number> singleCol = [[1], [2], [3]]
 
-start()
+start:
 	testMatrixLiterals()

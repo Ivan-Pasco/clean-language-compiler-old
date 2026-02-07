@@ -1,7 +1,7 @@
 // Spec Section: 9.2 - Iterate Loops
 // Tests: Basic iterate loop with ranges and collections
 
-start()
+start:
 	print("Iterate Loop Basic Test")
 	print("=======================")
 

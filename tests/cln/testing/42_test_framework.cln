@@ -12,5 +12,5 @@ tests:
 	"positive number test": isPositive(10) = true
 	isPositive(0) = false
 
-start()
+start:
 	// Nothing needed here for tests

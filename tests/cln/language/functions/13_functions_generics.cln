@@ -20,7 +20,7 @@ functions:
 	boolean isPositive(integer value)
 		return value > 0
 
-start()
+start:
 	// Test identity functions with different types
 	integer num = identityInteger(42)
 	string text = identityString("Hello")

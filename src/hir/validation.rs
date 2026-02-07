@@ -573,6 +573,11 @@ impl HirValidator {
                 // Continue statements are validated for loop context at compile time
                 // No additional validation needed here
             }
+
+            HirStatement::Require { condition, .. } => {
+                // Validate the condition expression
+                Self::validate_expression(context, condition);
+            }
         }
     }
 

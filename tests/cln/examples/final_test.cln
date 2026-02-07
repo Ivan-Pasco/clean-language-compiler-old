@@ -1,4 +1,4 @@
-start()
+start:
 	integer a = 10
 	integer b = 3
 

@@ -1,7 +1,7 @@
 // Minimal test case for JSON object parsing
 // Test parsing {"count":4} and accessing the count field
 
-start()
+start:
 	// Test 1: Parse simple object
 	string jsonText = "{\"count\":4}"
 	any result = json.tryTextToData(jsonText)
@@ -14,4 +14,4 @@ start()
 		// Test 2: Access field
 		any countValue = result.count
 		print("count field value:") +
-		print(countValue.toString() +)
+		print(countValue.toString()) +

@@ -1,7 +1,7 @@
 // Spec Section: 14.5 - I/O Functions
 // Tests: print output function (use print() + for newline)
 
-start()
+start:
 	// Test 1: Basic print with string literal
 	print("Test 1: Basic print")
 

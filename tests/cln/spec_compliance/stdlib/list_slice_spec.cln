@@ -1,7 +1,7 @@
 // Spec Section: 7 - Standard Library
 // Tests: list.slice() - extract portion of list
 
-start()
+start:
 	// Test 1: Basic slice
 	list<integer> numbers = [10, 20, 30, 40, 50]
 	list<integer> middle = list.slice(numbers, 1, 4)

@@ -16,7 +16,7 @@ functions:
 		print("Syncing cache...")
 		print("Cache sync complete")
 
-start()
+start:
 	// Test basic async with start/later pattern
 	later data = start fetchData("https://api.example.com/data")
 	print("Working while data loads...")

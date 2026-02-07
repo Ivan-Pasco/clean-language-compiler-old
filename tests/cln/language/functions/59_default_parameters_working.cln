@@ -16,6 +16,6 @@ functions:
 		print("Power result 1: " + result1.toString())
 		print("Power result 2: " + result2.toString())
 
-start()
+start:
 	testDefaultParameters()
 	print("Default parameters test completed successfully")

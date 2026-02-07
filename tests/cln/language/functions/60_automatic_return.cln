@@ -46,6 +46,6 @@ functions:
 		integer product = multiply(6, 7)
 		print("Product: " + product.toString())
 
-start()
+start:
 	testAutomaticReturn()
 	print("Automatic return test completed successfully")

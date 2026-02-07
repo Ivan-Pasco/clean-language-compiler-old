@@ -125,7 +125,7 @@ functions:
 		number:64 bigFloat = bigInt.toNumber()
 		print("Integer to number conversion: " + bigFloat.toString())
 
-start()
+start:
 	print("Type Precision Comprehensive Test")
 	print("=================================")
 	testIntegerPrecisionModifiers()

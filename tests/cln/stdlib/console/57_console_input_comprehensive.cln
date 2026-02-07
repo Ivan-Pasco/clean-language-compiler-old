@@ -38,7 +38,7 @@ functions:
 
 		print("All input patterns follow Clean Language Specification")
 
-start()
+start:
 	demonstrateConsoleInput()
 	print("")
 	testInputSyntaxPatterns()

@@ -76,7 +76,7 @@ functions:
 		string grade = if gradeA then "A" else if gradeB then "B" else if gradeC then "C" else "F"
 		print("Score " + score.toString() + " gets grade: " + grade)
 
-start()
+start:
 
 	print("Clean Language Conditional Expressions Test")
 	print("==========================================")

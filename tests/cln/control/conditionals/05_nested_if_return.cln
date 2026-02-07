@@ -27,7 +27,7 @@ functions:
 				return 2
 		return 0
 
-start()
+start:
 	// Test basic nested return
 	integer result1 = get_nested_return_value(1, 1)
 	if result1 == 100

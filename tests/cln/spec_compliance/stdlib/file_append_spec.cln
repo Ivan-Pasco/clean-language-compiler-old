@@ -2,7 +2,7 @@
 // Tests: file.append() function to append content to file
 // Requirement: Append text to end of existing file
 
-start()
+start:
 	// Test case 1: Basic append
 	string filename = "log.txt"
 	string content = "Log entry 1\n"

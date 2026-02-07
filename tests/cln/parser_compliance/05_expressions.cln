@@ -1,7 +1,7 @@
 // Parser Compliance Test - Expressions
 // This test verifies all expression types and operator precedence
 
-start()
+start:
 	// Arithmetic expressions
 	integer a = 10
 	integer b = 5

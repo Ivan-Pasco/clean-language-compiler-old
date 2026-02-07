@@ -21,6 +21,6 @@ functions:
 		string complex = "Hello {name}, your count is {count}!"
 		print("Complex interpolation: " + complex)
 
-start()
+start:
 	testStringInterpolation()
 	print("String interpolation test completed")

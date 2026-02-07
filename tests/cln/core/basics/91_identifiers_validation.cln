@@ -60,7 +60,7 @@ functions:
 		print("Function local variable: " + localVariable.toString())
 		print("Function parameter: " + functionParameter)
 		print("Function flag: " + isValidFlag.toString())
-start()
+start:
 	print("Identifier Validation Test")
 	print("=========================")
 	testValidIdentifiers()

@@ -4,6 +4,6 @@
 import:
 	utils
 
-start()
+start:
 	integer result = add(5, 3)
 	print(result)

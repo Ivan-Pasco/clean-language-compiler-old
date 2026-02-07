@@ -3,7 +3,7 @@
 // Dependencies: none
 // Expected: PASS
 
-start()
+start:
 	// Method calls as statements
 	list<integer> numbers = [1, 2, 3]
 	numbers.push(42)

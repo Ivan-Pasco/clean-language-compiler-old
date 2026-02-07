@@ -33,7 +33,7 @@ functions:
 		else
 			return "Processed: " + data + separator + "done"
 
-start()
+start:
 	print("=== Default Parameters Specification Test ===")
 
 	// Test default parameter usage

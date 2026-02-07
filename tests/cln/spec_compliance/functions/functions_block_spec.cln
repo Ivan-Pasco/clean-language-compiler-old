@@ -14,7 +14,7 @@ functions:
 	integer square(integer n)
 		return n * n
 
-start()
+start:
 	// Test function calls
 	integer sum = add(5, 3)
 	integer product = multiply(4, 7)

@@ -3,7 +3,7 @@
 // Spec Section: 5.2.2 - Collection Iteration
 // Tests: iterate loops with ranges and list collections
 
-start()
+start:
 	list<integer> numbers = [1, 2, 3, 4, 5]
 
 	iterate i in 0 to 3

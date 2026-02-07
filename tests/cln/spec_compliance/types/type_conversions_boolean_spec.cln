@@ -1,7 +1,7 @@
 // Spec Section: 3.10 - Type Conversions
 // Tests: .toBoolean conversion from integers
 
-start()
+start:
 	// Test 1: Zero converts to false
 	integer zero = 0
 	boolean zeroAsBool = zero.toBoolean()

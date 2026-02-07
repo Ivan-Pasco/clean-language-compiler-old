@@ -20,7 +20,7 @@ tests:
 	"division": 100 / 5 = 20
 	"mixed operations": 10 + 5 * 2 = 20
 
-start()
+start:
 	// Test factorial at runtime
 	integer fact5 = factorial(5)
 	print("factorial(5) = " + fact5.toString())

@@ -3,7 +3,7 @@
 // STATUS: Requires lambda/closure support for full implementation
 // This file documents expected API and tests basic list operations
 
-start()
+start:
 	// Test case 1: Manual reduce - sum
 	list<integer> nums = [1, 2, 3, 4, 5]
 	integer sum = 0

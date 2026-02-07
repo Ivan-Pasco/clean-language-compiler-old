@@ -35,7 +35,7 @@ functions:
 		string prettyJson = json.prettyDataToText(data)
 		print("Pretty JSON created") +
 
-start()
+start:
 	testParseNull()
 	testParseTrue()
 	testParseFalse()

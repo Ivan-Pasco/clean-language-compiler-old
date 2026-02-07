@@ -4,5 +4,5 @@ functions:
 	void testSimple()
 		integer:8 value = 42
 
-start()
+start:
 	testSimple()

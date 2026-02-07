@@ -44,7 +44,7 @@ functions:
 		else
 			return
 
-start()
+start:
 	simpleIfElse()
 	nestedIfElse()
 	deeplyNested()

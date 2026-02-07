@@ -1,7 +1,7 @@
 // Spec Section: 3.1 - Core Types (boolean)
 // Tests: boolean type - logical values true/false
 
-start()
+start:
 	// Test 1: Boolean declaration and initialization
 	boolean flag = true
 	boolean active = false

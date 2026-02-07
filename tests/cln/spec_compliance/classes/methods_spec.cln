@@ -58,7 +58,7 @@ class StringBuffer
 		boolean isEmpty()
 			return content == ""
 
-start()
+start:
 	// Test 1: Calculator methods
 	Calculator calc = Calculator(10)
 	print("Initial: " + calc.toString())

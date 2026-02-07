@@ -27,7 +27,7 @@ functions:
 			return 1
 		return base * power(base, exp - 1)
 
-start()
+start:
 	// Test 1: Factorial
 	integer fact5 = factorial(5)
 	print("5! = " + fact5.toString())

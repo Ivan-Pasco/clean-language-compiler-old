@@ -1,7 +1,7 @@
 // Comprehensive QA Test for Method-Style Syntax
 // Tests all enhanced method-style calls supported by the parser
 
-start()
+start:
 	// Test utility methods on values
 	string text = "Hello World"
 	integer length = text.length()

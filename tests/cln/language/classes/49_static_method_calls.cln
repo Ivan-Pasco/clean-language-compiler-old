@@ -65,7 +65,7 @@ functions:
 
 		print("Lowercase namespace calls test completed successfully!")
 
-start()
+start:
 
 	print("Lowercase Namespace Calls QA Test")
 	testLowercaseMethods()

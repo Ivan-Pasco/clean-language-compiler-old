@@ -10,5 +10,5 @@ functions:
 		number:32 singlePrecision = 3.14
 		number:64 doublePrecision = 3.141592653589793
 
-start()
+start:
 	testTypePrecision()

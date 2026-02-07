@@ -8,7 +8,7 @@ functions:
 	string fetchData()
 		return "data fetched"
 
-start()
+start:
 	print("Async later/background test")
 
 	// Test if later keyword is recognized

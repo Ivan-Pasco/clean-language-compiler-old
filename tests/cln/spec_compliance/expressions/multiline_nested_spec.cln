@@ -1,7 +1,7 @@
 // Spec Section: 4.2 - Multi-Line Expressions
 // Tests: Complex nested multi-line expressions with parentheses
 
-start()
+start:
 	// Test 1: Simple multi-line expression
 	integer result1 = (10 + 20 +
 		30 + 40)

@@ -21,7 +21,7 @@ functions:
 	number average(number a, number b, number c)
 		return (a + b + c) / 3.0
 
-start()
+start:
 	// Test 1: Single parameter
 	printSingle("Hello from single param")
 

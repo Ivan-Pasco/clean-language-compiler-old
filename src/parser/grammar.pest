@@ -14,7 +14,7 @@ TRIVIA = _{ LINE_TRIVIA | BLOCK_TRIVIA | EMPTY_LINE_TRIVIA }
 
 // Keywords and identifiers
 // BOOK: null-support - Added null and default keywords for null handling
-keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "null" | "default" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print" | "break" | "continue" | "while" | "state" | "watch" | "computed" | "screen" | "guard" | "reset") ~ !(ASCII_ALPHANUMERIC | "_") }
+keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "null" | "default" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print" | "break" | "continue" | "while" | "state" | "watch" | "computed" | "screen" | "guard" | "reset" | "require" | "rules") ~ !(ASCII_ALPHANUMERIC | "_") }
 // Identifiers can start with letter or underscore (underscore prefix for internal/bridge functions)
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
@@ -639,11 +639,20 @@ anonymous_test = { expression ~ "=" ~ expression }
 
 // State block - declares persistent state variables
 // Top-level state: = app scope, state: inside screen: = screen scope
-state_block = { "state" ~ ":" ~ indented_state_declarations }
+state_block = { "state" ~ ":" ~ indented_state_declarations ~ rules_block? }
 indented_state_declarations = {
     NEWLINE ~ (empty_line)* ~
     INDENT+ ~ state_declaration ~
     (NEWLINE ~ (empty_line)* ~ INDENT+ ~ (state_declaration | computed_block))*
+}
+
+// Rules block - declares state invariants that must always be true
+// Must appear after all state declarations, inside state: block
+// Requires build: block to configure when rules are checked
+rules_block = {
+    NEWLINE ~ (empty_line)* ~
+    INDENT ~ "rules" ~ ":" ~
+    (NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT ~ expression)+
 }
 
 // State declaration with optional guard clause
@@ -727,7 +736,7 @@ class_body_item = { class_functions_block | constructor | class_field }
 indented_class_body = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ class_body_item ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ !end_of_class ~ class_body_item)* ~ (NEWLINE ~ (empty_line)*)? }
 
 // Helper to detect end of class context
-end_of_class = { "class" | "start(" | EOI }
+end_of_class = { "class" | "start:" | EOI }
 
 class_decl = {
     "class" ~ WHITESPACE* ~ identifier ~
@@ -803,11 +812,17 @@ external_return_type = {
     identifier
 }
 
+// Require statement - declares a precondition that must be true
+// Can only appear inside functions or class methods
+// Always checked at runtime (cannot be disabled)
+require_stmt = { "require" ~ WHITESPACE+ ~ expression }
+
 // Update statements to include async features, imports, and state management
 // Critical fix: Add function_call before expression to prevent parameter parsing confusion
 // Method calls must come before assignment to avoid grammar ambiguity with property_access
 statement = {
-    (print_newline_stmt |
+    (require_stmt |
+    print_newline_stmt |
     print_parenthesized_stmt |
     print_bare_stmt |
     framework_block |
@@ -838,9 +853,9 @@ statement = {
 // Program with proper newline handling
 // State management blocks: state_block (app-level), watch_block (top-level observers), screen_block (UI screens)
 // External blocks: external_block for WASM host-provided functions
-program_item = { import_block | import_stmt | private_block | external_block | state_block | watch_block | screen_block | framework_block | start_function | implicit_start_function | functions_block | tests_block | class_decl | apply_block }
+program_item = { import_block | import_stmt | private_block | external_block | state_block | watch_block | screen_block | framework_block | start_block | functions_block | tests_block | class_decl | apply_block }
 program = { SOI ~ (empty_line)* ~ (program_item ~ (empty_line)*)* ~ EOI }
 
-// Start function - the entry point of a Clean Language program
-start_function = { ("void" ~ " "+)? ~ "start" ~ "(" ~ ")" ~ indented_block }
-implicit_start_function = { ("void" ~ " "+)? ~ "start" ~ "(" ~ ")" ~ indented_block } 
+// Start block - the entry point of a Clean Language program
+// Uses block syntax (start:) instead of function syntax (start())
+start_block = { "start" ~ ":" ~ simple_indented_block } 

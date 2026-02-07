@@ -1,7 +1,7 @@
 // Spec Section: 4.3 - Comparison Operators
 // Tests: Identity operators `is` and `not`
 
-start()
+start:
 	// Test 1: is operator with equal integers
 	integer x = 10
 	integer y = 10

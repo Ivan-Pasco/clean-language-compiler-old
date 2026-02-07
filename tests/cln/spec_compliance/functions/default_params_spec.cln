@@ -20,7 +20,7 @@ functions:
 	string formatNumber(integer num, string prefix = "", string suffix = "")
 		return prefix + num.toString() + suffix
 
-start()
+start:
 	// Test 1: Using default value
 	string greeting1 = greet()
 	print("Default greet: " + greeting1)

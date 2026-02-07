@@ -4,5 +4,5 @@ functions:
 	void test()
 		matrix<number> simple = [[1, 2], [3, 4]]
 
-start()
+start:
 	test()

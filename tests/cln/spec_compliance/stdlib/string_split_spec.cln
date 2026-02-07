@@ -1,7 +1,7 @@
 // Spec Section: 7 - Standard Library
 // Tests: string.split() - split string into array
 
-start()
+start:
 	// Test 1: Split by comma
 	string csv = "apple,banana,cherry"
 	list<string> fruits = string.split(csv, ",")

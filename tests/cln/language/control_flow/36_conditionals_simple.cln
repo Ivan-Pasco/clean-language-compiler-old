@@ -12,7 +12,7 @@ functions:
 		integer max = conditional.integer(greater, a, b)
 		print("Max of 10 and 5: " + max.toString())
 
-start()
+start:
 	print("Conditional Simple Test")
 	testConditionals()
 	print("Test completed")

@@ -5,7 +5,7 @@ functions:
 	string second()
 		return "world"
 
-start()
+start:
 	string result1 = first()
 	string result2 = second()
 	print(result1 + " " + result2)

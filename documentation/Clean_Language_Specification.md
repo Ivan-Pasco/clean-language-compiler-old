@@ -24,7 +24,7 @@
 
 ## Overview
 
-Clean Language is a modern, type-safe programming language designed to compile to WebAssembly (WASM). It combines the readability of Python with the safety of Rust while being approachable for beginners. The language emphasizes strong static typing, first-class functions, matrix operations, and comprehensive error handling.
+Clean Language is a modern, type-safe programming language designed to compile to WebAssembly (WASM). The language emphasizes strong static typing, first-class functions, matrix operations, and comprehensive error handling.
 
 ### Design Goals
 - **Type Safety**: Strong static typing with type inference
@@ -59,15 +59,15 @@ Clean Language source files use the `.cln` extension.
 
 These are essential implementation rules that must be followed by the Clean Language compiler:
 
-1. **Functions must be in a `functions:` block (except start())**
+1. **Functions must be in a `functions:` block**
    - ❌ No standalone `function name(...)` allowed at top level
    - ✅ Use `functions:` for top-level and class functions
-   - ✅ Exception: `start()` can be standalone
+   - ✅ Entry point uses `start:` block (not a function)
    ```clean
    // ❌ Invalid
    function myFunc()
        return 42
-   
+
    // ✅ Valid
    functions:
        integer myFunc()
@@ -150,7 +150,7 @@ Clean Language uses **tab-based indentation** for code structure:
 
 **Example:**
 ```clean
-start()
+start:
 ⇥⇥⇥⇥integer x = 5    // Tab indentation
 ⇥⇥⇥⇥if x > 0
 ⇥⇥⇥⇥⇥⇥⇥⇥print("positive")    // Nested tab indentation
@@ -598,7 +598,7 @@ All list types support these methods regardless of behavior:
 #### Complete Example
 
 ```clean
-start()
+start:
     // Test different list behaviors
     list<integer> myList = []
     
@@ -1095,24 +1095,23 @@ boolean subscribe = input.yesNo("Subscribe to newsletter? ")
 #### Usage Examples
 
 ```clean
-functions:
-    void start()
-        // Basic user interaction
-        string userName = input("Enter your name: ")
-        print("Hello, " + userName + "!") +
+start:
+    // Basic user interaction
+    string userName = input("Enter your name: ")
+    print("Hello, " + userName + "!")
 
-        // Numeric calculations
-        integer num1 = input.integer("First number: ")
-        integer num2 = input.integer("Second number: ")
-        integer sum = num1 + num2
-        print("Sum: " + sum.toString()) +
+    // Numeric calculations
+    integer num1 = input.integer("First number: ")
+    integer num2 = input.integer("Second number: ")
+    integer sum = num1 + num2
+    print("Sum: " + sum.toString())
 
-        // Decision making
-        boolean wantsCoffee = input.yesNo("Would you like coffee? ")
-        if wantsCoffee
-            print("Great! Coffee coming right up.") +
-        else
-            print("No problem, maybe next time.") +
+    // Decision making
+    boolean wantsCoffee = input.yesNo("Would you like coffee? ")
+    if wantsCoffee
+        print("Great! Coffee coming right up.")
+    else
+        print("No problem, maybe next time.")
 ```
 
 ### Return Statement
@@ -1123,34 +1122,177 @@ return value        // Return a value
 return expression   // Return expression result
 ```
 
+## File Structure
+
+A Clean Language file (`.cln`) is organized into top-level sections. Each section is optional, but when present, they must appear in this order:
+
+| Order | Section | Purpose |
+|-------|---------|---------|
+| 1 | `import:` | Bring in code from other modules |
+| 2 | `start:` | Where your program begins running |
+| 3 | `state:` | Variables that persist and can be watched |
+| 4 | `class` | Define your own types |
+| 5 | `functions:` | Reusable helper functions |
+
+### Why Order Matters
+
+Clean Language enforces section order to keep code consistent and readable. When you open any `.cln` file, you always know where to find things.
+
+If sections are out of order, the compiler tells you exactly what's wrong:
+
+```
+Error: 'state:' must appear after 'start:' block
+Error: 'import:' must be the first section in the file
+Error: 'functions:' must appear after class declarations
+```
+
+### A Complete Example
+
+Here's a file that uses all sections in the correct order:
+
+```clean
+import:
+    utils
+    math_helpers
+
+start:
+    print("Hello, World!")
+    integer result = add(5, 3)
+    print(result)
+
+state:
+    integer count = 0
+    string username = ""
+
+class Point
+    integer x
+    integer y
+
+functions:
+    integer add(integer a, integer b)
+        return a + b
+```
+
+### What Can't Go at the Top Level
+
+Only the sections listed above can appear at the top level. You can't write loose statements like assignments, function calls, or loops outside of a block.
+
+```clean
+// ❌ Invalid - can't have loose code at top level
+integer x = 5
+print("hello")
+
+// ✅ Valid - code goes inside start: block
+start:
+    integer x = 5
+    print("hello")
+```
+
+## Build Configuration
+
+When using state `rules:`, a `build:` block is required in your source file before `start:`. This block configures how the compiler handles rules checking.
+
+**Basic structure:**
+```clean
+build:
+    rules = true
+
+state:
+    integer count = 0
+    rules:
+        count >= 0
+
+start:
+    count = 5
+```
+
+**Rules options:**
+
+| Value | Behavior |
+|-------|----------|
+| `true` | Always check rules |
+| `false` | Never check rules (production optimization) |
+| `"development"` | Check only in development builds |
+
+**Example for production apps:**
+```clean
+build:
+    rules = "development"
+
+state:
+    integer balance = 0
+    rules:
+        balance >= 0
+
+start:
+    balance = 100
+```
+
+**CLI behavior:**
+```bash
+cln compile app.cln              # Development: rules ON
+cln compile app.cln --release    # Production: follows build: setting
+```
+
+**Rules for `build:`:**
+- Must appear at the top level, before `start:`
+- Only one `build:` block per file
+- Only required when using state `rules:`
+- If you use `rules:` in your state but don't have a `build:` block, the compiler will show an error
+
 ## Functions
 
 Clean Language uses **functions blocks** for all function declarations. This ensures consistency and organization in code structure.
 
-### The Start Function
+**Design philosophy for free functions:**
+- The `functions:` section exists for pure helper logic
+- Functions should be stateless and side-effect free where possible
+- Intended for math, construction helpers, and reusable algorithms
+- Not intended for application orchestration or domain flow — use classes for that
 
-Every Clean program begins with a `start()` function. The start function is **special** and can be declared standalone (outside of functions: blocks):
+### The Start Block (Entry Point)
+
+Every Clean program begins with a `start:` block. This is where your program starts running.
+
+The `start:` block uses block syntax — just a colon followed by indented code:
 
 ```clean
-start()
+start:
     print("Hello, World!")
     integer x = 42
     print(x)
 ```
 
-Alternatively, it can be declared within a `functions:` block:
+**Rules for `start:`:**
+- Use block syntax with a colon, not parentheses
+- Must be at the top level (not inside `functions:` or any other block)
+- Only one `start:` block per file
+- Library modules can skip `start:` entirely
+
+**Important:** The `start:` entry block is different from the `start` keyword used for background expressions. See [Asynchronous Programming](#asynchronous-programming) for details on `start` as an expression.
+
+#### Migrating from Old Syntax
+
+The function-style `start()` syntax is no longer supported:
 
 ```clean
+// ❌ No longer valid
+start()
+    print("Hello")
+
+// ❌ No longer valid
 functions:
     void start()
-        print("Hello, World!")
-        integer x = 42
-        print(x)
+        print("Hello")
+
+// ✅ Use this instead
+start:
+    print("Hello")
 ```
 
 ### Functions Blocks (Required)
 
-**All functions except `start()` must be declared within a `functions:` block.** This is the only supported syntax for function declarations:
+**All functions must be declared within a `functions:` block.** This is the only supported syntax for function declarations:
 
 ```clean
 functions:
@@ -1255,21 +1397,20 @@ functions:
 #### Usage Examples
 
 ```clean
-functions:
-    void start()
-        // Using functions with default values
-        print(greet())              // "Hello, World" (uses default)
-        print(greet("Alice"))       // "Hello, Alice" (overrides default)
-        
-        integer squared = power(5)  // 25 (uses default exponent=2)
-        integer cubed = power(5, 3) // 125 (overrides exponent)
-        
-        logMessage("System started")           // [INFO] System started
-        logMessage("Error occurred", "ERROR")  // [ERROR] Error occurred
-        
-        // Input blocks with defaults work seamlessly
-        integer area1 = calculateArea()        // Uses defaults: 10 * 5 = 50
-        // When calling functions with input blocks, defaults are applied automatically
+start:
+    // Using functions with default values
+    print(greet())              // "Hello, World" (uses default)
+    print(greet("Alice"))       // "Hello, Alice" (overrides default)
+
+    integer squared = power(5)  // 25 (uses default exponent=2)
+    integer cubed = power(5, 3) // 125 (overrides exponent)
+
+    logMessage("System started")           // [INFO] System started
+    logMessage("Error occurred", "ERROR")  // [ERROR] Error occurred
+
+    // Input blocks with defaults work seamlessly
+    integer area1 = calculateArea()        // Uses defaults: 10 * 5 = 50
+    // When calling functions with input blocks, defaults are applied automatically
 ```
 
 #### Default Value Rules
@@ -1313,12 +1454,11 @@ functions:
 Functions are called using standard syntax:
 
 ```clean
-functions:
-    void start()
-        integer result = add(5, 3)
-        integer value = multiply(2, 4)
-        integer squared = square(7)
-        printMessage()
+start:
+    integer result = add(5, 3)
+    integer value = multiply(2, 4)
+    integer squared = square(7)
+    printMessage()
 ```
 
 ### Automatic Return
@@ -1332,6 +1472,40 @@ functions:
     
     string greet(string name)
         "Hello, " + name    // Automatically returned
+```
+
+## Contracts: `require`
+
+Use `require` to declare preconditions that must be true for a function to execute. If the condition is false, execution stops with a contract violation error.
+
+**Syntax:**
+```clean
+require <boolean_expression>
+```
+
+**Example:**
+```clean
+functions:
+    integer divide(integer a, integer b)
+        require b != 0
+        return a / b
+
+    void setAge(integer age)
+        require age >= 0
+        require age <= 150
+        // implementation
+```
+
+**Rules for `require`:**
+- Can only appear inside functions or class methods
+- Must appear before other statements in the function body
+- Multiple `require` statements are allowed
+- Always checked at runtime (cannot be disabled)
+
+**Error on violation:**
+```
+Contract violation: require failed at divide:2
+  Expression: b != 0
 ```
 
 ## Testing
@@ -1635,6 +1809,14 @@ The error is available as error.
 
 ## Classes and Objects
 
+Classes are the primary mechanism for expressing domain behavior and responsibility in Clean Language.
+
+**Design philosophy:**
+- Long-lived behavior and stateful logic should be expressed as class methods
+- Application behavior (update, render, interaction, I/O coordination) naturally lives in classes
+- Entry blocks (`start:`) should delegate to classes rather than implement domain logic directly
+- Clean does not require all logic to be object-oriented, but encourages classes as the natural home for complex or evolving behavior
+
 ### Class Definition
 
 **All class methods must be declared within a `functions:` block:**
@@ -1728,19 +1910,18 @@ This makes code cleaner while maintaining type safety through name conflict prev
 ### Object Creation and Usage
 
 ```clean
-functions:
-    void start()
-// Create objects
-        Point point = Point(3, 4)
-        Circle circle = Circle("red", 5.0)
+start:
+    // Create objects
+    Point point = Point(3, 4)
+    Circle circle = Circle("red", 5.0)
 
-        // Call methods (parentheses required)
-        integer distance = point.distanceFromOrigin()
-point.move(1, -2)
+    // Call methods (parentheses required)
+    integer distance = point.distanceFromOrigin()
+    point.move(1, -2)
 
-// Access properties
-        integer xCoord = point.x
-        string color = circle.color
+    // Access properties
+    integer xCoord = point.x
+    string color = circle.color
 ```
 
 ### Static Methods
@@ -1767,12 +1948,11 @@ class DatabaseService
             return User.loadFromDatabase(id)
 
 // Static method calls - ClassName.method()
-functions:
-    void start()
-        number result = MathUtils.add(5.0, 3.0)
-        number maximum = MathUtils.max(10.0, 7.5)
-        boolean connected = DatabaseService.connect("mysql://localhost")
-        User user = DatabaseService.findUser(42)
+start:
+    number result = MathUtils.add(5.0, 3.0)
+    number maximum = MathUtils.max(10.0, 7.5)
+    boolean connected = DatabaseService.connect("mysql://localhost")
+    User user = DatabaseService.findUser(42)
 ```
 
 **Rules for Static Methods:**
@@ -1800,11 +1980,10 @@ class User
             return age >= 0 and age <= 150
 
 // Usage
-functions:
-    void start()
-        User user = User("Alice", 25)
-        string info = user.getInfo()                    // Instance method call
-        boolean valid = User.isValidAge(30)             // Static method call
+start:
+    User user = User("Alice", 25)
+    string info = user.getInfo()                    // Instance method call
+    boolean valid = User.isValidAge(30)             // Static method call
 ```
 
 ### Design Philosophy: Flexible Organization
@@ -1833,17 +2012,17 @@ class Calculator
 - **Scripting style**: Perfect for utility scripts and simple programs
 
 ```clean
+start:
+    number tax = calculateTax(100.0)
+    string result = formatResult(tax)
+    print(result)
+
 functions:
     number calculateTax(number amount)
         return amount * 0.15
-    
+
     string formatResult(number value)
         return "Result: " + value.toString()
-    
-    void start()
-        number tax = calculateTax(100.0)
-        string result = formatResult(tax)
-        print(result)
 ```
 
 **Both approaches are valid and can be mixed within the same program.** The choice depends on project complexity and developer preference.
@@ -1932,38 +2111,37 @@ math.pi(), math.e(), math.tau()
         number tau()             // τ = 2π ≈ 6.28318
 
 // Usage Examples
-functions:
-    void start()
-        // Basic calculations - using operators for basic math
-        number result = 5.0 + 3.0               // Use + operator, not math.add()
-        number maximum = math.max(10.5, 7.2)    // Use math functions for advanced operations
-        
-        // Geometry - calculate circle area
-        number radius = 5.0
-        number area = math.pi() * (radius ^ 2.0)  // Use operators for basic arithmetic
-        
-        // Trigonometry - find triangle sides
-        number angle = math.pi() / 4.0           // Use / operator, not math.divide()
-        number opposite = 10.0 * math.sin(angle) // Use * operator, not math.multiply()
-        number adjacent = 10.0 * math.cos(angle)
-        
-        // Rounding numbers for display
-        number price = 19.99567
-        number rounded = math.round(price)  // 20.0
-        number floored = math.floor(price)  // 19.0
-        
-        // Logarithmic calculations
-        number growth = math.exp(0.05)      // e^0.05 for 5% growth
-        number halfLife = math.log2(100.0)  // How many times to halve 100 to get 1
-        
-        // Distance calculations using Pythagorean theorem
-        number dx = 3.0
-        number dy = 4.0
-        number distance = math.sqrt((dx ^ 2.0) + (dy ^ 2.0))  // Use + operator, not math.add()
-        
-        // Absolute values for different types
-        number numberAbs = math.abs(-5.7)    // 5.7
-        integer intAbs = math.abs(-42)     // 42
+start:
+    // Basic calculations - using operators for basic math
+    number result = 5.0 + 3.0               // Use + operator, not math.add()
+    number maximum = math.max(10.5, 7.2)    // Use math functions for advanced operations
+
+    // Geometry - calculate circle area
+    number radius = 5.0
+    number area = math.pi() * (radius ^ 2.0)  // Use operators for basic arithmetic
+
+    // Trigonometry - find triangle sides
+    number angle = math.pi() / 4.0           // Use / operator, not math.divide()
+    number opposite = 10.0 * math.sin(angle) // Use * operator, not math.multiply()
+    number adjacent = 10.0 * math.cos(angle)
+
+    // Rounding numbers for display
+    number price = 19.99567
+    number rounded = math.round(price)  // 20.0
+    number floored = math.floor(price)  // 19.0
+
+    // Logarithmic calculations
+    number growth = math.exp(0.05)      // e^0.05 for 5% growth
+    number halfLife = math.log2(100.0)  // How many times to halve 100 to get 1
+
+    // Distance calculations using Pythagorean theorem
+    number dx = 3.0
+    number dy = 4.0
+    number distance = math.sqrt((dx ^ 2.0) + (dy ^ 2.0))  // Use + operator, not math.add()
+
+    // Absolute values for different types
+    number numberAbs = math.abs(-5.7)    // 5.7
+    integer intAbs = math.abs(-42)     // 42
 ```
 
 ### String Module
@@ -2093,49 +2271,48 @@ string.trim(text), string.replace(text, old, new)
             // Universal conversion for display purposes
 
 // Usage Examples - Real-world string processing scenarios
-functions:
-    void start()
-        // Basic text processing
-        string userInput = "  Hello World!  "
-        string cleaned = string.trim(userInput)        // "Hello World!"
-        integer length = string.length(cleaned)        // 12
-        
-        // Case normalization for comparisons
-        string email1 = "USER@EXAMPLE.COM"
-        string email2 = "user@example.com"
-        boolean same = string.lower(email1) == string.lower(email2)  // true
-        
-        // Text searching and validation
-        string filename = "document.pdf"
-        boolean isPdf = string.endsWith(filename, ".pdf")     // true
-        integer dotPos = string.lastIndexOf(filename, ".")    // 8
-        
-        // URL processing
-        string url = "https://api.example.com/users"
-        boolean isHttps = string.startsWith(url, "https://")  // true
-        boolean hasApi = string.contains(url, "api")          // true
-        
-        // Text parsing and reconstruction
-        string csvLine = "John,Doe,25,Engineer"
-        list<string> fields = string.split(csvLine, ",")     // ["John", "Doe", "25", "Engineer"]
-        string fullName = string.join([fields[0], fields[1]], " ")  // "John Doe"
-        
-        // Text replacement and cleaning
-        string messyText = "Hello    World"
-        string cleaned = string.replaceAll(messyText, "    ", " ")  // "Hello World"
-        
-        // Formatting and padding
-        string number = "42"
-        string padded = string.padStart(number, 5, "0")       // "00042"
-        
-        // Character-level operations
-        string word = "Hello"
-        string firstChar = string.charAt(word, 0)             // "H"
-        integer charCode = string.charCodeAt(word, 0)         // 72 (ASCII for 'H')
-        
-        // Input validation
-        string userField = "   "
-        boolean isValid = !string.isBlank(userField)          // false
+start:
+    // Basic text processing
+    string userInput = "  Hello World!  "
+    string cleaned = string.trim(userInput)        // "Hello World!"
+    integer length = string.length(cleaned)        // 12
+
+    // Case normalization for comparisons
+    string email1 = "USER@EXAMPLE.COM"
+    string email2 = "user@example.com"
+    boolean same = string.lower(email1) == string.lower(email2)  // true
+
+    // Text searching and validation
+    string filename = "document.pdf"
+    boolean isPdf = string.endsWith(filename, ".pdf")     // true
+    integer dotPos = string.lastIndexOf(filename, ".")    // 8
+
+    // URL processing
+    string url = "https://api.example.com/users"
+    boolean isHttps = string.startsWith(url, "https://")  // true
+    boolean hasApi = string.contains(url, "api")          // true
+
+    // Text parsing and reconstruction
+    string csvLine = "John,Doe,25,Engineer"
+    list<string> fields = string.split(csvLine, ",")     // ["John", "Doe", "25", "Engineer"]
+    string fullName = string.join([fields[0], fields[1]], " ")  // "John Doe"
+
+    // Text replacement and cleaning
+    string messyText = "Hello    World"
+    string cleanedText = string.replaceAll(messyText, "    ", " ")  // "Hello World"
+
+    // Formatting and padding
+    string number = "42"
+    string padded = string.padStart(number, 5, "0")       // "00042"
+
+    // Character-level operations
+    string word = "Hello"
+    string firstChar = string.charAt(word, 0)             // "H"
+    integer charCode = string.charCodeAt(word, 0)         // 72 (ASCII for 'H')
+
+    // Input validation
+    string userField = "   "
+    boolean isValid = !string.isBlank(userField)          // false
 ```
 
 ### List Module
@@ -2282,52 +2459,51 @@ list.sort(list), list.reverse(list), list.join(list, separator)
             // Example: range(1, 5) → [1, 2, 3, 4, 5]
 
 // Usage Examples - Real-world array processing scenarios
-functions:
-    void start()
-        // Basic array operations
-        list<integer> numbers = [1, 2, 3]
-        integer size = list.size(numbers)           // 3
-        integer first = list.get(numbers, 0)          // 1
-        list.set(numbers, 1, 99)                      // [1, 99, 3]
-        
-        // Building and modifying lists
-        list<string> fruits = ["apple", "banana"]
-        fruits = list.add(fruits, "orange")          // ["apple", "banana", "orange"]
-        string lastFruit = list.remove(fruits, 2)           // "orange", fruits becomes ["apple", "banana"]
-        
-        // Searching through data
-        list<integer> scores = [85, 92, 78, 96, 88]
-        boolean hasHighScore = list.contains(scores, 96)     // true
-        integer position = list.indexOf(scores, 92)          // 1
-        
-        // Data processing and transformation
-        list<integer> data = [1, 2, 3, 4, 5]
-        list<integer> doubled = list.map(data, x => x * 2)  // [2, 4, 6, 8, 10]
-        list<integer> evens = list.filter(data, x => x % 2 == 0)  // [2, 4]
-        integer sum = list.reduce(data, (total, x) => total + x, 0)  // 15
-        
-        // List manipulation
-        list<string> names1 = ["Alice", "Bob"]
-        list<string> names2 = ["Charlie", "Diana"]
-        list<string> allNames = list.concat(names1, names2)  // ["Alice", "Bob", "Charlie", "Diana"]
-        list<string> reversed = list.reverse(allNames)       // ["Diana", "Charlie", "Bob", "Alice"]
-        
-        // Working with sections of lists
-        list<integer> bigList = [10, 20, 30, 40, 50]
-        list<integer> middle = list.slice(bigList, 1, 4)     // [20, 30, 40]
-        
-        // Text processing with lists
-        list<string> words = ["hello", "world", "from", "Clean"]
-        string sentence = list.join(words, " ")               // "hello world from Clean"
-        
-        // Creating lists programmatically
-        list<string> greetings = list.fill(3, "Hello")       // ["Hello", "Hello", "Hello"]
-        list<integer> countdown = list.range(5, 1)           // [5, 4, 3, 2, 1]
-        
-        // Validation and utility
-        boolean isEmpty = list.isEmpty([])                    // true
-        string firstWord = list.first(words)                  // "hello"
-        string lastWord = list.last(words)                    // "Clean"
+start:
+    // Basic array operations
+    list<integer> numbers = [1, 2, 3]
+    integer size = list.size(numbers)           // 3
+    integer first = list.get(numbers, 0)          // 1
+    list.set(numbers, 1, 99)                      // [1, 99, 3]
+
+    // Building and modifying lists
+    list<string> fruits = ["apple", "banana"]
+    fruits = list.add(fruits, "orange")          // ["apple", "banana", "orange"]
+    string lastFruit = list.remove(fruits, 2)           // "orange", fruits becomes ["apple", "banana"]
+
+    // Searching through data
+    list<integer> scores = [85, 92, 78, 96, 88]
+    boolean hasHighScore = list.contains(scores, 96)     // true
+    integer position = list.indexOf(scores, 92)          // 1
+
+    // Data processing and transformation
+    list<integer> data = [1, 2, 3, 4, 5]
+    list<integer> doubled = list.map(data, x => x * 2)  // [2, 4, 6, 8, 10]
+    list<integer> evens = list.filter(data, x => x % 2 == 0)  // [2, 4]
+    integer sum = list.reduce(data, (total, x) => total + x, 0)  // 15
+
+    // List manipulation
+    list<string> names1 = ["Alice", "Bob"]
+    list<string> names2 = ["Charlie", "Diana"]
+    list<string> allNames = list.concat(names1, names2)  // ["Alice", "Bob", "Charlie", "Diana"]
+    list<string> reversed = list.reverse(allNames)       // ["Diana", "Charlie", "Bob", "Alice"]
+
+    // Working with sections of lists
+    list<integer> bigList = [10, 20, 30, 40, 50]
+    list<integer> middle = list.slice(bigList, 1, 4)     // [20, 30, 40]
+
+    // Text processing with lists
+    list<string> words = ["hello", "world", "from", "Clean"]
+    string sentence = list.join(words, " ")               // "hello world from Clean"
+
+    // Creating lists programmatically
+    list<string> greetings = list.fill(3, "Hello")       // ["Hello", "Hello", "Hello"]
+    list<integer> countdown = list.range(5, 1)           // [5, 4, 3, 2, 1]
+
+    // Validation and utility
+    boolean isEmpty = list.isEmpty([])                    // true
+    string firstWord = list.first(words)                  // "hello"
+    string lastWord = list.last(words)                    // "Clean"
 ```
 
 ### File Module
@@ -2367,26 +2543,25 @@ file.read(path), file.write(path, content), file.exists(path)
             // Does nothing if the file doesn't exist
 
 // Usage Examples
-functions:
-    void start()
-        // Read a configuration file
-        string config = file.read("settings.txt")
-        
-        // Process a log file line by line
-        list<string> logLines = file.lines("app.log")
-        
-        // Save user data
-        file.write("user_data.txt", "John Doe, 25, Engineer")
-        
-        // Add to a log file
-        file.append("activity.log", "User logged in at 2:30 PM")
-        
-        // Check if a file exists before reading
-        if file.exists("backup.txt")
-            string backup = file.read("backup.txt")
-        
-        // Clean up temporary files
-        file.delete("temp_data.txt")
+start:
+    // Read a configuration file
+    string config = file.read("settings.txt")
+
+    // Process a log file line by line
+    list<string> logLines = file.lines("app.log")
+
+    // Save user data
+    file.write("user_data.txt", "John Doe, 25, Engineer")
+
+    // Add to a log file
+    file.append("activity.log", "User logged in at 2:30 PM")
+
+    // Check if a file exists before reading
+    if file.exists("backup.txt")
+        string backup = file.read("backup.txt")
+
+    // Clean up temporary files
+    file.delete("temp_data.txt")
 ```
 
 ### Http Module
@@ -2424,28 +2599,27 @@ http.get(url), http.post(url, body)
             // Returns the server's response as a string
 
 // Usage Examples
-functions:
-    void start()
-        // Fetch user data from an API
-        string users = http.get("https://api.example.com/users")
-        
-        // Create a new user
-        string newUser = "{\"name\": \"Alice\", \"email\": \"alice@example.com\"}"
-        string response = http.post("https://api.example.com/users", newUser)
-        
-        // Update user information
-        string updatedUser = "{\"name\": \"Alice Smith\", \"email\": \"alice.smith@example.com\"}"
-        http.put("https://api.example.com/users/123", updatedUser)
-        
-        // Partially update user (just the email)
-        string emailUpdate = "{\"email\": \"newemail@example.com\"}"
-        http.patch("https://api.example.com/users/123", emailUpdate)
-        
-        // Remove a user
-        http.delete("https://api.example.com/users/123")
-        
-        // Fetch weather data
-        string weather = http.get("https://api.weather.com/current?city=London")
+start:
+    // Fetch user data from an API
+    string users = http.get("https://api.example.com/users")
+
+    // Create a new user
+    string newUser = "{\"name\": \"Alice\", \"email\": \"alice@example.com\"}"
+    string response = http.post("https://api.example.com/users", newUser)
+
+    // Update user information
+    string updatedUser = "{\"name\": \"Alice Smith\", \"email\": \"alice.smith@example.com\"}"
+    http.put("https://api.example.com/users/123", updatedUser)
+
+    // Partially update user (just the email)
+    string emailUpdate = "{\"email\": \"newemail@example.com\"}"
+    http.patch("https://api.example.com/users/123", emailUpdate)
+
+    // Remove a user
+    http.delete("https://api.example.com/users/123")
+
+    // Fetch weather data
+    string weather = http.get("https://api.weather.com/current?city=London")
 ```
 
 ### JSON Module
@@ -2528,7 +2702,7 @@ any city = data["user"]["address"]["city"]  // Bracket notation
 - **Missing fields**: Returns `null` when field doesn't exist or index is out of bounds
 
 ```clean
-start()
+start:
     string jsonText = '{"name": "Alice", "scores": [85, 92, 78], "profile": {"city": "NYC"}}'
     any data = json.textToData(jsonText)
 
@@ -2547,7 +2721,7 @@ start()
 
     // Use default operator for fallback values
     string userName = data.name default "Guest"
-    integer firstScore = data.scores[0] default 0
+    integer score = data.scores[0] default 0
 ```
 
 #### Serializing to JSON
@@ -2573,7 +2747,7 @@ functions:
 #### Usage Examples
 
 ```clean
-start()
+start:
     // Parse JSON from an API response
     string apiResponse = http.get("https://api.example.com/user/123")
     any userData = json.textToData(apiResponse)
@@ -2721,7 +2895,7 @@ string tag = response.data.users[0].profile.tags[0]  // Returns "admin"
 #### Error Handling
 
 ```clean
-start()
+start:
     // textToData throws on invalid JSON
     string badJson = "{ invalid json }"
     any data = json.textToData(badJson) onError null
@@ -2855,7 +3029,7 @@ Use the `import:` block to import other modules. All public functions and classe
 import:
     utils
 
-start()
+start:
     // Use functions from utils module
     integer sum = add(5, 3)
     integer product = multiply(4, 2)
@@ -2923,7 +3097,7 @@ project/
 // file: main.cln
 import "app/data/models.cln"  // Resolves to ./app/data/models.cln
 
-start()
+start:
     integer result = double(21)
     print(result)
 ```
@@ -3040,7 +3214,7 @@ import:
     string
     list
 
-start()
+start:
     number pi = math.pi
     string upper = string.toUpperCase("hello")
     list<integer> nums = list.range(1, 10)
@@ -3083,7 +3257,7 @@ private:
 import:
     mymodule
 
-start()
+start:
     integer x = publicFunc()   // OK
     integer y = helperFunc()   // ERROR: helperFunc is private
 ```
@@ -3124,7 +3298,7 @@ import:
     utils
     math_helpers
 
-start()
+start:
     // Use functions from utils
     integer sum = add(10, 5)
     print(sum)  // Output: 15
@@ -3149,24 +3323,51 @@ cln build main.cln -o app.wasm
 
 ## Asynchronous Programming
 
-Clean uses start and later for simple asynchronous execution.
-start begins a task in the background.
-later declares that the result will be available in the future.
-The value blocks only when accessed.
-Use background to run a task without keeping the result.
-You can also mark a function as background to always run it asynchronously and ignore its result.
+Clean uses `start`, `later`, and `background` for simple background execution:
+- `start` begins a task in the background
+- `later` declares that the result will be available in the future
+- The value blocks only when accessed
+- Use `background` to run a task without keeping the result
+- Mark a function as `background` to always run it in the background
 
-later data = start fetchData("url")
-print "Working..."
-print data          # blocks here only
+### Two Uses of the `start` Keyword
 
-background logAction("login")    # runs and ignores result
+The `start` keyword has two distinct meanings in Clean Language:
 
-function syncCache() background
-    sendUpdateToServer()
-    clearLocalTemp()
-    
-syncCache()    # runs in background automatically
+| Context | Syntax | Purpose |
+|---------|--------|---------|
+| Entry point | `start:` | Block that marks where your program begins (top-level only) |
+| Background expression | `start functionCall()` | Starts a function running in the background |
+
+These are completely separate features that happen to share a keyword. The compiler tells them apart by context.
+
+### Start Expression
+
+Use `start` before a function call to run it in the background:
+
+```clean
+start:
+    // Using 'start' for background — different from the entry block!
+    later data = start fetchData("url")
+    print("Working...")
+    print(data)          // blocks here only
+
+    background logAction("login")    // runs and ignores result
+```
+
+### Background Functions
+
+You can mark a function as `background` so it always runs in the background:
+
+```clean
+functions:
+    void syncCache() background
+        sendUpdateToServer()
+        clearLocalTemp()
+
+start:
+    syncCache()    // runs in background automatically
+```
 
 ## Memory Management
 
@@ -3353,7 +3554,7 @@ State is a first-class concept in Clean Language. It provides persistent memory 
 3. **Observable**: The runtime detects all state changes and can react to them.
 4. **Explicit Scope**: State is declared in known scopes (app or screen level).
 5. **Sequential Updates**: State mutations are processed in order, preventing race conditions.
-6. **Async Compatible**: Async operations update state on completion, following sequential rules.
+6. **Background Compatible**: Background operations update state on completion, following sequential rules.
 7. **In-Memory Default**: State lives in memory. Persistence is optional via plugins.
 8. **First-Class**: State is recognized by the compiler and enforced by the runtime.
 
@@ -3384,6 +3585,59 @@ screen Home:
 - `state:` inside `screen:` creates screen-scoped state
 - Initial values are required
 - **Names must be unique across all scopes** (no prefixes needed)
+
+### State Rules
+
+Use `rules:` inside a `state:` block to declare persistent invariants that must always be true. Rules are checked at **operation boundaries** — predictable points where your code completes a logical unit of work.
+
+**When rules are checked:**
+- After `start:` finishes executing
+- After each `frame:` finishes (if present)
+- After a handler finishes (e.g., HTTP endpoint, job handler, command handler)
+
+This approach is simple and predictable: rules are verified when your code hands control back to the runtime.
+
+**Syntax:**
+```clean
+state:
+    integer balance
+    integer limit
+
+    rules:
+        balance >= 0
+        limit > 0
+```
+
+**Example:**
+```clean
+state:
+    integer count = 0
+    integer maxCount = 100
+
+    rules:
+        count >= 0
+        count <= maxCount
+
+start:
+    count = 50
+    count = count + 10
+    // rules checked here, after start: completes
+```
+
+**Rules for `rules:`:**
+- Can only appear inside a `state:` block
+- Must appear after all state variable declarations
+- Each rule must be a boolean expression
+- If a rule becomes false, execution traps with a contract failure
+
+**Error on violation:**
+```
+Rule violation: rule failed in state block
+  Rule: balance >= 0
+  Actual: balance = -50
+```
+
+**Why operation boundaries?** Checking rules after every assignment would be slow and could catch intermediate states that are valid in context. By checking at operation boundaries, you get meaningful guarantees without performance overhead.
 
 ### State Access
 
@@ -3462,7 +3716,7 @@ functions:
         firstName = first
         lastName = last
 
-start()
+start:
     setName("Alice", "Smith")
     print(fullName)    // Prints: Alice Smith
 ```
@@ -3511,9 +3765,9 @@ functions:
         reset state          // all state returns to initial values
 ```
 
-### State with Async
+### State with Background Tasks
 
-Async functions can update state when they complete. Updates remain sequential.
+Background functions can update state when they complete. Updates remain sequential.
 
 ```clean
 state:
@@ -3522,9 +3776,9 @@ state:
     boolean loading = false
 
 functions:
-    async void fetchUser(integer id)
+    void fetchUser(integer id) background
         loading = true
-        any user = await api.getUser(id)
+        any user = start api.getUser(id)
         username = user.name
         isLoggedIn = true
         loading = false
@@ -3587,8 +3841,8 @@ functions:
     void setTheme(string newTheme)
         theme = newTheme
 
-    async void loadProfile()
-        any profile = await fetchProfile()
+    void loadProfile() background
+        any profile = start fetchProfile()
         user = profile.name
 
 // Home screen with its own state
@@ -3612,7 +3866,7 @@ screen Home:
             reset recentItems
 
 // Entry point
-start()
+start:
     setUser("Alice")       // Triggers watch, prints "Hello, Alice"
 ```
 

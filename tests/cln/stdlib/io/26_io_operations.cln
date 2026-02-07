@@ -1,5 +1,5 @@
 
-start()
+start:
 	string content = "Hello, Clean Language!"
 	print("Content: " + content)
 

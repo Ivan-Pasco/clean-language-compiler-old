@@ -195,7 +195,7 @@ impl StdlibPlugin for CustomFilePlugin {
                 description: "Read file contents as string".to_string(),
                 category: FunctionCategory::File,
                 is_builtin: false,
-                is_async: true,
+                is_background: true,
                 memory_requirements: MemoryRequirements {
                     heap_bytes: Some(self.max_file_size),
                     stack_depth: Some(3),
@@ -208,7 +208,7 @@ impl StdlibPlugin for CustomFilePlugin {
                 description: "Write content to file".to_string(),
                 category: FunctionCategory::File,
                 is_builtin: false,
-                is_async: true,
+                is_background: true,
                 memory_requirements: MemoryRequirements {
                     heap_bytes: Some(256),
                     stack_depth: Some(3),

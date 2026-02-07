@@ -7,5 +7,5 @@ functions:
 		integer count = 42
 		string message = "Count: {count}"
 
-start()
+start:
 	testStringInterpolation()

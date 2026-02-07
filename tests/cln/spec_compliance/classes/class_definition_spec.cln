@@ -34,7 +34,7 @@ class Rectangle
 		integer area()
 			return width * height
 
-start()
+start:
 	// Test 1: Create Point instance
 	Point p = Point(10, 20)
 	print("Point created")

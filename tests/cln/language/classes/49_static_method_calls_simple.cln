@@ -14,7 +14,7 @@ functions:
 		print(absolute.toString())
 		print("Static method calls test completed successfully!")
 
-start()
+start:
 
 	print("Static Method Calls QA Test")
 	testStaticMethods()

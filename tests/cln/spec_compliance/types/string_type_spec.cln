@@ -1,7 +1,7 @@
 // Spec Section: 3.1 - Core Types (string)
 // Tests: string type - UTF-8 text
 
-start()
+start:
 	// Test 1: String declaration and initialization
 	string empty = ""
 	string hello = "Hello"

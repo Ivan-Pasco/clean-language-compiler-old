@@ -18,7 +18,7 @@ class SimpleObject
 		integer getValue()
 			return value
 
-start()
+start:
 	print("Starting memory management test")
 
 	// Test object creation

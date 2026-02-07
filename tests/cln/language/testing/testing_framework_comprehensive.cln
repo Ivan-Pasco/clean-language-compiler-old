@@ -43,6 +43,6 @@ tests:
 		integer result = add(-5, 3)
 		print("Test 7: negative addition result")
 
-start()
+start:
 	print("Testing framework comprehensive test")
 	print("All test blocks defined successfully")

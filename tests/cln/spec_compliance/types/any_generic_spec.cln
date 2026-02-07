@@ -3,7 +3,7 @@
 // NOTE: Full any type with mixed concrete types requires runtime boxing (future work)
 // This test covers same-type any usage which works with current implementation
 
-start()
+start:
 	// Test 1: any in variable assignment - integer
 	any intValue = 42
 	print("any with integer: " + intValue.toString())

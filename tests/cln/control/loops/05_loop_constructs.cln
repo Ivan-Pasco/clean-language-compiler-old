@@ -3,7 +3,7 @@
 // Dependencies: none
 // Expected: PASS
 
-start()
+start:
 	// Iterate loop with range (0-2)
 	iterate counter in 0 to 2
 		print("Counter: " + counter.toString())

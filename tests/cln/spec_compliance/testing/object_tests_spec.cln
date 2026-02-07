@@ -40,7 +40,7 @@ tests:
 	"area calculation": 5 * 10 = 50
 	"perimeter formula": 2 * (5 + 10) = 30
 
-start()
+start:
 	// Test Point at runtime
 	Point p = Point(10, 20)
 	print("Point x: " + p.getX().toString())

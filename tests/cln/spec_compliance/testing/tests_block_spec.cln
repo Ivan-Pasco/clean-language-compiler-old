@@ -8,5 +8,5 @@ tests:
 	3 + 3 = 6
 	10 / 2 = 5
 
-start()
+start:
 	print("Tests block spec completed")

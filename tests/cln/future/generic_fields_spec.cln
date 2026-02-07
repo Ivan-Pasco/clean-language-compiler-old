@@ -26,7 +26,7 @@ class Wrapper
 		string describe()
 			return label + ": " + data.toString()
 
-start()
+start:
 	// Test 1: Container with integer
 	Container intContainer = Container(42)
 	any intVal = intContainer.get()

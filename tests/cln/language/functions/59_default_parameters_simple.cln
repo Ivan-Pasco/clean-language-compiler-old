@@ -36,6 +36,6 @@ functions:
 		logMessage("System started", "")      // Should use default INFO
 		logMessage("Error occurred", "ERROR") // Should use ERROR
 
-start()
+start:
 	testDefaultParameters()
 	print("Default parameters test completed successfully")

@@ -98,7 +98,7 @@ functions:
 	void clearCache()
 		print("Cache cleared in background")
 
-start()
+start:
 	// Test complex integration scenario
 	print("Starting integration test...")
 

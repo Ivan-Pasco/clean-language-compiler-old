@@ -37,7 +37,7 @@ functions:
 		*/
 
 		print("Comment edge cases completed")
-start()
+start:
 	print("Multi-line Comment Test")
 	print("======================")
 	testMultilineComments()

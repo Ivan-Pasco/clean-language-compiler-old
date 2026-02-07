@@ -7,5 +7,5 @@ functions:
 		string message = if flag then "yes" else "no"
 		integer comparison = if 5 > 3 then 100 else 200
 
-start()
+start:
 	testConditionals()

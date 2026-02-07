@@ -3,7 +3,7 @@ functions:
 		string status = "✓"
 		return status + " Learn Clean Language"
 
-start()
+start:
 	string task1 = formatTask()
 	string task2 = "○ Write tests"
 	string task3 = "✓ Build project"

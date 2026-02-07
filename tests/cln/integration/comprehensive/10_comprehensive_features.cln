@@ -27,7 +27,7 @@ class Calculator
 			else
 				return 0
 
-start()
+start:
 	// Test precision modifiers
 	integer:16 precision_val = 500
 

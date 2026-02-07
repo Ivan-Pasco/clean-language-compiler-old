@@ -2,7 +2,7 @@
 // Tests: file.delete() function to delete files
 // Requirement: Delete a file from the filesystem
 
-start()
+start:
 	// Test case 1: Delete file if exists
 	string filename = "temp_file.txt"
 	if file.exists(filename)

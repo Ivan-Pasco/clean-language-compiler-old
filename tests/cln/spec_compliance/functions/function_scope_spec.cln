@@ -25,7 +25,7 @@ functions:
 			return outer + inner
 		return outer
 
-start()
+start:
 	// Test 1: Local variable in function
 	integer result1 = getLocalValue()
 	print("Local value: " + result1.toString())

@@ -2,7 +2,7 @@
 // Spec Section: 5.2 - Print Statements
 // Tests: Basic integer variables (placeholder for matrix tests)
 
-start()
+start:
 	integer x = 1
 	integer y = 2
 	print(x)

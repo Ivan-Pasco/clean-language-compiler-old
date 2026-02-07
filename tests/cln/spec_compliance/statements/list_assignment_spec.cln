@@ -2,7 +2,7 @@
 // Tests: List element assignment
 // Requirement: list[index] = value assignment
 
-start()
+start:
 	// Test case 1: Basic list element assignment
 	list<integer> nums = [1, 2, 3]
 	nums[0] = 10

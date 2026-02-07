@@ -1,0 +1,18 @@
+// Test: State rules that should trap
+// When count is set to a value violating rules, execution should trap
+// Rules are checked at operation boundaries (after start: completes)
+
+state:
+	integer count = 0
+	integer maxCount = 10
+
+	rules:
+		count >= 0
+		count <= maxCount
+
+start:
+	count = 15
+	print("Rules checked after this...")
+	// Rules are checked HERE, at the end of start:
+	// This violates count <= maxCount (15 > 10)
+	// Program should trap with WASM unreachable

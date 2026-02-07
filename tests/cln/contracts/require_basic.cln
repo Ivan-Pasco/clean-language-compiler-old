@@ -1,0 +1,20 @@
+// Test: Basic require statement for preconditions
+// Require statements are always checked at runtime
+
+functions:
+	integer divide(integer a, integer b)
+		require b != 0
+		return a / b
+
+	integer absoluteValue(integer x)
+		require x >= -2147483647
+		if x < 0
+			return 0 - x
+		return x
+
+start:
+	integer result = divide(10, 2)
+	print(result.toString())
+
+	integer positive = absoluteValue(-5)
+	print(positive.toString())

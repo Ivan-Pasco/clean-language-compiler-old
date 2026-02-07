@@ -1,7 +1,7 @@
 // Spec Section: 14.2 - String Module
 // Tests: String manipulation operations
 
-start()
+start:
 	// Test 1: String concatenation with + operator
 	string first = "Hello"
 	string second = "World"

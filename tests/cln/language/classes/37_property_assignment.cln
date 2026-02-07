@@ -17,5 +17,5 @@ functions:
 		// Test assigning combined behavior
 		items.type = "line,unique"
 
-start()
+start:
 	testPropertyAssignment()

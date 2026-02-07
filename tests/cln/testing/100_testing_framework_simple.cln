@@ -55,7 +55,7 @@ tests:
 	(5 >= 5) = true
 	(3 <= 5) = true
 
-start()
+start:
 	print("Simple Testing Framework Test")
 	print("=============================")
 	print("This test demonstrates basic testing syntax:")

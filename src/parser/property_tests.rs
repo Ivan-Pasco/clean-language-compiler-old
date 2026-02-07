@@ -27,7 +27,7 @@ mod tests {
         ) {
             // Valid identifiers in various contexts should parse gracefully
             let contexts = vec![
-                format!("start()\n\tprint({id})"),
+                format!("start:\n\tprint({id})"),
                 format!("integer {id}"),
                 format!("functions:\n\tvoid {id}()\n\t\treturn"),
             ];

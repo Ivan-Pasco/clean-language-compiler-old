@@ -1,0 +1,12 @@
+// Test: Require precondition that traps
+// This test should compile and then trap on execution
+
+functions:
+	integer dividePositive(integer a, integer b)
+		require b > 0
+		return a / b
+
+start:
+	print("Testing require that should trap...")
+	integer result = dividePositive(10, 0)
+	print(result.toString())

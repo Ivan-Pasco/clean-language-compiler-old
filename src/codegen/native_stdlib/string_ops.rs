@@ -665,7 +665,7 @@ pub fn gen_last_index_of_from() -> Vec<Instruction<'static>> {
         Instruction::If(BlockType::Empty),
         Instruction::LocalGet(5), // Store result = i
         Instruction::LocalSet(8),
-        Instruction::Br(1), // Found! Exit outer loop
+        Instruction::Br(2), // Found! Exit outer Block (not Loop)
         Instruction::End,
         // If i == 0, we've checked all positions, exit loop
         Instruction::LocalGet(5),
@@ -804,7 +804,7 @@ pub fn gen_last_index_of() -> Vec<Instruction<'static>> {
         Instruction::If(BlockType::Empty),
         Instruction::LocalGet(4), // Store result = i
         Instruction::LocalSet(7),
-        Instruction::Br(1), // Found! Exit outer loop
+        Instruction::Br(2), // Found! Exit outer Block (not Loop)
         Instruction::End,
         // If i == 0, we've checked all positions, exit loop
         Instruction::LocalGet(4),

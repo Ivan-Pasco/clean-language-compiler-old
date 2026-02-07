@@ -2,7 +2,7 @@
 // Tests: String validation operations
 // Requirement: isEmpty and isBlank functions
 
-start()
+start:
 	// Test case 1: Check empty string
 	string empty = ""
 	boolean isEmptyResult = empty.isEmpty()

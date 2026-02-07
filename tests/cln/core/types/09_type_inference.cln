@@ -3,7 +3,7 @@
 // Spec Section: 4.3 - Arithmetic Operators
 // Tests: Type inference with mixed arithmetic
 
-start()
+start:
 	integer x = 42
 	number y = 3.14
 	string name = "Clean"

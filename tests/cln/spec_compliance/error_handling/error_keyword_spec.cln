@@ -19,7 +19,7 @@ functions:
 			error("Value above maximum")
 		return value
 
-start()
+start:
 	// Test 1: Safe division (no error case)
 	integer result1 = safeDivide(10, 2)
 	print("10 / 2 = " + result1.toString())

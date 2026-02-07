@@ -232,12 +232,12 @@ impl<'a> ConstraintSolver<'a> {
                 ConcreteType::Function {
                     parameters: p1,
                     return_type: r1,
-                    is_async: a1,
+                    is_background: a1,
                 },
                 ConcreteType::Function {
                     parameters: p2,
                     return_type: r2,
-                    is_async: a2,
+                    is_background: a2,
                 },
             ) => {
                 if a1 != a2 {
@@ -530,14 +530,14 @@ impl<'a> ConstraintSolver<'a> {
             ConcreteType::Function {
                 parameters,
                 return_type,
-                is_async,
+                is_background,
             } => ConcreteType::Function {
                 parameters: parameters
                     .iter()
                     .map(|p| self.apply_substitution(p))
                     .collect(),
                 return_type: Box::new(self.apply_substitution(return_type)),
-                is_async: *is_async,
+                is_background: *is_background,
             },
 
             ConcreteType::Class {

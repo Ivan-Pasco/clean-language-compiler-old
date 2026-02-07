@@ -1,10 +1,10 @@
 // Simple test for data keyword
-import:
+plugins:
 	frame.data
 
 data User
 	integer id
 	string name
 
-start()
+start:
 	print("Test")

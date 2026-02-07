@@ -19,7 +19,7 @@ functions:
 
 		print("Simple method-style test completed")
 
-start()
+start:
 
 	print("Method Style QA Test")
 	testMethodStyle()

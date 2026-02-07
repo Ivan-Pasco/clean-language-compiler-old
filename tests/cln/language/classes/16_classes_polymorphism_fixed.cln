@@ -74,7 +74,7 @@ functions:
 		print("Max Speed: " + vehicle.getMaxSpeed().toString() + " km/h")
 		print("Stopping: " + vehicle.stopEngine())
 
-start()
+start:
 	print("Polymorphism Test - Vehicle System")
 
 	Car tesla = Car("Tesla", "Model 3", 2023, 4, true)

@@ -260,7 +260,7 @@ mod tests {
         let unit = CompilationUnit::new(
             "main".to_string(),
             PathBuf::from("main.cln"),
-            "start()\n\tprint(42)".to_string(),
+            "start:\n\tprint(42)".to_string(),
         );
 
         assert_eq!(unit.module_count(), 1);
@@ -273,7 +273,7 @@ mod tests {
         let mut unit = CompilationUnit::new(
             "main".to_string(),
             PathBuf::from("main.cln"),
-            "import: utils\nstart()\n\tprint(42)".to_string(),
+            "import: utils\nstart:\n\tprint(42)".to_string(),
         );
 
         let utils_id = unit.add_module(
@@ -295,7 +295,7 @@ mod tests {
         let mut unit = CompilationUnit::new(
             "main".to_string(),
             PathBuf::from("main.cln"),
-            "start()".to_string(),
+            "start:\n\tprint(\"test\")".to_string(),
         );
 
         let id1 = unit.add_module(

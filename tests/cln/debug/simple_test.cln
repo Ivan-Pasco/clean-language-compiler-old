@@ -2,6 +2,6 @@ functions:
 	string first()
 		return "hello"
 
-start()
+start:
 	string result = first()
 	print(result)

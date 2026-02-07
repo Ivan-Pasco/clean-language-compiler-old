@@ -2,7 +2,7 @@
 // Tests: String padding operations
 // Requirement: padStart and padEnd functions
 
-start()
+start:
 	// Test case 1: Pad start with zeros
 	string num = "42"
 	string padded = num.padStart(5, "0")

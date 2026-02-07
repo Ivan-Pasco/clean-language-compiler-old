@@ -10,5 +10,5 @@ functions:
 		integer negBin = -0b1111
 		integer negOct = -0o20
 
-start()
+start:
 	testNumericLiterals()

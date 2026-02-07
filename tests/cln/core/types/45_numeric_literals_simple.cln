@@ -5,5 +5,5 @@ functions:
 		integer hex = 0xFF
 		integer bin = 0b1010
 
-start()
+start:
 	test()

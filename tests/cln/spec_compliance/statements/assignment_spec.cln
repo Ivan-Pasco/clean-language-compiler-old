@@ -1,7 +1,7 @@
 // Spec Section: 6.2 - Assignment
 // Tests: Assignment statements
 
-start()
+start:
 	// Test 1: Simple assignment
 	integer x = 0
 	x = 42

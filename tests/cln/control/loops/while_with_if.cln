@@ -1,7 +1,7 @@
 // While loop with if statement test
 // Tests conditional logic inside while loop
 
-start()
+start:
 	integer count = 0
 	while count < 10
 		if count % 2 == 0

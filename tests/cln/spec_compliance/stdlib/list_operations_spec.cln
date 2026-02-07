@@ -1,7 +1,7 @@
 // Spec Section: 14.3 - List Operations
 // Tests: List manipulation functions (add, remove, contains, first, last)
 
-start()
+start:
 	// Test 1: list.add - adding elements
 	list<integer> nums = [1, 2, 3]
 	list<integer> nums2 = list.add(nums, 4)

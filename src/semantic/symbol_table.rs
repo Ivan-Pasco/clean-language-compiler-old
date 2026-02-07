@@ -17,7 +17,7 @@ pub enum SymbolKind {
         return_type: Type,
         visibility: Visibility,
         modifiers: Vec<FunctionModifier>,
-        is_async: bool,
+        is_background: bool,
     },
     Class {
         fields: HashMap<String, Type>,
@@ -237,7 +237,7 @@ impl SymbolTable {
         location: Option<SourceLocation>,
         visibility: Visibility,
         modifiers: Vec<FunctionModifier>,
-        is_async: bool,
+        is_background: bool,
     ) -> Result<(), String> {
         let symbol = Symbol::new(
             name,
@@ -246,7 +246,7 @@ impl SymbolTable {
                 return_type,
                 visibility,
                 modifiers,
-                is_async,
+                is_background,
             },
             location,
             self.scopes[self.current_scope].level,

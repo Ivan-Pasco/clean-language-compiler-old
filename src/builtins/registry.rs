@@ -1190,7 +1190,7 @@ impl BuiltinRegistry {
             .map(|f| crate::typechecker::ConcreteType::Function {
                 parameters: f.parameters.iter().map(|p| p.to_concrete_type()).collect(),
                 return_type: Box::new(f.return_type.to_concrete_type()),
-                is_async: false,
+                is_background: false,
             })
     }
 
@@ -1204,7 +1204,7 @@ impl BuiltinRegistry {
             crate::typechecker::ConcreteType::Function {
                 parameters: f.parameters.iter().map(|p| p.to_concrete_type()).collect(),
                 return_type: Box::new(f.return_type.to_concrete_type()),
-                is_async: false,
+                is_background: false,
             }
         })
     }

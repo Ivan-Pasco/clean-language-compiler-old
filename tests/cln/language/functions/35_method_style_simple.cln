@@ -9,7 +9,7 @@ functions:
 		integer len = text.length()
 		print("Text length: " + len.toString())
 
-start()
+start:
 
 	print("Method Style Simple Test")
 	testMethodStyle()

@@ -1,7 +1,7 @@
 // Spec Section: 4.3 - Constant Apply-Blocks
 // Tests: constant: apply-block for declaring constants
 
-start()
+start:
 	// Test 1: Constant declarations
 	constant:
 		integer MAX_SIZE = 1000

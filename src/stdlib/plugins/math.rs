@@ -107,7 +107,7 @@ impl StdlibPlugin for MathPlugin {
                 description: "Add two numbers".to_string(),
                 category: FunctionCategory::Math,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements::default(),
             },
             FunctionMetadata {
@@ -116,7 +116,7 @@ impl StdlibPlugin for MathPlugin {
                 description: "Subtract second number from first".to_string(),
                 category: FunctionCategory::Math,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements::default(),
             },
             FunctionMetadata {
@@ -125,7 +125,7 @@ impl StdlibPlugin for MathPlugin {
                 description: "Multiply two numbers".to_string(),
                 category: FunctionCategory::Math,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements::default(),
             },
             FunctionMetadata {
@@ -134,7 +134,7 @@ impl StdlibPlugin for MathPlugin {
                 description: "Divide first number by second".to_string(),
                 category: FunctionCategory::Math,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements::default(),
             },
             FunctionMetadata {
@@ -143,7 +143,7 @@ impl StdlibPlugin for MathPlugin {
                 description: "Get remainder of division".to_string(),
                 category: FunctionCategory::Math,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements::default(),
             },
             FunctionMetadata {
@@ -152,7 +152,7 @@ impl StdlibPlugin for MathPlugin {
                 description: "Raise base to the power of exponent".to_string(),
                 category: FunctionCategory::Math,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements::default(),
             },
             FunctionMetadata {
@@ -161,7 +161,7 @@ impl StdlibPlugin for MathPlugin {
                 description: "Calculate square root".to_string(),
                 category: FunctionCategory::Math,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements::default(),
             },
             FunctionMetadata {
@@ -170,7 +170,7 @@ impl StdlibPlugin for MathPlugin {
                 description: "Get absolute value".to_string(),
                 category: FunctionCategory::Math,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements::default(),
             },
         ];
@@ -183,7 +183,7 @@ impl StdlibPlugin for MathPlugin {
                     description: "Calculate sine".to_string(),
                     category: FunctionCategory::Math,
                     is_builtin: true,
-                    is_async: false,
+                    is_background: false,
                     memory_requirements: MemoryRequirements::default(),
                 },
                 FunctionMetadata {
@@ -192,7 +192,7 @@ impl StdlibPlugin for MathPlugin {
                     description: "Calculate cosine".to_string(),
                     category: FunctionCategory::Math,
                     is_builtin: true,
-                    is_async: false,
+                    is_background: false,
                     memory_requirements: MemoryRequirements::default(),
                 },
                 FunctionMetadata {
@@ -201,7 +201,7 @@ impl StdlibPlugin for MathPlugin {
                     description: "Calculate tangent".to_string(),
                     category: FunctionCategory::Math,
                     is_builtin: true,
-                    is_async: false,
+                    is_background: false,
                     memory_requirements: MemoryRequirements::default(),
                 },
                 FunctionMetadata {
@@ -210,7 +210,7 @@ impl StdlibPlugin for MathPlugin {
                     description: "Calculate natural logarithm".to_string(),
                     category: FunctionCategory::Math,
                     is_builtin: true,
-                    is_async: false,
+                    is_background: false,
                     memory_requirements: MemoryRequirements::default(),
                 },
                 FunctionMetadata {
@@ -219,7 +219,7 @@ impl StdlibPlugin for MathPlugin {
                     description: "Calculate base-10 logarithm".to_string(),
                     category: FunctionCategory::Math,
                     is_builtin: true,
-                    is_async: false,
+                    is_background: false,
                     memory_requirements: MemoryRequirements::default(),
                 },
                 FunctionMetadata {
@@ -228,7 +228,7 @@ impl StdlibPlugin for MathPlugin {
                     description: "Calculate e raised to the power of x".to_string(),
                     category: FunctionCategory::Math,
                     is_builtin: true,
-                    is_async: false,
+                    is_background: false,
                     memory_requirements: MemoryRequirements::default(),
                 },
             ]);

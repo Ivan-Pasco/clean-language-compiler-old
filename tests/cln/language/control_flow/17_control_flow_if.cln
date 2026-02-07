@@ -3,7 +3,7 @@
 // Spec Section: 5.1.2 - Else Syntax
 // Tests: If/else statements with nested conditions
 
-start()
+start:
 	integer x = 10
 	integer y = 5
 

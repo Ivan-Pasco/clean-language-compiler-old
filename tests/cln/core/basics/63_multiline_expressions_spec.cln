@@ -8,7 +8,7 @@ functions:
 	number multiply(number x, number y)
 		return x * y
 
-start()
+start:
 	print("=== Multi-Line Expressions Specification Test ===")
 
 	// Test 1: Single line expressions (no parentheses required)

@@ -24,7 +24,7 @@ functions:
 	boolean isEqual(integer a, integer b)
 		return a == b
 
-start()
+start:
 	// Test 1: Integer returning functions
 	integer sum = addNumbers(10, 5)
 	integer diff = subtractNumbers(10, 5)

@@ -63,7 +63,7 @@ pub struct ResolvedHirFunction {
     pub return_type: Option<HirType>,
     pub body: ResolvedHirBlock,
     pub is_start: bool,
-    pub is_async: bool,
+    pub is_background: bool,
     pub location: SourceLocation,
 }
 
@@ -142,6 +142,8 @@ pub struct ResolvedHirTest {
 #[derive(Debug, Clone)]
 pub struct ResolvedHirStateBlock {
     pub declarations: Vec<ResolvedHirStateDeclaration>,
+    /// State invariants checked at operation boundaries
+    pub rules: Vec<ResolvedHirExpression>,
     pub scope: HirStateScope,
     pub location: SourceLocation,
 }
@@ -246,6 +248,13 @@ pub enum ResolvedHirStatement {
         variable: String,
         symbol_id: SymbolId,
         expression: ResolvedHirExpression,
+        location: SourceLocation,
+    },
+
+    /// Require statement - contract precondition that must be true
+    /// Traps at runtime if condition is false
+    Require {
+        condition: ResolvedHirExpression,
         location: SourceLocation,
     },
 }

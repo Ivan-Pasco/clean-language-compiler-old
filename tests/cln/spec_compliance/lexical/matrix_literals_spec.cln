@@ -1,7 +1,7 @@
 // Spec Section: 2 - Lexical Structure
 // Tests: Matrix literals syntax
 
-start()
+start:
 	// Test 1: 2x2 matrix
 	matrix<integer> mat2x2 = [[1, 2], [3, 4]]
 	print("2x2 matrix created")

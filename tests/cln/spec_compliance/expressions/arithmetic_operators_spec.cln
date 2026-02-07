@@ -1,7 +1,7 @@
 // Spec Section: 5.3 - Arithmetic Operators
 // Tests: +, -, *, /, %, ^ operators
 
-start()
+start:
 	// Test 1: Addition
 	integer sum1 = 5 + 3
 	integer sum2 = -10 + 15

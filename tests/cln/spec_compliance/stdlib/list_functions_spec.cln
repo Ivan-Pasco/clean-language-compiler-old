@@ -1,7 +1,7 @@
 // Spec Section: 14.3 - List Module
 // Tests: List operations and methods
 
-start()
+start:
 	// Test 1: List literal creation
 	list<integer> numbers = [1, 2, 3, 4, 5]
 	print("Test 1: List created")

@@ -30,7 +30,7 @@ functions:
 			return "zero"
 		return "positive"
 
-start()
+start:
 	// Test 1: Integer return
 	integer intVal = returnInteger()
 	print("Integer return: " + intVal.toString())

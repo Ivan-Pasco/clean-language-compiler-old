@@ -5,6 +5,6 @@ external "http":
 	string get(string url)
 	string post(string url, string body)
 
-start()
+start:
 	string response = get("https://example.com")
 	print(response)

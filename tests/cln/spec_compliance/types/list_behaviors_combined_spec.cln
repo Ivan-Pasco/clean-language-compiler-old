@@ -1,7 +1,7 @@
 // Spec Section: 2.4 - List Properties
 // Tests: Combined list behavior modifiers (line-unique, pile-unique)
 
-start()
+start:
 	// Test 1: Line-unique behavior (FIFO queue with no duplicates)
 	list<integer> lineUnique = []
 	lineUnique.type = "line-unique"

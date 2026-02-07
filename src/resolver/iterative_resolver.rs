@@ -462,7 +462,7 @@ impl IterativeNameResolver {
             return_type: function.return_type,
             body: resolved_body,
             is_start: function.is_start,
-            is_async: false,
+            is_background: false,
             location: function.location,
         };
 

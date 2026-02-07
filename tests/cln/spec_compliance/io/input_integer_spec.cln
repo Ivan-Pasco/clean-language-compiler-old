@@ -2,7 +2,7 @@
 // Tests: input.integer() function for integer input
 // Requirement: Integer input with automatic conversion
 
-start()
+start:
 	// Test case 1: Basic integer input
 	integer age = input.integer("Enter your age: ")
 	print("Age: " + age.toString())

@@ -241,7 +241,7 @@ mod tests {
     /// Test tab-based indentation (§1.4 - Code Structure)
     #[test]
     fn test_indentation() {
-        let input = "start()\n\tinteger x = 42\n\t\tprint(x)\n\tprint(\"done\")";
+        let input = "start:\n\tinteger x = 42\n\t\tprint(x)\n\tprint(\"done\")";
         let tokens = tokenize(input).expect("Failed to tokenize indented code");
         
         // Should contain indentation tokens
@@ -270,7 +270,7 @@ mod tests {
 	integer add(integer a, integer b)
 		return a + b
 
-start()
+start:
 	integer result = add(5, 3)
 	print(result)
 "#;
@@ -360,7 +360,7 @@ start()
     /// Test newline handling
     #[test]
     fn test_newlines() {
-        let input = "start()\nprint(\"hello\")\n";
+        let input = "start:\n\tprint(\"hello\")\n";
         let tokens = tokenize(input).expect("Failed to tokenize newlines");
         
         let has_newlines = tokens.iter().any(|t| matches!(t, TokenKind::Newline));
@@ -371,8 +371,8 @@ start()
     #[test]
     fn test_performance_benchmark() {
         use std::time::Instant;
-        
-        let large_program = r#"start()
+
+        let large_program = r#"start:
 	integer x = 42
 	integer y = 24
 	integer sum = x + y

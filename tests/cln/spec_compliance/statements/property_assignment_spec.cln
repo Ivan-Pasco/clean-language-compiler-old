@@ -32,7 +32,7 @@ class Rectangle
 		void setHeight(integer h)
 			height = h
 
-start()
+start:
 	// Test case 1: Basic property assignment via methods
 	Point p = Point(0, 0)
 	p.setX(10)

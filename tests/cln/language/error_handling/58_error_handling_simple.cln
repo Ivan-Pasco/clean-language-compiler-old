@@ -29,6 +29,6 @@ functions:
 		string contents2 = readFileContents("")
 		print("Error handled: " + contents2)
 
-start()
+start:
 	testErrorHandling()
 	print("Error handling test completed successfully")

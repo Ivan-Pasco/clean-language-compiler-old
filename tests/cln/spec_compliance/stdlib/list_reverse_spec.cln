@@ -1,7 +1,7 @@
 // Spec Section: 7 - Standard Library
 // Tests: list.reverse() - reverse list order
 
-start()
+start:
 	// Test 1: Reverse numbers
 	list<integer> numbers = [1, 2, 3, 4, 5]
 	list<integer> reversed = list.reverse(numbers)

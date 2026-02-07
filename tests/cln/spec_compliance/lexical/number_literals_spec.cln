@@ -1,7 +1,7 @@
 // Spec Section: 2.2 - Literals (Numeric Literals)
 // Tests: Floating-point number literal formats
 
-start()
+start:
 	// Test 1: Standard decimal numbers
 	number pi = 3.14159
 	number half = 0.5

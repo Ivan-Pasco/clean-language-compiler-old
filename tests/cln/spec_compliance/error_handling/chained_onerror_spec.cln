@@ -1,7 +1,7 @@
 // Spec Section: 10 - Error Handling
 // Tests: Chained onError handlers and error propagation
 
-start()
+start:
 	// Test 1: Basic onError chain
 	integer result1 = riskyOperation() onError 0
 	print("Result 1: " + result1.toString())

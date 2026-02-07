@@ -2,7 +2,7 @@
 // Tests: http.delete() function for HTTP DELETE requests
 // Requirement: Perform HTTP DELETE request to remove resources
 
-start()
+start:
 	// Test case 1: Basic DELETE request
 	string url = "https://httpbin.org/delete"
 	string response = http.delete(url)

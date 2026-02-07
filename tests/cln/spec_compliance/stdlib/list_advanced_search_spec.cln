@@ -1,7 +1,7 @@
 // Spec Section: 14.3 - List Advanced Search Operations
 // Tests: list.indexOf with various scenarios
 
-start()
+start:
 	// Test 1: indexOf - find first occurrence
 	list<integer> numbers = [10, 20, 30, 20, 40]
 	integer index1 = list.indexOf(numbers, 20)

@@ -2,7 +2,7 @@
 // Tests: print without newline
 // Requirement: print without parentheses outputs without newline
 
-start()
+start:
 	// Test case 1: Multiple prints without newlines
 	print "Hello"
 	print " "

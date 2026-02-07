@@ -103,7 +103,7 @@ functions:
 		integer top = dynamicList.remove()  // Should get 5 (LIFO)
 		print("Removed from stack: " + top.toString())
 
-start()
+start:
 	print("List Behaviors Comprehensive Test")
 	print("====================================")
 	testQueueBehavior()

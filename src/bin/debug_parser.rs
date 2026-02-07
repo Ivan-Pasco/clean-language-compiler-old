@@ -79,6 +79,6 @@ fn main() {
     test_rule(Rule::return_stmt, "return 42", "return_stmt");
 
     // Test the full sequence from our file
-    test_rule(Rule::start_function, &source, "start_function");
+    test_rule(Rule::start_block, &source, "start_block");
     test_rule(Rule::program, &source, "program");
 }

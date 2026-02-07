@@ -6,7 +6,7 @@ functions:
 	string processData(string data)
 		return "Processed: " + data
 
-start()
+start:
 	string data = fetchData("api.example.com")
 	string processed = processData(data)
 	print(processed)

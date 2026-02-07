@@ -168,7 +168,7 @@ impl ControlFlowGraph {
                     successors.insert(*true_block);
                     successors.insert(*false_block);
                 }
-                MirTerminator::Return { .. } | MirTerminator::Unreachable => {
+                MirTerminator::Return { .. } | MirTerminator::Unreachable | MirTerminator::Trap => {
                     // No successors
                 }
             }

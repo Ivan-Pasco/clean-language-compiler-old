@@ -2,7 +2,7 @@
 // Spec Section: 9.2.2 - Collection Iteration
 // Tests: iterate over lists and other collections
 
-start()
+start:
 	// Test 1: Iterate over integer list
 	print("Iterating integer list:")
 	list<integer> numbers = [10, 20, 30, 40, 50]

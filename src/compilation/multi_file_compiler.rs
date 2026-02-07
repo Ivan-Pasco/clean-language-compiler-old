@@ -961,8 +961,8 @@ impl MultiFileCompiler {
             combined.push_str("\t\treturn page.render()\n\n");
         }
 
-        // Generate start() with route registration
-        combined.push_str("start()\n");
+        // Generate start: block with route registration
+        combined.push_str("start:\n");
         combined.push_str("\tprintln(\"Starting HTML-first server...\")\n");
         combined.push_str("\tinteger status = 0\n");
 
@@ -1371,7 +1371,7 @@ mod tests {
     fn test_single_file_compilation() {
         let sources = vec![(
             "main".to_string(),
-            r#"start()
+            r#"start:
 	print(42)
 "#
             .to_string(),
@@ -1398,7 +1398,7 @@ mod tests {
                 r#"import:
 	utils
 
-start()
+start:
 	integer x = 42
 	print(x)
 "#
@@ -1447,7 +1447,7 @@ start()
             r#"import:
 	math
 
-start()
+start:
 	integer x = abs(-5)
 	print(x)
 "#

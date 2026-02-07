@@ -22,6 +22,6 @@ functions:
 		print("Name: " + name)
 		print("Version: " + version)
 
-start()
+start:
 	testApplyBlocks()
 	print("Apply-blocks test completed successfully")

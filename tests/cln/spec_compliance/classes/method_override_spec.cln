@@ -54,7 +54,7 @@ class SportsCar is Vehicle
 			else
 				return 180
 
-start()
+start:
 	// Test 1: Parent class method
 	Vehicle vehicle = Vehicle("Generic", 60)
 	string vehicleDesc = vehicle.describe()

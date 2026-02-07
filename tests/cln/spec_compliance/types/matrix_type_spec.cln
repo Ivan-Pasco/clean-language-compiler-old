@@ -1,7 +1,7 @@
 // Spec Section: 2 - Type System
 // Tests: matrix<any> type with operations
 
-start()
+start:
 	// Test 1: Integer matrix
 	matrix<integer> intMatrix = [[1, 2], [3, 4]]
 	print("Integer matrix: created")

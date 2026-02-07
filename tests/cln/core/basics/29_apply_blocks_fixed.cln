@@ -5,7 +5,7 @@ functions:
 	void displayNumber(integer num)
 		print("Number: " + num.toString())
 
-start()
+start:
 	print("Apply blocks test starting...")
 
 	// Type apply-blocks for variable declarations

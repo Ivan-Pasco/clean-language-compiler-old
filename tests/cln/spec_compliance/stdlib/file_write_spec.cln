@@ -1,7 +1,7 @@
 // Spec Section: 7 - Standard Library
 // Tests: file.write() - write content to file
 
-start()
+start:
 	// Test 1: Write simple text
 	file.write("output1.txt", "Test content")
 	print("Wrote to output1.txt")

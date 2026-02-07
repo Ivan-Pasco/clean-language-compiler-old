@@ -142,7 +142,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String], // print accepts any type but we'll use string
                     return_type: Box::new(ConcreteType::Null), // print returns void
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -157,7 +157,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::Null),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -172,7 +172,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::Null),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -187,7 +187,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::String),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -202,7 +202,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::Integer),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -217,7 +217,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -232,7 +232,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Integer],
                     return_type: Box::new(ConcreteType::String),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -247,7 +247,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::Integer),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -262,7 +262,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -277,7 +277,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::Integer),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -290,7 +290,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String, ConcreteType::String],
                     return_type: Box::new(ConcreteType::String),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -307,7 +307,7 @@ impl<'a> TypeInference<'a> {
                         ConcreteType::Integer,
                     ],
                     return_type: Box::new(ConcreteType::String),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -320,7 +320,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String, ConcreteType::String],
                     return_type: Box::new(ConcreteType::Integer),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -337,7 +337,7 @@ impl<'a> TypeInference<'a> {
                         ConcreteType::String,
                     ],
                     return_type: Box::new(ConcreteType::String),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -420,7 +420,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number, ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -434,7 +434,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number, ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -448,7 +448,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -462,7 +462,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -476,7 +476,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -490,7 +490,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -504,7 +504,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -518,7 +518,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -532,7 +532,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -546,7 +546,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -560,7 +560,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number, ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -574,7 +574,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -588,7 +588,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -602,7 +602,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Number],
                     return_type: Box::new(ConcreteType::Number),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -617,7 +617,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::Integer),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -635,7 +635,7 @@ impl<'a> TypeInference<'a> {
                         ConcreteType::Integer,
                     ],
                     return_type: Box::new(ConcreteType::String),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -649,7 +649,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::String),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -663,7 +663,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::String),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -677,7 +677,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String, ConcreteType::String],
                     return_type: Box::new(ConcreteType::Boolean),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -693,7 +693,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Array(Box::new(ConcreteType::Number))],
                     return_type: Box::new(ConcreteType::Integer),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -710,7 +710,7 @@ impl<'a> TypeInference<'a> {
                         ConcreteType::Number,
                     ],
                     return_type: Box::new(ConcreteType::Undefined),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -725,7 +725,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::String),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -739,7 +739,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String, ConcreteType::String],
                     return_type: Box::new(ConcreteType::String),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -753,7 +753,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String, ConcreteType::String],
                     return_type: Box::new(ConcreteType::String),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -767,7 +767,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::String),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -782,7 +782,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::String),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -796,7 +796,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String, ConcreteType::String],
                     return_type: Box::new(ConcreteType::Boolean),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -810,7 +810,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String, ConcreteType::String],
                     return_type: Box::new(ConcreteType::Boolean),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -824,7 +824,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::Boolean),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -838,7 +838,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::Boolean),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -854,7 +854,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![],
                     return_type: Box::new(ConcreteType::Integer), // Returns pointer
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -869,7 +869,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Integer],      // Value to wrap
                     return_type: Box::new(ConcreteType::Integer), // Returns ValidationResult pointer
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -884,7 +884,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Integer], // Errors list pointer
                     return_type: Box::new(ConcreteType::Integer), // Returns ValidationResult pointer
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -899,7 +899,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Integer], // ValidationResult pointer
                     return_type: Box::new(ConcreteType::Boolean),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -914,7 +914,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Integer], // ValidationResult pointer
                     return_type: Box::new(ConcreteType::Boolean),
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -929,7 +929,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Integer], // ValidationResult pointer
                     return_type: Box::new(ConcreteType::Integer), // Returns the wrapped value
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -944,7 +944,7 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Integer], // ValidationResult pointer
                     return_type: Box::new(ConcreteType::Integer), // Returns errors list pointer
-                    is_async: false,
+                    is_background: false,
                 },
             );
         }
@@ -976,7 +976,7 @@ impl<'a> TypeInference<'a> {
                                     ConcreteType::Function {
                                         parameters: concrete_params,
                                         return_type: concrete_return,
-                                        is_async: false,
+                                        is_background: false,
                                     },
                                 );
                             }
@@ -1187,7 +1187,7 @@ impl<'a> TypeInference<'a> {
         let function_type = ConcreteType::Function {
             parameters: param_types,
             return_type: Box::new(return_type.clone()),
-            is_async: function.is_async,
+            is_background: function.is_background,
         };
 
         self.type_env.insert(function.symbol_id, function_type);
@@ -1215,7 +1215,7 @@ impl<'a> TypeInference<'a> {
         let function_type = ConcreteType::Function {
             parameters: param_types,
             return_type: Box::new(return_type),
-            is_async: false, // Methods are not async by default
+            is_background: false, // Methods are not async by default
         };
 
         self.type_env.insert(method.symbol_id, function_type);
@@ -1350,7 +1350,7 @@ impl<'a> TypeInference<'a> {
             body: tast_body,
             generic_params: Vec::new(), // Would handle generics here
             constraints: Vec::new(),
-            is_async: function.is_async,
+            is_background: function.is_background,
             is_static: false, // Top-level functions are not static methods
             visibility: Visibility::Public, // Would get from HIR
             location: function.location.clone(),
@@ -1399,7 +1399,7 @@ impl<'a> TypeInference<'a> {
             body: tast_body,
             generic_params: Vec::new(),
             constraints: Vec::new(),
-            is_async: false,
+            is_background: false,
             is_static: false, // Constructors are never static
             visibility: Visibility::Public,
             location: constructor.location.clone(),
@@ -1458,7 +1458,7 @@ impl<'a> TypeInference<'a> {
             body: tast_body,
             generic_params: Vec::new(), // Would handle generics here
             constraints: Vec::new(),
-            is_async: false,                // Methods are typically not async
+            is_background: false,           // Methods are typically not async
             is_static,                      // Detected based on whether method uses 'this'
             visibility: Visibility::Public, // Would get from HIR
             location: method.location.clone(),
@@ -1627,6 +1627,29 @@ impl<'a> TypeInference<'a> {
             });
         }
 
+        // Type-check state invariant rules
+        let mut tast_rules = Vec::new();
+        for rule_expr in &state_block.rules {
+            let rule = self.infer_expression(rule_expr)?;
+
+            // Each rule must be a boolean expression
+            if rule.expr_type != ConcreteType::Boolean {
+                return Err(CompilerError::type_error(
+                    format!(
+                        "State rule must be a boolean expression, found {}",
+                        rule.expr_type
+                    ),
+                    Some(
+                        "State rules are invariants that must evaluate to true or false"
+                            .to_string(),
+                    ),
+                    Some(rule.location.clone()),
+                ));
+            }
+
+            tast_rules.push(rule);
+        }
+
         let scope = match state_block.scope {
             HirStateScope::App => TastStateScope::App,
             HirStateScope::Screen => TastStateScope::Screen,
@@ -1634,6 +1657,7 @@ impl<'a> TypeInference<'a> {
 
         Ok(TastStateBlock {
             declarations: tast_declarations,
+            rules: tast_rules,
             scope,
             location: state_block.location.clone(),
         })
@@ -2237,6 +2261,30 @@ impl<'a> TypeInference<'a> {
             ResolvedHirStatement::Continue { location } => Ok(TastStatement::Continue {
                 location: location.clone(),
             }),
+
+            ResolvedHirStatement::Require {
+                condition,
+                location,
+            } => {
+                let tast_condition = self.infer_expression(condition)?;
+
+                // Verify the condition is boolean
+                if tast_condition.expr_type != ConcreteType::Boolean {
+                    return Err(CompilerError::type_error(
+                        format!(
+                            "require condition must be boolean, found {:?}",
+                            tast_condition.expr_type
+                        ),
+                        None,
+                        Some(location.clone()),
+                    ));
+                }
+
+                Ok(TastStatement::Require {
+                    condition: tast_condition,
+                    location: location.clone(),
+                })
+            }
         };
         self.recursion_depth -= 1;
         result
@@ -2388,7 +2436,7 @@ impl<'a> TypeInference<'a> {
                                     .map(|a| a.expr_type.clone())
                                     .collect(),
                                 return_type: Box::new(return_type.clone()),
-                                is_async: false,
+                                is_background: false,
                             },
                             location: location.clone(),
                         }),
@@ -2807,7 +2855,7 @@ impl<'a> TypeInference<'a> {
                                     .map(|a| a.expr_type.clone())
                                     .collect(),
                                 return_type: Box::new(instance_type.clone()),
-                                is_async: false,
+                                is_background: false,
                             },
                             location: location.clone(),
                         }),
@@ -2858,7 +2906,7 @@ impl<'a> TypeInference<'a> {
                             expr_type: ConcreteType::Function {
                                 parameters: vec![tast_expression.expr_type.clone()],
                                 return_type: Box::new(target_concrete_type.clone()),
-                                is_async: false,
+                                is_background: false,
                             },
                             location: location.clone(),
                         }),
@@ -4532,7 +4580,7 @@ impl BuiltinTypes {
             ConcreteType::Function {
                 parameters: vec![ConcreteType::Integer, ConcreteType::Integer],
                 return_type: Box::new(ConcreteType::String),
-                is_async: false,
+                is_background: false,
             },
         );
 
@@ -4546,7 +4594,7 @@ impl BuiltinTypes {
                     bounds: vec![],
                 }],
                 return_type: Box::new(ConcreteType::Integer),
-                is_async: false,
+                is_background: false,
             },
         );
 
@@ -4581,6 +4629,7 @@ impl StatementLocation for ResolvedHirStatement {
             ResolvedHirStatement::Continue { location } => location,
             ResolvedHirStatement::Print { location, .. } => location,
             ResolvedHirStatement::LaterAssignment { location, .. } => location,
+            ResolvedHirStatement::Require { location, .. } => location,
         }
     }
 }

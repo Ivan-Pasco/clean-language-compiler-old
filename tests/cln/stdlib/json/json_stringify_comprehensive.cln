@@ -41,7 +41,7 @@ functions:
 		string result = json.dataToText(data)
 		printl(result)
 
-start()
+start:
 	testEmptyArray()
 	testEmptyObject()
 	testBooleans()

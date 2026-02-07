@@ -55,7 +55,7 @@ class Config
 		boolean isDebug()
 			return debug
 
-start()
+start:
 	// Test 1: Person constructor
 	Person alice = Person("Alice", 30)
 	print("Person: " + alice.describe())

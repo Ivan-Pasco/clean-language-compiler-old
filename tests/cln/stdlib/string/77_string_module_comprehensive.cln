@@ -1,7 +1,7 @@
 // Test 77: Comprehensive String Module Operations
 // Tests all string functions: length, concat, contains, split, case operations, trim, replace, etc.
 
-start()
+start:
 	// Basic string operations
 	string text = "  Hello, World!  "
 	integer len = string.size(text)

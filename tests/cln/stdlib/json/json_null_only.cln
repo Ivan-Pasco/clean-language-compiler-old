@@ -6,6 +6,6 @@ functions:
 		integer data = json.textToData("null")
 		print("Parsed null") +
 
-start()
+start:
 	testParseNull()
 	print("Test completed") +

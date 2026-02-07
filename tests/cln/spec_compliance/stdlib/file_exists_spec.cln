@@ -1,7 +1,7 @@
 // Spec Section: 7 - Standard Library
 // Tests: file.exists() - check if file exists
 
-start()
+start:
 	// Test 1: Check non-existent file
 	boolean exists1 = file.exists("nonexistent_file.txt")
 	if not exists1

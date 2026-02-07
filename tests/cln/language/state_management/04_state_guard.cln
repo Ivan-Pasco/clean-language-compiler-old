@@ -12,7 +12,7 @@ functions:
 	void decrement()
 		count = count - 1
 
-start()
+start:
 	print("Initial: " + count.toString())
 	increment()
 	increment()

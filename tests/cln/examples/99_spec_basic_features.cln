@@ -13,7 +13,7 @@ functions:
 	void showMessage(string msg)
 		print("[MSG] " + msg)
 
-start()
+start:
 	print("=== Clean Language Basic Specification Test ===")
 
 	// 1. Basic types

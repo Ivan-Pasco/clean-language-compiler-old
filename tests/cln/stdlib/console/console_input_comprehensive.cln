@@ -2,7 +2,7 @@
 // Tests input.integer(), input.number(), input.yesNo() according to Clean Language Specification
 
 functions:
-	void start()
+start:
 		print("Console input functionality test")
 
 		// Test integer input

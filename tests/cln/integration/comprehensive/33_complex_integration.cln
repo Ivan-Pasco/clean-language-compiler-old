@@ -94,7 +94,7 @@ functions:
 		print("Error processing shapes - using default handling")
 		print("Continuing with available shapes...")
 
-start()
+start:
 	print("Complex Integration Test - Clean Language Features")
 	print("================================================")
 

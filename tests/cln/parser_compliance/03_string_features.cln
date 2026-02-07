@@ -1,7 +1,7 @@
 // Parser Compliance Test - String Features
 // This test verifies string literals, escaping, and interpolation
 
-start()
+start:
 	// Basic string literals
 	string simple = "hello world"
 	string empty = ""

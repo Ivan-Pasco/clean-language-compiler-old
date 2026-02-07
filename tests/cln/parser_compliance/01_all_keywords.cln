@@ -1,7 +1,7 @@
 // Parser Compliance Test - All Keywords
 // This test verifies that all Clean Language keywords are properly recognized
 
-start()
+start:
 	// Variable declarations with all core types
 	integer count = 0
 	number value = 3.14

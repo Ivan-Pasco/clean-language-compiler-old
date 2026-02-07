@@ -1,7 +1,7 @@
 // Spec Section: 3.1 - Number Precision Modifiers
 // Tests: number:32 (single precision) and number:64 (double precision)
 
-start()
+start:
 	// Test 1: Standard 64-bit number
 	number standard = 3.141592653589793
 	print("Standard number: " + standard.toString())

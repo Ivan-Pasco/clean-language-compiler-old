@@ -1032,6 +1032,10 @@ impl MirCodeGenerator<'_> {
                 // Jump means this branch exits to a continuation - NOT a direct return
                 false
             }
+            MirTerminator::Trap => {
+                // Trap terminates execution - counts as "directly returns"
+                true
+            }
         }
     }
 
@@ -1141,8 +1145,8 @@ impl MirCodeGenerator<'_> {
                     to_visit.push(*true_block);
                     to_visit.push(*false_block);
                 }
-                MirTerminator::Return { .. } | MirTerminator::Unreachable => {
-                    // Dead end
+                MirTerminator::Return { .. } | MirTerminator::Unreachable | MirTerminator::Trap => {
+                    // Dead end (Return, Unreachable, or Trap)
                 }
             }
         }
@@ -1201,7 +1205,7 @@ impl MirCodeGenerator<'_> {
                 self.collect_jump_targets(function, *true_block, visited, targets);
                 self.collect_jump_targets(function, *false_block, visited, targets);
             }
-            MirTerminator::Return { .. } | MirTerminator::Unreachable => {
+            MirTerminator::Return { .. } | MirTerminator::Unreachable | MirTerminator::Trap => {
                 // Dead end - no continuation from here
             }
         }
@@ -1223,7 +1227,9 @@ impl MirCodeGenerator<'_> {
                     false_block,
                     ..
                 } => vec![*true_block, *false_block],
-                MirTerminator::Return { .. } | MirTerminator::Unreachable => vec![],
+                MirTerminator::Return { .. } | MirTerminator::Unreachable | MirTerminator::Trap => {
+                    vec![]
+                }
             };
             successors.insert(*id, succs);
         }
@@ -1328,7 +1334,7 @@ impl MirCodeGenerator<'_> {
         };
 
         let result = match &block.terminator {
-            MirTerminator::Return { .. } | MirTerminator::Unreachable => true,
+            MirTerminator::Return { .. } | MirTerminator::Unreachable | MirTerminator::Trap => true,
             MirTerminator::Branch {
                 true_block,
                 false_block,
@@ -1425,7 +1431,9 @@ impl MirCodeGenerator<'_> {
                     self.path_reaches_block(function, *true_block, target_block, visited)
                         || self.path_reaches_block(function, *false_block, target_block, visited)
                 }
-                MirTerminator::Return { .. } | MirTerminator::Unreachable => false,
+                MirTerminator::Return { .. } | MirTerminator::Unreachable | MirTerminator::Trap => {
+                    false
+                }
             }
         } else {
             false
@@ -1632,6 +1640,11 @@ impl MirCodeGenerator<'_> {
                 // CRITICAL FIX: Skip adding Unreachable - see comment in generate_structured_blocks
                 // MirTerminator::Unreachable is a placeholder that should not generate WASM Unreachable
                 // for void functions ending naturally.
+            }
+
+            MirTerminator::Trap => {
+                // Contract violation trap - ALWAYS generates WASM unreachable instruction
+                self.current_instructions.push(Instruction::Unreachable);
             }
         }
 
@@ -1927,6 +1940,11 @@ impl MirCodeGenerator<'_> {
                 // For void functions, this is valid - no Unreachable needed.
                 //
                 // Skip adding Unreachable - let function end naturally with End instruction
+            }
+
+            MirTerminator::Trap => {
+                // Contract violation trap - ALWAYS generates WASM unreachable instruction
+                self.current_instructions.push(Instruction::Unreachable);
             }
         }
 
@@ -3543,6 +3561,11 @@ impl MirCodeGenerator<'_> {
             }
 
             MirTerminator::Unreachable => {
+                self.current_instructions.push(Instruction::Unreachable);
+            }
+
+            MirTerminator::Trap => {
+                // Contract violation trap - generates WASM unreachable
                 self.current_instructions.push(Instruction::Unreachable);
             }
         }

@@ -1,7 +1,7 @@
 // Spec Section: 7 - Standard Library
 // Tests: string.toUpperCase() and string.toLowerCase()
 
-start()
+start:
 	// Test 1: toUpperCase
 	string lower = "hello world"
 	string upper = string.toUpperCase(lower)

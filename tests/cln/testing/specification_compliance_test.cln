@@ -36,7 +36,7 @@ class MathUtils
 		integer add(integer a, integer b)
 			return a + b
 
-start()
+start:
 	// Test constructor calls
 	Point p = Point(3, 4)
 	ColoredPoint cp = ColoredPoint(1, 2, "red")

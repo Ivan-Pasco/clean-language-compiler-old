@@ -46,7 +46,7 @@ functions:
 		boolean zeroConverted = zeroValue.toBoolean()
 		print("Integer to boolean (0): " + zeroConverted.toString())
 
-start()
+start:
 	print("Clean Language Method-Style Syntax Test")
 	print("======================================")
 	testStringMethods()

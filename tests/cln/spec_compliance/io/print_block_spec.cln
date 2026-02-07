@@ -2,7 +2,7 @@
 // Tests: print with apply block
 // Requirement: print: block outputs multiple lines
 
-start()
+start:
 	// Test case 1: Basic print block
 	print:
 		"First line"

@@ -36,7 +36,7 @@ class Cat is Animal
 		string describe()
 			return "Cat: " + name
 
-start()
+start:
 	// Test 1: Base class instance
 	Animal animal = Animal("Generic")
 	string sound1 = animal.speak()

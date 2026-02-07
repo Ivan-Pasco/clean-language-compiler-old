@@ -9,7 +9,7 @@ functions:
 	string task3()
 		return "Task 3 complete"
 
-start()
+start:
 	string result1 = task1()
 	string result2 = task2()
 	string result3 = task3()

@@ -31,7 +31,7 @@ functions:
 		)
 		return result
 
-	void start()
+start:
 		print("Testing multiline expressions edge cases")
 
 		// Test complex arithmetic

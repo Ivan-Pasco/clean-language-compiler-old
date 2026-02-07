@@ -1,7 +1,7 @@
 // Spec Section: 7 - Standard Library
 // Tests: file.read() - read entire file content
 
-start()
+start:
 	// Test 1: Read existing file
 	if file.exists("test_data.txt")
 		string content = file.read("test_data.txt")

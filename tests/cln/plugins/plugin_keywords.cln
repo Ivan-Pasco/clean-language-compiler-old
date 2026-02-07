@@ -2,7 +2,7 @@
 // Requires frame.data plugin to be loaded
 // NOTE: Field constraints (: pk, auto) require plugin update - using simple fields for now
 
-import:
+plugins:
 	frame.data
 
 // Plugin keyword "data" followed by identifier (no colon)
@@ -21,5 +21,5 @@ functions:
 	void printUsers()
 		print("Users loaded")
 
-start()
+start:
 	printUsers()

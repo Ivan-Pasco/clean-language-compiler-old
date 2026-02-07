@@ -116,7 +116,7 @@ functions:
 		print("1. " + item1)
 		print("2. " + item2)
 		print("3. " + item3)
-start()
+start:
 	print("Console Input Comprehensive Test")
 	print("===============================")
 	testBasicTextInput()

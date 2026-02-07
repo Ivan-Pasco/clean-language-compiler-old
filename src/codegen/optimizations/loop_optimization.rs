@@ -126,7 +126,7 @@ impl LoopOptimizer {
                         params: function.params.clone(),
                         return_type: function.return_type.clone(),
                         body: statements.clone(),
-                        is_async: function.is_async,
+                        is_background: function.is_background,
                     };
                     let nested_results = self.optimize_loops_in_function(&mut nested_function)?;
                     *statements = nested_function.body;

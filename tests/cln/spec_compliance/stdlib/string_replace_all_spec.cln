@@ -2,7 +2,7 @@
 // Tests: String replace all occurrences
 // Requirement: replaceAll function
 
-start()
+start:
 	// Test case 1: Replace all occurrences
 	string text = "foo bar foo baz foo"
 	string replaced = text.replaceAll("foo", "qux")

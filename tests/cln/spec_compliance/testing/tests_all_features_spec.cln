@@ -36,7 +36,7 @@ tests:
 	"greater than": 10 > 5 = true
 	"less than": 3 < 7 = true
 
-start()
+start:
 	print("Comprehensive Feature Integration Test")
 	print("======================================")
 

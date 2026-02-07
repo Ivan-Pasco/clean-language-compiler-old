@@ -185,6 +185,8 @@ pub enum HirStateScope {
 pub struct HirStateBlock {
     pub declarations: Vec<HirStateDeclaration>,
     pub computed: Vec<HirComputedDeclaration>,
+    /// State invariants checked at operation boundaries
+    pub rules: Vec<HirExpression>,
     pub scope: HirStateScope,
     pub location: SourceLocation,
 }
@@ -302,6 +304,13 @@ pub enum HirStatement {
     LaterAssignment {
         variable: String,
         expression: HirExpression,
+        location: SourceLocation,
+    },
+
+    /// Require statement - contract precondition that must be true
+    /// Traps at runtime if condition is false
+    Require {
+        condition: HirExpression,
         location: SourceLocation,
     },
 }

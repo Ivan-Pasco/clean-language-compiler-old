@@ -40,16 +40,16 @@ functions:
 		else
 			return "FAIL: Nested field returned '" + countValue + "' instead of '4'"
 
-start()
+start:
 	print("=== JSON Field Access Bug Test ===") +
 	print("") +
 
 	print("Test 1: Simple object parsing") +
-	print(testSimpleJsonParsing() +)
+	print(testSimpleJsonParsing()) +
 	print("") +
 
 	print("Test 2: Nested object parsing") +
-	print(testNestedJsonParsing() +)
+	print(testNestedJsonParsing()) +
 	print("") +
 
 	print("=== Expected Results ===") +

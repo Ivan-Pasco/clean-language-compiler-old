@@ -13,5 +13,5 @@ functions:
 		integer result1 = safeFunction() onError 0
 		integer result2 = riskyFunction() onError -1
 
-start()
+start:
 	testOnError()

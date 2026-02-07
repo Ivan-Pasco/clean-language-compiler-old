@@ -46,7 +46,7 @@ class Counter
 		integer getCount()
 			return count
 
-start()
+start:
 	// Test 1: Create class with multiple fields
 	SimpleClass obj = SimpleClass(42, "Test", true)
 	print("Initial value: " + obj.getValue().toString())

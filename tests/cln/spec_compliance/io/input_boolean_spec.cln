@@ -2,7 +2,7 @@
 // Tests: input.yesNo() function for boolean input
 // Requirement: Yes/No input with boolean result
 
-start()
+start:
 	// Test case 1: Basic yes/no input
 	boolean confirmed = input.yesNo("Continue? ")
 	print("Confirmed: " + confirmed.toString())

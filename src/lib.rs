@@ -881,6 +881,7 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
         let mut all_imports = Vec::new();
         let mut all_tests = Vec::new();
         let mut all_externals = Vec::new();
+        let mut merged_state: Option<crate::hir::HirStateBlock> = None;
         let mut root_location = None;
 
         // Process modules in compilation order (dependencies first)
@@ -897,9 +898,10 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
                         all_classes.push(class.clone());
                     }
 
-                    // Only the entry module's start function is used
+                    // Only the entry module's start function and state block are used
                     if module.is_entry {
                         start_function = hir.start_function.clone();
+                        merged_state = hir.state.clone();
                         root_location = Some(hir.location.clone());
                     }
 
@@ -941,7 +943,7 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
             start_function,
             imports: all_imports,
             tests: all_tests,
-            state: None, // Multi-file compilation doesn't merge state blocks yet
+            state: merged_state,
             watch_blocks: Vec::new(),
             externals: all_externals,
             location,
@@ -1216,7 +1218,7 @@ mod integration_tests {
 
     #[test]
     fn test_basic_integration() {
-        let source = r#"start()
+        let source = r#"start:
 	integer x = 42
 	print(x)
 "#;
@@ -1246,7 +1248,7 @@ mod integration_tests {
 	integer add(integer a, integer b)
 		return a + b
 
-start()
+start:
 	integer result = add(5, 3)
 	print(result)
 "#;
@@ -1269,7 +1271,7 @@ start()
 
     #[test]
     fn test_type_checking_integration() {
-        let source = r#"start()
+        let source = r#"start:
 	integer x = 42
 	string y = "hello"
 	print(x)
@@ -1295,7 +1297,7 @@ start()
     #[test]
     fn test_error_propagation() {
         // Test that calling an undefined function produces an error
-        let source = r#"start()
+        let source = r#"start:
 	integer x = undefined_function()
 	print(x)
 "#;
@@ -1330,7 +1332,7 @@ start()
         let test_cases = vec![
             (
                 "Math Functions",
-                r#"start()
+                r#"start:
 	integer x = -5
 	integer result = abs(x)
 	print(result)
@@ -1338,7 +1340,7 @@ start()
             ),
             (
                 "String Functions",
-                r#"start()
+                r#"start:
 	string text = "hello"
 	integer length = text.length()
 	print(length)
@@ -1346,7 +1348,7 @@ start()
             ),
             (
                 "List Functions",
-                r#"start()
+                r#"start:
 	list<integer> lst = [1, 2, 3, 4, 5]
 	integer length = lst.length()
 	print(length)

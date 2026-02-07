@@ -1,0 +1,18 @@
+// Test: State rules (invariants) checking at operation boundaries
+// Rules are checked after start: completes
+// NOTE: This test requires state block to be properly registered (pending fix)
+
+state:
+	integer count = 0
+	integer maxCount = 10
+
+	rules:
+		count >= 0
+		count <= maxCount
+
+start:
+	count = 5
+	print("Count set to 5")
+	print("Count: " + count.toString())
+	// Rules will be checked here, after start: completes
+	// Both rules pass: 5 >= 0 and 5 <= 10

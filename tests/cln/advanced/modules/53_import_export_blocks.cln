@@ -23,7 +23,7 @@ private:
 	helperFunction
 	internalProcessor
 
-start()
+start:
 
 	// Test using public functions
 	integer sum = calculateSum(10, 20)

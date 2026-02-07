@@ -21,11 +21,11 @@ functions:
 		// List operations
 		list<integer> numbers = [1, 2, 3, 4, 5]
 		integer sum = calculateSum(numbers[0], numbers[1], numbers[2])
-		print("Sum of first three: " + sum.toString() +)
+		print("Sum of first three: " + sum.toString()) +
 
 		// Math operations with integer
 		integer doubled = 21 * 2
-		print("21 * 2 = " + doubled.toString() +)
+		print("21 * 2 = " + doubled.toString()) +
 
 	// Private helper functions (marked private below)
 	string internalHelper(string data)
@@ -39,6 +39,6 @@ private:
 	internalHelper
 	secretCalculation
 
-start()
+start:
 	demonstrateModules()
 	print("Import/export test completed successfully") +

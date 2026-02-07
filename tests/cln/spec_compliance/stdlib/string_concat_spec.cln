@@ -1,7 +1,7 @@
 // Spec Section: 14.2.2 - String Concatenation
 // Tests: String concatenation using + operator
 
-start()
+start:
 	// Test 1: Basic string concatenation
 	string a = "Hello"
 	string b = "World"

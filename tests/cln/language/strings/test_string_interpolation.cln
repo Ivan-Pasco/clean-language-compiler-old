@@ -2,7 +2,7 @@
 // Spec Section: 4.1 - String Concatenation
 // Tests: String interpolation with {expression} syntax
 functions:
-	void start()
+start:
 		// Simple interpolation
 		string name = "World"
 		string greeting = "Hello, {name}!"

@@ -379,7 +379,7 @@ impl NameResolver {
             return_type: function.return_type,
             body: resolved_body,
             is_start: function.is_start,
-            is_async: false, // Async detection handled by runtime analysis
+            is_background: false, // Async detection handled by runtime analysis
             location: function.location,
         })
     }
@@ -856,8 +856,16 @@ impl NameResolver {
             });
         }
 
+        // Resolve state invariant rules
+        let mut resolved_rules = Vec::new();
+        for rule_expr in &state_block.rules {
+            let resolved_rule = self.resolve_expression(rule_expr)?;
+            resolved_rules.push(resolved_rule);
+        }
+
         Ok(ResolvedHirStateBlock {
             declarations: resolved_declarations,
+            rules: resolved_rules,
             scope: state_block.scope,
             location: state_block.location.clone(),
         })
@@ -1086,6 +1094,17 @@ impl NameResolver {
             HirStatement::Continue { location } => Ok(ResolvedHirStatement::Continue {
                 location: location.clone(),
             }),
+
+            HirStatement::Require {
+                condition,
+                location,
+            } => {
+                let resolved_condition = self.resolve_expression(condition)?;
+                Ok(ResolvedHirStatement::Require {
+                    condition: resolved_condition,
+                    location: location.clone(),
+                })
+            }
         }
     }
 

@@ -1,7 +1,7 @@
 // Spec Section: 2.3 - Identifiers
 // Tests: Valid identifier naming conventions
 
-start()
+start:
 	// Test 1: Simple single letter identifier
 	integer x = 1
 	print("Single letter x = " + x.toString())

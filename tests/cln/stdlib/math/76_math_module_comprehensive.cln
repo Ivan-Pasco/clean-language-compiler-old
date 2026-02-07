@@ -1,7 +1,7 @@
 // Test 76: Comprehensive Math Module Operations
 // Tests all math functions: sqrt, abs, max, min, trig functions, log functions, constants
 
-start()
+start:
 	// Basic math operations
 	number value = 16.0
 	number sqrtResult = math.sqrt(value)

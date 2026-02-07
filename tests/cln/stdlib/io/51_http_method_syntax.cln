@@ -1,7 +1,7 @@
 // Comprehensive QA Test for HTTP Method Syntax
 // Tests http.method() calls for HTTP operations
 
-start()
+start:
 	// Test http.get() method
 	string getResponse = http.get("https://api.example.com/users")
 	print("GET response length: ")

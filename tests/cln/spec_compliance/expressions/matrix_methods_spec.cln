@@ -1,7 +1,7 @@
 // Spec Section: 4.4 - Matrix Operations
 // Tests: Matrix methods (transpose, inverse, determinant)
 
-start()
+start:
 	// Test 1: Create a 2x2 matrix
 	matrix<number> m1 = [[1.0, 2.0], [3.0, 4.0]]
 	print("Created 2x2 matrix")

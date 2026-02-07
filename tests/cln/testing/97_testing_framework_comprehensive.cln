@@ -99,7 +99,7 @@ tests:
 	"less equal": (3 <= 5) = true
 
 // Demonstration of test execution context
-start()
+start:
 	print("Testing Framework Comprehensive Test")
 	print("====================================")
 	print("This test demonstrates the built-in testing syntax:")

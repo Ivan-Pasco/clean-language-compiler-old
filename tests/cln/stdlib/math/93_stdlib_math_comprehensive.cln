@@ -128,7 +128,7 @@ functions:
 		number time = 2.0
 		number growth = principal * math.exp(rate * time)
 		print("Exponential growth: " + growth.toString())
-start()
+start:
 	print("Standard Library Math Module Test")
 	print("=================================")
 	testCoreMathOperations()

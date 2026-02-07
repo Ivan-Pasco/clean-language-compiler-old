@@ -1,7 +1,7 @@
 // Spec Section: 2.4 - Numeric Literals
 // Tests: Hexadecimal, binary, and octal integer literals
 
-start()
+start:
 	// Test 1: Hexadecimal literals
 	integer hex1 = 0xff
 	print("Hex 0xff: " + hex1.toString())

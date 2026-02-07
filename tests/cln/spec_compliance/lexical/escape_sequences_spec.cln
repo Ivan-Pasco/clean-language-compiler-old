@@ -1,7 +1,7 @@
 // Spec Section: 2.5 - Escape Sequences
 // Tests: String escape sequences (\n, \t, \\, \", etc.)
 
-start()
+start:
 	// Test 1: Newline escape sequence
 	string withNewline = "Line 1\nLine 2"
 	print("Newline test:")

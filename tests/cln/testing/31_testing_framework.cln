@@ -73,7 +73,7 @@ tests:
 	[1, 2, 3, 4, 5][2] = 3
 	["a", "b", "c"].contains("b") = true
 
-start()
+start:
 	print("Testing framework demonstration")
 	print("Run with --test flag to execute all tests")
 

@@ -2,7 +2,7 @@
 // The ! operator asserts that a value is not null and returns it
 // If the value is null, it will trap at runtime
 
-start()
+start:
 	// Test 1: Required on non-null value (should pass)
 	integer value1 = 42
 	integer result1 = value1!

@@ -1,7 +1,7 @@
 // Spec Section: 3.4 - Type Conversions
 // Tests: Type conversion methods (.toString)
 
-start()
+start:
 	// Test 1: Integer to String conversion
 	integer num = 123
 	string strFromInt = num.toString()

@@ -5,5 +5,5 @@
 // Dependencies: none
 // Expected: PASS
 
-start()
+start:
 	print("Hello, World!")

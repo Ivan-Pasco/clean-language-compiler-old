@@ -2,7 +2,7 @@
 // Tests: Variable declaration without initialization
 // Requirement: Variables can be declared without initial value
 
-start()
+start:
 	// Test case 1: Declare then assign integer
 	integer x
 	x = 10

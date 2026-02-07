@@ -68,7 +68,7 @@ pub struct FunctionMetadata {
     pub description: String,
     pub category: FunctionCategory,
     pub is_builtin: bool,
-    pub is_async: bool,
+    pub is_background: bool,
     pub memory_requirements: MemoryRequirements,
 }
 
@@ -497,7 +497,7 @@ mod tests {
                 description: "Test function".to_string(),
                 category: FunctionCategory::Test,
                 is_builtin: true,
-                is_async: false,
+                is_background: false,
                 memory_requirements: MemoryRequirements::default(),
             }]
         }

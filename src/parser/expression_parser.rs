@@ -3331,7 +3331,7 @@ mod tests {
     #[test]
     fn test_null_full_program() {
         // Test parsing a full program with null
-        let program_src = r#"start()
+        let program_src = r#"start:
 	print(null)"#;
 
         let result = CleanParser::parse_program(program_src);
@@ -3428,7 +3428,7 @@ mod tests {
     #[test]
     fn test_null_compile_pipeline() {
         // Test the full compilation pipeline with null
-        let source = r#"start()
+        let source = r#"start:
 	print(null)"#;
 
         // Parse

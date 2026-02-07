@@ -9,6 +9,6 @@ functions:
 		else
 			return n * factorial(n - 1)
 
-start()
+start:
 	integer fact5 = factorial(5)
 	print(fact5)

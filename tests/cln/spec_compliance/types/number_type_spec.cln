@@ -1,7 +1,7 @@
 // Spec Section: 3.1 - Core Types (number)
 // Tests: number type - 64-bit floating-point decimals
 
-start()
+start:
 	// Test 1: Number declaration and initialization
 	number zero = 0.0
 	number pi = 3.14159

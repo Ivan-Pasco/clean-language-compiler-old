@@ -1,7 +1,7 @@
 // Spec Section: 2.2 - Literals (String Literals)
 // Tests: Basic strings and string interpolation
 
-start()
+start:
 	// Test 1: Basic string literals
 	string hello = "Hello, World!"
 	string empty = ""

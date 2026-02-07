@@ -112,7 +112,7 @@ functions:
 		print("Hex == Binary: " + eq2.toString())
 		print("Binary == Octal: " + eq3.toString())
 		print("Octal == Decimal: " + eq4.toString())
-start()
+start:
 	print("Numeric Literals Comprehensive Test")
 	print("===================================")
 	testDecimalLiterals()

@@ -1,7 +1,7 @@
 // Spec Section: 9.3 - Nested Loops
 // Tests: Nested iterate loops
 
-start()
+start:
 	// Test 1: Simple nested loop
 	print("Nested loop test:")
 	iterate i in 1 to 3

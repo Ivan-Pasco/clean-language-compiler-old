@@ -6,7 +6,7 @@ state:
 	number negFloat = -3.14
 	boolean disabled = false
 
-start()
+start:
 	print("Negative: " + negative.toString())
 	print("NegFloat: " + negFloat.toString())
 	print("Disabled: " + disabled.toString())

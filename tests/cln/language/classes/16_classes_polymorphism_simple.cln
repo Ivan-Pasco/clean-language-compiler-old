@@ -40,7 +40,7 @@ class Car is Vehicle
 			else
 				return 100
 
-start()
+start:
 	print("Polymorphism Test - Vehicle System")
 	print("=================================")
 

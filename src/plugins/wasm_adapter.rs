@@ -2426,14 +2426,12 @@ impl WasmPluginAdapter {
             return Ok(Vec::new());
         }
 
-        // If full program parsing fails, try extracting statements from start() or start: block
+        // If full program parsing fails, try extracting statements from start: block
         // Strip the start prefix and parse individual statements
-        let code_without_start = if generated_code.trim().starts_with("start()")
-            || generated_code.trim().starts_with("start:")
-        {
+        let code_without_start = if generated_code.trim().starts_with("start:") {
             generated_code
                 .lines()
-                .skip(1) // Skip "start()" or "start:" line
+                .skip(1) // Skip "start:" line
                 .filter(|line| !line.trim().is_empty()) // Skip empty lines
                 .map(|line| {
                     // Remove one level of indentation (tab or spaces)
@@ -2452,9 +2450,9 @@ impl WasmPluginAdapter {
         };
 
         // Wrap the statements in a minimal program structure to parse
-        // Use start() syntax which is valid Clean Language
+        // Use start: block syntax which is valid Clean Language
         let wrapper = format!(
-            "start()\n\t{}",
+            "start:\n\t{}",
             code_without_start.trim().replace('\n', "\n\t")
         );
         let program = crate::parser::CleanParser::parse_program(&wrapper).map_err(|e| {
@@ -2580,9 +2578,7 @@ impl WasmPluginAdapter {
         }
 
         // If full program parsing fails, try wrapping and parsing
-        let code_without_start = if generated_code.trim().starts_with("start()")
-            || generated_code.trim().starts_with("start:")
-        {
+        let code_without_start = if generated_code.trim().starts_with("start:") {
             generated_code
                 .lines()
                 .skip(1)
@@ -2603,7 +2599,7 @@ impl WasmPluginAdapter {
         };
 
         let wrapper = format!(
-            "start()\n\t{}",
+            "start:\n\t{}",
             code_without_start.trim().replace('\n', "\n\t")
         );
         let program = crate::parser::CleanParser::parse_program(&wrapper)

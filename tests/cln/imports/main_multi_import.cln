@@ -5,7 +5,7 @@ import:
 	utils
 	math_helpers
 
-start()
+start:
 	// Direct use from utils
 	integer sum = add(10, 5)
 	print(sum)

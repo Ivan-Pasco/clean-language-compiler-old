@@ -1,7 +1,7 @@
 // Nested while loop test
 // Tests while loops inside other while loops
 
-start()
+start:
 	integer i = 0
 	while i < 3
 		integer j = 0

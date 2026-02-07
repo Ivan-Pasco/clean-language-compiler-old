@@ -32,6 +32,6 @@ functions:
 	integer multiply(integer a, integer b)
 		return a * b
 
-start()
+start:
 	testMultilineExpressions()
 	print("Multi-line expressions test completed successfully")

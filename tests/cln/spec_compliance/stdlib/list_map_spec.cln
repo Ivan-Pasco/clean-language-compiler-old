@@ -10,7 +10,7 @@ functions:
 	integer tripleValue(integer x)
 		return x * 3
 
-start()
+start:
 	// Test case 1: Manual map implementation (until lambda support)
 	list<integer> nums = [1, 2, 3, 4, 5]
 	list<integer> doubled = []

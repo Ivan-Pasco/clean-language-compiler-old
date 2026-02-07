@@ -99,6 +99,10 @@ pub struct MirBuilder {
     /// State variables with their SymbolIds and types for global variable generation
     /// Maps variable name -> (SymbolId, MirType)
     state_variables: HashMap<String, (SymbolId, MirType)>,
+
+    /// State invariant rules to be checked at operation boundaries
+    /// These are evaluated at the end of start:, frame:, and handler functions
+    state_rules: Vec<TastExpression>,
 }
 
 /// Context for building a single function
@@ -195,6 +199,7 @@ impl MirBuilder {
             all_classes: Vec::new(),
             all_functions: Vec::new(),
             state_variables,
+            state_rules: Vec::new(),
         }
     }
 
@@ -207,6 +212,17 @@ impl MirBuilder {
 
         // Store all functions for default parameter lookups
         self.all_functions = tast.functions.clone();
+
+        // Store state rules for operation boundary checking (start:, frame:, handlers)
+        if let Some(ref state_block) = tast.state {
+            self.state_rules = state_block.rules.clone();
+            if !self.state_rules.is_empty() {
+                debug!(
+                    rule_count = self.state_rules.len(),
+                    "State rules registered for operation boundary checking"
+                );
+            }
+        }
 
         // Initialize program structure
         let mut mir_program = MirProgram {
@@ -669,6 +685,18 @@ impl MirBuilder {
         let has_non_void_return = !matches!(tast_function.return_type, ConcreteType::Undefined);
         self.build_function_body(&mut context, &tast_function.body, has_non_void_return)?;
 
+        // Inject state rules checking at operation boundaries (start:, frame:)
+        if (tast_function.name == "start" || tast_function.name == "frame")
+            && !self.state_rules.is_empty()
+        {
+            debug!(
+                function_name = %tast_function.name,
+                rule_count = self.state_rules.len(),
+                "Injecting state rules checking at operation boundary"
+            );
+            self.inject_rules_checking(&mut context)?;
+        }
+
         // Ensure function has proper termination
         self.ensure_function_termination(&mut context, &tast_function.return_type)?;
 
@@ -877,6 +905,7 @@ impl MirBuilder {
                     && self.block_effectively_returns_recursive(context, *false_block, visited)
             }
             MirTerminator::Unreachable | MirTerminator::Jump { .. } => false,
+            MirTerminator::Trap => true, // Trap terminates execution
         }
     }
 
@@ -2456,6 +2485,66 @@ impl MirBuilder {
                         location.clone(),
                     )]);
                 }
+            }
+
+            TastStatement::Require {
+                condition,
+                location,
+            } => {
+                // Generate code for require precondition
+                // require <condition> traps if condition is false
+
+                // Evaluate the condition
+                let condition_value = self.build_expression(context, condition)?;
+
+                // Reserve block IDs for trap and continue blocks
+                let base_block_id = context.function.next_block_id;
+                let trap_block_id = BasicBlockId(base_block_id);
+                let continue_block_id = BasicBlockId(base_block_id + 1);
+                context.function.next_block_id = base_block_id + 2;
+
+                // Pre-insert blocks to reserve their IDs
+                // Trap block: executes unreachable if condition is false
+                context.function.blocks.insert(
+                    trap_block_id,
+                    MirBasicBlock {
+                        id: trap_block_id,
+                        label: Some("require_trap".to_string()),
+                        instructions: Vec::new(),
+                        terminator: MirTerminator::Trap, // WASM unreachable trap for contract violation
+                        predecessors: HashSet::new(),
+                        successors: HashSet::new(),
+                        location: location.clone(),
+                    },
+                );
+
+                // Continue block: normal execution if condition is true
+                context.function.blocks.insert(
+                    continue_block_id,
+                    MirBasicBlock {
+                        id: continue_block_id,
+                        label: Some("require_continue".to_string()),
+                        instructions: Vec::new(),
+                        terminator: MirTerminator::Unreachable, // Will be replaced
+                        predecessors: HashSet::new(),
+                        successors: HashSet::new(),
+                        location: location.clone(),
+                    },
+                );
+
+                // Set terminator: branch based on condition
+                // If condition is true, continue; if false, trap
+                self.set_block_terminator(
+                    context,
+                    MirTerminator::Branch {
+                        condition: MirOperand::Value(condition_value),
+                        true_block: continue_block_id, // Condition true -> continue
+                        false_block: trap_block_id,    // Condition false -> trap
+                    },
+                );
+
+                // Switch to continue block for subsequent statements
+                self.current_block = Some(continue_block_id);
             }
 
             _ => {
@@ -6366,7 +6455,7 @@ impl MirBuilder {
             } => ConcreteType::Function {
                 parameters: parameters.iter().map(Self::mir_type_to_concrete).collect(),
                 return_type: Box::new(Self::mir_type_to_concrete(return_type)),
-                is_async: false,
+                is_background: false,
             },
             // For types that can't be precisely converted back, use safe defaults
             MirType::I8 | MirType::I16 | MirType::I64 => ConcreteType::Integer,
@@ -6605,6 +6694,75 @@ impl MirBuilder {
                 block.terminator = terminator;
             }
         }
+    }
+
+    /// Inject state rules checking at the end of operation boundary functions (start, frame)
+    /// Each rule must evaluate to true; if any is false, execution traps
+    fn inject_rules_checking(
+        &mut self,
+        context: &mut FunctionBuildContext,
+    ) -> Result<(), Vec<CompilerError>> {
+        // Clone rules to avoid borrow issues
+        let rules = self.state_rules.clone();
+
+        for (rule_idx, rule_expr) in rules.iter().enumerate() {
+            trace!(rule_index = rule_idx, "Building state rule check");
+
+            // Build the rule expression - evaluate it to get a boolean
+            let condition_value = self.build_expression(context, rule_expr)?;
+
+            // Reserve block IDs for trap and continue blocks
+            let base_block_id = context.function.next_block_id;
+            let trap_block_id = BasicBlockId(base_block_id);
+            let continue_block_id = BasicBlockId(base_block_id + 1);
+            context.function.next_block_id = base_block_id + 2;
+
+            // Trap block: executes unreachable if rule is false
+            context.function.blocks.insert(
+                trap_block_id,
+                MirBasicBlock {
+                    id: trap_block_id,
+                    label: Some(format!("rule_{}_trap", rule_idx)),
+                    instructions: Vec::new(),
+                    terminator: MirTerminator::Trap, // WASM unreachable trap for contract violation
+                    predecessors: HashSet::new(),
+                    successors: HashSet::new(),
+                    location: rule_expr.location.clone(),
+                },
+            );
+
+            // Continue block: normal execution if rule is true
+            context.function.blocks.insert(
+                continue_block_id,
+                MirBasicBlock {
+                    id: continue_block_id,
+                    label: Some(format!("rule_{}_continue", rule_idx)),
+                    instructions: Vec::new(),
+                    terminator: MirTerminator::Unreachable, // Will be replaced
+                    predecessors: HashSet::new(),
+                    successors: HashSet::new(),
+                    location: rule_expr.location.clone(),
+                },
+            );
+
+            // Set terminator: branch based on condition
+            // If condition is true, continue; if false, trap
+            self.set_block_terminator(
+                context,
+                MirTerminator::Branch {
+                    condition: MirOperand::Value(condition_value),
+                    true_block: continue_block_id, // Condition true -> continue
+                    false_block: trap_block_id,    // Condition false -> trap
+                },
+            );
+
+            // Switch to continue block for next rule or function termination
+            self.current_block = Some(continue_block_id);
+        }
+
+        trace!(rule_count = rules.len(), "State rules checking injected");
+
+        Ok(())
     }
 
     /// Ensure function has proper termination

@@ -1,7 +1,7 @@
 // Spec Section: 3.10 - Type Conversions
 // Tests: Extended type conversion methods (.toInteger, .toNumber, .toBoolean)
 
-start()
+start:
 	// Test 1: string.toInteger - string to integer conversion
 	string numStr = "42"
 	integer numVal = numStr.toInteger()

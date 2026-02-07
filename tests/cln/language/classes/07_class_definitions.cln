@@ -21,7 +21,7 @@ class Animal
 		integer getAge()
 			return age
 
-start()
+start:
 	Animal animal = Animal("Fluffy", 5)
 
 	print("Class definitions test successful!")

@@ -10,7 +10,7 @@ functions:
 	void displayNumber(integer num)
 		print("Number: " + num.toString())
 
-start()
+start:
 	// Function apply-blocks - TODO: Fix semantic analysis bug
 	// Currently disabled due to compiler bug where function apply-blocks
 	// are treated as multi-argument calls instead of multiple single calls

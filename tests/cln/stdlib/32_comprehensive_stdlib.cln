@@ -110,7 +110,7 @@ functions:
 			print("file.append() result: " + appendResult.toString())
 			boolean deleteResult = file.delete(filename)
 			print("file.delete() result: " + deleteResult.toString())
-start()
+start:
 	print("Comprehensive Standard Library Test")
 	print("====================================")
 	testMathOperations()

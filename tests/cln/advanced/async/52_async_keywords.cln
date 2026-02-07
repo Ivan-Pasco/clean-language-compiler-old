@@ -12,7 +12,7 @@ functions:
 		print("LOG: ")
 		print(message)
 
-start()
+start:
 
 	// Test start keyword for async execution
 	later result1 = start fetchData("https://api.example.com/data1")

@@ -1,7 +1,7 @@
 // Basic validator tests
 // Tests the validator stdlib module
 
-start()
+start:
 	// Test 1: Create a simple validator with field rules
 	integer rules = validator.create()
 	print("Created validator rules") +

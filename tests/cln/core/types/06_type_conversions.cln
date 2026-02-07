@@ -2,7 +2,7 @@
 // Spec Section: 5.2 - Print Statements
 // Tests: Basic type declarations and print output
 
-start()
+start:
 	integer x = 42
 	number y = 3.14
 	string text = "123"

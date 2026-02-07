@@ -5,7 +5,7 @@ class Animal
 		string getName()
 			return "Animal"
 
-start()
+start:
 	Animal a = Animal()
 	string name = a.getName()
 	print(name)

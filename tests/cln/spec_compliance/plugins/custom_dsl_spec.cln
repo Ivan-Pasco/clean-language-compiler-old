@@ -12,5 +12,5 @@ schema:
 		field userId: integer
 		field title: string
 
-start()
+start:
 	print("Custom DSL schema test completed")

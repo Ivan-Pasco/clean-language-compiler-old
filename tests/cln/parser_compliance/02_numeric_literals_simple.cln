@@ -1,7 +1,7 @@
 // Parser Compliance Test - Numeric Literals (Simplified)
 // This test verifies all numeric literal formats are properly parsed
 
-start()
+start:
 	// Test each major numeric format
 	integer decimal_pos = 42
 	print(decimal_pos)

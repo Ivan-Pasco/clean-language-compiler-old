@@ -1,2 +1,2 @@
-start()
+start:
 	print("Parser verification: Hello, World!")

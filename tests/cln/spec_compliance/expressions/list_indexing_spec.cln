@@ -1,7 +1,7 @@
 // Spec Section: 4.5 - Method Calls and Property Access
 // Tests: List indexing with bracket notation
 
-start()
+start:
 	// Test 1: Access first element (index 0)
 	list<integer> nums = [10, 20, 30, 40, 50]
 	integer first = nums[0]

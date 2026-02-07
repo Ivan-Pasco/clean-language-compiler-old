@@ -1,7 +1,7 @@
 // Spec Section: 5.4 - Comparison Operators
 // Tests: ==, !=, <, >, <=, >= operators
 
-start()
+start:
 	integer a = 10
 	integer b = 5
 	integer c = 10

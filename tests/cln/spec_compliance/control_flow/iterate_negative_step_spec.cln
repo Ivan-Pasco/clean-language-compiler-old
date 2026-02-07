@@ -2,7 +2,7 @@
 // Tests: Iterate with descending range
 // Requirement: iterate from high to low
 
-start()
+start:
 	// Test case 1: Simple countdown using while
 	print("Countdown simulation:")
 	integer count = 5

@@ -3,7 +3,7 @@
 // STATUS: This requires file.lines() implementation
 // Currently using file.read() as workaround
 
-start()
+start:
 	// Test case 1: Read file content
 	string content = file.read("test_data.txt")
 	print("File content: " + content)

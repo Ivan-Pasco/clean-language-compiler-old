@@ -1,5 +1,5 @@
 
-start()
+start:
 	integer x = 42
 	number y = 3.14
 	string name = "Clean"
