@@ -1,0 +1,24 @@
+// Test: combined spec, intent, and require in functions
+
+functions:
+	number calculateDiscount(number price, string tier)
+		spec "pricing/discount-rules"
+		intent "Apply tier-based percentage discount to price"
+		require price > 0.0
+		if tier == "gold"
+			return price * 0.20
+		if tier == "silver"
+			return price * 0.10
+		return price * 0.05
+
+	string greet(string name)
+		spec "ui/greeting"
+		intent "Create a personalized greeting message"
+		require name != ""
+		return "Hello, " + name + "!"
+
+start:
+	number discount = calculateDiscount(100.0, "gold")
+	print(discount.toString())
+	string message = greet("World")
+	print(message)

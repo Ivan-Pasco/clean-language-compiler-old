@@ -87,6 +87,7 @@ impl TokenParser {
         let screens = Vec::new(); // Always empty - screens handled as framework blocks by plugins
         let mut state: Option<crate::ast::StateBlock> = None;
         let mut externals: Vec<crate::ast::ExternalFunction> = Vec::new();
+        let mut source_block: Option<Statement> = None;
 
         while !self.is_at_end() {
             self.skip_whitespace();
@@ -166,6 +167,16 @@ impl TokenParser {
                                 "Parsed state block"
                             );
                             state = Some(state_block);
+                        }
+                        Err(e) => self.errors.push(e),
+                    }
+                }
+                TokenKind::Source => {
+                    // Parse source: block (AI metadata)
+                    debug!("Parsing source: block");
+                    match self.parse_source_block() {
+                        Ok(sb) => {
+                            source_block = Some(sb);
                         }
                         Err(e) => self.errors.push(e),
                     }
@@ -303,6 +314,7 @@ impl TokenParser {
             watch_blocks: Vec::new(),
             screen_blocks: Vec::new(),
             externals,
+            source_block,
             location: None,
         })
     }
@@ -2517,6 +2529,8 @@ impl TokenParser {
             }
             TokenKind::Error => self.parse_error_statement(),
             TokenKind::Require => self.parse_require(),
+            TokenKind::Spec => self.parse_spec(),
+            TokenKind::Intent => self.parse_intent(),
             TokenKind::Constant => self.parse_constant_apply_block(),
             // Allow Test keyword to be used as a class/type name
             TokenKind::Test => {
@@ -3026,6 +3040,159 @@ impl TokenParser {
         Ok(Statement::Require {
             condition,
             location: Some(require_token.location),
+        })
+    }
+
+    /// Parse spec statement: spec "path/to/spec"
+    /// AI metadata that links a function to its specification document
+    fn parse_spec(&mut self) -> Result<Statement, CompilerError> {
+        let spec_token = self.expect(&TokenKind::Spec)?;
+        self.skip_whitespace();
+
+        if let TokenKind::StringLiteral(path) = self.current_kind() {
+            let path = path.clone();
+            self.bump();
+            return Ok(Statement::Spec {
+                path,
+                location: Some(spec_token.location),
+            });
+        }
+
+        Err(CompilerError::Syntax {
+            context: Box::new(crate::error::ErrorContext {
+                message: "Expected string literal after 'spec'".to_string(),
+                location: Some(self.current().location.clone()),
+                error_code: Some("SYN100".to_string()),
+                severity: crate::error::ErrorSeverity::Error,
+                ..Default::default()
+            }),
+        })
+    }
+
+    /// Parse intent statement: intent "description of purpose"
+    /// AI metadata that describes a function's purpose in natural language
+    fn parse_intent(&mut self) -> Result<Statement, CompilerError> {
+        let intent_token = self.expect(&TokenKind::Intent)?;
+        self.skip_whitespace();
+
+        if let TokenKind::StringLiteral(desc) = self.current_kind() {
+            let description = desc.clone();
+            self.bump();
+            return Ok(Statement::Intent {
+                description,
+                location: Some(intent_token.location),
+            });
+        }
+
+        Err(CompilerError::Syntax {
+            context: Box::new(crate::error::ErrorContext {
+                message: "Expected string literal after 'intent'".to_string(),
+                location: Some(self.current().location.clone()),
+                error_code: Some("SYN101".to_string()),
+                severity: crate::error::ErrorSeverity::Error,
+                ..Default::default()
+            }),
+        })
+    }
+
+    /// Parse a source: top-level block with spec and version fields
+    /// ```text
+    /// source:
+    ///     spec "pricing/discount-rules"
+    ///     version "abc123"
+    /// ```
+    fn parse_source_block(&mut self) -> Result<Statement, CompilerError> {
+        let source_token = self.expect(&TokenKind::Source)?;
+        self.skip_whitespace();
+
+        // Expect colon after "source"
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        let mut spec_path = String::new();
+        let mut version: Option<String> = None;
+
+        // Skip newline if present
+        if matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump();
+        }
+
+        // Get the indent level
+        let block_level = if let TokenKind::Indent(level) = self.current_kind() {
+            *level
+        } else {
+            1
+        };
+
+        // Consume the initial indent
+        if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            self.bump();
+        }
+
+        // Parse key-value pairs inside the block
+        loop {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for dedent (end of block)
+            if let TokenKind::Dedent(level) = self.current_kind() {
+                if *level < block_level {
+                    self.bump();
+                    break;
+                }
+            }
+
+            // Check for top-level keywords that end the source block
+            if matches!(
+                self.current_kind(),
+                TokenKind::Functions
+                    | TokenKind::Class
+                    | TokenKind::Start
+                    | TokenKind::Tests
+                    | TokenKind::Import
+                    | TokenKind::State
+                    | TokenKind::Plugins
+            ) {
+                break;
+            }
+
+            match self.current_kind() {
+                TokenKind::Spec => {
+                    self.bump(); // consume "spec"
+                    self.skip_whitespace();
+                    if let TokenKind::StringLiteral(path) = self.current_kind() {
+                        spec_path = path.clone();
+                        self.bump();
+                    }
+                }
+                TokenKind::Identifier(name) if name == "version" => {
+                    self.bump(); // consume "version"
+                    self.skip_whitespace();
+                    if let TokenKind::StringLiteral(ver) = self.current_kind() {
+                        version = Some(ver.clone());
+                        self.bump();
+                    }
+                }
+                TokenKind::Indent(_) => {
+                    self.bump();
+                }
+                TokenKind::Newline => {
+                    self.bump();
+                }
+                _ => {
+                    // Skip unknown tokens inside source block
+                    self.bump();
+                }
+            }
+        }
+
+        Ok(Statement::SourceBlock {
+            spec_path,
+            version,
+            location: Some(source_token.location),
         })
     }
 

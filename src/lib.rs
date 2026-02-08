@@ -205,6 +205,177 @@ pub fn compile_with_opt_level(
     compile_with_plugins_and_opt_level(source, file_path, &registry, opt_level)
 }
 
+/// Parses Clean Language source code and returns the AST (stages 1-2 only).
+///
+/// Runs lexing and parsing only, without any semantic analysis or type checking.
+/// The returned Program AST can be serialized to JSON for tooling integration.
+///
+/// # Arguments
+/// * `source` - The Clean Language source code
+/// * `file_path` - Path to the source file (used for error reporting)
+///
+/// # Returns
+/// * `Ok(ast::Program)` - Parsed AST
+/// * `Err(Vec<CompilerError>)` - Parse errors
+pub fn parse_to_ast(source: &str, file_path: &str) -> Result<ast::Program, Vec<CompilerError>> {
+    use crate::lexer::specification_lexer::SpecificationLexer;
+    use crate::parser::SpecificationParser;
+
+    // Stage 1: Lexical Analysis
+    let source_code = crate::lexer::specification_lexer::SourceCode::new(
+        source.to_string(),
+        file_path.to_string(),
+    );
+    let mut lexer = SpecificationLexer::new(&source_code);
+    let tokens = lexer
+        .tokenize()
+        .map_err(|e| vec![CompilerError::LexError(e)])?;
+
+    // Stage 2: Parsing to AST
+    let mut parser =
+        SpecificationParser::with_plugin_keywords(tokens, file_path.to_string(), Vec::new());
+    let ast = parser.parse_program().map_err(|e| vec![e])?;
+
+    Ok(ast)
+}
+
+/// Result of type-checking a Clean Language source file (stages 1-5 only)
+#[derive(Debug)]
+pub struct TypeCheckResult {
+    /// Whether type-checking succeeded without errors
+    pub success: bool,
+    /// Number of functions found
+    pub function_count: usize,
+    /// Number of classes found
+    pub type_count: usize,
+    /// Duration of the type-check in milliseconds
+    pub duration_ms: u64,
+    /// Diagnostics (warnings, info) collected during type-checking
+    pub diagnostics: Vec<CompilerError>,
+}
+
+/// Performs fast type-checking on a Clean Language source file.
+///
+/// Runs compilation stages 1-5 only (Lexer → Parser → HIR → Resolver → Type Checker),
+/// skipping MIR lowering and WASM code generation. This is significantly faster than
+/// a full compilation and is designed for IDE integration and AI tooling.
+///
+/// # Arguments
+/// * `source` - The Clean Language source code
+/// * `file_path` - Path to the source file (used for error reporting)
+///
+/// # Returns
+/// * `Ok(TypeCheckResult)` - Type-checking succeeded with metadata
+/// * `Err(Vec<CompilerError>)` - Type-checking errors
+pub fn type_check(source: &str, file_path: &str) -> Result<TypeCheckResult, Vec<CompilerError>> {
+    let registry = plugins::PluginRegistry::builder()
+        .build()
+        .expect("Empty registry should always build");
+    type_check_with_plugins(source, file_path, &registry)
+}
+
+/// Performs fast type-checking with plugin support.
+///
+/// Same as `type_check()` but with plugin registry for framework-aware checking.
+pub fn type_check_with_plugins(
+    source: &str,
+    file_path: &str,
+    registry: &plugins::PluginRegistry,
+) -> Result<TypeCheckResult, Vec<CompilerError>> {
+    use crate::lexer::specification_lexer::SpecificationLexer;
+    use crate::resolver::Resolver;
+    use crate::typechecker::TypeChecker;
+
+    let start_time = std::time::Instant::now();
+
+    // Stage 1: Lexical Analysis
+    let source_code = crate::lexer::specification_lexer::SourceCode::new(
+        source.to_string(),
+        file_path.to_string(),
+    );
+    let mut lexer = SpecificationLexer::new(&source_code);
+    let tokens = lexer
+        .tokenize()
+        .map_err(|e| vec![CompilerError::LexError(e)])?;
+
+    // Stage 2: Parsing to AST
+    use crate::parser::SpecificationParser;
+    let plugin_keywords = registry.get_all_block_keywords();
+    let mut parser =
+        SpecificationParser::with_plugin_keywords(tokens, file_path.to_string(), plugin_keywords);
+    let parsed_ast = parser.parse_program().map_err(|e| vec![e])?;
+
+    let function_count = parsed_ast.functions.len();
+    let type_count = parsed_ast.classes.len();
+
+    // Stage 2.5: Plugin Expansion
+    use crate::plugins::PluginExpander;
+    let mut expander = PluginExpander::new(registry);
+    let mut ast = expander.expand_program(parsed_ast).map_err(|e| {
+        vec![CompilerError::syntax_error(
+            e.to_string(),
+            Some("Plugin expansion failed".to_string()),
+            None,
+        )]
+    })?;
+
+    // Stage 2.6: Bridge function registration
+    let bridge_functions = registry.bridge_functions();
+    if !bridge_functions.is_empty() {
+        for bf in bridge_functions {
+            if ast.externals.iter().any(|e| e.name == bf.name) {
+                continue;
+            }
+            let parameters: Vec<crate::ast::Parameter> = bf
+                .params
+                .iter()
+                .enumerate()
+                .map(|(i, type_str)| crate::ast::Parameter {
+                    name: format!("arg{}", i),
+                    type_: parse_bridge_type(type_str),
+                    default_value: None,
+                })
+                .collect();
+
+            let external_fn = crate::ast::ExternalFunction {
+                name: bf.name.clone(),
+                parameters,
+                return_type: parse_bridge_type(&bf.returns),
+                module: bf.module.clone(),
+                location: None,
+            };
+            ast.externals.push(external_fn);
+        }
+    }
+
+    // Stage 3: AST to HIR
+    use crate::hir::hir_builder::HirBuilder;
+    let mut hir_builder = HirBuilder::new();
+    let hir_result = hir_builder.build_hir(ast).map_err(|e| vec![e])?;
+
+    // Stage 4: Name and Module Resolution
+    let bridge_functions = registry.bridge_functions();
+    let resolution_result = if bridge_functions.is_empty() {
+        Resolver::resolve(hir_result.hir)?
+    } else {
+        Resolver::resolve_with_bridge_functions(hir_result.hir, bridge_functions)?
+    };
+    let resolved_hir = resolution_result.resolved_hir;
+
+    // Stage 5: Type Inference and Checking
+    let _type_result = TypeChecker::check(resolved_hir)?;
+
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+
+    Ok(TypeCheckResult {
+        success: true,
+        function_count,
+        type_count,
+        duration_ms,
+        diagnostics: Vec::new(),
+    })
+}
+
 /// Compiles Clean Language source code with NO plugins (pure language)
 ///
 /// This is for compiling pure Clean Language code without framework extensions.
@@ -552,11 +723,20 @@ pub fn compile_with_external_plugins_and_opt_level(
     opt_level: u8,
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
     // Extract plugins from plugins: block in source
-    let plugin_names = extract_plugins(source);
+    let mut plugin_names = extract_plugins(source);
+
+    // Auto-detect plugins based on file path (implicit imports)
+    let auto_detected = detect_plugins_from_path(file_path);
+    for plugin in auto_detected {
+        if !plugin_names.contains(&plugin) {
+            tracing::debug!(plugin = %plugin, "Auto-detected plugin from path");
+            plugin_names.push(plugin);
+        }
+    }
 
     if plugin_names.is_empty() {
-        // No plugins block, compile without external plugins
-        tracing::debug!("No plugins: block found, compiling without external plugins");
+        // No plugins declared or auto-detected, compile without external plugins
+        tracing::debug!("No plugins found, compiling without external plugins");
         return compile_pure(source, file_path);
     }
 
@@ -766,6 +946,70 @@ fn extract_plugins(source: &str) -> Vec<String> {
     plugins
 }
 
+/// Auto-detect plugins based on file path and directory structure.
+///
+/// This enables implicit plugin loading based on folder conventions:
+/// - `app/api/`, `app/backend/api/`, `app/server/api/` → `frame.httpserver`
+/// - `app/data/`, `app/server/models/` → `frame.data`
+/// - `app/auth/`, `app/config/auth/` → `frame.auth`
+/// - `app/canvas/` → `frame.canvas`
+/// - `app/ui/`, `app/components/` → `frame.ui`
+///
+/// # Arguments
+/// * `file_path` - Path to the .cln file being compiled
+///
+/// # Returns
+/// Vector of plugin names that should be auto-injected based on path
+fn detect_plugins_from_path<P: AsRef<std::path::Path>>(file_path: P) -> Vec<String> {
+    let path_str = file_path.as_ref().to_string_lossy().to_lowercase();
+    let mut plugins = Vec::new();
+
+    // HTTP Server plugin - for API endpoints
+    let is_api = path_str.contains("/api/")
+        || path_str.contains("/backend/api/")
+        || path_str.contains("/server/api/")
+        || path_str.contains("/endpoints/");
+
+    if is_api {
+        plugins.push("frame.httpserver".to_string());
+        // API endpoints commonly use database and auth
+        plugins.push("frame.data".to_string());
+        plugins.push("frame.auth".to_string());
+    }
+
+    // Data plugin - for models and database operations (standalone data files)
+    if path_str.contains("/data/")
+        || path_str.contains("/models/")
+        || path_str.contains("/server/models/")
+    {
+        if !plugins.contains(&"frame.data".to_string()) {
+            plugins.push("frame.data".to_string());
+        }
+    }
+
+    // Auth plugin - for authentication configuration (standalone auth files)
+    if path_str.contains("/auth/") || path_str.contains("/config/auth/") {
+        if !plugins.contains(&"frame.auth".to_string()) {
+            plugins.push("frame.auth".to_string());
+        }
+    }
+
+    // Canvas plugin - for canvas/graphics applications
+    if path_str.contains("/canvas/") {
+        plugins.push("frame.canvas".to_string());
+    }
+
+    // UI plugin - for UI components
+    if path_str.contains("/ui/")
+        || path_str.contains("/components/")
+        || path_str.contains("/screens/")
+    {
+        plugins.push("frame.ui".to_string());
+    }
+
+    plugins
+}
+
 /// Compiles a multi-file Clean Language program from an entry file
 ///
 /// This function supports programs with `import:` statements that reference
@@ -821,9 +1065,18 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
     })?;
 
     // Extract plugin names from plugins: block
-    let plugin_names = extract_plugins(&entry_source);
+    let mut plugin_names = extract_plugins(&entry_source);
 
-    // Load plugins if any are declared
+    // Auto-detect plugins based on file path (implicit imports)
+    let auto_detected = detect_plugins_from_path(&entry_path);
+    for plugin in auto_detected {
+        if !plugin_names.contains(&plugin) {
+            tracing::debug!(plugin = %plugin, "Auto-detected plugin from path");
+            plugin_names.push(plugin);
+        }
+    }
+
+    // Load plugins if any are declared or auto-detected
     let registry = if !plugin_names.is_empty() {
         tracing::info!(plugins = ?plugin_names, "Loading plugins for multi-file compilation");
 
@@ -929,6 +1182,8 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
             file: entry_path.as_ref().to_string_lossy().to_string(),
             line: 1,
             column: 1,
+            byte_start: None,
+            byte_end: None,
         });
 
         tracing::info!(

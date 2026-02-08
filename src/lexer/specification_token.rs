@@ -76,6 +76,9 @@ pub enum TokenKind {
     Continue,    // continue - Loop control flow
     Require,     // require - Contract precondition
     Rules,       // rules - State invariants
+    Spec,        // spec - AI metadata: links function to specification
+    Intent,      // intent - AI metadata: describes function purpose
+    Source,      // source - AI metadata: marks file as generated from spec
 
     // Operators (§5.1 - Binary and Unary operators from specification)
     Plus,     // +
@@ -203,6 +206,9 @@ impl fmt::Display for TokenKind {
             TokenKind::Continue => write!(f, "continue"),
             TokenKind::Require => write!(f, "require"),
             TokenKind::Rules => write!(f, "rules"),
+            TokenKind::Spec => write!(f, "spec"),
+            TokenKind::Intent => write!(f, "intent"),
+            TokenKind::Source => write!(f, "source"),
 
             // Operators
             TokenKind::Plus => write!(f, "+"),
@@ -416,6 +422,9 @@ impl Keywords {
             "continue" => Some(TokenKind::Continue),
             "require" => Some(TokenKind::Require),
             "rules" => Some(TokenKind::Rules),
+            "spec" => Some(TokenKind::Spec),
+            "intent" => Some(TokenKind::Intent),
+            "source" => Some(TokenKind::Source),
             _ => None,
         }
     }
@@ -461,6 +470,9 @@ impl TokenKind {
             TokenKind::Continue => "continue".to_string(),
             TokenKind::Require => "require".to_string(),
             TokenKind::Rules => "rules".to_string(),
+            TokenKind::Spec => "spec".to_string(),
+            TokenKind::Intent => "intent".to_string(),
+            TokenKind::Source => "source".to_string(),
             TokenKind::If => "if".to_string(),
             TokenKind::Import => "import".to_string(),
             TokenKind::In => "in".to_string(),

@@ -176,6 +176,8 @@ impl ModuleResolver {
                             file: "<module_resolver>".to_string(),
                             line: 0,
                             column: 0,
+                            byte_start: None,
+                            byte_end: None,
                         },
                     ));
                 }
@@ -249,6 +251,8 @@ impl ModuleResolver {
                     file: "<module_resolver>".to_string(),
                     line: 0,
                     column: 0,
+                    byte_start: None,
+                    byte_end: None,
                 },
             ));
         }
@@ -290,6 +294,8 @@ impl ModuleResolver {
                             file: module.file_path.to_string_lossy().to_string(),
                             line: 0,
                             column: 0,
+                            byte_start: None,
+                            byte_end: None,
                         },
                     )
                 })?;
@@ -307,6 +313,8 @@ impl ModuleResolver {
                             file: module.file_path.to_string_lossy().to_string(),
                             line: 0,
                             column: 0,
+                            byte_start: None,
+                            byte_end: None,
                         },
                     )
                 })?;
@@ -350,6 +358,8 @@ impl ModuleResolver {
                     file: "<module_resolver>".to_string(),
                     line: 0,
                     column: 0,
+                    byte_start: None,
+                    byte_end: None,
                 },
             ))
         }
@@ -388,6 +398,8 @@ mod tests {
             file: "test.cln".to_string(),
             line: 1,
             column: 1,
+            byte_start: None,
+            byte_end: None,
         }
     }
 

@@ -204,6 +204,8 @@ impl GlobalSymbolTable {
                     file: "<builtin>".to_string(),
                     line: 0,
                     column: 0,
+                    byte_start: None,
+                    byte_end: None,
                 },
             );
 
@@ -238,6 +240,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
 
@@ -281,6 +285,8 @@ impl GlobalSymbolTable {
                     file: "<builtin>".to_string(),
                     line: 0,
                     column: 0,
+                    byte_start: None,
+                    byte_end: None,
                 },
             );
             math_method_ids.push(method_id);
@@ -308,6 +314,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
 
@@ -351,6 +359,8 @@ impl GlobalSymbolTable {
                     file: "<builtin>".to_string(),
                     line: 0,
                     column: 0,
+                    byte_start: None,
+                    byte_end: None,
                 },
             );
             stringutils_method_ids.push(method_id);
@@ -378,6 +388,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
 
@@ -400,6 +412,8 @@ impl GlobalSymbolTable {
                     file: "<builtin>".to_string(),
                     line: 0,
                     column: 0,
+                    byte_start: None,
+                    byte_end: None,
                 },
             );
             string_method_ids.push(method_id);
@@ -427,6 +441,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
 
@@ -446,6 +462,8 @@ impl GlobalSymbolTable {
                     file: "<builtin>".to_string(),
                     line: 0,
                     column: 0,
+                    byte_start: None,
+                    byte_end: None,
                 },
             );
             integer_method_ids.push(method_id);
@@ -1225,6 +1243,8 @@ impl GlobalSymbolTable {
                     file: "<builtin>".to_string(),
                     line: 0,
                     column: 0,
+                    byte_start: None,
+                    byte_end: None,
                 },
             );
             self.builtins.insert(symbol_id);
@@ -1279,6 +1299,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
         self.builtins.insert(math_namespace_id);
@@ -1329,6 +1351,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
         self.builtins.insert(string_namespace_id);
@@ -1371,6 +1395,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
         self.builtins.insert(list_namespace_id);
@@ -1398,6 +1424,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
         self.builtins.insert(conditional_namespace_id);
@@ -1420,6 +1448,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
         self.builtins.insert(http_namespace_id);
@@ -1443,6 +1473,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
         self.builtins.insert(file_namespace_id);
@@ -1467,6 +1499,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
         self.builtins.insert(json_namespace_id);
@@ -1509,6 +1543,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
         self.builtins.insert(compare_namespace_id);
@@ -1535,6 +1571,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
         self.builtins.insert(conditional_namespace_id);
@@ -1556,6 +1594,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
         self.builtins.insert(logical_namespace_id);
@@ -1581,6 +1621,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
         self.builtins.insert(input_namespace_id);
@@ -1634,6 +1676,8 @@ impl GlobalSymbolTable {
                 file: "<builtin>".to_string(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             },
         );
         self.builtins.insert(validator_namespace_id);
@@ -1690,6 +1734,8 @@ mod tests {
                 file: "test".to_string(),
                 line: 1,
                 column: 1,
+                byte_start: None,
+                byte_end: None,
             },
         );
 
@@ -1720,6 +1766,8 @@ mod tests {
                 file: "test".to_string(),
                 line: 1,
                 column: 1,
+                byte_start: None,
+                byte_end: None,
             },
         );
 
@@ -1735,6 +1783,8 @@ mod tests {
                 file: "test".to_string(),
                 line: 2,
                 column: 1,
+                byte_start: None,
+                byte_end: None,
             },
         );
 

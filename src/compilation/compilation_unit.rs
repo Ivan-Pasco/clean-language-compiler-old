@@ -67,6 +67,8 @@ impl CompiledModule {
                 file: file_path.to_string_lossy().to_string(),
                 line: 1,
                 column: 1,
+                byte_start: None,
+                byte_end: None,
             },
         }
     }

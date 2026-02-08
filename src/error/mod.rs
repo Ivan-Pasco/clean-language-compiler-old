@@ -1792,6 +1792,8 @@ impl ErrorUtils {
                     line,
                     column: col,
                     file: file_path.to_string(),
+                    byte_start: None,
+                    byte_end: None,
                 })
             }
             pest::error::InputLocation::Span((start_pos, _)) => {
@@ -1800,6 +1802,8 @@ impl ErrorUtils {
                     line,
                     column: col,
                     file: file_path.to_string(),
+                    byte_start: None,
+                    byte_end: None,
                 })
             }
         };

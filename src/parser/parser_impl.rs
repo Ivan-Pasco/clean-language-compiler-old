@@ -220,6 +220,8 @@ impl ErrorRecoveringParser {
                                         file: self.file_path.clone(),
                                         line: l.line,
                                         column: l.column,
+                                        byte_start: None,
+                                        byte_end: None,
                                     })
                                 ));
                             }
@@ -235,6 +237,8 @@ impl ErrorRecoveringParser {
                                         file: self.file_path.clone(),
                                         line: l.line,
                                         column: l.column,
+                                        byte_start: None,
+                                        byte_end: None,
                                     })
                                 ));
                             }
@@ -284,6 +288,7 @@ impl ErrorRecoveringParser {
             watch_blocks: Vec::new(),
             screen_blocks: Vec::new(),
             externals: Vec::new(),
+            source_block: None,
             location: None,
         };
 
@@ -440,6 +445,7 @@ impl ErrorRecoveringParser {
                 watch_blocks: Vec::new(),
                 screen_blocks: Vec::new(),
                 externals: Vec::new(),
+                source_block: None,
                 location: None,
             });
         }
@@ -537,6 +543,7 @@ impl ErrorRecoveringParser {
                     watch_blocks: Vec::new(),
                     screen_blocks: Vec::new(),
                     externals: Vec::new(),
+                    source_block: None,
                     location: None,
                 })
             }
@@ -562,6 +569,7 @@ impl ErrorRecoveringParser {
                     watch_blocks: Vec::new(),
                     screen_blocks: Vec::new(),
                     externals: Vec::new(),
+                    source_block: None,
                     location: None,
                 })
             }
@@ -863,6 +871,7 @@ fn parse_with_preprocessing(source: &str, file_path: &str) -> Result<Program, Co
                     watch_blocks: Vec::new(),
                     screen_blocks: Vec::new(),
                     externals: Vec::new(),
+                    source_block: None,
                     location: None,
                 };
 
@@ -1028,6 +1037,7 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
         watch_blocks,
         screen_blocks,
         externals,
+        source_block: None,
         location: None,
     };
 
@@ -1145,6 +1155,8 @@ pub fn get_location(pair: &Pair<Rule>) -> super::SourceLocation {
         line,
         column: col,
         file: String::new(), // Will be set by the parser context
+        byte_start: None,
+        byte_end: None,
     }
 }
 
@@ -1789,6 +1801,8 @@ impl ErrorRecoveringParser {
                 file: self.file_path.clone(),
                 line,
                 column,
+                byte_start: None,
+                byte_end: None,
             });
         }
         None

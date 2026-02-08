@@ -2230,6 +2230,8 @@ impl NameResolver {
             line: 0,
             column: 0,
             file: "<builtin>".to_string(),
+            byte_start: None,
+            byte_end: None,
         };
 
         // Common IO functions
@@ -2753,6 +2755,8 @@ impl NameResolver {
             line: 0,
             column: 0,
             file: "<plugin-bridge>".to_string(),
+            byte_start: None,
+            byte_end: None,
         };
 
         for func in bridge_functions {

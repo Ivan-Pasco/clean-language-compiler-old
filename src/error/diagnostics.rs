@@ -1116,6 +1116,8 @@ mod tests {
             line: 5,
             column: 10,
             file: "test.cln".to_string(),
+            byte_start: None,
+            byte_end: None,
         };
 
         let source = "line1\nline2\nline3\nline4\nprint(x\nline6";

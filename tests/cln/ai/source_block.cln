@@ -1,0 +1,20 @@
+// Test: source: top-level block marks file as generated from a spec
+
+source:
+	spec "pricing/discount-rules"
+	version "v2.1.0-abc123"
+
+functions:
+	number applyDiscount(number price, string tier)
+		spec "pricing/discount-rules"
+		intent "Apply tier-based percentage discount to price"
+		require price > 0.0
+		if tier == "gold"
+			return price * 0.80
+		if tier == "silver"
+			return price * 0.90
+		return price * 0.95
+
+start:
+	number result = applyDiscount(100.0, "gold")
+	print(result.toString())

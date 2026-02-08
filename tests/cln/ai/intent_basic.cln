@@ -1,0 +1,20 @@
+// Test: intent keyword - describes function purpose
+
+functions:
+	integer factorial(integer n)
+		intent "Calculate factorial of n recursively"
+		require n >= 0
+		if n <= 1
+			return 1
+		return n * factorial(n - 1)
+
+	boolean isEven(integer n)
+		intent "Check if a number is even"
+		return n % 2 == 0
+
+start:
+	integer result = factorial(5)
+	print(result.toString())
+	boolean even = isEven(4)
+	if even
+		print("4 is even")

@@ -1,0 +1,17 @@
+// Test: spec keyword - links function to specification document
+
+functions:
+	integer divide(integer a, integer b)
+		spec "math/division"
+		require b != 0
+		return a / b
+
+	integer add(integer a, integer b)
+		spec "math/addition"
+		return a + b
+
+start:
+	integer result = divide(10, 2)
+	print(result.toString())
+	integer sum = add(3, 4)
+	print(sum.toString())

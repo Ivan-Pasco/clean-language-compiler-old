@@ -19,8 +19,9 @@
 15. [Memory Management](#memory-management)
 16. [Advanced Types](#advanced-types)
 17. [Asynchronous Programming](#asynchronous-programming)
-18. [Plugin System](#plugin-system)
-19. [State Management](#state-management)
+18. [AI Integration](#ai-integration)
+19. [Plugin System](#plugin-system)
+20. [State Management](#state-management)
 
 ## Overview
 
@@ -197,9 +198,9 @@ Reserved keywords in Clean Language:
 ```
 and        class       computed     constructor  default     else
 error      false       for          from         function    guard
-if         import      in           iterate      not         null
+if         import      in           intent       iterate     not         null
 onError    or          print        reset        return
-screen     start       state        step         test        tests
+screen     source      spec         start        state       step         test        tests
 this       to          true         watch        is          returns
 description while      input        unit         private     constant
 functions
@@ -3372,6 +3373,231 @@ start:
 ## Memory Management
 
 Clean uses Automatic Reference Counting (ARC) for memory management.
+
+## AI Integration
+
+Clean Language provides built-in features to support AI-assisted development by linking code to formal specifications and documenting function intent.
+
+### Overview
+
+The AI Integration features enable:
+- **Traceability**: Link functions to their specification documents
+- **Intent Documentation**: Describe function purpose in natural language
+- **Source Attribution**: Mark generated files with their specification source
+
+These features are language-level constructs that enhance code clarity and enable tools to understand the relationship between specifications and implementations.
+
+### The `spec` Keyword
+
+The `spec` keyword links a function or method to its specification document.
+
+**Syntax:**
+```clean
+spec "path/to/specification.spec.cln"
+```
+
+**Rules:**
+- Can only appear inside function or method bodies
+- Must appear before other statements (except `intent`)
+- Path is relative to the project root
+- Multiple `spec` declarations are allowed (for referencing multiple specs)
+
+**Example:**
+```clean
+functions:
+    number calculateDiscount(number price, number percentage)
+        spec "specs/pricing/discount.spec.cln"
+        require percentage >= 0 and percentage <= 100
+        return price * (percentage / 100)
+```
+
+### The `intent` Keyword
+
+The `intent` keyword describes a function's purpose in natural language.
+
+**Syntax:**
+```clean
+intent "Natural language description of function purpose"
+```
+
+**Rules:**
+- Can only appear inside function or method bodies
+- Must appear before other statements (except `spec`)
+- Provides human-readable documentation of what the function does
+- Multiple `intent` declarations are allowed
+
+**Example:**
+```clean
+functions:
+    void processPayment(number amount, string method)
+        intent "Process a payment transaction using the specified payment method"
+        spec "specs/payment/process.spec.cln"
+        require amount > 0
+        require method in ["credit", "debit", "paypal"]
+        // ... implementation
+```
+
+### The `source:` Block
+
+The `source:` block marks a file as generated from a specification document.
+
+**Syntax:**
+```clean
+source:
+    spec: "path/to/specification.spec.cln"
+    version: "commit-hash-or-version"
+```
+
+**Rules:**
+- Must appear at the top of the file (before any other declarations)
+- Contains two required fields:
+  - `spec`: Path to the source specification file
+  - `version`: Version identifier (git hash, version number, etc.)
+- Indicates the file was generated from a formal specification
+
+**Example:**
+```clean
+source:
+    spec: "specs/payment.spec.cln"
+    version: "a3f2c1d"
+
+functions:
+    boolean validateCard(string cardNumber)
+        intent "Validate credit card number using Luhn algorithm"
+        spec "specs/payment.spec.cln"
+        require cardNumber.length() >= 13 and cardNumber.length() <= 19
+        // ... implementation
+```
+
+### Combined Usage Example
+
+Here's a complete example showing all AI integration features together:
+
+```clean
+source:
+    spec: "specs/authentication.spec.cln"
+    version: "2.1.0"
+
+functions:
+    boolean authenticateUser(string username, string password)
+        intent "Authenticate a user with username and password credentials"
+        spec "specs/authentication.spec.cln"
+        require username.length() > 0
+        require password.length() >= 8
+
+        hash = hashPassword(password)
+        stored = database.query("SELECT password FROM users WHERE username = ?", username)
+
+        if stored.length() == 0
+            return false
+
+        return compareHashes(hash, stored[0].password)
+
+    string hashPassword(string password)
+        intent "Generate secure hash of password using bcrypt"
+        spec "specs/authentication.spec.cln"
+        require password.length() >= 8
+
+        salt = crypto.generateSalt(10)
+        return crypto.bcrypt(password, salt)
+
+    boolean compareHashes(string hash1, string hash2)
+        intent "Securely compare two password hashes in constant time"
+        spec "specs/authentication.spec.cln"
+        require hash1.length() > 0
+        require hash2.length() > 0
+
+        return crypto.constantTimeCompare(hash1, hash2)
+
+tests:
+    test "authenticate valid user"
+        result = authenticateUser("john", "SecurePass123")
+        assert result == true
+
+    test "reject invalid password"
+        result = authenticateUser("john", "WrongPass")
+        assert result == false
+
+    test "reject empty username"
+        result = authenticateUser("", "SecurePass123")
+        // Should fail require check
+```
+
+### Use Cases
+
+**1. Specification-Driven Development:**
+```clean
+functions:
+    number calculateTax(number income, string state)
+        spec "specs/tax/calculation.spec.cln"
+        intent "Calculate state income tax based on tax brackets"
+        require income >= 0
+        require state in ["CA", "NY", "TX", "FL"]
+        // Implementation follows specification
+```
+
+**2. Documentation and Traceability:**
+```clean
+functions:
+    void sendEmail(string to, string subject, string body)
+        intent "Send email via SMTP with retry logic and error handling"
+        spec "specs/email/smtp.spec.cln"
+        require to.contains("@")
+        require subject.length() > 0
+        // Implementation traceable to spec
+```
+
+**3. Generated Code Attribution:**
+```clean
+source:
+    spec: "specs/api/rest_endpoints.spec.cln"
+    version: "v1.2.3"
+
+// Generated API endpoint handlers
+functions:
+    string handleGetUser(string userId)
+        intent "Handle GET /api/users/:id endpoint"
+        spec "specs/api/rest_endpoints.spec.cln"
+        // ... implementation
+```
+
+### Best Practices
+
+1. **Use relative paths**: Spec paths should be relative to project root
+   ```clean
+   spec "specs/module/feature.spec.cln"  // ✅ Good
+   spec "/absolute/path/spec.cln"         // ❌ Avoid
+   ```
+
+2. **Place metadata early**: `spec` and `intent` should come before `require` and implementation
+   ```clean
+   functions:
+       void myFunc()
+           intent "..."    // ✅ Good: before require
+           spec "..."      // ✅ Good: before require
+           require x > 0
+           // implementation
+   ```
+
+3. **Keep intent concise**: One clear sentence describing the function's purpose
+   ```clean
+   intent "Calculate compound interest over a given period"  // ✅ Good
+   intent "This function does stuff with numbers"            // ❌ Too vague
+   ```
+
+4. **Version tracking**: Use meaningful version identifiers in `source:` blocks
+   ```clean
+   source:
+       spec: "specs/payment.spec.cln"
+       version: "a3f2c1d"    // ✅ Git hash
+   ```
+
+### Notes
+
+- These features are metadata and don't affect runtime behavior
+- The compiler can use this information for validation and tooling
+- Specification files (`.spec.cln`) follow the same Clean Language syntax
+- Tools can verify that implementations match their specifications
 
 ## Plugin System
 

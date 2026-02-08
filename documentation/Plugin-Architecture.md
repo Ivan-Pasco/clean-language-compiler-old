@@ -111,6 +111,36 @@ Clean Language supports two types of plugins:
 | **Built-in** | Rust | Compiled into compiler | Manual in lib.rs |
 | **External** | Clean Language | `~/.cleen/plugins/` | Auto-loaded from `import:` |
 
+### Plugin Auto-Detection (v2.1)
+
+The compiler automatically detects and loads plugins based on the file's location in the project structure. This eliminates the need for explicit `plugins:` declarations in most cases:
+
+| File Path Pattern | Auto-Detected Plugins |
+|-------------------|----------------------|
+| `/api/`, `/backend/api/`, `/server/api/`, `/endpoints/` | `frame.httpserver`, `frame.data`, `frame.auth` |
+| `/data/`, `/models/`, `/server/models/` | `frame.data` |
+| `/auth/`, `/config/auth/` | `frame.auth` |
+| `/canvas/` | `frame.canvas` |
+| `/ui/`, `/components/`, `/screens/` | `frame.ui` |
+
+**Example - No explicit imports needed:**
+
+```clean
+// File: app/api/users.cln
+// Plugins auto-detected: frame.httpserver, frame.data, frame.auth
+
+functions:
+    string getUsers()
+        string result = _db_query("SELECT * FROM users", "[]")
+        return result
+
+start:
+    integer s = _http_route("GET", "/users", 0)
+    printl("Users API ready")
+```
+
+The compiler merges auto-detected plugins with any explicitly declared plugins, so you can still add additional plugins via the `plugins:` block when needed.
+
 ### External Plugin Architecture (v2)
 
 External plugins are written in Clean Language, compiled to WASM, and loaded at compile-time:

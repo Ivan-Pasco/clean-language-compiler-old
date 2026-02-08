@@ -54,42 +54,46 @@ impl OutputConfig {
     }
 
     fn error_to_json(&self, error: &CompilerError) -> serde_json::Value {
-        let (severity, message, file, line, column, code) = match error {
+        let (severity, message, location, code) = match error {
             CompilerError::Syntax { context } => (
                 "error",
                 context.message.clone(),
-                context
-                    .location
-                    .as_ref()
-                    .map(|l| l.file.clone())
-                    .unwrap_or_default(),
-                context.location.as_ref().map(|l| l.line).unwrap_or(0),
-                context.location.as_ref().map(|l| l.column).unwrap_or(0),
+                context.location.clone(),
                 context.error_code.clone(),
             ),
             CompilerError::Type { context } => (
                 "error",
                 context.message.clone(),
-                context
-                    .location
-                    .as_ref()
-                    .map(|l| l.file.clone())
-                    .unwrap_or_default(),
-                context.location.as_ref().map(|l| l.line).unwrap_or(0),
-                context.location.as_ref().map(|l| l.column).unwrap_or(0),
+                context.location.clone(),
                 context.error_code.clone(),
             ),
-            _ => ("error", error.to_string(), String::new(), 0, 0, None),
+            _ => ("error", error.to_string(), None, None),
         };
 
-        serde_json::json!({
+        let file = location.as_ref().map(|l| l.file.as_str()).unwrap_or("");
+        let line = location.as_ref().map(|l| l.line).unwrap_or(0);
+        let column = location.as_ref().map(|l| l.column).unwrap_or(0);
+        let byte_start = location.as_ref().and_then(|l| l.byte_start);
+        let byte_end = location.as_ref().and_then(|l| l.byte_end);
+
+        let mut json = serde_json::json!({
             "severity": severity,
             "message": message,
             "file": file,
             "line": line,
             "column": column,
             "code": code
-        })
+        });
+
+        // Include byte spans when available (for precise AI code edits)
+        if let Some(bs) = byte_start {
+            json["byte_start"] = serde_json::json!(bs);
+        }
+        if let Some(be) = byte_end {
+            json["byte_end"] = serde_json::json!(be);
+        }
+
+        json
     }
 }
 
@@ -227,6 +231,10 @@ enum Commands {
         /// Enable error recovery mode
         #[arg(long)]
         recover_errors: bool,
+
+        /// Output AST as JSON
+        #[arg(long)]
+        ast_json: bool,
     },
     /// Run a Clean Language source file or WebAssembly binary
     Run {
@@ -282,6 +290,20 @@ enum Commands {
         /// List all available runtimes
         #[arg(long)]
         list: bool,
+    },
+    /// Fast type-check a Clean Language file (no WASM generation)
+    Check {
+        /// Input file to type-check
+        input: String,
+    },
+    /// Watch a directory for .cln file changes and type-check on save
+    Watch {
+        /// Directory or file to watch
+        path: String,
+
+        /// Output newline-delimited JSON events (for AI/IDE integration)
+        #[arg(long)]
+        json_stream: bool,
     },
 }
 
@@ -449,7 +471,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             input,
             show_tree,
             recover_errors,
-        } => handle_parse(input, show_tree, recover_errors).await?,
+            ast_json,
+        } => {
+            if ast_json {
+                handle_ast_json(input, &output_config).await?
+            } else {
+                handle_parse(input, show_tree, recover_errors).await?
+            }
+        }
         Commands::Run { input, debug } => handle_run(input, debug, &output_config).await?,
         Commands::Options {
             export_json,
@@ -472,6 +501,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             debug,
             watch,
         } => handle_serve(input, port, host, debug, watch, &output_config).await?,
+        Commands::Check { input } => handle_check(input, &output_config).await?,
+        Commands::Watch { path, json_stream } => {
+            handle_watch(path, json_stream, &output_config).await?
+        }
     }
 
     Ok(())
@@ -648,6 +681,216 @@ async fn handle_serve(
 
     if !status.success() {
         return Err(format!("Server exited with status: {}", status).into());
+    }
+
+    Ok(())
+}
+
+async fn handle_watch(
+    path: String,
+    json_stream: bool,
+    output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+    use std::sync::mpsc;
+
+    let watch_path = std::path::Path::new(&path);
+    if !watch_path.exists() {
+        return Err(format!("Path does not exist: {}", path).into());
+    }
+
+    if !json_stream && !output_config.quiet {
+        eprintln!("Watching {} for .cln file changes...", path);
+        eprintln!("Press Ctrl+C to stop.");
+    }
+
+    let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
+
+    let mut watcher = RecommendedWatcher::new(tx, Config::default())?;
+    watcher.watch(watch_path.as_ref(), RecursiveMode::Recursive)?;
+
+    // Type-check a single .cln file and output result
+    let check_file = |file_path: &std::path::Path| {
+        let file_str = file_path.to_string_lossy().to_string();
+        let source = match std::fs::read_to_string(file_path) {
+            Ok(s) => s,
+            Err(e) => {
+                if json_stream {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "event": "error",
+                            "file": file_str,
+                            "message": format!("Failed to read: {}", e)
+                        })
+                    );
+                } else {
+                    eprintln!("Error reading {}: {}", file_str, e);
+                }
+                return;
+            }
+        };
+
+        let start = std::time::Instant::now();
+        match clean_language_compiler::type_check(&source, &file_str) {
+            Ok(result) => {
+                let duration_ms = start.elapsed().as_millis() as u64;
+                if json_stream {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "event": "check",
+                            "file": file_str,
+                            "success": true,
+                            "functions": result.function_count,
+                            "types": result.type_count,
+                            "duration_ms": duration_ms,
+                            "diagnostics": []
+                        })
+                    );
+                } else if !output_config.quiet {
+                    let green = if output_config.use_colors {
+                        "\x1b[32m"
+                    } else {
+                        ""
+                    };
+                    let reset = if output_config.use_colors {
+                        "\x1b[0m"
+                    } else {
+                        ""
+                    };
+                    eprintln!("{}OK{} {} ({}ms)", green, reset, file_str, duration_ms);
+                }
+            }
+            Err(errors) => {
+                let duration_ms = start.elapsed().as_millis() as u64;
+                if json_stream {
+                    let diagnostics: Vec<serde_json::Value> = errors
+                        .iter()
+                        .map(|e| output_config.error_to_json(e))
+                        .collect();
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "event": "check",
+                            "file": file_str,
+                            "success": false,
+                            "duration_ms": duration_ms,
+                            "diagnostics": diagnostics
+                        })
+                    );
+                } else {
+                    output_config.report_errors(&errors, Some(&source));
+                }
+            }
+        }
+    };
+
+    loop {
+        match rx.recv() {
+            Ok(Ok(event)) => {
+                if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
+                    for path in &event.paths {
+                        if path.extension().is_some_and(|ext| ext == "cln") {
+                            check_file(path);
+                        }
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                if json_stream {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "event": "error",
+                            "message": format!("Watch error: {}", e)
+                        })
+                    );
+                } else {
+                    eprintln!("Watch error: {}", e);
+                }
+            }
+            Err(e) => {
+                return Err(format!("Channel error: {}", e).into());
+            }
+        }
+    }
+}
+
+async fn handle_check(
+    input: String,
+    output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source = std::fs::read_to_string(&input)
+        .map_err(|e| format!("Failed to read '{}': {}", input, e))?;
+
+    let start_time = std::time::Instant::now();
+
+    match clean_language_compiler::type_check(&source, &input) {
+        Ok(result) => {
+            let duration = start_time.elapsed();
+
+            if output_config.json_mode {
+                let json = serde_json::json!({
+                    "success": result.success,
+                    "file": input,
+                    "functions": result.function_count,
+                    "types": result.type_count,
+                    "duration_ms": duration.as_millis() as u64,
+                    "diagnostics": []
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json).unwrap_or_default()
+                );
+            } else if !output_config.quiet {
+                let green = if output_config.use_colors {
+                    "\x1b[32m"
+                } else {
+                    ""
+                };
+                let reset = if output_config.use_colors {
+                    "\x1b[0m"
+                } else {
+                    ""
+                };
+                println!(
+                    "{}OK{} {} ({} functions, {} types, {}ms)",
+                    green,
+                    reset,
+                    input,
+                    result.function_count,
+                    result.type_count,
+                    duration.as_millis()
+                );
+            }
+        }
+        Err(errors) => {
+            if output_config.json_mode {
+                let diagnostics: Vec<serde_json::Value> = errors
+                    .iter()
+                    .map(|e| output_config.error_to_json(e))
+                    .collect();
+                let json = serde_json::json!({
+                    "success": false,
+                    "file": input,
+                    "diagnostics": diagnostics,
+                    "duration_ms": start_time.elapsed().as_millis() as u64,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json).unwrap_or_default()
+                );
+            } else {
+                output_config.report_errors(&errors, Some(&source));
+            }
+            return Err(format!(
+                "Type check failed with {} error{}",
+                errors.len(),
+                if errors.len() == 1 { "" } else { "s" }
+            )
+            .into());
+        }
     }
 
     Ok(())
@@ -1183,6 +1426,31 @@ async fn handle_lint(
     if fix {
         println!("Note: Automatic fixing is not yet implemented");
     }
+    Ok(())
+}
+
+async fn handle_ast_json(
+    input: String,
+    output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source = std::fs::read_to_string(&input)
+        .map_err(|e| format!("Failed to read '{}': {}", input, e))?;
+
+    match clean_language_compiler::parse_to_ast(&source, &input) {
+        Ok(ast) => {
+            println!("{}", serde_json::to_string_pretty(&ast).unwrap_or_default());
+        }
+        Err(errors) => {
+            output_config.report_errors(&errors, Some(&source));
+            return Err(format!(
+                "Parse failed with {} error{}",
+                errors.len(),
+                if errors.len() == 1 { "" } else { "s" }
+            )
+            .into());
+        }
+    }
+
     Ok(())
 }
 

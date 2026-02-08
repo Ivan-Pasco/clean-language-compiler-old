@@ -40,5 +40,7 @@ pub fn get_location(pair: &pest::iterators::Pair<Rule>) -> SourceLocation {
         line: start.0,
         column: start.1,
         file: String::new(), // Will be set by the parser context
+        byte_start: None,
+        byte_end: None,
     }
 }

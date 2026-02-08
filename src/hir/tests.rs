@@ -13,6 +13,8 @@ fn test_location() -> SourceLocation {
         file: "test.cln".to_string(),
         line: 1,
         column: 1,
+        byte_start: None,
+        byte_end: None,
     }
 }
 
@@ -31,6 +33,7 @@ fn test_program_with_functions(functions: Vec<Function>) -> Program {
         watch_blocks: Vec::new(),
         screen_blocks: Vec::new(),
         externals: Vec::new(),
+        source_block: None,
         location: Some(test_location()),
     }
 }
@@ -50,6 +53,7 @@ fn test_program_with_start(start_fn: Function) -> Program {
         watch_blocks: Vec::new(),
         screen_blocks: Vec::new(),
         externals: Vec::new(),
+        source_block: None,
         location: Some(test_location()),
     }
 }
@@ -69,6 +73,7 @@ fn test_program_with_classes(classes: Vec<Class>) -> Program {
         watch_blocks: Vec::new(),
         screen_blocks: Vec::new(),
         externals: Vec::new(),
+        source_block: None,
         location: Some(test_location()),
     }
 }
@@ -465,6 +470,7 @@ mod integration_tests {
             watch_blocks: Vec::new(),
             screen_blocks: Vec::new(),
             externals: Vec::new(),
+            source_block: None,
             location: Some(test_location()),
         };
 

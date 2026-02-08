@@ -3140,6 +3140,10 @@ impl SemanticAnalyzer {
                 }
                 Ok(())
             }
+            // AI metadata statements — compile-time only, no semantic checking needed
+            Statement::Spec { .. } | Statement::Intent { .. } | Statement::SourceBlock { .. } => {
+                Ok(())
+            }
         }
     }
 
@@ -3339,6 +3343,8 @@ impl SemanticAnalyzer {
                         line: 0,
                         column: 0,
                         file: "unknown".to_string(),
+                        byte_start: None,
+                        byte_end: None,
                     };
                     return self.check_constructor_call(name, args, &location);
                 }

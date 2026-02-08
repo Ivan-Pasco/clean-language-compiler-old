@@ -66,6 +66,8 @@ impl FunctionParser {
                     line: 1,
                     column: 1,
                     file: String::new(),
+                    byte_start: None,
+                    byte_end: None,
                 }),
             )
         })?;
@@ -92,6 +94,8 @@ impl FunctionParser {
                 line: 1,
                 column: 1,
                 file: String::new(),
+                byte_start: None,
+                byte_end: None,
             }),
         ))
     }
@@ -117,6 +121,8 @@ impl FunctionParser {
                 line: 1,
                 column: 1,
                 file: String::new(),
+                byte_start: None,
+                byte_end: None,
             }),
         ))
     }
@@ -173,6 +179,8 @@ impl FunctionParser {
                 line: span.start_pos().line_col().0,
                 column: span.start_pos().line_col().1,
                 file: String::new(),
+                byte_start: None,
+                byte_end: None,
             }),
         })
     }

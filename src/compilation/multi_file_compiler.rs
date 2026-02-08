@@ -1064,6 +1064,8 @@ impl MultiFileCompiler {
                                         file: file_path.to_string_lossy().to_string(),
                                         line: 1,
                                         column: 1,
+                                        byte_start: None,
+                                        byte_end: None,
                                     },
                                 );
 
@@ -1117,6 +1119,8 @@ impl MultiFileCompiler {
                         file: importing_file.to_string_lossy().to_string(),
                         line: 1,
                         column: 1,
+                        byte_start: None,
+                        byte_end: None,
                     }),
                 )
             })?;
@@ -1135,6 +1139,8 @@ impl MultiFileCompiler {
                 file: importing_file.to_string_lossy().to_string(),
                 line: 1,
                 column: 1,
+                byte_start: None,
+                byte_end: None,
             }),
         ))
     }
@@ -1159,6 +1165,8 @@ impl MultiFileCompiler {
                     file: file_path.to_string_lossy().to_string(),
                     line: 1,
                     column: 1,
+                    byte_start: None,
+                    byte_end: None,
                 }),
             )
         })?;
@@ -1238,6 +1246,8 @@ impl MultiFileCompiler {
                                 file: full_path.to_string_lossy().to_string(),
                                 line: 1,
                                 column: 1,
+                                byte_start: None,
+                                byte_end: None,
                             }),
                         )
                     })?;
@@ -1327,6 +1337,8 @@ impl MultiFileCompiler {
                         file: file_path.to_string_lossy().to_string(),
                         line: 1,
                         column: 1,
+                        byte_start: None,
+                        byte_end: None,
                     }),
                 )
             })?

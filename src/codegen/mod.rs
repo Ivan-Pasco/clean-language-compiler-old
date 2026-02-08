@@ -1184,6 +1184,8 @@ impl CodeGenerator {
                 // Evaluate condition, trap if false
                 self.generate_require_statement(condition, location, instructions)?;
             }
+            // AI metadata statements — compile-time only, no code generation
+            Statement::Spec { .. } | Statement::Intent { .. } | Statement::SourceBlock { .. } => {}
         }
         Ok(())
     }
@@ -10535,6 +10537,8 @@ impl CodeGenerator {
                 line: 0,
                 column: 0,
                 file: String::new(),
+                byte_start: None,
+                byte_end: None,
             },
         };
 
@@ -10858,6 +10862,8 @@ impl CodeGenerator {
                 file: String::new(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             }),
         });
 
@@ -10880,6 +10886,8 @@ impl CodeGenerator {
                             file: String::new(),
                             line: 0,
                             column: 0,
+                            byte_start: None,
+                            byte_end: None,
                         }),
                     });
                     continue;
@@ -10894,6 +10902,8 @@ impl CodeGenerator {
                     file: String::new(),
                     line: 0,
                     column: 0,
+                    byte_start: None,
+                    byte_end: None,
                 }),
             });
         }
@@ -10905,6 +10915,8 @@ impl CodeGenerator {
                 file: String::new(),
                 line: 0,
                 column: 0,
+                byte_start: None,
+                byte_end: None,
             }),
         });
 

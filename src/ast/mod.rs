@@ -1,10 +1,16 @@
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize)]
 pub struct SourceLocation {
     pub line: usize,
     pub column: usize,
     pub file: String,
+    /// Byte offset of the start of this span in the source file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub byte_start: Option<usize>,
+    /// Byte offset of the end of this span in the source file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub byte_end: Option<usize>,
 }
 
 impl SourceLocation {
@@ -13,6 +19,18 @@ impl SourceLocation {
             line,
             column,
             file: file.to_string(),
+            byte_start: None,
+            byte_end: None,
+        }
+    }
+
+    pub fn with_byte_span(line: usize, column: usize, file: &str, byte_start: usize) -> Self {
+        Self {
+            line,
+            column,
+            file: file.to_string(),
+            byte_start: Some(byte_start),
+            byte_end: None,
         }
     }
 }
@@ -23,7 +41,7 @@ impl fmt::Display for SourceLocation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Value {
     Integer(i64), // Default integer (platform optimal)
     Number(f64),  // Default number (platform optimal)
@@ -49,7 +67,7 @@ pub enum Value {
     Pairs(Vec<(Value, Value)>),
 }
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(Debug, Clone, PartialEq, Copy, serde::Serialize)]
 pub enum ListBehavior {
     Default,        // Standard list behavior
     Line,           // Queue behavior (FIFO)
@@ -61,7 +79,7 @@ pub enum ListBehavior {
     LineUniquePile, // All three combined
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum Type {
     // Core types from specification
     Boolean,
@@ -96,7 +114,7 @@ pub enum Type {
     Any,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum BinaryOperator {
     // Arithmetic
     Add,
@@ -125,7 +143,7 @@ pub enum BinaryOperator {
     Default,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum UnaryOperator {
     Negate,
     Not,
@@ -134,7 +152,7 @@ pub enum UnaryOperator {
     Required,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Parameter {
     pub name: String,
     pub type_: Type,
@@ -159,7 +177,7 @@ impl Parameter {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Expression {
     Literal(Value),
     Variable(String),
@@ -296,14 +314,14 @@ pub enum Expression {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum StringPart {
     Text(String),
     Interpolation(Expression),
 }
 
 /// Input types for console input expressions
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum InputType {
     String,  // input("prompt")
     Integer, // input.integer("prompt")
@@ -311,7 +329,7 @@ pub enum InputType {
     Boolean, // input.yesNo("prompt")
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct MatchCase {
     pub pattern: Pattern,
     pub guard: Option<Expression>, // Optional when condition
@@ -319,7 +337,7 @@ pub struct MatchCase {
     pub location: SourceLocation,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Pattern {
     // Literal patterns: 42, "hello", true
     Literal(Value),
@@ -358,13 +376,13 @@ pub enum Pattern {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct FieldPattern {
     pub name: String,
     pub pattern: Option<Pattern>, // None means shorthand { x } instead of { x: pattern }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Statement {
     // Contract: Require statement - precondition that must be true
     // Can only appear inside functions or class methods
@@ -563,6 +581,25 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
+    // AI metadata: links function to specification document
+    Spec {
+        path: String,
+        location: Option<SourceLocation>,
+    },
+
+    // AI metadata: describes function purpose in natural language
+    Intent {
+        description: String,
+        location: Option<SourceLocation>,
+    },
+
+    // Top-level: marks file as generated from a spec
+    SourceBlock {
+        spec_path: String,
+        version: Option<String>,
+        location: Option<SourceLocation>,
+    },
+
     // Framework extension block (for Clean Frame plugins)
     // Generic container for DSL blocks like endpoints:, data, component
     // These are expanded by plugins before HIR transformation
@@ -621,20 +658,20 @@ pub enum Statement {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct VariableAssignment {
     pub name: String,
     pub initializer: Option<Expression>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ConstantAssignment {
     pub type_: Type,
     pub name: String,
     pub value: Expression,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ImportItem {
     /// Module name (e.g., "Math", "math.sqrt") or file path (e.g., "app/data/models.cln")
     pub name: String,
@@ -645,7 +682,7 @@ pub struct ImportItem {
     pub is_file_import: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TestCase {
     pub description: Option<String>, // None for anonymous tests
     pub test_expression: Expression,
@@ -654,7 +691,7 @@ pub struct TestCase {
 }
 
 /// Attribute for framework DSL elements (e.g., @pk, @unique, @required)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct FrameworkAttribute {
     pub name: String,          // Attribute name: "pk", "unique", "required"
     pub value: Option<String>, // Optional value: @default("value")
@@ -666,7 +703,7 @@ pub struct FrameworkAttribute {
 // ============================================================================
 
 /// UI Screen definition: screen "Name": ...
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Screen {
     pub name: String,
     pub state: Option<Vec<StateVariable>>,
@@ -675,7 +712,7 @@ pub struct Screen {
 }
 
 /// State variable in a screen: count: integer = 0
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct StateVariable {
     pub name: String,
     pub type_name: String, // "integer", "number", "text", "bool", "list"
@@ -684,7 +721,7 @@ pub struct StateVariable {
 }
 
 /// UI node types for Clean UI widgets
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum UiNode {
     /// Layout containers: ui.column, ui.row, ui.stack
     Container {
@@ -812,7 +849,7 @@ pub enum UiNode {
 }
 
 /// Container types for layout
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(Debug, Clone, PartialEq, Copy, serde::Serialize)]
 pub enum UiContainerKind {
     Column,
     Row,
@@ -820,7 +857,7 @@ pub enum UiContainerKind {
 }
 
 /// Common properties for UI widgets
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
 pub struct UiProps {
     pub gap: Option<Expression>,
     pub padding: Option<Expression>,
@@ -844,7 +881,7 @@ pub struct UiProps {
 }
 
 /// Event handler for UI widgets
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct UiEvent {
     pub name: String,        // "onClick", "onChange", "onFocus", "onBlur", "draw"
     pub params: Vec<String>, // ["value"] for onChange, ["dt"] for draw
@@ -854,7 +891,7 @@ pub struct UiEvent {
 
 /// Framework block container for plugin expansion
 /// This is the structured form passed to plugins for DSL transformation
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct FrameworkBlock {
     pub name: String,    // Block identifier: "endpoints", "data", "component"
     pub content: String, // Raw content of the block (unparsed DSL)
@@ -869,7 +906,7 @@ pub struct FrameworkBlock {
 // ============================================================================
 
 /// State scope - determines lifetime and visibility of state
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy, serde::Serialize)]
 pub enum StateScope {
     App,    // Application lifetime, visible everywhere
     Screen, // Screen lifetime, visible only within screen
@@ -878,7 +915,7 @@ pub enum StateScope {
 /// State block - declares persistent state variables
 /// Top-level state: = app scope, state: inside screen: = screen scope
 /// May optionally contain a rules: block for state invariants
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct StateBlock {
     pub declarations: Vec<StateDeclaration>,
     pub computed: Vec<ComputedDeclaration>,
@@ -888,7 +925,7 @@ pub struct StateBlock {
 }
 
 /// Individual state declaration with type, name, initial value, and optional guard
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct StateDeclaration {
     pub name: String,
     pub type_: Type,
@@ -899,7 +936,7 @@ pub struct StateDeclaration {
 
 /// Guard clause - validates state before mutation
 /// Example: guard value >= 0 else "Count cannot be negative"
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct GuardClause {
     pub condition: Expression, // Condition to validate (uses 'value' for proposed new value)
     pub error_message: String, // Error message if validation fails
@@ -907,7 +944,7 @@ pub struct GuardClause {
 }
 
 /// Computed state declaration - derived values that auto-update when dependencies change
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ComputedDeclaration {
     pub name: String,
     pub type_: Type,
@@ -917,7 +954,7 @@ pub struct ComputedDeclaration {
 
 /// Watch block - react to state changes
 /// Example: watch count: print("Count changed")
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct WatchBlock {
     pub targets: Vec<String>, // State variable names to watch
     pub body: Vec<Statement>, // Code to execute when state changes
@@ -925,7 +962,7 @@ pub struct WatchBlock {
 }
 
 /// Reset target - what to reset
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum ResetTarget {
     Variable(String), // Reset single state variable
     AllState,         // Reset all state in current scope (reset state)
@@ -941,7 +978,7 @@ pub enum ResetTarget {
 /// Require statement - declares a precondition that must be true
 /// Can only appear inside functions or class methods
 /// Always checked at runtime (cannot be disabled)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct RequireStatement {
     pub condition: Expression,
     pub location: Option<SourceLocation>,
@@ -950,7 +987,7 @@ pub struct RequireStatement {
 /// Rules block - declares state invariants that must always be true
 /// Must appear inside state: block, after all state declarations
 /// Requires build: block to configure when rules are checked
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct RulesBlock {
     pub rules: Vec<Expression>,
     pub location: Option<SourceLocation>,
@@ -964,13 +1001,13 @@ pub struct RulesBlock {
 // END STATE MANAGEMENT AST TYPES
 // ============================================================================
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum FunctionModifier {
     None,
     Background,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum FunctionSyntax {
     Simple,     // function integer add() ...
     Detailed,   // function integer add() with description/input blocks
@@ -979,13 +1016,13 @@ pub enum FunctionSyntax {
     Background, // background function modifier
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TypeConstraint {
     pub type_parameter: String,
     pub constraint_type: Type,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Function {
     pub name: String,
     pub type_parameters: Vec<String>,
@@ -1024,13 +1061,13 @@ impl Function {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Visibility {
     Public,
     Private,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Field {
     pub name: String,
     pub type_: Type,
@@ -1039,7 +1076,7 @@ pub struct Field {
     pub default_value: Option<Expression>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Constructor {
     pub parameters: Vec<Parameter>,
     pub body: Vec<Statement>,
@@ -1060,7 +1097,7 @@ impl Constructor {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Class {
     pub name: String,
     pub type_parameters: Vec<String>,
@@ -1075,7 +1112,7 @@ pub struct Class {
 
 /// External function declaration - a function provided by the WASM host (imported)
 /// These functions are declared in external: blocks and generate WASM import entries
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ExternalFunction {
     /// Function name (e.g., "_req_body_field", "_http_respond")
     pub name: String,
@@ -1089,7 +1126,7 @@ pub struct ExternalFunction {
     pub location: Option<SourceLocation>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Program {
     pub imports: Vec<ImportItem>,
     pub plugins: Vec<String>, // Framework plugins (e.g., "frame.ui", "frame.data")
@@ -1103,6 +1140,7 @@ pub struct Program {
     pub watch_blocks: Vec<WatchBlock>,    // Top-level watch observers
     pub screen_blocks: Vec<Statement>,    // Screen blocks with state scope
     pub externals: Vec<ExternalFunction>, // External functions (WASM imports)
+    pub source_block: Option<Statement>,  // AI metadata: source: block
     pub location: Option<SourceLocation>,
 }
 
@@ -1232,5 +1270,64 @@ impl fmt::Display for Value {
 impl Type {
     pub fn as_type_ref(&self) -> &Type {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ast_serialization() {
+        // Test that all major AST types can be serialized to JSON
+
+        // Test simple types
+        let int_type = Type::Integer;
+        let json = serde_json::to_string(&int_type).unwrap();
+        assert!(json.contains("Integer"));
+
+        // Test Value
+        let value = Value::Integer(42);
+        let json = serde_json::to_string(&value).unwrap();
+        assert!(json.contains("42"));
+
+        // Test Expression
+        let expr = Expression::Literal(Value::String("test".to_string()));
+        let json = serde_json::to_string(&expr).unwrap();
+        assert!(json.contains("test"));
+
+        // Test Statement
+        let stmt = Statement::Return {
+            value: Some(Expression::Literal(Value::Boolean(true))),
+            location: None,
+        };
+        let json = serde_json::to_string(&stmt).unwrap();
+        assert!(json.contains("Return"));
+
+        // Test Function
+        let func = Function::new("test_func".to_string(), vec![], Type::Void, vec![], None);
+        let json = serde_json::to_string(&func).unwrap();
+        assert!(json.contains("test_func"));
+
+        // Test Program
+        let program = Program {
+            imports: vec![],
+            plugins: vec![],
+            statements: vec![],
+            functions: vec![func],
+            classes: vec![],
+            start_function: None,
+            tests: vec![],
+            screens: vec![],
+            state: None,
+            watch_blocks: vec![],
+            screen_blocks: vec![],
+            externals: vec![],
+            source_block: None,
+            location: None,
+        };
+        let json = serde_json::to_string(&program).unwrap();
+        assert!(json.contains("test_func"));
+        assert!(json.len() > 0);
     }
 }

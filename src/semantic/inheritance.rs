@@ -636,6 +636,8 @@ mod tests {
             line: 1,
             column: 1,
             file: "test.cln".to_string(),
+            byte_start: None,
+            byte_end: None,
         })
     }
 

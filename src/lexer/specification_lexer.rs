@@ -1559,7 +1559,12 @@ impl<'a> SpecificationLexer<'a> {
     }
 
     fn current_location(&self) -> SourceLocation {
-        SourceLocation::new(self.line, self.column, &self.source_map.file_path)
+        SourceLocation::with_byte_span(
+            self.line,
+            self.column,
+            &self.source_map.file_path,
+            self.current_pos,
+        )
     }
 
     fn source_text_range(&self, start: usize, end: usize) -> String {

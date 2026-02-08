@@ -323,7 +323,17 @@ impl OptimizationPipeline {
             functions: vec![function.clone()],
             start_function: None,
             imports: vec![],
-            exports: vec![],
+            plugins: vec![],
+            statements: vec![],
+            classes: vec![],
+            tests: vec![],
+            screens: vec![],
+            state: None,
+            watch_blocks: vec![],
+            screen_blocks: vec![],
+            externals: vec![],
+            source_block: None,
+            location: None,
         };
         
         let results = folder.fold(&mut temp_program)?;
@@ -338,17 +348,27 @@ impl OptimizationPipeline {
     /// Loop optimization implementation
     fn optimize_loops_in_function(&mut self, function: &mut Function) -> Result<(), CompilerError> {
         use crate::codegen::optimizations::LoopOptimizer;
-        
+
         let mut optimizer = LoopOptimizer::new(self.config.debug_info);
-        
+
         // Create a single-function program for the optimizer
         let mut temp_program = Program {
             functions: vec![function.clone()],
             start_function: None,
             imports: vec![],
-            exports: vec![],
+            plugins: vec![],
+            statements: vec![],
+            classes: vec![],
+            tests: vec![],
+            screens: vec![],
+            state: None,
+            watch_blocks: vec![],
+            screen_blocks: vec![],
+            externals: vec![],
+            source_block: None,
+            location: None,
         };
-        
+
         let results = optimizer.optimize(&mut temp_program)?;
         
         // Copy back the optimized function
@@ -361,17 +381,27 @@ impl OptimizationPipeline {
     /// Peephole optimization implementation
     fn run_peephole_optimizations(&mut self, function: &mut Function) -> Result<(), CompilerError> {
         use crate::codegen::optimizations::PeepholeOptimizer;
-        
+
         let mut optimizer = PeepholeOptimizer::new(self.config.debug_info);
-        
+
         // Create a single-function program for the optimizer
         let mut temp_program = Program {
             functions: vec![function.clone()],
             start_function: None,
             imports: vec![],
-            exports: vec![],
+            plugins: vec![],
+            statements: vec![],
+            classes: vec![],
+            tests: vec![],
+            screens: vec![],
+            state: None,
+            watch_blocks: vec![],
+            screen_blocks: vec![],
+            externals: vec![],
+            source_block: None,
+            location: None,
         };
-        
+
         let _results = optimizer.optimize(&mut temp_program)?;
         
         // Copy back the optimized function

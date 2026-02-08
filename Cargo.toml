@@ -1,6 +1,6 @@
 [package]
 name = "clean-language-compiler"
-version = "0.30.14"
+version = "0.30.15"
 authors = ["Ivan Pasco Lizarraga"]
 edition = "2021"
 homepage = "https://www.cleanlanguage.dev"
@@ -72,6 +72,9 @@ tempfile = "3.8"
 
 # HTTP client for real network requests (using native-tls for better macOS compatibility)
 reqwest = { version = "0.11", features = ["blocking", "json", "native-tls"], default-features = false }
+
+# File watching
+notify = "7.0"
 
 # System utilities
 libc = "0.2"
