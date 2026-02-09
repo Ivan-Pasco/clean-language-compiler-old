@@ -3657,6 +3657,42 @@ plugins:
 
 The compiler reads this configuration and loads the specified plugins before compilation.
 
+### Plugin Auto-Detection (v0.30.15+)
+
+The compiler can automatically detect and load plugins based on the file's location in the project structure. This eliminates the need for explicit `plugins:` declarations in most cases.
+
+**Auto-Detection Rules:**
+
+| File Path Pattern | Auto-Loaded Plugins |
+|-------------------|---------------------|
+| `/api/`, `/backend/api/`, `/server/api/`, `/endpoints/` | `frame.httpserver`, `frame.data`, `frame.auth` |
+| `/data/`, `/models/`, `/server/models/` | `frame.data` |
+| `/auth/`, `/config/auth/` | `frame.auth` |
+| `/canvas/` | `frame.canvas` |
+| `/ui/`, `/components/`, `/screens/` | `frame.ui` |
+
+**Example - No explicit plugin declaration needed:**
+
+```clean
+// File: app/api/users.cln
+// Plugins auto-detected: frame.httpserver, frame.data, frame.auth
+
+functions:
+    string getUsers()
+        string result = _db_query("SELECT * FROM users", "[]")
+        return result
+
+start:
+    integer s = _http_route("GET", "/users", 0)
+```
+
+**Precedence:**
+1. Explicit `plugins:` block declarations are always respected
+2. Auto-detected plugins are merged with explicit declarations
+3. No duplicates are loaded
+
+This feature is especially useful for Frame Framework projects where folder conventions are standard.
+
 ### Framework Blocks
 
 Framework blocks are custom DSL blocks defined by plugins. They follow the apply-block syntax:

@@ -63,6 +63,35 @@ The plugin converts the DSL into normal Clean code, and compilation continues no
 
 Each plugin simply adds readable blocks that make Clean more expressive.
 
+### 2.3. Plugin Auto-Detection (v0.30.15+)
+
+The compiler can automatically load plugins based on your file's location. No explicit import needed!
+
+**Auto-Detection Rules:**
+
+| Your File Location | Plugins Auto-Loaded |
+|--------------------|---------------------|
+| `app/api/users.cln` | httpserver, data, auth |
+| `app/data/User.cln` | data |
+| `app/auth/config.cln` | auth |
+| `app/canvas/game.cln` | canvas |
+| `app/ui/Button.cln` | ui |
+
+**Example - Zero configuration:**
+```clean
+// File: app/api/users.cln
+// No import needed - plugins auto-detected!
+
+functions:
+    string getUsers()
+        return _db_query("SELECT * FROM users", "[]")
+
+start:
+    integer s = _http_route("GET", "/users", 0)
+```
+
+This feature works with Frame Framework's folder conventions. Just put your files in the right folders!
+
 ---
 
 ## 3. Plugin Commands (Using `cleen`)
