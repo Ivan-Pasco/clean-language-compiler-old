@@ -19,6 +19,9 @@ pub struct PluginManifest {
     /// Language definitions for LSP support (static, no WASM required)
     #[serde(default)]
     pub language: PluginLanguage,
+    /// AI context for agent-assisted development
+    #[serde(default)]
+    pub ai: PluginAiContext,
 }
 
 /// Basic plugin information
@@ -114,6 +117,33 @@ pub struct BridgeFunction {
 
 fn default_bridge_module() -> String {
     "env".to_string()
+}
+
+/// AI context for agent-assisted development
+///
+/// Provides metadata that AI agents can use to understand what a plugin does,
+/// how to use it, and what constraints apply. This section is optional and
+/// purely informational — it has no effect on compilation.
+///
+/// # Example in plugin.toml
+///
+/// ```toml
+/// [ai]
+/// description = "HTTP endpoint DSL for Clean Language"
+/// examples = ["examples/basic_api.cln", "examples/crud.cln"]
+/// constraints = ["All endpoints must have authentication", "Use REST conventions"]
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginAiContext {
+    /// Natural-language description of what the plugin does, for AI agents
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Paths to example files demonstrating plugin usage
+    #[serde(default)]
+    pub examples: Vec<String>,
+    /// Constraints or rules that AI agents should follow when generating code for this plugin
+    #[serde(default)]
+    pub constraints: Vec<String>,
 }
 
 /// Bridge section in plugin.toml
@@ -526,5 +556,56 @@ mod tests {
 
         assert_eq!(manifest.language.keywords.len(), 1);
         assert_eq!(manifest.language.keywords[0].context, "any"); // Default context
+    }
+
+    #[test]
+    fn test_manifest_with_ai_context() {
+        let toml_str = r#"
+            [plugin]
+            name = "frame.web"
+            version = "1.0.0"
+
+            [handles]
+            blocks = ["endpoints"]
+
+            [ai]
+            description = "HTTP endpoint DSL for Clean Language"
+            examples = ["examples/basic_api.cln", "examples/crud.cln"]
+            constraints = ["All endpoints must have authentication", "Use REST conventions"]
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(manifest.plugin.name, "frame.web");
+        assert_eq!(
+            manifest.ai.description.as_deref(),
+            Some("HTTP endpoint DSL for Clean Language")
+        );
+        assert_eq!(manifest.ai.examples.len(), 2);
+        assert_eq!(manifest.ai.examples[0], "examples/basic_api.cln");
+        assert_eq!(manifest.ai.constraints.len(), 2);
+        assert_eq!(
+            manifest.ai.constraints[0],
+            "All endpoints must have authentication"
+        );
+    }
+
+    #[test]
+    fn test_ai_context_defaults() {
+        let toml_str = r#"
+            [plugin]
+            name = "minimal.plugin"
+            version = "0.1.0"
+
+            [handles]
+            blocks = ["minimal"]
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        // AI context should be default (empty)
+        assert!(manifest.ai.description.is_none());
+        assert!(manifest.ai.examples.is_empty());
+        assert!(manifest.ai.constraints.is_empty());
     }
 }

@@ -305,6 +305,16 @@ enum Commands {
         #[arg(long)]
         json_stream: bool,
     },
+    /// Start the MCP server for AI agent communication
+    #[command(name = "mcp-server")]
+    McpServer {},
+    /// Generate MCP configuration JSON for AI agent integration
+    #[command(name = "mcp-config")]
+    McpConfig {
+        /// Output format: claude-desktop, vscode, generic (default: generic)
+        #[arg(short, long, default_value = "generic")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -505,6 +515,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Watch { path, json_stream } => {
             handle_watch(path, json_stream, &output_config).await?
         }
+        Commands::McpServer {} => clean_language_compiler::mcp::run_mcp_server().await?,
+        Commands::McpConfig { format } => handle_mcp_config(&format)?,
     }
 
     Ok(())
@@ -2109,4 +2121,88 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
             fix: "",
         },
     }
+}
+
+fn handle_mcp_config(format: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // Find the cln binary path
+    let cln_path = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "cln".to_string());
+
+    match format {
+        "claude-desktop" | "claude" => {
+            let config = serde_json::json!({
+                "mcpServers": {
+                    "clean-language": {
+                        "command": cln_path,
+                        "args": ["mcp-server"]
+                    }
+                }
+            });
+            println!("{}", serde_json::to_string_pretty(&config)?);
+            eprintln!();
+            eprintln!("Add the JSON above to your claude_desktop_config.json file.");
+            eprintln!("Location: ~/Library/Application Support/Claude/claude_desktop_config.json");
+        }
+        "vscode" | "cursor" => {
+            let config = serde_json::json!({
+                "mcp": {
+                    "servers": {
+                        "clean-language": {
+                            "command": cln_path,
+                            "args": ["mcp-server"]
+                        }
+                    }
+                }
+            });
+            println!("{}", serde_json::to_string_pretty(&config)?);
+            eprintln!();
+            eprintln!(
+                "Add the JSON above to your VS Code/Cursor settings.json or .vscode/mcp.json"
+            );
+        }
+        "claude-code" => {
+            let config = serde_json::json!({
+                "mcpServers": {
+                    "clean-language": {
+                        "command": cln_path,
+                        "args": ["mcp-server"]
+                    }
+                }
+            });
+            println!("{}", serde_json::to_string_pretty(&config)?);
+            eprintln!();
+            eprintln!(
+                "Add the JSON above to your .claude/settings.json or project .mcp.json file."
+            );
+        }
+        _ => {
+            // Generic format with full instructions
+            let config = serde_json::json!({
+                "server": {
+                    "name": "clean-language",
+                    "command": cln_path,
+                    "args": ["mcp-server"],
+                    "transport": "stdio"
+                },
+                "instructions": {
+                    "step_1": "Start the MCP server: cln mcp-server",
+                    "step_2": "The server reads JSON-RPC from stdin, writes to stdout",
+                    "step_3": "First call: tools/call get_quick_reference to learn the language",
+                    "step_4": "Use 'check' for fast type-checking, 'compile' for WASM output"
+                },
+                "available_tools": [
+                    "get_quick_reference", "check", "compile", "parse",
+                    "diagnostics", "explain_error", "list_functions",
+                    "list_types", "list_builtins", "get_specification",
+                    "list_error_codes", "list_plugins"
+                ]
+            });
+            println!("{}", serde_json::to_string_pretty(&config)?);
+            eprintln!();
+            eprintln!("Formats: cln mcp-config --format claude-desktop|vscode|claude-code|generic");
+        }
+    }
+
+    Ok(())
 }

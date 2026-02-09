@@ -3599,6 +3599,106 @@ functions:
 - Specification files (`.spec.cln`) follow the same Clean Language syntax
 - Tools can verify that implementations match their specifications
 
+### AI Agent Setup (MCP Server)
+
+The Clean Language compiler includes a built-in MCP (Model Context Protocol) server that allows AI agents to write, compile, and debug Clean Language programs. The MCP server exposes 12 tools over a stdio-based JSON-RPC 2.0 transport.
+
+#### Quick Setup
+
+Generate the configuration for your AI platform:
+
+```bash
+# For Claude Desktop
+cln mcp-config --format claude-desktop
+
+# For VS Code / Cursor
+cln mcp-config --format vscode
+
+# For Claude Code
+cln mcp-config --format claude-code
+
+# Generic (all platforms)
+cln mcp-config
+```
+
+Each command outputs the JSON configuration to add to your platform's settings file. For example, Claude Desktop requires adding to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "clean-language": {
+      "command": "cln",
+      "args": ["mcp-server"]
+    }
+  }
+}
+```
+
+#### Starting the MCP Server Manually
+
+```bash
+cln mcp-server
+```
+
+The server reads JSON-RPC 2.0 requests from stdin and writes responses to stdout. Debug logging goes to stderr.
+
+#### Available MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_quick_reference` | **Call first.** Returns a concise cheat sheet with syntax, types, control flow, and examples. |
+| `check` | Fast type-check (no WASM generation). Use during iterative development. |
+| `compile` | Full compilation to WebAssembly. Returns WASM as base64. |
+| `parse` | Returns the AST as JSON. Useful for code analysis. |
+| `diagnostics` | Detailed error/warning diagnostics for source code. |
+| `explain_error` | Explains any error code (e.g., SYN001, SEM002) with examples and fixes. |
+| `list_functions` | Lists all functions in a source file with signatures. |
+| `list_types` | Lists all class/type definitions in a source file. |
+| `list_builtins` | Complete catalog of built-in functions, classes, and namespaces. |
+| `get_specification` | Query the language specification by section or keyword. Auto-updates when spec changes. |
+| `list_error_codes` | All compiler error codes with descriptions across 6 categories. |
+| `list_plugins` | Available plugins with AI context metadata. |
+
+#### Recommended AI Agent Workflow
+
+1. **Learn the language**: Call `get_quick_reference` to receive a complete syntax cheat sheet
+2. **Write code**: Create `.cln` files following the patterns from the quick reference
+3. **Iterate fast**: Call `check` for rapid type-checking feedback (no WASM generation overhead)
+4. **Compile**: Call `compile` when the code is ready for WebAssembly output
+5. **Debug errors**: Call `explain_error` with the error code for detailed fix suggestions
+6. **Deep reference**: Call `get_specification` with a section name or search query for detailed documentation
+
+#### MCP Protocol Example
+
+Initialize the connection:
+```json
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+```
+
+Call a tool:
+```json
+{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+  "name": "check",
+  "arguments": {
+    "source": "start:\n\tprint(\"Hello\")",
+    "file_path": "hello.cln"
+  }
+}}
+```
+
+#### Plugin AI Context
+
+Plugins can include an `[ai]` section in their `plugin.toml` manifest to provide context for AI agents:
+
+```toml
+[ai]
+description = "HTTP endpoint DSL for Clean Language"
+examples = ["examples/basic_api.cln", "examples/crud.cln"]
+constraints = ["All endpoints must have authentication", "Use REST conventions"]
+```
+
+AI agents can discover this context via the `list_plugins` MCP tool, enabling them to understand what plugins are available and how to use them correctly.
+
 ## Plugin System
 
 The Clean Language Plugin System allows you to extend the language with custom Domain-Specific Language (DSL) blocks. Plugins transform DSL syntax into standard Clean Language code before compilation.

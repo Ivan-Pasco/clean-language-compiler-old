@@ -76,6 +76,7 @@ pub mod error;
 pub mod hir;
 
 pub mod lexer;
+pub mod mcp;
 pub mod memory;
 pub mod mir;
 pub mod module;
