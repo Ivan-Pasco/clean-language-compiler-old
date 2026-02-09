@@ -833,7 +833,7 @@ fn get_available_tools() -> Vec<Tool> {
                 properties: json!({
                     "project_dir": {
                         "type": "string",
-                        "description": "Optional project directory to search for project-specific plugins (in addition to global ~/.clean/plugins/)"
+                        "description": "Optional project directory to search for project-specific plugins (in addition to global ~/.cleen/plugins/)"
                     }
                 }),
                 required: vec![],
@@ -1509,7 +1509,7 @@ fn find_plugin_dir(name: &str, project_dir: Option<&str>) -> Option<std::path::P
     // Check global directory
     if let Some(home) = dirs::home_dir() {
         for dir_name in &dir_names {
-            let path = home.join(".clean").join("plugins").join(dir_name);
+            let path = home.join(".cleen").join("plugins").join(dir_name);
             if path.exists() {
                 return Some(path);
             }

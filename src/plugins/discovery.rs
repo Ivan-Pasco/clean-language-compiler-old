@@ -2,7 +2,7 @@
  * Plugin Discovery - Finds and loads plugin manifests from global and project directories
  *
  * This module provides functionality to discover plugins from:
- * - Global plugins directory: ~/.clean/plugins/
+ * - Global plugins directory: ~/.cleen/plugins/
  * - Project plugins directory: <project>/plugins/
  * - Plugins declared in app.cln
  */
@@ -57,7 +57,7 @@ impl std::error::Error for DiscoveryError {}
 /// }
 /// ```
 pub struct PluginDiscovery {
-    /// Global plugins directory (~/.clean/plugins/)
+    /// Global plugins directory (~/.cleen/plugins/)
     global_dir: PathBuf,
     /// Project plugins directory (<project>/plugins/)
     project_dir: Option<PathBuf>,
@@ -67,12 +67,12 @@ impl PluginDiscovery {
     /// Create a new plugin discovery service with default paths
     ///
     /// Uses:
-    /// - Global: ~/.clean/plugins/
+    /// - Global: ~/.cleen/plugins/
     /// - Project: None (set with `with_project_dir`)
     pub fn new() -> Self {
         let global_dir = dirs::home_dir()
-            .map(|h| h.join(".clean").join("plugins"))
-            .unwrap_or_else(|| PathBuf::from(".clean/plugins"));
+            .map(|h| h.join(".cleen").join("plugins"))
+            .unwrap_or_else(|| PathBuf::from(".cleen/plugins"));
 
         Self {
             global_dir,
