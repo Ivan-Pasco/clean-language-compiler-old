@@ -683,7 +683,7 @@ fn handle_initialize(id: serde_json::Value) -> JsonRpcResponse {
             "name": "cln",
             "version": VERSION
         },
-        "instructions": "Clean Language compiler MCP server. Call 'get_quick_reference' first to learn the language syntax, types, and patterns. Use 'check' for fast type-checking during development, 'compile' for WebAssembly output. All 12 tools are available — get_quick_reference is the starting point."
+        "instructions": "Clean Language compiler MCP server. Call 'get_quick_reference' first to learn the language syntax, types, and patterns. Call 'list_plugins' to discover framework/plugin DSL syntax, then 'get_plugin_examples' to see usage patterns. Use 'check' for fast type-checking during development, 'compile' for WebAssembly output. All 14 tools are available — get_quick_reference is the starting point."
     });
     JsonRpcResponse::success(id, result)
 }
@@ -898,6 +898,38 @@ fn get_available_tools() -> Vec<Tool> {
                 required: vec![],
             },
         },
+        Tool {
+            name: "get_plugin_examples".to_string(),
+            description: "Read example source files from an installed plugin. Plugins declare example files in their [ai] section — this tool reads and returns their contents so you can learn the plugin's DSL syntax.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "plugin_name": {
+                        "type": "string",
+                        "description": "Plugin name (e.g., 'frame.data', 'frame.endpoints')"
+                    },
+                    "project_dir": {
+                        "type": "string",
+                        "description": "Optional project directory for project-specific plugins"
+                    }
+                }),
+                required: vec!["plugin_name".to_string()],
+            },
+        },
+        Tool {
+            name: "list_ecosystem".to_string(),
+            description: "List ALL plugins available in the Clean Language ecosystem, whether installed or not. Returns the full catalog with descriptions, blocks, bridge functions, and install status. Use this to discover what plugins exist.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "category": {
+                        "type": "string",
+                        "description": "Filter by category: 'server', 'data', 'auth', 'ui', 'canvas', or 'all' (default)"
+                    }
+                }),
+                required: vec![],
+            },
+        },
     ]
 }
 
@@ -953,6 +985,8 @@ fn handle_tools_call(id: serde_json::Value, params: Option<serde_json::Value>) -
         "list_builtins" => tool_list_builtins(id, arguments),
         "list_error_codes" => tool_list_error_codes(id, arguments),
         "get_quick_reference" => tool_get_quick_reference(id),
+        "get_plugin_examples" => tool_get_plugin_examples(id, arguments),
+        "list_ecosystem" => tool_list_ecosystem(id, arguments),
         _ => JsonRpcResponse::error(
             id,
             error_codes::METHOD_NOT_FOUND,
@@ -1364,6 +1398,309 @@ fn tool_list_plugins(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
             }),
         ),
     }
+}
+
+/// Tool: get_plugin_examples - Read example files from an installed plugin
+fn tool_get_plugin_examples(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    let plugin_name = match args.get("plugin_name").and_then(|v| v.as_str()) {
+        Some(name) => name,
+        None => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Missing 'plugin_name' parameter".to_string(),
+            )
+        }
+    };
+    let project_dir = args.get("project_dir").and_then(|v| v.as_str());
+
+    let mut discovery = PluginDiscovery::new();
+    if let Some(dir) = project_dir {
+        discovery = discovery.with_project_dir(dir);
+    }
+
+    // Load the specific plugin
+    match discovery.load_plugin(plugin_name) {
+        Ok(manifest) => {
+            let example_paths = &manifest.ai.examples;
+
+            if example_paths.is_empty() {
+                return JsonRpcResponse::success(
+                    id,
+                    json!({
+                        "success": true,
+                        "plugin": plugin_name,
+                        "examples": [],
+                        "note": "This plugin has no example files declared in its [ai] section."
+                    }),
+                );
+            }
+
+            // Resolve example paths relative to the plugin directory
+            // Try project dir first, then global
+            let plugin_dir = find_plugin_dir(plugin_name, project_dir);
+
+            let mut examples: Vec<serde_json::Value> = Vec::new();
+            for example_path in example_paths {
+                let full_path = if let Some(ref pdir) = plugin_dir {
+                    pdir.join(example_path)
+                } else {
+                    std::path::PathBuf::from(example_path)
+                };
+
+                match std::fs::read_to_string(&full_path) {
+                    Ok(content) => {
+                        examples.push(json!({
+                            "path": example_path,
+                            "content": content
+                        }));
+                    }
+                    Err(e) => {
+                        examples.push(json!({
+                            "path": example_path,
+                            "error": format!("Could not read file: {}", e)
+                        }));
+                    }
+                }
+            }
+
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": true,
+                    "plugin": plugin_name,
+                    "examples": examples,
+                    "language": {
+                        "blocks": manifest.handles.blocks,
+                        "keywords": manifest.language.keywords.iter()
+                            .map(|k| json!({"name": k.name, "description": k.description}))
+                            .collect::<Vec<_>>(),
+                        "types": manifest.language.types.iter()
+                            .map(|t| json!({"name": t.name, "description": t.description}))
+                            .collect::<Vec<_>>(),
+                    }
+                }),
+            )
+        }
+        Err(e) => JsonRpcResponse::success(
+            id,
+            json!({
+                "success": false,
+                "error": format!("Plugin '{}' not found: {}", plugin_name, e)
+            }),
+        ),
+    }
+}
+
+/// Find the directory where a plugin is installed
+fn find_plugin_dir(name: &str, project_dir: Option<&str>) -> Option<std::path::PathBuf> {
+    let dir_names = [name.to_string(), name.replace('.', "-")];
+
+    // Check project directory first
+    if let Some(pdir) = project_dir {
+        for dir_name in &dir_names {
+            let path = std::path::Path::new(pdir).join("plugins").join(dir_name);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    // Check global directory
+    if let Some(home) = dirs::home_dir() {
+        for dir_name in &dir_names {
+            let path = home.join(".clean").join("plugins").join(dir_name);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    None
+}
+
+/// Tool: list_ecosystem - List all plugins in the Clean Language ecosystem
+///
+/// MAINTENANCE: When a new plugin is added to the Clean Language ecosystem,
+/// add it to the `get_ecosystem_catalog()` function below. Each entry needs:
+/// name, version, category, description, blocks, key_features, bridge_function_count,
+/// install command, and status.
+fn tool_list_ecosystem(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    let category_filter = args.get("category").and_then(|v| v.as_str());
+
+    let catalog = get_ecosystem_catalog();
+
+    let mut plugins: Vec<serde_json::Value> = Vec::new();
+    for entry in &catalog {
+        if let Some(cat) = category_filter {
+            if !cat.eq_ignore_ascii_case("all") && !entry.category.eq_ignore_ascii_case(cat) {
+                continue;
+            }
+        }
+
+        plugins.push(json!({
+            "name": entry.name,
+            "version": entry.version,
+            "category": entry.category,
+            "description": entry.description,
+            "blocks": entry.blocks,
+            "key_features": entry.key_features,
+            "bridge_function_count": entry.bridge_function_count,
+            "install": entry.install,
+            "status": entry.status,
+            "auto_detect_paths": entry.auto_detect_paths,
+        }));
+    }
+
+    // Check which ones are actually installed
+    let discovery = PluginDiscovery::new();
+    let installed = discovery.discover_all().unwrap_or_default();
+    let installed_names: Vec<String> = installed.keys().cloned().collect();
+
+    for plugin in plugins.iter_mut() {
+        let name = plugin["name"].as_str().unwrap_or("");
+        plugin["installed"] = json!(installed_names.iter().any(|n| n == name));
+    }
+
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": true,
+            "ecosystem": plugins,
+            "total": catalog.len(),
+            "installed_count": installed_names.len(),
+            "note": "Use 'list_plugins' with project_dir to see installed plugins with full DSL details. Use 'get_plugin_examples' to read example code."
+        }),
+    )
+}
+
+struct EcosystemPlugin {
+    name: &'static str,
+    version: &'static str,
+    category: &'static str,
+    description: &'static str,
+    blocks: &'static [&'static str],
+    key_features: &'static [&'static str],
+    bridge_function_count: usize,
+    install: &'static str,
+    status: &'static str,
+    auto_detect_paths: &'static [&'static str],
+}
+
+/// ECOSYSTEM CATALOG — Add new plugins here
+///
+/// When a new plugin is created in the Clean Language ecosystem:
+/// 1. Add an EcosystemPlugin entry to this function
+/// 2. Include accurate block names, feature list, and bridge function count
+/// 3. Set status to "stable", "beta", or "planned"
+/// 4. Run `cargo test` to verify compilation
+fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
+    vec![
+        EcosystemPlugin {
+            name: "frame.httpserver",
+            version: "2.0.0",
+            category: "server",
+            description: "HTTP server plugin — routing, request context, response helpers, and authentication guards. Define REST APIs with endpoints: blocks.",
+            blocks: &["server", "endpoints"],
+            key_features: &[
+                "HTTP route registration (GET, POST, PUT, PATCH, DELETE)",
+                "Protected routes with role requirements",
+                "Request context (params, query, headers, body, cookies)",
+                "Response helpers (JSON, HTML, redirect, error)",
+                "Response headers and caching control",
+                "Authentication guard integration",
+            ],
+            bridge_function_count: 47,
+            install: "cleen plugin add frame.httpserver",
+            status: "stable",
+            auto_detect_paths: &["/api/", "/backend/api/", "/server/api/", "/endpoints/"],
+        },
+        EcosystemPlugin {
+            name: "frame.data",
+            version: "2.0.0",
+            category: "data",
+            description: "ORM and database plugin — data models, CRUD operations, query builder, transactions, and raw SQL. Define models with data: blocks.",
+            blocks: &["data"],
+            key_features: &[
+                "Model definition with typed fields",
+                "Query builder (find, first, count, insert, update, delete)",
+                "Filtering, sorting, and pagination",
+                "Transaction support (Data.tx:)",
+                "Raw SQL queries (db.query:, db.queryAs)",
+                "Database migrations",
+            ],
+            bridge_function_count: 2,
+            install: "cleen plugin add frame.data",
+            status: "stable",
+            auto_detect_paths: &["/data/", "/models/", "/server/models/"],
+        },
+        EcosystemPlugin {
+            name: "frame.auth",
+            version: "2.0.0",
+            category: "auth",
+            description: "Authentication and authorization plugin — sessions, JWT tokens, password hashing, roles/permissions, CSRF protection. Configure with auth: blocks.",
+            blocks: &["auth", "protected", "login", "roles"],
+            key_features: &[
+                "Session management (store, get, delete)",
+                "JWT token operations (sign, verify, decode)",
+                "Password hashing (Argon2id)",
+                "CSRF token management",
+                "Role-based access control (RBAC)",
+                "Permission checking",
+                "Cookie management",
+                "Environment variable access for secrets",
+            ],
+            bridge_function_count: 20,
+            install: "cleen plugin add frame.auth",
+            status: "stable",
+            auto_detect_paths: &["/auth/", "/config/auth/"],
+        },
+        EcosystemPlugin {
+            name: "frame.ui",
+            version: "2.1.0",
+            category: "ui",
+            description: "HTML-first UI framework — components, screens, event handling, two-way binding, and hydration. Define components with component: blocks and HTML templates.",
+            blocks: &["component", "screen", "page", "styles"],
+            key_features: &[
+                "Component definitions with properties and slots",
+                "HTML directives (if, else, each, bind, show, validate)",
+                "Event handling (onclick, oninput, onsubmit, etc.)",
+                "Event modifiers (prevent, stop, once, enter, escape)",
+                "Interpolation ({{escaped}} and {{{raw}}})",
+                "Hydration modes (off, on, visible, idle, only)",
+                "Two-way data binding",
+                "State management for components",
+            ],
+            bridge_function_count: 10,
+            install: "cleen plugin add frame.ui",
+            status: "stable",
+            auto_detect_paths: &["/ui/", "/components/", "/screens/"],
+        },
+        EcosystemPlugin {
+            name: "frame.canvas",
+            version: "2.0.0",
+            category: "canvas",
+            description: "Canvas rendering and game development plugin — drawing, animation, audio, sprites, input, collision detection, and easing functions. Define scenes with canvasScene: blocks.",
+            blocks: &["canvasScene", "draw", "onFrame"],
+            key_features: &[
+                "Drawing primitives (circles, rectangles, lines, polygons)",
+                "Text and image rendering",
+                "Transform operations (translate, rotate, scale)",
+                "Animation frame management",
+                "Audio (sound effects and music with volume/pan control)",
+                "Sprite sheet support",
+                "Input handling (mouse, keyboard, touch, gamepad)",
+                "Collision detection (7 types including raycasting)",
+                "Camera and viewport control",
+                "20 easing functions",
+                "Scene management",
+            ],
+            bridge_function_count: 127,
+            install: "cleen plugin add frame.canvas",
+            status: "stable",
+            auto_detect_paths: &["/canvas/"],
+        },
+    ]
 }
 
 /// Tool: get_specification - Query the Clean Language Specification
@@ -1844,15 +2181,29 @@ functions:
 - `list_builtins` — All built-in functions/methods
 - `get_specification` — Full language spec by section
 - `list_error_codes` — All error codes
-- `list_plugins` — Available plugins
+- `list_plugins` — Installed plugins with full DSL syntax
+- `list_ecosystem` — ALL available plugins (installed or not)
+- `get_plugin_examples` — Read plugin example files
 
 ## Workflow
-1. Call `get_quick_reference` (this tool) to learn syntax
-2. Write .cln code following the patterns above
-3. Call `check` to type-check (fast feedback loop)
-4. Call `compile` when ready for WASM output
-5. If errors occur, call `explain_error` with the code
-6. Use `get_specification` for detailed docs on specific features
+1. Call `get_quick_reference` (this tool) to learn base syntax
+2. Call `list_ecosystem` to see ALL available plugins in the ecosystem
+3. Call `list_plugins` to see installed plugins with full DSL details
+4. Call `get_plugin_examples` to see plugin usage patterns
+5. Write .cln code following the patterns above
+6. Call `check` to type-check (fast feedback loop)
+7. Call `compile` when ready for WASM output
+8. If errors occur, call `explain_error` with the code
+9. Use `get_specification` for detailed docs on specific features
+
+## Plugin Syntax Discovery
+Plugins (like Frame) add custom blocks, keywords, and types.
+Call `list_plugins` to see what each plugin provides:
+- blocks: DSL block names (endpoints:, data:, component:)
+- keywords: Custom keywords (find, where, route)
+- types: Custom types (Model, Endpoint)
+- functions: Plugin functions (Data.tx, Http.route)
+- ai.examples: Example files you can read with `get_plugin_examples`
 "#;
 
     JsonRpcResponse::success(
@@ -1861,7 +2212,7 @@ functions:
             "success": true,
             "quick_reference": quick_ref,
             "version": crate::VERSION,
-            "tools_available": 12,
+            "tools_available": 14,
             "tip": "Use 'check' for fast iteration, 'compile' when ready for WASM."
         }),
     )

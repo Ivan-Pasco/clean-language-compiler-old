@@ -490,6 +490,22 @@ ALWAYS prefer editing an existing file to creating a new one.
 NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
 - we dont need backwards compatibility, the Clean Language Specification and the intermediate representations are the main and only source of truth
 
+## MCP Ecosystem Catalog Maintenance
+
+**MANDATORY: Keep the MCP ecosystem plugin catalog in sync.**
+
+When a new plugin is added to the Clean Language ecosystem (in `clean-framework/plugins/` or any other component):
+
+1. **Update the catalog** in `src/mcp/server.rs` — find the `get_ecosystem_catalog()` function
+2. **Add an `EcosystemPlugin` entry** with: name, version, category, description, blocks, key_features, bridge_function_count, install command, status, and auto_detect_paths
+3. **Update existing entries** when a plugin's version, features, or bridge functions change
+4. **Set status correctly**: `"stable"` for production-ready, `"beta"` for testing, `"planned"` for announced but not yet available
+5. **Run `cargo build && cargo test`** to verify the catalog compiles
+
+This catalog is served by the `list_ecosystem` MCP tool (tool #14) so AI agents know what plugins exist even before any are installed.
+
+**Trigger**: Whenever you see changes to any `plugin.toml` file in the ecosystem, or a new plugin directory is created, update `get_ecosystem_catalog()` accordingly.
+
 ## Cross-Component Work Policy
 
 **CRITICAL: AI Instance Separation of Concerns**
