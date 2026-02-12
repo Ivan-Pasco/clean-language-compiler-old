@@ -1,4 +1,6 @@
-// Error handling simple test - demonstrates basic error patterns
+start:
+	testErrorHandling()
+	print("Error handling test completed successfully")// Error handling simple test - demonstrates basic error patterns
 // Note: Full onError syntax requires parser implementation
 
 functions:
@@ -29,6 +31,3 @@ functions:
 		string contents2 = readFileContents("")
 		print("Error handled: " + contents2)
 
-start:
-	testErrorHandling()
-	print("Error handling test completed successfully")

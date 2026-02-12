@@ -1,4 +1,7 @@
-// Test static method calls
+start:
+	print("Static methods test starting")
+	testStaticMethods()
+	print("Static methods test completed")// Test static method calls
 
 functions:
 	void testStaticMethods()
@@ -6,7 +9,3 @@ functions:
 		print("math.max result: ")
 		print(result1.toString())
 
-start:
-	print("Static methods test starting")
-	testStaticMethods()
-	print("Static methods test completed")

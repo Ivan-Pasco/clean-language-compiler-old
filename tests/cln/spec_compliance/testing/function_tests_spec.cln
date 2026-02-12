@@ -1,3 +1,15 @@
+start:
+	// Test at runtime
+	integer sum = add(10, 20)
+	print("add(10, 20) = " + sum.toString())
+
+	integer product = multiply(6, 7)
+	print("multiply(6, 7) = " + product.toString())
+
+	boolean positive = isPositive(5)
+	print("isPositive(5) = " + positive.toString())
+
+	print("Function tests specification completed")
 // Spec Section: 7 - Testing Framework
 // Tests: Testing functions within tests block
 // Requirement: Test block can verify function behavior
@@ -19,15 +31,3 @@ tests:
 	"multiply by zero": multiply(10, 0) = 0
 	"multiply by one": multiply(7, 1) = 7
 
-start:
-	// Test at runtime
-	integer sum = add(10, 20)
-	print("add(10, 20) = " + sum.toString())
-
-	integer product = multiply(6, 7)
-	print("multiply(6, 7) = " + product.toString())
-
-	boolean positive = isPositive(5)
-	print("isPositive(5) = " + positive.toString())
-
-	print("Function tests specification completed")

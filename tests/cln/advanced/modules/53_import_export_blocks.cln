@@ -1,4 +1,20 @@
-// Simple QA Test for Import/Export Block Syntax
+start:
+
+	// Test using public functions
+	integer sum = calculateSum(10, 20)
+	print("Sum result: ")
+	print(sum.toString())
+
+	string formatted = formatText("test")
+	print("Formatted text: ")
+	print(formatted)
+
+	// Private functions should not be accessible from outside
+	// These would cause compilation errors if uncommented:
+	// helperFunction()         // Error: private function
+	// internalProcessor("test") // Error: private function
+
+	print("Import/export block syntax test completed successfully!")// Simple QA Test for Import/Export Block Syntax
 // Tests basic private: block syntax for module management
 // Note: Builtin namespaces (math, string, list) are always available
 
@@ -23,20 +39,3 @@ private:
 	helperFunction
 	internalProcessor
 
-start:
-
-	// Test using public functions
-	integer sum = calculateSum(10, 20)
-	print("Sum result: ")
-	print(sum.toString())
-
-	string formatted = formatText("test")
-	print("Formatted text: ")
-	print(formatted)
-
-	// Private functions should not be accessible from outside
-	// These would cause compilation errors if uncommented:
-	// helperFunction()         // Error: private function
-	// internalProcessor("test") // Error: private function
-
-	print("Import/export block syntax test completed successfully!")

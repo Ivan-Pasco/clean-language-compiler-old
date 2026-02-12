@@ -1,3 +1,8 @@
+start:
+	testStringifyArray()
+	testStringifyObject()
+	testStringifyNested()
+	printl("All tests completed")
 // Test: JSON stringify with arrays and objects
 
 functions:
@@ -16,8 +21,3 @@ functions:
 		string result = json.dataToText(data)
 		printl(result)
 
-start:
-	testStringifyArray()
-	testStringifyObject()
-	testStringifyNested()
-	printl("All tests completed")

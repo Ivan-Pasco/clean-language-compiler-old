@@ -1,3 +1,9 @@
+start:
+	integer result = divide(10, 2)
+	print(result.toString())
+
+	integer positive = absoluteValue(-5)
+	print(positive.toString())
 // Test: Basic require statement for preconditions
 // Require statements are always checked at runtime
 
@@ -12,9 +18,3 @@ functions:
 			return 0 - x
 		return x
 
-start:
-	integer result = divide(10, 2)
-	print(result.toString())
-
-	integer positive = absoluteValue(-5)
-	print(positive.toString())

@@ -1,4 +1,5 @@
-// Test extended numeric literals
+start:
+	testNumericLiterals()// Test extended numeric literals
 
 functions:
 	void testNumericLiterals()
@@ -10,5 +11,3 @@ functions:
 		integer negBin = -0b1111
 		integer negOct = -0o20
 
-start:
-	testNumericLiterals()

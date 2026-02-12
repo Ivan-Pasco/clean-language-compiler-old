@@ -1,26 +1,3 @@
-// Spec Section: 7.4 - Parameters
-// Tests: Functions with various parameter types and counts
-
-functions:
-	void printSingle(string message)
-		print(message)
-
-	void printTwo(string first, string second)
-		print(first)
-		print(second)
-
-	integer sumThree(integer a, integer b, integer c)
-		return a + b + c
-
-	string formatPerson(string name, integer age)
-		return name + " is " + age.toString() + " years old"
-
-	boolean inRange(integer value, integer min, integer max)
-		return value >= min and value <= max
-
-	number average(number a, number b, number c)
-		return (a + b + c) / 3.0
-
 start:
 	// Test 1: Single parameter
 	printSingle("Hello from single param")
@@ -47,3 +24,26 @@ start:
 	print("Average of 10, 20, 30: " + avg.toString())
 
 	print("Function parameters test completed")
+// Spec Section: 7.4 - Parameters
+// Tests: Functions with various parameter types and counts
+
+functions:
+	void printSingle(string message)
+		print(message)
+
+	void printTwo(string first, string second)
+		print(first)
+		print(second)
+
+	integer sumThree(integer a, integer b, integer c)
+		return a + b + c
+
+	string formatPerson(string name, integer age)
+		return name + " is " + age.toString() + " years old"
+
+	boolean inRange(integer value, integer min, integer max)
+		return value >= min and value <= max
+
+	number average(number a, number b, number c)
+		return (a + b + c) / 3.0
+

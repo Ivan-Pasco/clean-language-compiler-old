@@ -1,4 +1,6 @@
-// Default parameters working test - simplified version
+start:
+	testDefaultParameters()
+	print("Default parameters test completed successfully")// Default parameters working test - simplified version
 
 functions:
 	string greet(string name)
@@ -16,6 +18,3 @@ functions:
 		print("Power result 1: " + result1.toString())
 		print("Power result 2: " + result2.toString())
 
-start:
-	testDefaultParameters()
-	print("Default parameters test completed successfully")

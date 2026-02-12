@@ -1,3 +1,13 @@
+start:
+	testEmptyArray()
+	testEmptyObject()
+	testBooleans()
+	testNull()
+	testMixedTypes()
+	testDeeplyNested()
+	testArrayOfObjects()
+	testObjectWithArrays()
+	printl("All comprehensive tests completed")
 // Test: Comprehensive JSON stringify tests
 
 functions:
@@ -41,13 +51,3 @@ functions:
 		string result = json.dataToText(data)
 		printl(result)
 
-start:
-	testEmptyArray()
-	testEmptyObject()
-	testBooleans()
-	testNull()
-	testMixedTypes()
-	testDeeplyNested()
-	testArrayOfObjects()
-	testObjectWithArrays()
-	printl("All comprehensive tests completed")

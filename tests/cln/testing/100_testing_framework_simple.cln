@@ -1,4 +1,13 @@
-// Testing Framework Simple Test
+start:
+	print("Simple Testing Framework Test")
+	print("=============================")
+	print("This test demonstrates basic testing syntax:")
+	print("")
+	print("Named tests: \"description\": expression = expected")
+	print("Anonymous tests: expression = expected")
+	print("")
+	print("Run with --test flag to execute tests")
+	print("Simple testing framework test completed")// Testing Framework Simple Test
 // Tests the basic testing framework syntax
 
 functions:
@@ -55,13 +64,3 @@ tests:
 	(5 >= 5) = true
 	(3 <= 5) = true
 
-start:
-	print("Simple Testing Framework Test")
-	print("=============================")
-	print("This test demonstrates basic testing syntax:")
-	print("")
-	print("Named tests: \"description\": expression = expected")
-	print("Anonymous tests: expression = expected")
-	print("")
-	print("Run with --test flag to execute tests")
-	print("Simple testing framework test completed")

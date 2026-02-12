@@ -1,4 +1,12 @@
-// Spec Section: 9.2 - onError Handler
+start:
+	string result1 = riskyOperation(false) onError "Default"
+	print(result1)
+
+	string result2 = riskyOperation(true) onError "Default"
+	print(result2)
+
+	string result3 = getDefaultValue()
+	print(result3)// Spec Section: 9.2 - onError Handler
 // Tests: Basic onError fallback handling
 
 functions:
@@ -10,12 +18,3 @@ functions:
 			return "Error occurred"
 		return "Success"
 
-start:
-	string result1 = riskyOperation(false) onError "Default"
-	print(result1)
-
-	string result2 = riskyOperation(true) onError "Default"
-	print(result2)
-
-	string result3 = getDefaultValue()
-	print(result3)

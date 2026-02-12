@@ -1,3 +1,9 @@
+start:
+	simpleIfElse()
+	nestedIfElse()
+	deeplyNested()
+	ifWithReturn()
+	ifElseWithReturns()
 // Test: Nested if-else in void functions should not generate unreachable
 
 state:
@@ -44,9 +50,3 @@ functions:
 		else
 			return
 
-start:
-	simpleIfElse()
-	nestedIfElse()
-	deeplyNested()
-	ifWithReturn()
-	ifElseWithReturns()

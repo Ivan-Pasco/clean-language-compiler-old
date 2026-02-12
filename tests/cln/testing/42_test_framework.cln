@@ -1,4 +1,5 @@
-// Test framework functionality
+start:
+	// Nothing needed here for tests// Test framework functionality
 
 functions:
 	integer add(integer a, integer b)
@@ -12,5 +13,3 @@ tests:
 	"positive number test": isPositive(10) = true
 	isPositive(0) = false
 
-start:
-	// Nothing needed here for tests

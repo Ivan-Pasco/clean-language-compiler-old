@@ -1,4 +1,16 @@
-functions:
+start:
+	print("Testing framework demonstration")
+	print("Run with --test flag to execute all tests")
+
+	// Regular program execution
+	integer result = add(10, 15)
+	print("Regular execution: 10 + 15 = " + result.toString())
+
+	string fullName = formatName("Clean", "Language")
+	print("Formatted name: " + fullName)
+
+	boolean evenCheck = isEven(result)
+	print("Is " + result.toString() + " even? " + evenCheck.toString())functions:
 	integer add(integer a, integer b)
 		return a + b
 
@@ -73,16 +85,3 @@ tests:
 	[1, 2, 3, 4, 5][2] = 3
 	["a", "b", "c"].contains("b") = true
 
-start:
-	print("Testing framework demonstration")
-	print("Run with --test flag to execute all tests")
-
-	// Regular program execution
-	integer result = add(10, 15)
-	print("Regular execution: 10 + 15 = " + result.toString())
-
-	string fullName = formatName("Clean", "Language")
-	print("Formatted name: " + fullName)
-
-	boolean evenCheck = isEven(result)
-	print("Is " + result.toString() + " even? " + evenCheck.toString())

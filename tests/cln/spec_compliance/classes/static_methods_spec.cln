@@ -1,31 +1,3 @@
-// Spec Section: 11.5 - Static Methods
-// Tests: Static class methods called via ClassName.method()
-
-class Calculator
-	functions:
-		integer square(integer n)
-			return n * n
-
-		integer cube(integer n)
-			return n * n * n
-
-		integer add(integer a, integer b)
-			return a + b
-
-		integer multiply(integer a, integer b)
-			return a * b
-
-		boolean isEven(integer n)
-			return n % 2 == 0
-
-		boolean isPositive(integer n)
-			return n > 0
-
-		integer absolute(integer n)
-			if n < 0
-				return 0 - n
-			return n
-
 start:
 	// Test 1: Static method call - square
 	integer sq = Calculator.square(5)
@@ -66,3 +38,31 @@ start:
 	print("Square of (2+3): " + chainResult.toString())
 
 	print("Static methods test completed")
+// Spec Section: 11.5 - Static Methods
+// Tests: Static class methods called via ClassName.method()
+
+class Calculator
+	functions:
+		integer square(integer n)
+			return n * n
+
+		integer cube(integer n)
+			return n * n * n
+
+		integer add(integer a, integer b)
+			return a + b
+
+		integer multiply(integer a, integer b)
+			return a * b
+
+		boolean isEven(integer n)
+			return n % 2 == 0
+
+		boolean isPositive(integer n)
+			return n > 0
+
+		integer absolute(integer n)
+			if n < 0
+				return 0 - n
+			return n
+

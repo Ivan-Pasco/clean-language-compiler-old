@@ -1,22 +1,3 @@
-// Error handling onError specification compliance test
-// Tests onError syntax as defined in Clean Language Specification
-
-functions:
-	integer riskyDivision(integer a, integer b)
-		if b == 0
-			return 0
-		return a / b
-
-	string readFileContent(string filename)
-		if filename == "nonexistent.txt"
-			return "File not available"
-		return "File content for " + filename
-
-	integer parseNumber(string text)
-		if text == "invalid"
-			return 0
-		return 42  // Simplified - would parse actual number
-
 start:
 	print("=== Error Handling onError Specification Test ===")
 
@@ -55,4 +36,22 @@ start:
 	integer complex = (riskyDivision(20, 0) onError riskyDivision(15, 3)) onError 999
 	print("Nested onError result: " + complex.toString())
 
-	print("Error handling onError specification compliance test completed")
+	print("Error handling onError specification compliance test completed")// Error handling onError specification compliance test
+// Tests onError syntax as defined in Clean Language Specification
+
+functions:
+	integer riskyDivision(integer a, integer b)
+		if b == 0
+			return 0
+		return a / b
+
+	string readFileContent(string filename)
+		if filename == "nonexistent.txt"
+			return "File not available"
+		return "File content for " + filename
+
+	integer parseNumber(string text)
+		if text == "invalid"
+			return 0
+		return 42  // Simplified - would parse actual number
+

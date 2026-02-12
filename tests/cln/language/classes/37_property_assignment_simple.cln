@@ -1,9 +1,8 @@
-// Simple property assignment test
+start:
+	testSimple()// Simple property assignment test
 
 functions:
 	void testSimple()
 		list<integer> items = [1, 2, 3]
 		items.type = "line"
 
-start:
-	testSimple()

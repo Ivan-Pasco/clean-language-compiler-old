@@ -1,4 +1,5 @@
-// Test type precision modifiers
+start:
+	testTypePrecision()// Test type precision modifiers
 
 functions:
 	void testTypePrecision()
@@ -10,5 +11,3 @@ functions:
 		number:32 singlePrecision = 3.14
 		number:64 doublePrecision = 3.141592653589793
 
-start:
-	testTypePrecision()

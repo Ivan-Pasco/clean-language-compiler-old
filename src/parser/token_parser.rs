@@ -19,6 +19,31 @@ use crate::lexer::specification_token::{Token, TokenKind, TokenStream};
 use std::collections::HashSet;
 use tracing::{debug, trace, warn};
 
+/// Returns the ordering index for the 5 core sections, or None for non-core sections.
+/// Order: import: (1) → start: (2) → state: (3) → class (4) → functions: (5)
+fn core_section_order(kind: &TokenKind) -> Option<u8> {
+    match kind {
+        TokenKind::Import => Some(1),
+        TokenKind::Start => Some(2),
+        TokenKind::State => Some(3),
+        TokenKind::Class => Some(4),
+        TokenKind::Functions => Some(5),
+        _ => None,
+    }
+}
+
+/// Returns the human-readable name for a core section given its order index.
+fn core_section_name(order: u8) -> &'static str {
+    match order {
+        1 => "import:",
+        2 => "start:",
+        3 => "state:",
+        4 => "class",
+        5 => "functions:",
+        _ => "unknown",
+    }
+}
+
 /// Token-driven parser for Clean Language
 pub struct TokenParser {
     tokens: Vec<Token>,
@@ -89,6 +114,10 @@ impl TokenParser {
         let mut externals: Vec<crate::ast::ExternalFunction> = Vec::new();
         let mut source_block: Option<Statement> = None;
 
+        // Track section ordering for the 5 core sections:
+        // import: (1) → start: (2) → state: (3) → class (4) → functions: (5)
+        let mut last_core_section: u8 = 0;
+
         while !self.is_at_end() {
             self.skip_whitespace();
 
@@ -102,6 +131,27 @@ impl TokenParser {
                 self.bump();
                 trace!(cursor = self.cursor, token = ?self.current_kind(), "After bump");
                 continue;
+            }
+
+            // Enforce section ordering for the 5 core sections
+            if let Some(current_order) = core_section_order(self.current_kind()) {
+                if current_order < last_core_section {
+                    let current_name = core_section_name(current_order);
+                    let last_name = core_section_name(last_core_section);
+                    let token = self.current();
+                    self.errors.push(CompilerError::parse_error(
+                        format!(
+                            "'{}' section is out of order — it must appear before '{}'",
+                            current_name, last_name
+                        ),
+                        Some(token.location.clone()),
+                        Some(
+                            "Expected section order: import:, start:, state:, class, functions:"
+                                .to_string(),
+                        ),
+                    ));
+                }
+                last_core_section = last_core_section.max(current_order);
             }
 
             // Parse top-level declarations

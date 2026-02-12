@@ -1,4 +1,5 @@
-// Test conditional expressions
+start:
+	testConditionals()// Test conditional expressions
 
 functions:
 	void testConditionals()
@@ -7,5 +8,3 @@ functions:
 		string message = if flag then "yes" else "no"
 		integer comparison = if 5 > 3 then 100 else 200
 
-start:
-	testConditionals()

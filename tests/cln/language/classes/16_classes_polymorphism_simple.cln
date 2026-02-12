@@ -1,4 +1,27 @@
-class Vehicle
+start:
+	print("Polymorphism Test - Vehicle System")
+	print("=================================")
+
+	// Create different types of vehicles
+	Car tesla = Car("Tesla", "Model 3", 2023, 4, true)
+	Car honda = Car("Honda", "Civic", 2022, 4, false)
+
+	// Demonstrate polymorphism - same method call, different behavior
+	print("=== Tesla Demonstration ===")
+	print("Info: " + tesla.getInfo())
+	print("Starting: " + tesla.startEngine())
+	print("Max Speed: " + tesla.getMaxSpeed().toString() + " km/h")
+
+	print("=== Honda Demonstration ===")
+	print("Info: " + honda.getInfo())
+	print("Starting: " + honda.startEngine())
+	print("Max Speed: " + honda.getMaxSpeed().toString() + " km/h")
+
+	// Test polymorphic assignment
+	Vehicle myVehicle = tesla
+	print("=== Polymorphic Vehicle ===")
+	print("Type: " + myVehicle.getInfo())
+	print("Starting: " + myVehicle.startEngine())class Vehicle
 	string make
 	string model
 	integer year
@@ -40,27 +63,3 @@ class Car is Vehicle
 			else
 				return 100
 
-start:
-	print("Polymorphism Test - Vehicle System")
-	print("=================================")
-
-	// Create different types of vehicles
-	Car tesla = Car("Tesla", "Model 3", 2023, 4, true)
-	Car honda = Car("Honda", "Civic", 2022, 4, false)
-
-	// Demonstrate polymorphism - same method call, different behavior
-	print("=== Tesla Demonstration ===")
-	print("Info: " + tesla.getInfo())
-	print("Starting: " + tesla.startEngine())
-	print("Max Speed: " + tesla.getMaxSpeed().toString() + " km/h")
-
-	print("=== Honda Demonstration ===")
-	print("Info: " + honda.getInfo())
-	print("Starting: " + honda.startEngine())
-	print("Max Speed: " + honda.getMaxSpeed().toString() + " km/h")
-
-	// Test polymorphic assignment
-	Vehicle myVehicle = tesla
-	print("=== Polymorphic Vehicle ===")
-	print("Type: " + myVehicle.getInfo())
-	print("Starting: " + myVehicle.startEngine())

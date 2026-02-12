@@ -1,3 +1,7 @@
+start:
+	print("Counter: " + counter.toString())
+	print("Rate: " + rate.toString())
+	print("Enabled: " + enabled.toString())
 // Test state with compile-time constant initializers
 // These values should be directly emitted in WASM global initialization
 
@@ -6,7 +10,3 @@ state:
 	number rate = 3.14
 	boolean enabled = true
 
-start:
-	print("Counter: " + counter.toString())
-	print("Rate: " + rate.toString())
-	print("Enabled: " + enabled.toString())

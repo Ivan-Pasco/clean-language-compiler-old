@@ -1,7 +1,3 @@
-// Console Input Comprehensive Test
-// Tests input.integer(), input.number(), input.yesNo() according to Clean Language Specification
-
-functions:
 start:
 		print("Console input functionality test")
 
@@ -28,4 +24,7 @@ start:
 		string userName = input("Enter your name: ")
 		print("Name entered: " + userName)
 
-		print("Console input test completed")
+		print("Console input test completed")// Console Input Comprehensive Test
+// Tests input.integer(), input.number(), input.yesNo() according to Clean Language Specification
+
+functions:

@@ -1,3 +1,7 @@
+start:
+	print("Testing require that should trap...")
+	integer result = dividePositive(10, 0)
+	print(result.toString())
 // Test: Require precondition that traps
 // This test should compile and then trap on execution
 
@@ -6,7 +10,3 @@ functions:
 		require b > 0
 		return a / b
 
-start:
-	print("Testing require that should trap...")
-	integer result = dividePositive(10, 0)
-	print(result.toString())

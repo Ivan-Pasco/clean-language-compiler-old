@@ -1,4 +1,6 @@
-// Quick test - minimal OOP features
+start:
+	Point p = Point(5)
+	print("Test complete")// Quick test - minimal OOP features
 class Point
 	integer x
 
@@ -9,6 +11,3 @@ class Point
 		integer getX()
 			return x
 
-start:
-	Point p = Point(5)
-	print("Test complete")

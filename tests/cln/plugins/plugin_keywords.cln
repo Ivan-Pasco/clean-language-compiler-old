@@ -1,3 +1,11 @@
+start:
+	printUsers()
+// Plugin keyword "data" followed by identifier (no colon)
+// Regular functions block (should still work)
+functions:
+	void printUsers()
+		print("Users loaded")
+
 // Test: Plugin keywords without colons should be accepted
 // Requires frame.data plugin to be loaded
 // NOTE: Field constraints (: pk, auto) require plugin update - using simple fields for now
@@ -5,7 +13,6 @@
 plugins:
 	frame.data
 
-// Plugin keyword "data" followed by identifier (no colon)
 data User
 	integer id
 	string email
@@ -16,10 +23,3 @@ data Post
 	string title
 	string content
 
-// Regular functions block (should still work)
-functions:
-	void printUsers()
-		print("Users loaded")
-
-start:
-	printUsers()

@@ -1,15 +1,3 @@
-// Spec Section: 3 - Apply-Blocks
-// Spec Section: 3.2 - Variable Declaration Apply-Blocks
-// Spec Section: 3.3 - Constant Apply-Blocks
-// Tests: Type apply-blocks (integer:, string:, boolean:, constant:)
-
-functions:
-	void processItem(string item)
-		print("Processing: " + item)
-
-	void displayNumber(integer num)
-		print("Number: " + num.toString())
-
 start:
 	// Function apply-blocks - TODO: Fix semantic analysis bug
 	// Currently disabled due to compiler bug where function apply-blocks
@@ -49,4 +37,15 @@ start:
 	print("Constants:")
 	print("Max users: " + MAX_USERS.toString())
 	print("API version: " + API_VERSION)
-	print("PI: " + PI_CONSTANT.toString())
+	print("PI: " + PI_CONSTANT.toString())// Spec Section: 3 - Apply-Blocks
+// Spec Section: 3.2 - Variable Declaration Apply-Blocks
+// Spec Section: 3.3 - Constant Apply-Blocks
+// Tests: Type apply-blocks (integer:, string:, boolean:, constant:)
+
+functions:
+	void processItem(string item)
+		print("Processing: " + item)
+
+	void displayNumber(integer num)
+		print("Number: " + num.toString())
+

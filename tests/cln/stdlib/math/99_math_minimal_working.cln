@@ -1,4 +1,15 @@
-// Math Module Minimal Working Test
+start:
+	print("Math Module Minimal Test")
+	print("========================")
+	testImplementedMathFunctions()
+	print("")
+	testBasicArithmeticOperators()
+	print("")
+	testPracticalExample()
+	print("")
+	testAbsoluteValues()
+	print("")
+	print("Minimal math test completed successfully")// Math Module Minimal Working Test
 // Tests only the actually implemented mathematical functions
 
 functions:
@@ -57,15 +68,3 @@ functions:
 		print("abs(-15) = " + absNeg.toString())
 		print("abs(25) = " + absPos.toString())
 		print("abs(0) = " + absZero.toString())
-start:
-	print("Math Module Minimal Test")
-	print("========================")
-	testImplementedMathFunctions()
-	print("")
-	testBasicArithmeticOperators()
-	print("")
-	testPracticalExample()
-	print("")
-	testAbsoluteValues()
-	print("")
-	print("Minimal math test completed successfully")

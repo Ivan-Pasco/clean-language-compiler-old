@@ -1,4 +1,17 @@
-class Vehicle
+start:
+	print("Polymorphism Test - Vehicle System")
+
+	Car tesla = Car("Tesla", "Model 3", 2023, 4, true)
+	Car honda = Car("Honda", "Civic", 2022, 4, false)
+	Motorcycle harley = Motorcycle("Harley-Davidson", "Street 750", 2021, false)
+
+	print("Tesla: " + tesla.startEngine())
+	print("Honda: " + honda.startEngine())
+	print("Harley: " + harley.startEngine())
+
+	print("Tesla max speed: " + tesla.getMaxSpeed().toString())
+	print("Honda max speed: " + honda.getMaxSpeed().toString())
+	print("Harley max speed: " + harley.getMaxSpeed().toString())class Vehicle
 	string make
 	string model
 	integer year
@@ -66,17 +79,3 @@ class Motorcycle is Vehicle
 			else
 				return 140
 
-start:
-	print("Polymorphism Test - Vehicle System")
-
-	Car tesla = Car("Tesla", "Model 3", 2023, 4, true)
-	Car honda = Car("Honda", "Civic", 2022, 4, false)
-	Motorcycle harley = Motorcycle("Harley-Davidson", "Street 750", 2021, false)
-
-	print("Tesla: " + tesla.startEngine())
-	print("Honda: " + honda.startEngine())
-	print("Harley: " + harley.startEngine())
-
-	print("Tesla max speed: " + tesla.getMaxSpeed().toString())
-	print("Honda max speed: " + honda.getMaxSpeed().toString())
-	print("Harley max speed: " + harley.getMaxSpeed().toString())

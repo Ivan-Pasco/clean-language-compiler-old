@@ -1,4 +1,17 @@
-// List behaviors comprehensive test - demonstrates list.type property modifiers
+start:
+	print("List Behaviors Comprehensive Test")
+	print("====================================")
+	testQueueBehavior()
+	print("")
+	testStackBehavior()
+	print("")
+	testUniqueBehavior()
+	print("")
+	testCombinedBehaviors()
+	print("")
+	testBehaviorSwitching()
+	print("")
+	print("List behaviors test completed successfully")// List behaviors comprehensive test - demonstrates list.type property modifiers
 // Tests the "line", "pile", "unique" behavior specifications
 
 functions:
@@ -103,17 +116,3 @@ functions:
 		integer top = dynamicList.remove()  // Should get 5 (LIFO)
 		print("Removed from stack: " + top.toString())
 
-start:
-	print("List Behaviors Comprehensive Test")
-	print("====================================")
-	testQueueBehavior()
-	print("")
-	testStackBehavior()
-	print("")
-	testUniqueBehavior()
-	print("")
-	testCombinedBehaviors()
-	print("")
-	testBehaviorSwitching()
-	print("")
-	print("List behaviors test completed successfully")

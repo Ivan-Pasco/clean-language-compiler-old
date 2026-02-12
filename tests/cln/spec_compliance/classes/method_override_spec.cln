@@ -1,3 +1,33 @@
+start:
+	// Test 1: Parent class method
+	Vehicle vehicle = Vehicle("Generic", 60)
+	string vehicleDesc = vehicle.describe()
+	print("Vehicle: " + vehicleDesc)
+	print("Vehicle max speed: " + vehicle.getMaxSpeed().toString())
+
+	// Test 2: Car with overridden method
+	Car car = Car("Toyota", 70, 4)
+	string carDesc = car.describe()
+	print("Car: " + carDesc)
+	print("Car max speed: " + car.getMaxSpeed().toString())
+
+	// Test 3: SportsCar with turbo
+	SportsCar turboSports = SportsCar("Ferrari", 90, true)
+	string turboDesc = turboSports.describe()
+	print("Turbo sports: " + turboDesc)
+	print("Turbo max speed: " + turboSports.getMaxSpeed().toString())
+
+	// Test 4: SportsCar without turbo
+	SportsCar normalSports = SportsCar("Porsche", 85, false)
+	string normalDesc = normalSports.describe()
+	print("Normal sports: " + normalDesc)
+	print("Normal max speed: " + normalSports.getMaxSpeed().toString())
+
+	// Test 5: Access inherited field through child
+	print("Car brand (inherited): " + car.brand)
+	print("SportsCar brand (inherited): " + turboSports.brand)
+
+	print("Method override tests completed")
 // Spec Section: 9.3 - Inheritance Features
 // Tests: Method overriding in child classes
 
@@ -54,33 +84,3 @@ class SportsCar is Vehicle
 			else
 				return 180
 
-start:
-	// Test 1: Parent class method
-	Vehicle vehicle = Vehicle("Generic", 60)
-	string vehicleDesc = vehicle.describe()
-	print("Vehicle: " + vehicleDesc)
-	print("Vehicle max speed: " + vehicle.getMaxSpeed().toString())
-
-	// Test 2: Car with overridden method
-	Car car = Car("Toyota", 70, 4)
-	string carDesc = car.describe()
-	print("Car: " + carDesc)
-	print("Car max speed: " + car.getMaxSpeed().toString())
-
-	// Test 3: SportsCar with turbo
-	SportsCar turboSports = SportsCar("Ferrari", 90, true)
-	string turboDesc = turboSports.describe()
-	print("Turbo sports: " + turboDesc)
-	print("Turbo max speed: " + turboSports.getMaxSpeed().toString())
-
-	// Test 4: SportsCar without turbo
-	SportsCar normalSports = SportsCar("Porsche", 85, false)
-	string normalDesc = normalSports.describe()
-	print("Normal sports: " + normalDesc)
-	print("Normal max speed: " + normalSports.getMaxSpeed().toString())
-
-	// Test 5: Access inherited field through child
-	print("Car brand (inherited): " + car.brand)
-	print("SportsCar brand (inherited): " + turboSports.brand)
-
-	print("Method override tests completed")

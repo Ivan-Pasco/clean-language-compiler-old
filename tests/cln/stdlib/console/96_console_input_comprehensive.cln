@@ -1,4 +1,22 @@
-// Console Input Comprehensive Test
+start:
+	print("Console Input Comprehensive Test")
+	print("===============================")
+	testBasicTextInput()
+	print("")
+	testNumericInput()
+	print("")
+	testBooleanInput()
+	print("")
+	testInputWithCalculations()
+	print("")
+	testInputValidationScenarios()
+	print("")
+	testInteractiveScenario()
+	print("")
+	testInputMethodChaining()
+	print("")
+	print("Console input test completed")
+	print("(Note: This test simulates input for automated testing)")// Console Input Comprehensive Test
 // Tests all console input methods as specified in the language
 
 functions:
@@ -116,22 +134,3 @@ functions:
 		print("1. " + item1)
 		print("2. " + item2)
 		print("3. " + item3)
-start:
-	print("Console Input Comprehensive Test")
-	print("===============================")
-	testBasicTextInput()
-	print("")
-	testNumericInput()
-	print("")
-	testBooleanInput()
-	print("")
-	testInputWithCalculations()
-	print("")
-	testInputValidationScenarios()
-	print("")
-	testInteractiveScenario()
-	print("")
-	testInputMethodChaining()
-	print("")
-	print("Console input test completed")
-	print("(Note: This test simulates input for automated testing)")

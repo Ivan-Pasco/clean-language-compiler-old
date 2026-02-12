@@ -1,4 +1,8 @@
-// Simple QA Test for Method-Style Syntax
+start:
+
+	print("Method Style QA Test")
+	testMethodStyle()
+	print("Test completed")// Simple QA Test for Method-Style Syntax
 // Tests basic method-style calls
 
 functions:
@@ -19,8 +23,3 @@ functions:
 
 		print("Simple method-style test completed")
 
-start:
-
-	print("Method Style QA Test")
-	testMethodStyle()
-	print("Test completed")

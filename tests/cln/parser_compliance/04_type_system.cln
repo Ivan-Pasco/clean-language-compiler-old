@@ -43,23 +43,6 @@ start:
 	print("Container types working")
 	print("Nested types working")
 
-functions:
-	// Function with various parameter and return types
-	integer simpleFunction(integer a, string b)
-		return a
-
-	// Function with generic types
-	any genericFunction(any input)
-		return input
-
-	// Function with complex types (matrix disabled due to parsing issue)
-	// list<integer> complexFunction(matrix<number> data, pairs<string, boolean> config)
-	//	return [1, 2, 3]
-
-	// Function with sized types
-	integer:16 precisionFunction(integer:8 small, number:32 precise)
-		return small
-
 class TypedClass
 	// Class fields with various types
 	integer id
@@ -80,4 +63,20 @@ class TypedClass
 
 		// Method with generic return
 		any getGeneric()
-			return name
+			return namefunctions:
+	// Function with various parameter and return types
+	integer simpleFunction(integer a, string b)
+		return a
+
+	// Function with generic types
+	any genericFunction(any input)
+		return input
+
+	// Function with complex types (matrix disabled due to parsing issue)
+	// list<integer> complexFunction(matrix<number> data, pairs<string, boolean> config)
+	//	return [1, 2, 3]
+
+	// Function with sized types
+	integer:16 precisionFunction(integer:8 small, number:32 precise)
+		return small
+

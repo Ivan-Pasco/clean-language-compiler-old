@@ -1,4 +1,15 @@
-functions:
+start:
+	print("Comprehensive Standard Library Test")
+	print("====================================")
+	testMathOperations()
+	print("")
+	testStringOperations()
+	print("")
+	testListOperations()
+	print("")
+	testFileOperations()
+	print("")
+	print("Standard library test completed!")functions:
 	void testMathOperations()
 		print("=== Math Operations - Specification Compliant ===")
 		// Basic arithmetic - use operators per Clean Language "one way to do things"
@@ -110,15 +121,3 @@ functions:
 			print("file.append() result: " + appendResult.toString())
 			boolean deleteResult = file.delete(filename)
 			print("file.delete() result: " + deleteResult.toString())
-start:
-	print("Comprehensive Standard Library Test")
-	print("====================================")
-	testMathOperations()
-	print("")
-	testStringOperations()
-	print("")
-	testListOperations()
-	print("")
-	testFileOperations()
-	print("")
-	print("Standard library test completed!")

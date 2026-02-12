@@ -1,3 +1,9 @@
+start:
+	print("Comprehensive Testing Framework Test")
+	print("====================================")
+	print("This test demonstrates comprehensive testing capabilities")
+	print("Run with --test flag to execute all tests")
+	print("Comprehensive test completed")
 // Spec Section: 12.1 - Testing Framework
 // Tests: Comprehensive testing framework with various data types and operations
 
@@ -71,9 +77,3 @@ tests:
 	fibonacci(6) = 8
 	isPrime(11) = true
 
-start:
-	print("Comprehensive Testing Framework Test")
-	print("====================================")
-	print("This test demonstrates comprehensive testing capabilities")
-	print("Run with --test flag to execute all tests")
-	print("Comprehensive test completed")

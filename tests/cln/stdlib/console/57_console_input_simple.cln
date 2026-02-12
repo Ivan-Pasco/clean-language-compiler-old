@@ -1,4 +1,6 @@
-// Console input simple test - demonstrates basic input functionality
+start:
+	testConsoleInput()
+	print("Console input test completed successfully")// Console input simple test - demonstrates basic input functionality
 // Note: Full input.integer(), input.yesNo() requires runtime implementation
 
 functions:
@@ -25,6 +27,3 @@ functions:
 		else
 			print("You declined the action.")
 
-start:
-	testConsoleInput()
-	print("Console input test completed successfully")

@@ -1,9 +1,6 @@
-// Test: source: top-level block marks file as generated from a spec
-
-source:
-	spec "pricing/discount-rules"
-	version "v2.1.0-abc123"
-
+start:
+	number result = applyDiscount(100.0, "gold")
+	print(result.toString())
 functions:
 	number applyDiscount(number price, string tier)
 		spec "pricing/discount-rules"
@@ -15,6 +12,9 @@ functions:
 			return price * 0.90
 		return price * 0.95
 
-start:
-	number result = applyDiscount(100.0, "gold")
-	print(result.toString())
+// Test: source: top-level block marks file as generated from a spec
+
+source:
+	spec "pricing/discount-rules"
+	version "v2.1.0-abc123"
+

@@ -1,18 +1,3 @@
-// Clean Language Basic Specification Features Test
-
-functions:
-	// Simple function with direct return
-	string getMessage()
-		return "Hello World"
-
-	// Function with parameter
-	string addPrefix(string text)
-		return "PREFIX: " + text
-
-	// Void function
-	void showMessage(string msg)
-		print("[MSG] " + msg)
-
 start:
 	print("=== Clean Language Basic Specification Test ===")
 
@@ -72,4 +57,18 @@ start:
 	number absolute = math.abs(-15)
 	print("math.abs(-15) = " + absolute.toString())
 
-	print("=== Basic Specification Test Completed ===")
+	print("=== Basic Specification Test Completed ===")// Clean Language Basic Specification Features Test
+
+functions:
+	// Simple function with direct return
+	string getMessage()
+		return "Hello World"
+
+	// Function with parameter
+	string addPrefix(string text)
+		return "PREFIX: " + text
+
+	// Void function
+	void showMessage(string msg)
+		print("[MSG] " + msg)
+

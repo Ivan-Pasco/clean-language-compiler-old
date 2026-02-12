@@ -1,4 +1,9 @@
-// Console input comprehensive test - Clean Language Specification compliance
+start:
+	demonstrateConsoleInput()
+	print("")
+	testInputSyntaxPatterns()
+	print("")
+	print("Console input specification compliance test completed")// Console input comprehensive test - Clean Language Specification compliance
 // Tests all console input functionality as defined in the specification
 
 functions:
@@ -38,9 +43,3 @@ functions:
 
 		print("All input patterns follow Clean Language Specification")
 
-start:
-	demonstrateConsoleInput()
-	print("")
-	testInputSyntaxPatterns()
-	print("")
-	print("Console input specification compliance test completed")

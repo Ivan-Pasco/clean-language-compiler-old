@@ -1,3 +1,10 @@
+start:
+	print("Initial: " + count.toString())
+	increment()
+	increment()
+	print("After increments: " + count.toString())
+	decrement()
+	print("After decrement: " + count.toString())
 // Test state guards - validation before mutation
 // Guards should prevent invalid state assignments
 
@@ -12,10 +19,3 @@ functions:
 	void decrement()
 		count = count - 1
 
-start:
-	print("Initial: " + count.toString())
-	increment()
-	increment()
-	print("After increments: " + count.toString())
-	decrement()
-	print("After decrement: " + count.toString())

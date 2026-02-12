@@ -1,4 +1,8 @@
-// Simple QA Test for Input Method Syntax
+start:
+
+	print("Input Method Syntax QA Test")
+	testInputMethods()
+	print("Test completed")// Simple QA Test for Input Method Syntax
 // Tests basic input.method() calls for user input operations
 
 functions:
@@ -22,8 +26,3 @@ functions:
 
 		print("Input method syntax test completed successfully!")
 
-start:
-
-	print("Input Method Syntax QA Test")
-	testInputMethods()
-	print("Test completed")

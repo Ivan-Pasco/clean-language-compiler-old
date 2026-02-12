@@ -1,8 +1,8 @@
+start:
+	print("plugins syntax test")
 // Test 1: plugins: block syntax parsing
 // This tests that plugins: block is parsed correctly (plugin loading is separate)
 
 state:
 	integer count = 0
 
-start:
-	print("plugins syntax test")

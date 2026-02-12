@@ -1,7 +1,3 @@
-// Matrix Operations Comprehensive Test
-// Tests matrix literals, arithmetic, and methods according to Clean Language Specification
-
-functions:
 start:
 		// Matrix literal creation
 		matrix<integer> mat1 = [[1, 2], [3, 4]]
@@ -25,4 +21,7 @@ start:
 		// Print results for verification
 		print("Matrix operations test completed")
 		print("Element access: " + element.toString())
-		print("Matrix dimensions: " + rows.toString() + "x" + cols.toString())
+		print("Matrix dimensions: " + rows.toString() + "x" + cols.toString())// Matrix Operations Comprehensive Test
+// Tests matrix literals, arithmetic, and methods according to Clean Language Specification
+
+functions:

@@ -1,4 +1,5 @@
-// Parser Compliance Test - All Keywords
+// Note: constant, private, tests, import, later, background blocks not implemented
+// This test focuses on keywords that are currently supported by the parser// Parser Compliance Test - All Keywords
 // This test verifies that all Clean Language keywords are properly recognized
 
 start:
@@ -27,15 +28,6 @@ start:
 	// Return statement
 	return
 
-functions:
-	// Basic function (description/input blocks not implemented)
-	integer testFunction(integer a, integer b)
-		// Basic conditional without then (if-then-else not implemented)
-		if a > b
-			return a
-		else
-			return b
-
 // Basic class (inheritance not implemented)
 class TestClass
 	integer field
@@ -49,5 +41,12 @@ class TestClass
 			// Method implementation
 			print("test method")
 
-// Note: constant, private, tests, import, later, background blocks not implemented
-// This test focuses on keywords that are currently supported by the parser
+functions:
+	// Basic function (description/input blocks not implemented)
+	integer testFunction(integer a, integer b)
+		// Basic conditional without then (if-then-else not implemented)
+		if a > b
+			return a
+		else
+			return b
+

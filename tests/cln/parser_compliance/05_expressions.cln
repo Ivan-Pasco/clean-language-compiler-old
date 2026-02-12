@@ -81,10 +81,6 @@ start:
 
 	print("All expression types parsed successfully")
 
-functions:
-	integer calculateSum(integer x, integer y)
-		return x + y
-
 class TestObject
 	integer value
 	TestData data
@@ -97,4 +93,7 @@ class TestData
 	string name
 
 	constructor()
-		name = "test"
+		name = "test"functions:
+	integer calculateSum(integer x, integer y)
+		return x + y
+

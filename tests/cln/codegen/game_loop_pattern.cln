@@ -1,3 +1,7 @@
+start:
+	gameLoop(0.016)
+	gameLoop(0.016)
+	gameLoop(0.016)
 // Test: Real-world game loop pattern combining both bugs
 // This pattern is common in frame.canvas games
 // Tests: unused return values + nested if-else
@@ -102,7 +106,3 @@ functions:
 			integer dummy = 0
 		draw()
 
-start:
-	gameLoop(0.016)
-	gameLoop(0.016)
-	gameLoop(0.016)

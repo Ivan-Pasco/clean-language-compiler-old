@@ -1,4 +1,6 @@
-// Spec Section: 6.5 - Return Types
+start:
+	testAutomaticReturn()
+	print("Automatic return test completed successfully")// Spec Section: 6.5 - Return Types
 // Spec Section: 6.5.1 - Implicit Return
 // Tests: Automatic return of last expression in function body
 
@@ -46,6 +48,3 @@ functions:
 		integer product = multiply(6, 7)
 		print("Product: " + product.toString())
 
-start:
-	testAutomaticReturn()
-	print("Automatic return test completed successfully")

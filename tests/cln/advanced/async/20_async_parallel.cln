@@ -1,14 +1,3 @@
-
-functions:
-	string task1()
-		return "Task 1 complete"
-
-	string task2()
-		return "Task 2 complete"
-
-	string task3()
-		return "Task 3 complete"
-
 start:
 	string result1 = task1()
 	string result2 = task2()
@@ -22,3 +11,13 @@ start:
 
 	iterate result in results
 		print("Parallel result: " + result)
+functions:
+	string task1()
+		return "Task 1 complete"
+
+	string task2()
+		return "Task 2 complete"
+
+	string task3()
+		return "Task 3 complete"
+

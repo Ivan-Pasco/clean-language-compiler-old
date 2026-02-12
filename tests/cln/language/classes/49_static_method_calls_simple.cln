@@ -1,4 +1,8 @@
-// Simple QA Test for Static Method Calls
+start:
+
+	print("Static Method Calls QA Test")
+	testStaticMethods()
+	print("Test completed")// Simple QA Test for Static Method Calls
 // Tests basic static method call syntax
 
 functions:
@@ -14,8 +18,3 @@ functions:
 		print(absolute.toString())
 		print("Static method calls test completed successfully!")
 
-start:
-
-	print("Static Method Calls QA Test")
-	testStaticMethods()
-	print("Test completed")

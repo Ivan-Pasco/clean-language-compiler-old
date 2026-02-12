@@ -1,4 +1,12 @@
-// Test Description: Function declarations and calls
+start:
+	integer sum = add(5, 10)
+	number product = multiply(3.14, 2.0)
+	string text = joinStrings("Hello, ", "World!")
+
+	print("Function definitions test successful!")
+	print("Sum: " + sum.toString())
+	print("Product: " + product.toString())
+	print("Text: " + text)// Test Description: Function declarations and calls
 // Category: functions
 // Dependencies: none
 // Expected: PASS
@@ -13,12 +21,3 @@ functions:
 	string joinStrings(string first, string second)
 		return first + second
 
-start:
-	integer sum = add(5, 10)
-	number product = multiply(3.14, 2.0)
-	string text = joinStrings("Hello, ", "World!")
-
-	print("Function definitions test successful!")
-	print("Sum: " + sum.toString())
-	print("Product: " + product.toString())
-	print("Text: " + text)

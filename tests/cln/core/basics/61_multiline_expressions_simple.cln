@@ -1,4 +1,6 @@
-// Multi-line expressions simple test
+start:
+	testMultilineExpressions()
+	print("Multi-line expressions test completed successfully")// Multi-line expressions simple test
 // Note: Full multi-line parentheses syntax requires parser implementation
 
 functions:
@@ -32,6 +34,3 @@ functions:
 	integer multiply(integer a, integer b)
 		return a * b
 
-start:
-	testMultilineExpressions()
-	print("Multi-line expressions test completed successfully")

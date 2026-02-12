@@ -1,4 +1,3 @@
-functions:
 start:
 		integer i = 0
 		number x = 400.0
@@ -18,3 +17,4 @@ start:
 			i = i + 1
 
 		print(y) +
+functions:

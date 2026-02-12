@@ -7,13 +7,57 @@ import:
 	list
 	http
 
-private:
-	internalValidation
-	secretKey
-	logUserAction
-	clearCache
+start:
+	// Test complex integration scenario
+	print("Starting integration test...")
 
-functions:
+	// Combine static methods with method-style calls (simplified)
+	number value = math.sqrt(144.0)
+	string valueText = value.toString() + "_computed"
+	print("Computed value: " + valueText)
+
+	// Test HTTP and validation (simplified without async)
+	string apiStatus = http.get("https://api.example.com/status")
+
+	// Use input methods with validation chains (simplified)
+	string testInput = input("Enter test data: ")
+	string cleanInput = testInput  // Direct assignment until trim is fixed
+	if string.isEmpty(cleanInput)
+		return
+
+	// Test method chaining with HTTP results
+	boolean validStatus = string.size(apiStatus) > 0
+	print("API status valid: " + validStatus.toString())
+
+	// Test static method combinations
+	list<integer> numbers = [5, 2, 8, 1, 9]
+	integer listLength = list.size(numbers)
+	number maxValueFloat = math.max(8.0, 9.0)
+	integer maxValue = maxValueFloat.toInteger()
+
+	print("list length: " + listLength.toString())
+	print("Max value: " + maxValue.toString())
+
+	// Test HTTP operations with method calls
+	// Note: Using simple format instead of JSON to avoid escape sequence issues
+	string analytics = http.post("https://api.example.com/analytics", "event=test_completed")
+
+	// Test comprehensive user processing
+	boolean userProcessed = processUserInput()
+	print("User processing result: " + userProcessed.toString())
+
+	// Test data fetching and processing
+	list<string> processedData = fetchAndProcessData()
+	integer dataCount = list.size(processedData)
+	print("Processed data items: " + dataCount.toString())
+
+	// Final validation with all patterns
+	string finalMessage = "Integration test completed successfully!"
+	boolean messageEmpty = string.isEmpty(finalMessage)
+	boolean messageValid = string.size(finalMessage) > 0
+
+	print("Final message valid: " + messageValid.toString())
+	print(finalMessage)functions:
 	// Public function using method-style and static calls
 	boolean processUserInput()
 		// Get user data with input methods
@@ -98,54 +142,9 @@ functions:
 	void clearCache()
 		print("Cache cleared in background")
 
-start:
-	// Test complex integration scenario
-	print("Starting integration test...")
+private:
+	internalValidation
+	secretKey
+	logUserAction
+	clearCache
 
-	// Combine static methods with method-style calls (simplified)
-	number value = math.sqrt(144.0)
-	string valueText = value.toString() + "_computed"
-	print("Computed value: " + valueText)
-
-	// Test HTTP and validation (simplified without async)
-	string apiStatus = http.get("https://api.example.com/status")
-
-	// Use input methods with validation chains (simplified)
-	string testInput = input("Enter test data: ")
-	string cleanInput = testInput  // Direct assignment until trim is fixed
-	if string.isEmpty(cleanInput)
-		return
-
-	// Test method chaining with HTTP results
-	boolean validStatus = string.size(apiStatus) > 0
-	print("API status valid: " + validStatus.toString())
-
-	// Test static method combinations
-	list<integer> numbers = [5, 2, 8, 1, 9]
-	integer listLength = list.size(numbers)
-	number maxValueFloat = math.max(8.0, 9.0)
-	integer maxValue = maxValueFloat.toInteger()
-
-	print("list length: " + listLength.toString())
-	print("Max value: " + maxValue.toString())
-
-	// Test HTTP operations with method calls
-	// Note: Using simple format instead of JSON to avoid escape sequence issues
-	string analytics = http.post("https://api.example.com/analytics", "event=test_completed")
-
-	// Test comprehensive user processing
-	boolean userProcessed = processUserInput()
-	print("User processing result: " + userProcessed.toString())
-
-	// Test data fetching and processing
-	list<string> processedData = fetchAndProcessData()
-	integer dataCount = list.size(processedData)
-	print("Processed data items: " + dataCount.toString())
-
-	// Final validation with all patterns
-	string finalMessage = "Integration test completed successfully!"
-	boolean messageEmpty = string.isEmpty(finalMessage)
-	boolean messageValid = string.size(finalMessage) > 0
-
-	print("Final message valid: " + messageValid.toString())
-	print(finalMessage)

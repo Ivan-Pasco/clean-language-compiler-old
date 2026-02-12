@@ -1,4 +1,7 @@
-// Simple test of list behavior functions
+start:
+	print("List Behavior Simple Test")
+	testListBehaviors()
+	print("Test completed")// Simple test of list behavior functions
 
 functions:
 	void testListBehaviors()
@@ -14,7 +17,3 @@ functions:
 		boolean notEmpty = list.isNotEmpty(myList)
 		print("Is not empty: " + notEmpty.toString())
 
-start:
-	print("List Behavior Simple Test")
-	testListBehaviors()
-	print("Test completed")

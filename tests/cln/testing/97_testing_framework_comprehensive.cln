@@ -1,4 +1,22 @@
-// Testing Framework Comprehensive Test
+// Demonstration of test execution context
+start:
+	print("Testing Framework Comprehensive Test")
+	print("====================================")
+	print("This test demonstrates the built-in testing syntax:")
+	print("")
+	print("Named tests: \"description\": expression = expected")
+	print("Anonymous tests: expression = expected")
+	print("")
+	print("Test expressions can include:")
+	print("- Function calls: add(2, 3) = 5")
+	print("- Method calls: string.length(\"text\") = 4")
+	print("- Complex expressions: (a + b) * c = result")
+	print("- Error conditions: func(\"\") = error(\"message\")")
+	print("")
+	print("When run with --test flag, these tests will be executed")
+	print("and results will show pass/fail status for each test.")
+	print("")
+	print("Testing framework demonstration completed")// Testing Framework Comprehensive Test
 // Tests the built-in testing framework syntax as specified
 
 functions:
@@ -98,22 +116,3 @@ tests:
 	"greater equal": (5 >= 5) = true
 	"less equal": (3 <= 5) = true
 
-// Demonstration of test execution context
-start:
-	print("Testing Framework Comprehensive Test")
-	print("====================================")
-	print("This test demonstrates the built-in testing syntax:")
-	print("")
-	print("Named tests: \"description\": expression = expected")
-	print("Anonymous tests: expression = expected")
-	print("")
-	print("Test expressions can include:")
-	print("- Function calls: add(2, 3) = 5")
-	print("- Method calls: string.length(\"text\") = 4")
-	print("- Complex expressions: (a + b) * c = result")
-	print("- Error conditions: func(\"\") = error(\"message\")")
-	print("")
-	print("When run with --test flag, these tests will be executed")
-	print("and results will show pass/fail status for each test.")
-	print("")
-	print("Testing framework demonstration completed")

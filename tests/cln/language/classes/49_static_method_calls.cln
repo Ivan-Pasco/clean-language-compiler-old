@@ -1,4 +1,8 @@
-// Spec Section: 7.1 - Standard Library Organization (Namespaces)
+start:
+
+	print("Lowercase Namespace Calls QA Test")
+	testLowercaseMethods()
+	print("Test completed")// Spec Section: 7.1 - Standard Library Organization (Namespaces)
 // Spec Section: 7.2 - math Namespace
 // Spec Section: 7.3 - string Namespace
 // Spec Section: 7.4 - list Namespace
@@ -65,8 +69,3 @@ functions:
 
 		print("Lowercase namespace calls test completed successfully!")
 
-start:
-
-	print("Lowercase Namespace Calls QA Test")
-	testLowercaseMethods()
-	print("Test completed")

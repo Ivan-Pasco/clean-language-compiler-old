@@ -1,3 +1,18 @@
+start:
+	print("=== JSON Field Access Bug Test ===") +
+	print("") +
+
+	print("Test 1: Simple object parsing") +
+	print(testSimpleJsonParsing()) +
+	print("") +
+
+	print("Test 2: Nested object parsing") +
+	print(testNestedJsonParsing()) +
+	print("") +
+
+	print("=== Expected Results ===") +
+	print("Both tests should PASS, but currently both FAIL") +
+	print("This confirms the bug: JSON field access returns default values") +
 // Minimal test case for JSON field access bug
 // Issue: any.field returns 0 instead of actual field value
 // Expected: Field values should be accessible on parsed JSON objects
@@ -40,18 +55,3 @@ functions:
 		else
 			return "FAIL: Nested field returned '" + countValue + "' instead of '4'"
 
-start:
-	print("=== JSON Field Access Bug Test ===") +
-	print("") +
-
-	print("Test 1: Simple object parsing") +
-	print(testSimpleJsonParsing()) +
-	print("") +
-
-	print("Test 2: Nested object parsing") +
-	print(testNestedJsonParsing()) +
-	print("") +
-
-	print("=== Expected Results ===") +
-	print("Both tests should PASS, but currently both FAIL") +
-	print("This confirms the bug: JSON field access returns default values") +

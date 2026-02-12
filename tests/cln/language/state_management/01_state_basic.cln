@@ -1,3 +1,10 @@
+start:
+	print("Initial count: " + count.toString())
+	increment()
+	increment()
+	print("After increments: " + count.toString())
+	setUser("Alice")
+	print("User: " + username)
 // Test basic state declaration
 // State is a first-class language concept that persists across function calls
 
@@ -14,10 +21,3 @@ functions:
 		username = name
 		isLoggedIn = true
 
-start:
-	print("Initial count: " + count.toString())
-	increment()
-	increment()
-	print("After increments: " + count.toString())
-	setUser("Alice")
-	print("User: " + username)

@@ -1,3 +1,17 @@
+start:
+	// Test 1: Safe division (no error case)
+	integer result1 = safeDivide(10, 2)
+	print("10 / 2 = " + result1.toString())
+
+	// Test 2: Validate positive input
+	string valid = validateInput(42)
+	print(valid)
+
+	// Test 3: Check range (valid case)
+	integer rangeResult = checkRange(50, 0, 100)
+	print("Range check: " + rangeResult.toString())
+
+	print("Error keyword test completed")
 // Spec Section: 10.1 - Raising Errors
 // Tests: error() keyword for raising errors
 
@@ -19,17 +33,3 @@ functions:
 			error("Value above maximum")
 		return value
 
-start:
-	// Test 1: Safe division (no error case)
-	integer result1 = safeDivide(10, 2)
-	print("10 / 2 = " + result1.toString())
-
-	// Test 2: Validate positive input
-	string valid = validateInput(42)
-	print(valid)
-
-	// Test 3: Check range (valid case)
-	integer rangeResult = checkRange(50, 0, 100)
-	print("Range check: " + rangeResult.toString())
-
-	print("Error keyword test completed")

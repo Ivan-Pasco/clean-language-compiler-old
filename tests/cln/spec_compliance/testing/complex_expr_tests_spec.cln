@@ -1,25 +1,3 @@
-// Spec Section: 7 - Testing Framework
-// Tests: Testing complex expressions within tests block
-// Requirement: Test block can verify complex expression results
-
-functions:
-	integer factorial(integer n)
-		if n <= 1
-			return 1
-		return n * factorial(n - 1)
-
-	integer fibonacci(integer n)
-		if n <= 1
-			return n
-		return fibonacci(n - 1) + fibonacci(n - 2)
-
-tests:
-	"arithmetic expression": (10 + 5) * 2 = 30
-	"subtraction chain": 100 - 50 - 25 = 25
-	"multiplication": 3 * 4 * 5 = 60
-	"division": 100 / 5 = 20
-	"mixed operations": 10 + 5 * 2 = 20
-
 start:
 	// Test factorial at runtime
 	integer fact5 = factorial(5)
@@ -43,3 +21,25 @@ start:
 	print("(100 - 50) / (10 - 5) = " + complex2.toString())
 
 	print("Complex expression tests specification completed")
+// Spec Section: 7 - Testing Framework
+// Tests: Testing complex expressions within tests block
+// Requirement: Test block can verify complex expression results
+
+functions:
+	integer factorial(integer n)
+		if n <= 1
+			return 1
+		return n * factorial(n - 1)
+
+	integer fibonacci(integer n)
+		if n <= 1
+			return n
+		return fibonacci(n - 1) + fibonacci(n - 2)
+
+tests:
+	"arithmetic expression": (10 + 5) * 2 = 30
+	"subtraction chain": 100 - 50 - 25 = 25
+	"multiplication": 3 * 4 * 5 = 60
+	"division": 100 / 5 = 20
+	"mixed operations": 10 + 5 * 2 = 20
+

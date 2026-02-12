@@ -1,4 +1,13 @@
-// Test method-style syntax - Clean Language Specification compliance
+start:
+	print("Clean Language Method-Style Syntax Test")
+	print("======================================")
+	testStringMethods()
+	print("")
+	testNumberMethods()
+	print("")
+	testBooleanMethods()
+	print("")
+	print("All method-style tests completed!")// Test method-style syntax - Clean Language Specification compliance
 
 functions:
 
@@ -46,13 +55,3 @@ functions:
 		boolean zeroConverted = zeroValue.toBoolean()
 		print("Integer to boolean (0): " + zeroConverted.toString())
 
-start:
-	print("Clean Language Method-Style Syntax Test")
-	print("======================================")
-	testStringMethods()
-	print("")
-	testNumberMethods()
-	print("")
-	testBooleanMethods()
-	print("")
-	print("All method-style tests completed!")

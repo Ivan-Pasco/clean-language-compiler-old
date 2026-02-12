@@ -1,4 +1,12 @@
-// Type precision modifiers specification compliance test
+start:
+	print("=== Type Precision Specification Test ===")
+	demonstrateIntegerPrecision()
+	print("")
+	demonstrateNumberPrecision()
+	print("")
+	demonstratePracticalUsage()
+	print("")
+	print("Type precision modifiers specification compliance test completed")// Type precision modifiers specification compliance test
 // Tests integer and number precision modifiers as defined in Clean Language Specification
 
 functions:
@@ -77,12 +85,3 @@ functions:
 		print("Screen X: " + screenX.toString())
 		print("Screen Y: " + screenY.toString())
 
-start:
-	print("=== Type Precision Specification Test ===")
-	demonstrateIntegerPrecision()
-	print("")
-	demonstrateNumberPrecision()
-	print("")
-	demonstratePracticalUsage()
-	print("")
-	print("Type precision modifiers specification compliance test completed")

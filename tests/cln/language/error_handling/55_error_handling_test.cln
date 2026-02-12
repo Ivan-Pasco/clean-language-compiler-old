@@ -1,4 +1,8 @@
-// Error Handling QA Test
+start:
+
+	print("Error Handling QA Test")
+	testErrorHandling()
+	print("Test completed")// Error Handling QA Test
 // Tests how parser handles invalid syntax for new patterns
 
 functions:
@@ -25,8 +29,3 @@ functions:
 
 		print("Error handling test completed")
 
-start:
-
-	print("Error Handling QA Test")
-	testErrorHandling()
-	print("Test completed")

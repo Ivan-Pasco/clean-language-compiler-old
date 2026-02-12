@@ -1,4 +1,11 @@
-// Spec Section: 10.1 - Class Definition
+start:
+	Animal animal = Animal("Fluffy", 5)
+	Dog dog = Dog("Rex", 3, "Labrador")
+
+	print("Class inheritance test successful!")
+	print("Animal: " + animal.getName() + ", Age: " + animal.getAge().toString())
+	print("Dog: " + dog.getName() + ", Breed: " + dog.getBreed())
+	print("Dog says: " + dog.speak())// Spec Section: 10.1 - Class Definition
 // Spec Section: 10.3 - Inheritance
 // Spec Section: 10.3.2 - base() Constructor Call
 // Tests: Class inheritance with base constructor calls
@@ -35,11 +42,3 @@ class Dog is Animal
 		string speak()
 			return "Woof!"
 
-start:
-	Animal animal = Animal("Fluffy", 5)
-	Dog dog = Dog("Rex", 3, "Labrador")
-
-	print("Class inheritance test successful!")
-	print("Animal: " + animal.getName() + ", Age: " + animal.getAge().toString())
-	print("Dog: " + dog.getName() + ", Breed: " + dog.getBreed())
-	print("Dog says: " + dog.speak())

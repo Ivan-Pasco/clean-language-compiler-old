@@ -1,4 +1,25 @@
-// Standard Library String Module Comprehensive Test
+start:
+	print("Standard Library String Module Test")
+	print("===================================")
+	testBasicStringOperations()
+	print("")
+	testCaseOperations()
+	print("")
+	testSearchOperations()
+	print("")
+	testTrimOperations()
+	print("")
+	testAdvancedManipulation()
+	print("")
+	testCharacterOperations()
+	print("")
+	testValidationHelpers()
+	print("")
+	testPaddingOperations()
+	print("")
+	testRealWorldScenarios()
+	print("")
+	print("String module comprehensive test completed")// Standard Library String Module Comprehensive Test
 // Tests all string manipulation functions as specified
 
 functions:
@@ -159,25 +180,3 @@ functions:
 
 		print("User input: '" + userInput + "'")
 		print("Cleaned: '" + normalized + "'")
-start:
-	print("Standard Library String Module Test")
-	print("===================================")
-	testBasicStringOperations()
-	print("")
-	testCaseOperations()
-	print("")
-	testSearchOperations()
-	print("")
-	testTrimOperations()
-	print("")
-	testAdvancedManipulation()
-	print("")
-	testCharacterOperations()
-	print("")
-	testValidationHelpers()
-	print("")
-	testPaddingOperations()
-	print("")
-	testRealWorldScenarios()
-	print("")
-	print("String module comprehensive test completed")

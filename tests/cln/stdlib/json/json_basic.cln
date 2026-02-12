@@ -1,3 +1,11 @@
+start:
+	testParseNull()
+	testParseTrue()
+	testParseFalse()
+	testTryParse()
+	testStringify()
+	testPrettyStringify()
+	print("All JSON tests completed") +
 // Test: JSON module basic operations
 // Tests json namespace functions for parsing and stringifying JSON
 // BOOK: json-module
@@ -35,11 +43,3 @@ functions:
 		string prettyJson = json.prettyDataToText(data)
 		print("Pretty JSON created") +
 
-start:
-	testParseNull()
-	testParseTrue()
-	testParseFalse()
-	testTryParse()
-	testStringify()
-	testPrettyStringify()
-	print("All JSON tests completed") +

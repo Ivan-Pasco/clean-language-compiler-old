@@ -1,3 +1,6 @@
+start:
+	demonstrateModules()
+	print("Import/export test completed successfully") +
 // Import/Export comprehensive test - demonstrates module system
 // Note: Builtin namespaces (math, string, list, file) are always available
 
@@ -39,6 +42,3 @@ private:
 	internalHelper
 	secretCalculation
 
-start:
-	demonstrateModules()
-	print("Import/export test completed successfully") +

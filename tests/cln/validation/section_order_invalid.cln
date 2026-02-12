@@ -1,0 +1,10 @@
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+start:
+	integer result = add(5, 3)
+	print(result)
+
+import:
+	math_helpers

@@ -1,4 +1,13 @@
-// Identifier Validation Test
+start:
+	print("Identifier Validation Test")
+	print("=========================")
+	testValidIdentifiers()
+	print("")
+	testCamelCaseConventions()
+	print("")
+	testIdentifiersInFunctions()
+	print("")
+	print("All identifier validation tests passed")// Identifier Validation Test
 // Tests valid identifier patterns and camelCase conventions
 
 functions:
@@ -60,13 +69,3 @@ functions:
 		print("Function local variable: " + localVariable.toString())
 		print("Function parameter: " + functionParameter)
 		print("Function flag: " + isValidFlag.toString())
-start:
-	print("Identifier Validation Test")
-	print("=========================")
-	testValidIdentifiers()
-	print("")
-	testCamelCaseConventions()
-	print("")
-	testIdentifiersInFunctions()
-	print("")
-	print("All identifier validation tests passed")

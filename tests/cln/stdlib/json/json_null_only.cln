@@ -1,3 +1,6 @@
+start:
+	testParseNull()
+	print("Test completed") +
 // Test: JSON module - null only
 // Minimal test to isolate the issue
 
@@ -6,6 +9,3 @@ functions:
 		integer data = json.textToData("null")
 		print("Parsed null") +
 
-start:
-	testParseNull()
-	print("Test completed") +

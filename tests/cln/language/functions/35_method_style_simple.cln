@@ -1,4 +1,8 @@
-// Simple test of method-style syntax functions
+start:
+
+	print("Method Style Simple Test")
+	testMethodStyle()
+	print("Test completed")// Simple test of method-style syntax functions
 
 functions:
 
@@ -9,8 +13,3 @@ functions:
 		integer len = text.length()
 		print("Text length: " + len.toString())
 
-start:
-
-	print("Method Style Simple Test")
-	testMethodStyle()
-	print("Test completed")

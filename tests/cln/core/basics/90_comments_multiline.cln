@@ -1,4 +1,11 @@
-// Multi-line Comment Comprehensive Test
+start:
+	print("Multi-line Comment Test")
+	print("======================")
+	testMultilineComments()
+	print("")
+	testCommentEdgeCases()
+	print("")
+	print("All multi-line comment tests passed")// Multi-line Comment Comprehensive Test
 // Tests multi-line comment syntax and placement rules
 
 /*
@@ -37,11 +44,3 @@ functions:
 		*/
 
 		print("Comment edge cases completed")
-start:
-	print("Multi-line Comment Test")
-	print("======================")
-	testMultilineComments()
-	print("")
-	testCommentEdgeCases()
-	print("")
-	print("All multi-line comment tests passed")

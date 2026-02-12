@@ -1,17 +1,3 @@
-// Simple QA Test for Async Keywords
-// Tests basic async keyword syntax
-
-functions:
-
-	string fetchData(string url)
-		// Simulated async data fetching
-		return "Data from " + url
-
-	void logMessage(string message)
-		// Simulated logging operation
-		print("LOG: ")
-		print(message)
-
 start:
 
 	// Test start keyword for async execution
@@ -31,4 +17,17 @@ start:
 	print("Data2 result: ")
 	print(data2)
 
-	print("Async keywords test completed successfully!")
+	print("Async keywords test completed successfully!")// Simple QA Test for Async Keywords
+// Tests basic async keyword syntax
+
+functions:
+
+	string fetchData(string url)
+		// Simulated async data fetching
+		return "Data from " + url
+
+	void logMessage(string message)
+		// Simulated logging operation
+		print("LOG: ")
+		print(message)
+

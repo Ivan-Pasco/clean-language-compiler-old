@@ -1,25 +1,3 @@
-// Spec Section: 6.3 - Function Declaration
-// Spec Section: 6.4 - Parameters
-// Spec Section: 6.5 - Return Types
-// Spec Section: 2.4 - Composite Types (list<T>)
-// Tests: Typed functions demonstrating different type handling
-
-functions:
-	string identityString(string value)
-		return value
-
-	integer identityInteger(integer value)
-		return value
-
-	integer double(integer value)
-		return value * 2
-
-	string combineStrings(string a, string b)
-		return a + b
-
-	boolean isPositive(integer value)
-		return value > 0
-
 start:
 	// Test identity functions with different types
 	integer num = identityInteger(42)
@@ -49,4 +27,25 @@ start:
 	iterate num in numbers
 		print(num)
 	iterate name in names
-		print(name)
+		print(name)// Spec Section: 6.3 - Function Declaration
+// Spec Section: 6.4 - Parameters
+// Spec Section: 6.5 - Return Types
+// Spec Section: 2.4 - Composite Types (list<T>)
+// Tests: Typed functions demonstrating different type handling
+
+functions:
+	string identityString(string value)
+		return value
+
+	integer identityInteger(integer value)
+		return value
+
+	integer double(integer value)
+		return value * 2
+
+	string combineStrings(string a, string b)
+		return a + b
+
+	boolean isPositive(integer value)
+		return value > 0
+

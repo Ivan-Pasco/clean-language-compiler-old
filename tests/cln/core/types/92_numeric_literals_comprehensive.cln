@@ -1,4 +1,17 @@
-// Numeric Literals Comprehensive Test
+start:
+	print("Numeric Literals Comprehensive Test")
+	print("===================================")
+	testDecimalLiterals()
+	print("")
+	testHexadecimalLiterals()
+	print("")
+	testBinaryLiterals()
+	print("")
+	testOctalLiterals()
+	print("")
+	testLiteralComparisons()
+	print("")
+	print("All numeric literal tests passed")// Numeric Literals Comprehensive Test
 // Tests all numeric literal formats including alternative bases
 
 functions:
@@ -112,17 +125,3 @@ functions:
 		print("Hex == Binary: " + eq2.toString())
 		print("Binary == Octal: " + eq3.toString())
 		print("Octal == Decimal: " + eq4.toString())
-start:
-	print("Numeric Literals Comprehensive Test")
-	print("===================================")
-	testDecimalLiterals()
-	print("")
-	testHexadecimalLiterals()
-	print("")
-	testBinaryLiterals()
-	print("")
-	testOctalLiterals()
-	print("")
-	testLiteralComparisons()
-	print("")
-	print("All numeric literal tests passed")

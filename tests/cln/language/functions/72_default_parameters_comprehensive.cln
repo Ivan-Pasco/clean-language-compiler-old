@@ -1,4 +1,17 @@
-// Default parameters comprehensive test - demonstrates default parameter values
+start:
+	print("Default Parameters Comprehensive Test")
+	print("====================================")
+	testBasicDefaultParameters()
+	print("")
+	testInputBlockDefaults()
+	print("")
+	testComplexDefaultParameters()
+	print("")
+	testUserCreationDefaults()
+	print("")
+	testDefaultParameterEdgeCases()
+	print("")
+	print("Default parameters test completed successfully")// Default parameters comprehensive test - demonstrates default parameter values
 
 functions:
 	// Basic default parameters
@@ -126,17 +139,3 @@ functions:
 		print("2 to power 0: " + result2.toString())
 		print("4 to power 1: " + result3.toString())
 
-start:
-	print("Default Parameters Comprehensive Test")
-	print("====================================")
-	testBasicDefaultParameters()
-	print("")
-	testInputBlockDefaults()
-	print("")
-	testComplexDefaultParameters()
-	print("")
-	testUserCreationDefaults()
-	print("")
-	testDefaultParameterEdgeCases()
-	print("")
-	print("Default parameters test completed successfully")

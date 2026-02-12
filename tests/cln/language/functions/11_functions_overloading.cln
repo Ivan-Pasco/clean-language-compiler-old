@@ -1,4 +1,9 @@
-// Spec Section: 6.3 - Function Declaration
+start:
+	string result1 = processInt(42)
+	string result2 = processStr("test")
+
+	print(result1)
+	print(result2)// Spec Section: 6.3 - Function Declaration
 // Spec Section: 6.4 - Parameters (different parameter types)
 // Tests: Functions with same name but different parameter types (simulated overloading)
 
@@ -9,9 +14,3 @@ functions:
 	string processStr(string x)
 		return "String processed"
 
-start:
-	string result1 = processInt(42)
-	string result2 = processStr("test")
-
-	print(result1)
-	print(result2)

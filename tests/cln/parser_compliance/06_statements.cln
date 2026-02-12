@@ -32,17 +32,6 @@ start:
 	# Return statement (in function context)
 	testStatements()
 
-functions:
-	void testStatements()
-		print("Statement test completed")
-
-	integer valueFunction()
-		return 42
-
-	integer safeFunction(integer value)
-		return value * 2
-
-# Test statements in different contexts
 class StatementTest
 	integer value = 0
 
@@ -72,4 +61,14 @@ class StatementTest
 			else
 				return temp
 
-# Basic statement parsing completed successfully
+# Basic statement parsing completed successfullyfunctions:
+	void testStatements()
+		print("Statement test completed")
+
+	integer valueFunction()
+		return 42
+
+	integer safeFunction(integer value)
+		return value * 2
+
+# Test statements in different contexts

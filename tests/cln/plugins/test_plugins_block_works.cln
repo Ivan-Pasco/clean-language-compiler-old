@@ -1,11 +1,11 @@
+start:
+	print("test")
+state:
+	integer count = 0
+
 // Test 1: plugins: block works correctly
 // This should compile successfully
 
 plugins:
 	frame.ui
 
-state:
-	integer count = 0
-
-start:
-	print("test")

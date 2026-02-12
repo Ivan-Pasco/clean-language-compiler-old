@@ -1,32 +1,3 @@
-// Test Description: Comprehensive integration of multiple language features
-// Category: integration
-// Dependencies: all core features
-// Expected: PASS
-
-functions:
-	list<integer> processNumbers(list<integer> input)
-		list<integer> result = [0]  // Initialize with dummy value
-		iterate i in 0 to input.length() - 1
-			integer value = input[i]
-			if value > 0
-				result.push(value * 2)
-		return result
-
-class Calculator
-	string name
-
-	constructor(string name)
-		name = name
-
-	functions:
-		integer calculate(integer a, integer b, string operation)
-			if operation == "add"
-				return a + b
-			else if operation == "multiply"
-				return a * b
-			else
-				return 0
-
 start:
 	// Test precision modifiers
 	integer:16 precision_val = 500
@@ -58,4 +29,32 @@ start:
 	// Test loops with complex operations
 	iterate item in processed
 		if item > 10
-			print("Large item: " + item.toString())
+			print("Large item: " + item.toString())class Calculator
+	string name
+
+	constructor(string name)
+		name = name
+
+	functions:
+		integer calculate(integer a, integer b, string operation)
+			if operation == "add"
+				return a + b
+			else if operation == "multiply"
+				return a * b
+			else
+				return 0
+
+// Test Description: Comprehensive integration of multiple language features
+// Category: integration
+// Dependencies: all core features
+// Expected: PASS
+
+functions:
+	list<integer> processNumbers(list<integer> input)
+		list<integer> result = [0]  // Initialize with dummy value
+		iterate i in 0 to input.length() - 1
+			integer value = input[i]
+			if value > 0
+				result.push(value * 2)
+		return result
+

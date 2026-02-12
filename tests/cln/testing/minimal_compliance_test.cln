@@ -1,4 +1,7 @@
-// Minimal Clean Language Specification Compliance Test
+start:
+	Point p = Point(3, 4)
+	integer value = p.getX()
+	print("Test complete")// Minimal Clean Language Specification Compliance Test
 // Testing core features one by one
 
 class Point
@@ -13,7 +16,3 @@ class Point
 		integer getX()
 			return x
 
-start:
-	Point p = Point(3, 4)
-	integer value = p.getX()
-	print("Test complete")

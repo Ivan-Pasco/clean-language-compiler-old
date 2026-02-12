@@ -1,4 +1,5 @@
-// Test onError expressions
+start:
+	testOnError()// Test onError expressions
 
 functions:
 	integer safeFunction()
@@ -13,5 +14,3 @@ functions:
 		integer result1 = safeFunction() onError 0
 		integer result2 = riskyFunction() onError -1
 
-start:
-	testOnError()

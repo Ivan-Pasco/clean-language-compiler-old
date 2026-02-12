@@ -1,3 +1,24 @@
+start:
+	// Test 1: Create Point instance
+	Point p = Point(10, 20)
+	print("Point created")
+	print("X: " + p.getX().toString())
+	print("Y: " + p.getY().toString())
+
+	// Test 2: Create Rectangle instance
+	Rectangle rect = Rectangle(5, 10)
+	print("Rectangle created")
+	print("Width: " + rect.getWidth().toString())
+	print("Height: " + rect.getHeight().toString())
+	print("Area: " + rect.area().toString())
+
+	// Test 3: Multiple instances
+	Point p1 = Point(0, 0)
+	Point p2 = Point(100, 200)
+	print("P1: (" + p1.getX().toString() + ", " + p1.getY().toString() + ")")
+	print("P2: (" + p2.getX().toString() + ", " + p2.getY().toString() + ")")
+
+	print("Class definition test completed")
 // Spec Section: 11.1 - Class Definition
 // Tests: Basic class structure with fields
 
@@ -34,24 +55,3 @@ class Rectangle
 		integer area()
 			return width * height
 
-start:
-	// Test 1: Create Point instance
-	Point p = Point(10, 20)
-	print("Point created")
-	print("X: " + p.getX().toString())
-	print("Y: " + p.getY().toString())
-
-	// Test 2: Create Rectangle instance
-	Rectangle rect = Rectangle(5, 10)
-	print("Rectangle created")
-	print("Width: " + rect.getWidth().toString())
-	print("Height: " + rect.getHeight().toString())
-	print("Area: " + rect.area().toString())
-
-	// Test 3: Multiple instances
-	Point p1 = Point(0, 0)
-	Point p2 = Point(100, 200)
-	print("P1: (" + p1.getX().toString() + ", " + p1.getY().toString() + ")")
-	print("P2: (" + p2.getX().toString() + ", " + p2.getY().toString() + ")")
-
-	print("Class definition test completed")

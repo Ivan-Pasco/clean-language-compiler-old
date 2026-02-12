@@ -1,4 +1,16 @@
-// Spec Section: 4.4 - Comparison Operators
+start:
+
+	print("Clean Language Conditional Expressions Test")
+	print("==========================================")
+	testIntegerConditionals()
+	print("")
+	testNumberConditionals()
+	print("")
+	testLogicalOperations()
+	print("")
+	testComplexConditionals()
+	print("")
+	print("All conditional tests completed!")// Spec Section: 4.4 - Comparison Operators
 // Spec Section: 4.5 - Logical Operators
 // Spec Section: 5.1 - If/Else Statements
 // Spec Section: 7.6 - compare Namespace
@@ -82,16 +94,3 @@ functions:
 		string grade = conditional.string(gradeA, "A", conditional.string(gradeB, "B", conditional.string(gradeC, "C", "F")))
 		print("Score " + score.toString() + " gets grade: " + grade)
 
-start:
-
-	print("Clean Language Conditional Expressions Test")
-	print("==========================================")
-	testIntegerConditionals()
-	print("")
-	testNumberConditionals()
-	print("")
-	testLogicalOperations()
-	print("")
-	testComplexConditionals()
-	print("")
-	print("All conditional tests completed!")

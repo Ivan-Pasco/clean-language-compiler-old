@@ -1,4 +1,5 @@
-// Test property assignment functionality for list behavior modifiers
+start:
+	testPropertyAssignment()// Test property assignment functionality for list behavior modifiers
 
 functions:
 	void testPropertyAssignment()
@@ -17,5 +18,3 @@ functions:
 		// Test assigning combined behavior
 		items.type = "line,unique"
 
-start:
-	testPropertyAssignment()

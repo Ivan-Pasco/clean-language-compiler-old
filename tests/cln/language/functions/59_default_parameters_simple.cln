@@ -1,4 +1,6 @@
-// Default parameters simple test - demonstrates basic function parameter patterns
+start:
+	testDefaultParameters()
+	print("Default parameters test completed successfully")// Default parameters simple test - demonstrates basic function parameter patterns
 // Note: Full default parameter syntax requires parser implementation
 
 functions:
@@ -36,6 +38,3 @@ functions:
 		logMessage("System started", "")      // Should use default INFO
 		logMessage("Error occurred", "ERROR") // Should use ERROR
 
-start:
-	testDefaultParameters()
-	print("Default parameters test completed successfully")

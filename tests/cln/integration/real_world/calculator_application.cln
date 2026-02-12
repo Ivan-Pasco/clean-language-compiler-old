@@ -1,4 +1,13 @@
-// Calculator Application - Real-world Integration Test
+start:
+		print("Calculator Application - Real-world Integration Test")
+		print("================================================")
+
+		performBasicOperations()
+		print("")
+		performComplexCalculations()
+
+		print("")
+		print("Calculator application test completed successfully")// Calculator Application - Real-world Integration Test
 // Comprehensive test demonstrating practical Clean Language usage
 
 class Calculator
@@ -92,13 +101,3 @@ functions:
 		)
 		print("(2^3) * sqrt(9) = " + scientificResult.toString())
 
-start:
-		print("Calculator Application - Real-world Integration Test")
-		print("================================================")
-
-		performBasicOperations()
-		print("")
-		performComplexCalculations()
-
-		print("")
-		print("Calculator application test completed successfully")

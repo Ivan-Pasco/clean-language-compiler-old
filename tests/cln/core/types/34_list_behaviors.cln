@@ -1,4 +1,17 @@
-// Spec Section: 2.4 - Composite Types (list<any>)
+start:
+	print("Clean Language List Behavior Test")
+	print("==================================")
+	testQueueBehavior()
+	print("")
+	testStackBehavior()
+	print("")
+	testUniqueBehavior()
+	print("")
+	testCombinedBehaviors()
+	print("")
+	testUtilityMethods()
+	print("")
+	print("All list behavior tests completed!")// Spec Section: 2.4 - Composite Types (list<any>)
 // Spec Section: 2.5 - List Properties (Behavior Modifiers)
 // Tests: List behavior modifiers - "line" (FIFO), "pile" (LIFO), "unique", "line-unique"
 
@@ -96,17 +109,3 @@ functions:
 		print("Non-empty list isNotEmpty: " + notEmpty.toString())
 
 
-start:
-	print("Clean Language List Behavior Test")
-	print("==================================")
-	testQueueBehavior()
-	print("")
-	testStackBehavior()
-	print("")
-	testUniqueBehavior()
-	print("")
-	testCombinedBehaviors()
-	print("")
-	testUtilityMethods()
-	print("")
-	print("All list behavior tests completed!")

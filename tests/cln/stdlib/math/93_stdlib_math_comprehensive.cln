@@ -1,4 +1,21 @@
-// Standard Library Math Module Comprehensive Test
+start:
+	print("Standard Library Math Module Test")
+	print("=================================")
+	testCoreMathOperations()
+	print("")
+	testRoundingFunctions()
+	print("")
+	testTrigonometricFunctions()
+	print("")
+	testLogarithmicFunctions()
+	print("")
+	testHyperbolicFunctions()
+	print("")
+	testMathematicalConstants()
+	print("")
+	testPracticalCalculations()
+	print("")
+	print("Math module comprehensive test completed")// Standard Library Math Module Comprehensive Test
 // Tests all mathematical functions and constants as specified
 
 functions:
@@ -128,21 +145,3 @@ functions:
 		number time = 2.0
 		number growth = principal * math.exp(rate * time)
 		print("Exponential growth: " + growth.toString())
-start:
-	print("Standard Library Math Module Test")
-	print("=================================")
-	testCoreMathOperations()
-	print("")
-	testRoundingFunctions()
-	print("")
-	testTrigonometricFunctions()
-	print("")
-	testLogarithmicFunctions()
-	print("")
-	testHyperbolicFunctions()
-	print("")
-	testMathematicalConstants()
-	print("")
-	testPracticalCalculations()
-	print("")
-	print("Math module comprehensive test completed")

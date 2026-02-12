@@ -1,4 +1,6 @@
-// Test string interpolation - Clean Language Specification compliance
+start:
+	testStringInterpolation()
+	print("String interpolation test completed")// Test string interpolation - Clean Language Specification compliance
 
 functions:
 	void testStringInterpolation()
@@ -21,6 +23,3 @@ functions:
 		string complex = "Hello {name}, your count is {count}!"
 		print("Complex interpolation: " + complex)
 
-start:
-	testStringInterpolation()
-	print("String interpolation test completed")

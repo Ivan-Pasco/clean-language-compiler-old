@@ -1,4 +1,6 @@
-// Testing Framework Comprehensive Test
+start:
+	print("Testing framework comprehensive test")
+	print("All test blocks defined successfully")// Testing Framework Comprehensive Test
 // Tests the 'tests:' block functionality according to Clean Language Specification
 
 functions:
@@ -43,6 +45,3 @@ tests:
 		integer result = add(-5, 3)
 		print("Test 7: negative addition result")
 
-start:
-	print("Testing framework comprehensive test")
-	print("All test blocks defined successfully")

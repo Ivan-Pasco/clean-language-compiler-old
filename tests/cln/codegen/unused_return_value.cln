@@ -1,3 +1,8 @@
+start:
+	useValue()
+	ignoreValue()
+	multipleIgnored()
+	mixedUsage()
 // Test: Function calls with unused return values should compile
 // The compiler must emit 'drop' for unused returns
 
@@ -23,8 +28,3 @@ functions:
 		getValue()
 		integer b = getValue()
 
-start:
-	useValue()
-	ignoreValue()
-	multipleIgnored()
-	mixedUsage()

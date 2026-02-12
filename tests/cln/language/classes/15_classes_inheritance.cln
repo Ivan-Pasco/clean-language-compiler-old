@@ -1,4 +1,12 @@
-// Spec Section: 10.1 - Class Definition
+start:
+	Dog buddy = Dog("Buddy", 3, "Golden Retriever")
+	Cat whiskers = Cat("Whiskers", 2, true)
+
+	print(buddy.makeSound())
+	print(whiskers.makeSound())
+	print(buddy.getInfo())
+	print(whiskers.getInfo())
+	print("Whiskers is an " + whiskers.getHabitat())// Spec Section: 10.1 - Class Definition
 // Spec Section: 10.3 - Inheritance
 // Spec Section: 10.3.2 - base() Constructor Call
 // Spec Section: 10.6 - Method Override
@@ -56,12 +64,3 @@ class Cat is Animal
 			else
 				return "outdoor cat"
 
-start:
-	Dog buddy = Dog("Buddy", 3, "Golden Retriever")
-	Cat whiskers = Cat("Whiskers", 2, true)
-
-	print(buddy.makeSound())
-	print(whiskers.makeSound())
-	print(buddy.getInfo())
-	print(whiskers.getInfo())
-	print("Whiskers is an " + whiskers.getHabitat())

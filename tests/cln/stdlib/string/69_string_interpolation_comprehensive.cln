@@ -1,4 +1,17 @@
-// String interpolation comprehensive test - demonstrates {variable} syntax
+start:
+	print("String Interpolation Comprehensive Test")
+	print("=======================================")
+	testBasicInterpolation()
+	print("")
+	testExpressionInterpolation()
+	print("")
+	testObjectInterpolation()
+	print("")
+	testNestedInterpolation()
+	print("")
+	testInterpolationEdgeCases()
+	print("")
+	print("String interpolation test completed successfully")// String interpolation comprehensive test - demonstrates {variable} syntax
 
 functions:
 	void testBasicInterpolation()
@@ -115,17 +128,3 @@ functions:
 	integer multiply(integer x, integer y)
 		return x * y
 
-start:
-	print("String Interpolation Comprehensive Test")
-	print("=======================================")
-	testBasicInterpolation()
-	print("")
-	testExpressionInterpolation()
-	print("")
-	testObjectInterpolation()
-	print("")
-	testNestedInterpolation()
-	print("")
-	testInterpolationEdgeCases()
-	print("")
-	print("String interpolation test completed successfully")

@@ -1,0 +1,7 @@
+start:
+	integer result = add(5, 3)
+	print(result)
+
+functions:
+	integer add(integer a, integer b)
+		return a + b

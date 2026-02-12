@@ -1,3 +1,12 @@
+start:
+	print("Testing multiple requires...")
+	integer result1 = safeCalculate(10, 20)
+	print("10 * 20 = " + result1.toString())
+
+	integer result2 = safeCalculate(0, 5)
+	print("0 * 5 = " + result2.toString())
+
+	print("All preconditions passed!")
 // Test: Multiple require statements in a function
 // All preconditions are checked in order
 
@@ -8,12 +17,3 @@ functions:
 		require a + b < 1000
 		return a * b
 
-start:
-	print("Testing multiple requires...")
-	integer result1 = safeCalculate(10, 20)
-	print("10 * 20 = " + result1.toString())
-
-	integer result2 = safeCalculate(0, 5)
-	print("0 * 5 = " + result2.toString())
-
-	print("All preconditions passed!")

@@ -1,3 +1,40 @@
+start:
+	// Test 1: Direct field access in method
+	Point p = Point(3, 4)
+	integer pSum = p.sum()
+	print("Point sum: " + pSum.toString())
+
+	// Test 2: Multiple field access in expression
+	integer pProduct = p.product()
+	print("Point product: " + pProduct.toString())
+
+	// Test 3: Modify fields in method
+	p.move(2, 3)
+	string newPos = p.display()
+	print("After move: " + newPos)
+
+	// Test 4: Rectangle area using direct field access
+	Rectangle rect = Rectangle(5, 10)
+	integer area = rect.area()
+	print("Rectangle area: " + area.toString())
+
+	// Test 5: Rectangle perimeter
+	integer perim = rect.perimeter()
+	print("Rectangle perimeter: " + perim.toString())
+
+	// Test 6: Boolean return from field comparison
+	boolean square1 = rect.isSquare()
+	print("Is 5x10 square? " + square1.toString())
+
+	Rectangle sqr = Rectangle(4, 4)
+	boolean square2 = sqr.isSquare()
+	print("Is 4x4 square? " + square2.toString())
+
+	// Test 7: Modify multiple fields
+	rect.scale(2)
+	print("After scale(2), area: " + rect.area().toString())
+
+	print("Implicit context tests completed")
 // Spec Section: 9.3 - Implicit Context Rules
 // Tests: Direct field access without this/self keywords
 
@@ -45,40 +82,3 @@ class Rectangle
 			width = width * factor
 			height = height * factor
 
-start:
-	// Test 1: Direct field access in method
-	Point p = Point(3, 4)
-	integer pSum = p.sum()
-	print("Point sum: " + pSum.toString())
-
-	// Test 2: Multiple field access in expression
-	integer pProduct = p.product()
-	print("Point product: " + pProduct.toString())
-
-	// Test 3: Modify fields in method
-	p.move(2, 3)
-	string newPos = p.display()
-	print("After move: " + newPos)
-
-	// Test 4: Rectangle area using direct field access
-	Rectangle rect = Rectangle(5, 10)
-	integer area = rect.area()
-	print("Rectangle area: " + area.toString())
-
-	// Test 5: Rectangle perimeter
-	integer perim = rect.perimeter()
-	print("Rectangle perimeter: " + perim.toString())
-
-	// Test 6: Boolean return from field comparison
-	boolean square1 = rect.isSquare()
-	print("Is 5x10 square? " + square1.toString())
-
-	Rectangle sqr = Rectangle(4, 4)
-	boolean square2 = sqr.isSquare()
-	print("Is 4x4 square? " + square2.toString())
-
-	// Test 7: Modify multiple fields
-	rect.scale(2)
-	print("After scale(2), area: " + rect.area().toString())
-
-	print("Implicit context tests completed")

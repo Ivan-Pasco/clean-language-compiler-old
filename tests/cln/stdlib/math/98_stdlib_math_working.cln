@@ -1,4 +1,17 @@
-// Standard Library Math Module Working Test
+start:
+	print("Math Module Working Test")
+	print("========================")
+	testBasicMathOperations()
+	print("")
+	testMathConstants()
+	print("")
+	testPracticalCalculations()
+	print("")
+	testBasicArithmetic()
+	print("")
+	testAbsoluteValues()
+	print("")
+	print("Math module working test completed")// Standard Library Math Module Working Test
 // Tests only the currently implemented mathematical functions
 
 functions:
@@ -68,17 +81,3 @@ functions:
 		print("abs(-25) = " + absNeg.toString())
 		print("abs(42) = " + absPos.toString())
 		print("abs(0) = " + absZero.toString())
-start:
-	print("Math Module Working Test")
-	print("========================")
-	testBasicMathOperations()
-	print("")
-	testMathConstants()
-	print("")
-	testPracticalCalculations()
-	print("")
-	testBasicArithmetic()
-	print("")
-	testAbsoluteValues()
-	print("")
-	print("Math module working test completed")

@@ -1,13 +1,3 @@
-// Multi-line expressions specification compliance test
-// Tests parentheses requirement for multi-line expressions as per Clean Language Specification
-
-functions:
-	integer calculate(integer a, integer b)
-		return a + b
-
-	number multiply(number x, number y)
-		return x * y
-
 start:
 	print("=== Multi-Line Expressions Specification Test ===")
 
@@ -54,4 +44,13 @@ start:
 		"expressions " + "correctly")
 	print("Combined: " + combined)
 
-	print("Multi-line expressions specification compliance test completed")
+	print("Multi-line expressions specification compliance test completed")// Multi-line expressions specification compliance test
+// Tests parentheses requirement for multi-line expressions as per Clean Language Specification
+
+functions:
+	integer calculate(integer a, integer b)
+		return a + b
+
+	number multiply(number x, number y)
+		return x * y
+

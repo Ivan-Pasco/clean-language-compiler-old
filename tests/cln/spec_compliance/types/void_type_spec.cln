@@ -1,29 +1,3 @@
-// Spec Section: 3.1 - Core Types (void)
-// Tests: void type - functions with no return value
-
-functions:
-	void printMessage(string msg)
-		print("Message: " + msg)
-
-	void printNumber(integer n)
-		print("Number: " + n.toString())
-
-	void doNothing()
-		// Function body can be empty or have no return
-		integer x = 1
-
-	void printTwice(string text)
-		print(text)
-		print(text)
-
-	void conditionalPrint(boolean shouldPrint, string msg)
-		if shouldPrint
-			print(msg)
-
-	void processAndPrint(integer a, integer b)
-		integer sum = a + b
-		print("Sum: " + sum.toString())
-
 start:
 	// Test 1: Call void function with string
 	printMessage("Hello from void function")
@@ -51,3 +25,29 @@ start:
 	printMessage("Third")
 
 	print("Void type test completed")
+// Spec Section: 3.1 - Core Types (void)
+// Tests: void type - functions with no return value
+
+functions:
+	void printMessage(string msg)
+		print("Message: " + msg)
+
+	void printNumber(integer n)
+		print("Number: " + n.toString())
+
+	void doNothing()
+		// Function body can be empty or have no return
+		integer x = 1
+
+	void printTwice(string text)
+		print(text)
+		print(text)
+
+	void conditionalPrint(boolean shouldPrint, string msg)
+		if shouldPrint
+			print(msg)
+
+	void processAndPrint(integer a, integer b)
+		integer sum = a + b
+		print("Sum: " + sum.toString())
+

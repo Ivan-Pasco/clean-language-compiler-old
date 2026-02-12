@@ -1,4 +1,17 @@
-// Error handling comprehensive test - demonstrates onError syntax patterns
+start:
+	print("Error Handling onError Comprehensive Test")
+	print("========================================")
+	testBasicOnErrorSyntax()
+	print("")
+	testOnErrorWithExpressions()
+	print("")
+	testOnErrorWithErrorVariable()
+	print("")
+	testOnErrorInExpressions()
+	print("")
+	testOnErrorWithLogging()
+	print("")
+	print("Error handling onError test completed successfully")// Error handling comprehensive test - demonstrates onError syntax patterns
 // Note: Full onError implementation requires parser and runtime support
 
 functions:
@@ -126,17 +139,3 @@ functions:
 	void printValue(integer value)
 		print("Received value: " + value.toString())
 
-start:
-	print("Error Handling onError Comprehensive Test")
-	print("========================================")
-	testBasicOnErrorSyntax()
-	print("")
-	testOnErrorWithExpressions()
-	print("")
-	testOnErrorWithErrorVariable()
-	print("")
-	testOnErrorInExpressions()
-	print("")
-	testOnErrorWithLogging()
-	print("")
-	print("Error handling onError test completed successfully")

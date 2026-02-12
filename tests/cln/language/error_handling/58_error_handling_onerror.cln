@@ -1,4 +1,6 @@
-// Error handling with onError syntax comprehensive test
+start:
+	testErrorHandling()
+	print("Error handling test completed successfully")// Error handling with onError syntax comprehensive test
 // According to Clean Language Specification, onError provides error recovery
 
 functions:
@@ -33,6 +35,3 @@ functions:
 		integer calculation = safeDivide(100, 5) + 5
 		print("Calculation result: " + calculation.toString())
 
-start:
-	testErrorHandling()
-	print("Error handling test completed successfully")

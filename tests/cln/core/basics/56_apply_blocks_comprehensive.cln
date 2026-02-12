@@ -1,3 +1,6 @@
+start:
+	testApplyBlocks()
+	print("completed")
 // Test file for apply blocks
 
 functions:
@@ -24,6 +27,3 @@ functions:
 
 		print("Count: " + count.toString())
 
-start:
-	testApplyBlocks()
-	print("completed")

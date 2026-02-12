@@ -1,4 +1,54 @@
-// Spec Section: 10.1 - Class Definition
+start:
+	print("Polymorphism Test - Vehicle System")
+	print("=================================")
+
+	// Create different types of vehicles
+	Car tesla = Car("Tesla", "Model 3", 2023, 4, true)
+	Car honda = Car("Honda", "Civic", 2022, 4, false)
+	Motorcycle harley = Motorcycle("Harley-Davidson", "Street 750", 2021, false)
+	Motorcycle sidecarBike = Motorcycle("BMW", "R1250GS", 2023, true)
+
+	// Demonstrate polymorphism - same method call, different behavior
+	demonstratePolymorphism(tesla)
+	demonstratePolymorphism(honda)
+	demonstratePolymorphism(harley)
+	demonstratePolymorphism(sidecarBike)
+
+	// Create array of vehicles (polymorphic collection)
+	list<Vehicle> fleet
+	fleet.add(tesla)
+	fleet.add(honda)
+	fleet.add(harley)
+	fleet.add(sidecarBike)
+
+	// Test polymorphic behavior with collection
+	testVehicleArray(fleet)
+
+	// Demonstrate method overriding with specific types
+	print("Specific vehicle details:")
+	print("Car: " + tesla.getCarDetails())
+	print("Motorcycle: " + harley.getBikeDetails())
+	print("")
+
+	// Test polymorphic method calls in expressions
+	integer totalMaxSpeed = 0
+	iterate vehicle in fleet
+		totalMaxSpeed = totalMaxSpeed + vehicle.getMaxSpeed()
+
+	integer averageSpeed = totalMaxSpeed / fleet.size()
+	print("Fleet analysis:")
+	print("Total vehicles: " + fleet.size().toString())
+	print("Average max speed: " + averageSpeed.toString() + " km/h")
+
+	// Demonstrate dynamic behavior
+	print("Dynamic polymorphic calls:")
+	iterate vehicle in fleet
+		if vehicle.getMaxSpeed() > 100
+			print("Fast vehicle: " + vehicle.getInfo() + " (" + vehicle.getMaxSpeed().toString() + " km/h)")
+		else
+			print("Standard vehicle: " + vehicle.getInfo() + " (" + vehicle.getMaxSpeed().toString() + " km/h)")
+
+	print("Polymorphism demonstration completed!")// Spec Section: 10.1 - Class Definition
 // Spec Section: 10.3 - Inheritance
 // Spec Section: 10.3.2 - base() Constructor Call
 // Spec Section: 10.6 - Method Override
@@ -104,54 +154,3 @@ functions:
 			print("  Max speed: " + vehicle.getMaxSpeed().toString() + " km/h")
 		print("")
 
-start:
-	print("Polymorphism Test - Vehicle System")
-	print("=================================")
-
-	// Create different types of vehicles
-	Car tesla = Car("Tesla", "Model 3", 2023, 4, true)
-	Car honda = Car("Honda", "Civic", 2022, 4, false)
-	Motorcycle harley = Motorcycle("Harley-Davidson", "Street 750", 2021, false)
-	Motorcycle sidecarBike = Motorcycle("BMW", "R1250GS", 2023, true)
-
-	// Demonstrate polymorphism - same method call, different behavior
-	demonstratePolymorphism(tesla)
-	demonstratePolymorphism(honda)
-	demonstratePolymorphism(harley)
-	demonstratePolymorphism(sidecarBike)
-
-	// Create array of vehicles (polymorphic collection)
-	list<Vehicle> fleet
-	fleet.add(tesla)
-	fleet.add(honda)
-	fleet.add(harley)
-	fleet.add(sidecarBike)
-
-	// Test polymorphic behavior with collection
-	testVehicleArray(fleet)
-
-	// Demonstrate method overriding with specific types
-	print("Specific vehicle details:")
-	print("Car: " + tesla.getCarDetails())
-	print("Motorcycle: " + harley.getBikeDetails())
-	print("")
-
-	// Test polymorphic method calls in expressions
-	integer totalMaxSpeed = 0
-	iterate vehicle in fleet
-		totalMaxSpeed = totalMaxSpeed + vehicle.getMaxSpeed()
-
-	integer averageSpeed = totalMaxSpeed / fleet.size()
-	print("Fleet analysis:")
-	print("Total vehicles: " + fleet.size().toString())
-	print("Average max speed: " + averageSpeed.toString() + " km/h")
-
-	// Demonstrate dynamic behavior
-	print("Dynamic polymorphic calls:")
-	iterate vehicle in fleet
-		if vehicle.getMaxSpeed() > 100
-			print("Fast vehicle: " + vehicle.getInfo() + " (" + vehicle.getMaxSpeed().toString() + " km/h)")
-		else
-			print("Standard vehicle: " + vehicle.getInfo() + " (" + vehicle.getMaxSpeed().toString() + " km/h)")
-
-	print("Polymorphism demonstration completed!")

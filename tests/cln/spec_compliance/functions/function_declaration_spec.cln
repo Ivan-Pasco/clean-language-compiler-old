@@ -1,29 +1,3 @@
-// Spec Section: 7.2 - Functions Block
-// Spec Section: 7.3 - Function Declaration
-// Tests: Function declarations with various return types
-
-functions:
-	integer addNumbers(integer a, integer b)
-		return a + b
-
-	integer subtractNumbers(integer a, integer b)
-		return a - b
-
-	integer multiplyNumbers(integer a, integer b)
-		return a * b
-
-	number divideNumbers(number a, number b)
-		return a / b
-
-	string concatStrings(string a, string b)
-		return a + b
-
-	boolean isGreater(integer a, integer b)
-		return a > b
-
-	boolean isEqual(integer a, integer b)
-		return a == b
-
 start:
 	// Test 1: Integer returning functions
 	integer sum = addNumbers(10, 5)
@@ -52,3 +26,29 @@ start:
 	print("(2 * 3) + 4 = " + chainResult.toString())
 
 	print("Function declaration test completed")
+// Spec Section: 7.2 - Functions Block
+// Spec Section: 7.3 - Function Declaration
+// Tests: Function declarations with various return types
+
+functions:
+	integer addNumbers(integer a, integer b)
+		return a + b
+
+	integer subtractNumbers(integer a, integer b)
+		return a - b
+
+	integer multiplyNumbers(integer a, integer b)
+		return a * b
+
+	number divideNumbers(number a, number b)
+		return a / b
+
+	string concatStrings(string a, string b)
+		return a + b
+
+	boolean isGreater(integer a, integer b)
+		return a > b
+
+	boolean isEqual(integer a, integer b)
+		return a == b
+

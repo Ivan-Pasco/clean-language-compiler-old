@@ -1,3 +1,8 @@
+start:
+	number discount = calculateDiscount(100.0, "gold")
+	print(discount.toString())
+	string message = greet("World")
+	print(message)
 // Test: combined spec, intent, and require in functions
 
 functions:
@@ -17,8 +22,3 @@ functions:
 		require name != ""
 		return "Hello, " + name + "!"
 
-start:
-	number discount = calculateDiscount(100.0, "gold")
-	print(discount.toString())
-	string message = greet("World")
-	print(message)

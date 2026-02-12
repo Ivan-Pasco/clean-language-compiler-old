@@ -1,4 +1,3 @@
-functions:
 start:
 		integer i = 0
 		number x = 100.0
@@ -7,3 +6,4 @@ start:
 		while i < 10
 			x = x + vx
 			i = i + 1
+functions:

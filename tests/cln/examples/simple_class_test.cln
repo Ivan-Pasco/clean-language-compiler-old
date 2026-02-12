@@ -1,3 +1,6 @@
+start:
+	Vehicle car = Vehicle("Toyota")
+	testFunction(car)
 class Vehicle
 	string make
 
@@ -11,6 +14,3 @@ class Vehicle
 functions:
 	void testFunction(Vehicle vehicle)
 		print(vehicle.getInfo())
-start:
-	Vehicle car = Vehicle("Toyota")
-	testFunction(car)

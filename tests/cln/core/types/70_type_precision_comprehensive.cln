@@ -1,4 +1,17 @@
-// Type precision comprehensive test - demonstrates precision modifiers
+start:
+	print("Type Precision Comprehensive Test")
+	print("=================================")
+	testIntegerPrecisionModifiers()
+	print("")
+	testNumberPrecisionModifiers()
+	print("")
+	testPrecisionUseScenarios()
+	print("")
+	testPrecisionCalculations()
+	print("")
+	testPrecisionConversions()
+	print("")
+	print("Type precision test completed successfully")// Type precision comprehensive test - demonstrates precision modifiers
 
 functions:
 	void testIntegerPrecisionModifiers()
@@ -125,17 +138,3 @@ functions:
 		number:64 bigFloat = bigInt.toNumber()
 		print("Integer to number conversion: " + bigFloat.toString())
 
-start:
-	print("Type Precision Comprehensive Test")
-	print("=================================")
-	testIntegerPrecisionModifiers()
-	print("")
-	testNumberPrecisionModifiers()
-	print("")
-	testPrecisionUseScenarios()
-	print("")
-	testPrecisionCalculations()
-	print("")
-	testPrecisionConversions()
-	print("")
-	print("Type precision test completed successfully")

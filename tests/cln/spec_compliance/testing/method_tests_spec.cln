@@ -1,3 +1,24 @@
+start:
+	// Test Counter at runtime
+	Counter c = Counter()
+	print("Initial value: " + c.getValue().toString())
+
+	c.increment()
+	print("After increment: " + c.getValue().toString())
+
+	c.increment()
+	c.increment()
+	print("After 2 more increments: " + c.getValue().toString())
+
+	// Test Calculator at runtime
+	Calculator calc = Calculator()
+	integer sum = calc.add(15, 25)
+	print("calc.add(15, 25) = " + sum.toString())
+
+	integer diff = calc.subtract(100, 30)
+	print("calc.subtract(100, 30) = " + diff.toString())
+
+	print("Method tests specification completed")
 // Spec Section: 7 - Testing Framework
 // Tests: Testing class methods
 // Requirement: Test block can verify class method behavior
@@ -28,24 +49,3 @@ tests:
 	"subtraction": 10 - 3 = 7
 	"calculator pattern": 5 * 4 = 20
 
-start:
-	// Test Counter at runtime
-	Counter c = Counter()
-	print("Initial value: " + c.getValue().toString())
-
-	c.increment()
-	print("After increment: " + c.getValue().toString())
-
-	c.increment()
-	c.increment()
-	print("After 2 more increments: " + c.getValue().toString())
-
-	// Test Calculator at runtime
-	Calculator calc = Calculator()
-	integer sum = calc.add(15, 25)
-	print("calc.add(15, 25) = " + sum.toString())
-
-	integer diff = calc.subtract(100, 30)
-	print("calc.subtract(100, 30) = " + diff.toString())
-
-	print("Method tests specification completed")

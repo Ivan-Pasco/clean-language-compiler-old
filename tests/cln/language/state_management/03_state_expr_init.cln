@@ -1,3 +1,7 @@
+start:
+	print("Negative: " + negative.toString())
+	print("NegFloat: " + negFloat.toString())
+	print("Disabled: " + disabled.toString())
 // Test state with negative number initialization
 // Negative values should be correctly initialized
 
@@ -6,7 +10,3 @@ state:
 	number negFloat = -3.14
 	boolean disabled = false
 
-start:
-	print("Negative: " + negative.toString())
-	print("NegFloat: " + negFloat.toString())
-	print("Disabled: " + disabled.toString())

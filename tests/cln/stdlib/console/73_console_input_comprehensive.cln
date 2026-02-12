@@ -1,4 +1,21 @@
-// Console input comprehensive test - demonstrates complete input functionality
+start:
+	print("Console Input Comprehensive Test")
+	print("==================================")
+	testBasicConsoleInput()
+	print("")
+	testNumericInput()
+	print("")
+	testBooleanInput()
+	print("")
+	testInputWithDefaultValues()
+	print("")
+	testInputValidation()
+	print("")
+	testInteractiveUserFlow()
+	print("")
+	testAdvancedInputScenarios()
+	print("")
+	print("Console input test completed successfully")// Console input comprehensive test - demonstrates complete input functionality
 // Note: Full input functionality requires runtime implementation
 
 functions:
@@ -152,21 +169,3 @@ functions:
 			string adminKey = "secret123"  // Would be user input
 			print("Admin key provided: " + adminKey)
 
-start:
-	print("Console Input Comprehensive Test")
-	print("==================================")
-	testBasicConsoleInput()
-	print("")
-	testNumericInput()
-	print("")
-	testBooleanInput()
-	print("")
-	testInputWithDefaultValues()
-	print("")
-	testInputValidation()
-	print("")
-	testInteractiveUserFlow()
-	print("")
-	testAdvancedInputScenarios()
-	print("")
-	print("Console input test completed successfully")

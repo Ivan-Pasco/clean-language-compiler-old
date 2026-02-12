@@ -1,4 +1,7 @@
-
+start:
+	string data = fetchData("api.example.com")
+	string processed = processData(data)
+	print(processed)
 functions:
 	string fetchData(string url)
 		return "Data from " + url
@@ -6,7 +9,3 @@ functions:
 	string processData(string data)
 		return "Processed: " + data
 
-start:
-	string data = fetchData("api.example.com")
-	string processed = processData(data)
-	print(processed)

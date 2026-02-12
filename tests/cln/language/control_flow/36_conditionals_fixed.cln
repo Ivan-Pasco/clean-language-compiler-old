@@ -1,4 +1,16 @@
-// Test conditional expressions and comparisons
+start:
+
+	print("Clean Language Conditional Expressions Test")
+	print("==========================================")
+	testIntegerConditionals()
+	print("")
+	testNumberConditionals()
+	print("")
+	testLogicalOperations()
+	print("")
+	testComplexConditionals()
+	print("")
+	print("All conditional tests completed!")// Test conditional expressions and comparisons
 
 functions:
 
@@ -76,16 +88,3 @@ functions:
 		string grade = if gradeA then "A" else if gradeB then "B" else if gradeC then "C" else "F"
 		print("Score " + score.toString() + " gets grade: " + grade)
 
-start:
-
-	print("Clean Language Conditional Expressions Test")
-	print("==========================================")
-	testIntegerConditionals()
-	print("")
-	testNumberConditionals()
-	print("")
-	testLogicalOperations()
-	print("")
-	testComplexConditionals()
-	print("")
-	print("All conditional tests completed!")

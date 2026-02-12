@@ -1,4 +1,6 @@
-// Spec Section: 6.4.1 - Default Parameter Values
+start:
+	testDefaultParameters()
+	print("Default parameters test completed successfully")// Spec Section: 6.4.1 - Default Parameter Values
 // Spec Section: 6.3 - Function Declaration
 // Tests: Default parameter values in function definitions
 
@@ -45,6 +47,3 @@ functions:
 		string msg1 = formatMessage()
 		print("Default message: " + msg1)
 
-start:
-	testDefaultParameters()
-	print("Default parameters test completed successfully")

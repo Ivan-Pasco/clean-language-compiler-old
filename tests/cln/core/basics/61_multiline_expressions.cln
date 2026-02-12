@@ -1,4 +1,6 @@
-// Multi-line expressions comprehensive test
+start:
+	testMultilineExpressions()
+	print("Multi-line expressions test completed successfully")// Multi-line expressions comprehensive test
 // According to Clean Language Specification, multi-line expressions must be wrapped in parentheses
 
 functions:
@@ -39,6 +41,3 @@ functions:
 	integer multiply(integer a, integer b)
 		return a * b
 
-start:
-	testMultilineExpressions()
-	print("Multi-line expressions test completed successfully")
