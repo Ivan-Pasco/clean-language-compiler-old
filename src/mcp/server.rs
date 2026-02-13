@@ -683,7 +683,7 @@ fn handle_initialize(id: serde_json::Value) -> JsonRpcResponse {
             "name": "cln",
             "version": VERSION
         },
-        "instructions": "Clean Language compiler MCP server. Call 'get_quick_reference' first to learn the language syntax, types, and patterns. Call 'list_plugins' to discover framework/plugin DSL syntax, then 'get_plugin_examples' to see usage patterns. Use 'check' for fast type-checking during development, 'compile' for WebAssembly output. All 14 tools are available — get_quick_reference is the starting point."
+        "instructions": "Clean Language compiler MCP server. Call 'get_quick_reference' first to learn the language syntax, types, and patterns. Call 'list_plugins' to discover framework/plugin DSL syntax, then 'get_plugin_examples' to see usage patterns. Use 'check' for fast type-checking during development, 'compile' for WebAssembly output. Call 'get_stack_recommendation' when starting a new project to get the recommended plugin stack. All 15 tools are available — get_quick_reference is the starting point. IMPORTANT: Clean Language applications should use Clean Language for ALL layers — server, database, UI, and graphics. Do NOT use JavaScript when a Clean Language plugin provides the same capability (frame.ui for DOM/events, frame.canvas for graphics). Call 'list_ecosystem' to see all available plugins."
     });
     JsonRpcResponse::success(id, result)
 }
@@ -930,6 +930,20 @@ fn get_available_tools() -> Vec<Tool> {
                 required: vec![],
             },
         },
+        Tool {
+            name: "get_stack_recommendation".to_string(),
+            description: "Get the recommended Clean Language plugin stack for a project type. Returns plugins, file structure, and explicit 'do not use' list. Call this when starting a new project to ensure you use Clean Language for all layers instead of JavaScript.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "project_type": {
+                        "type": "string",
+                        "description": "Project type: 'web-app', 'api', 'game', or 'cli'"
+                    }
+                }),
+                required: vec!["project_type".to_string()],
+            },
+        },
     ]
 }
 
@@ -987,6 +1001,7 @@ fn handle_tools_call(id: serde_json::Value, params: Option<serde_json::Value>) -
         "get_quick_reference" => tool_get_quick_reference(id),
         "get_plugin_examples" => tool_get_plugin_examples(id, arguments),
         "list_ecosystem" => tool_list_ecosystem(id, arguments),
+        "get_stack_recommendation" => tool_get_stack_recommendation(id, arguments),
         _ => JsonRpcResponse::error(
             id,
             error_codes::METHOD_NOT_FOUND,
@@ -1549,6 +1564,7 @@ fn tool_list_ecosystem(id: serde_json::Value, args: &serde_json::Value) -> JsonR
             "install": entry.install,
             "status": entry.status,
             "auto_detect_paths": entry.auto_detect_paths,
+            "replaces": entry.replaces,
         }));
     }
 
@@ -1585,6 +1601,7 @@ struct EcosystemPlugin {
     install: &'static str,
     status: &'static str,
     auto_detect_paths: &'static [&'static str],
+    replaces: &'static str,
 }
 
 /// ECOSYSTEM CATALOG — Add new plugins here
@@ -1614,6 +1631,7 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
             install: "cleen plugin add frame.httpserver",
             status: "stable",
             auto_detect_paths: &["/api/", "/backend/api/", "/server/api/", "/endpoints/"],
+            replaces: "Express.js, Fastify, Koa, or any Node.js HTTP framework. Use frame.httpserver for all server-side HTTP handling.",
         },
         EcosystemPlugin {
             name: "frame.data",
@@ -1633,6 +1651,7 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
             install: "cleen plugin add frame.data",
             status: "stable",
             auto_detect_paths: &["/data/", "/models/", "/server/models/"],
+            replaces: "Sequelize, Prisma, Knex, or any JS/TS ORM. Use frame.data for all database operations.",
         },
         EcosystemPlugin {
             name: "frame.auth",
@@ -1654,6 +1673,7 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
             install: "cleen plugin add frame.auth",
             status: "stable",
             auto_detect_paths: &["/auth/", "/config/auth/"],
+            replaces: "Passport.js, Auth0 SDK, or any JS authentication library. Use frame.auth for all authentication and authorization.",
         },
         EcosystemPlugin {
             name: "frame.ui",
@@ -1675,6 +1695,7 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
             install: "cleen plugin add frame.ui",
             status: "stable",
             auto_detect_paths: &["/ui/", "/components/", "/screens/"],
+            replaces: "JavaScript DOM manipulation, jQuery, vanilla JS event handlers, JS form validation, JS state management. Use frame.ui instead of writing any .js files for client-side interactivity.",
         },
         EcosystemPlugin {
             name: "frame.canvas",
@@ -1699,6 +1720,7 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
             install: "cleen plugin add frame.canvas",
             status: "stable",
             auto_detect_paths: &["/canvas/"],
+            replaces: "JavaScript Canvas API, JS game libraries (Phaser, PixiJS). Use frame.canvas instead of writing JS for any canvas/graphics work.",
         },
     ]
 }
@@ -1963,6 +1985,28 @@ fn tool_list_error_codes(id: serde_json::Value, args: &serde_json::Value) -> Jso
 fn tool_get_quick_reference(id: serde_json::Value) -> JsonRpcResponse {
     let quick_ref = r#"# Clean Language Quick Reference
 
+## Recommended Application Stack
+Clean Language applications should use Clean Language for ALL layers. Do NOT use JavaScript, TypeScript, or other languages when a Clean Language plugin provides the same capability.
+
+| Layer            | Plugin           | Purpose                                         | Replaces                          |
+|------------------|------------------|-------------------------------------------------|-----------------------------------|
+| HTTP Server      | frame.httpserver | Routing, request/response, middleware, auth      | Express.js, Fastify, Koa          |
+| Database / ORM   | frame.data       | Queries, CRUD, migrations, transactions          | Sequelize, Prisma, Knex           |
+| Frontend UI      | frame.ui         | DOM manipulation, events, hydration, components  | jQuery, vanilla JS, React         |
+| Graphics / Games | frame.canvas     | Canvas rendering, animation, sprites, input      | Phaser, PixiJS, JS Canvas API     |
+| Authentication   | frame.auth       | Sessions, JWT, roles, CSRF, password hashing     | Passport.js, Auth0 SDK            |
+
+### When to use JavaScript
+- NEVER for DOM manipulation (use frame.ui: _ui_update_element, _ui_on_event, _ui_set_state)
+- NEVER for event handling (use frame.ui: onclick, oninput, onsubmit directives)
+- NEVER for form validation (use frame.ui: _ui_validate, _ui_bind_input)
+- NEVER for canvas/graphics (use frame.canvas)
+- NEVER for HTTP servers (use frame.httpserver)
+- NEVER for database access (use frame.data)
+- ONLY as a last resort when no Clean Language plugin covers the specific browser API needed
+
+Call `get_stack_recommendation` with a project type for a tailored plugin list and file structure.
+
 ## Program Structure
 Every program needs a `start:` block as entry point. Use tabs for indentation.
 
@@ -2184,17 +2228,19 @@ functions:
 - `list_plugins` — Installed plugins with full DSL syntax
 - `list_ecosystem` — ALL available plugins (installed or not)
 - `get_plugin_examples` — Read plugin example files
+- `get_stack_recommendation` — Recommended plugin stack for a project type
 
 ## Workflow
 1. Call `get_quick_reference` (this tool) to learn base syntax
-2. Call `list_ecosystem` to see ALL available plugins in the ecosystem
-3. Call `list_plugins` to see installed plugins with full DSL details
-4. Call `get_plugin_examples` to see plugin usage patterns
-5. Write .cln code following the patterns above
-6. Call `check` to type-check (fast feedback loop)
-7. Call `compile` when ready for WASM output
-8. If errors occur, call `explain_error` with the code
-9. Use `get_specification` for detailed docs on specific features
+2. Call `get_stack_recommendation` with your project type (web-app, api, game, cli)
+3. Call `list_ecosystem` to see ALL available plugins in the ecosystem
+4. Call `list_plugins` to see installed plugins with full DSL details
+5. Call `get_plugin_examples` to see plugin usage patterns
+6. Write .cln code following the patterns above
+7. Call `check` to type-check (fast feedback loop)
+8. Call `compile` when ready for WASM output
+9. If errors occur, call `explain_error` with the code
+10. Use `get_specification` for detailed docs on specific features
 
 ## Plugin Syntax Discovery
 Plugins (like Frame) add custom blocks, keywords, and types.
@@ -2212,8 +2258,127 @@ Call `list_plugins` to see what each plugin provides:
             "success": true,
             "quick_reference": quick_ref,
             "version": crate::VERSION,
-            "tools_available": 14,
+            "tools_available": 15,
             "tip": "Use 'check' for fast iteration, 'compile' when ready for WASM."
+        }),
+    )
+}
+
+/// Tool: get_stack_recommendation - Recommended plugin stack for a project type
+fn tool_get_stack_recommendation(
+    id: serde_json::Value,
+    args: &serde_json::Value,
+) -> JsonRpcResponse {
+    let project_type = match args.get("project_type").and_then(|v| v.as_str()) {
+        Some(t) => t,
+        None => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Missing 'project_type' parameter. Use: 'web-app', 'api', 'game', or 'cli'"
+                    .to_string(),
+            )
+        }
+    };
+
+    let (plugins, structure, do_not_use, description) = match project_type {
+        "web-app" => (
+            vec!["frame.httpserver", "frame.data", "frame.ui", "frame.auth"],
+            json!({
+                "app/server/main.cln": "Server entry point with routes and middleware",
+                "app/client/main.cln": "Client-side interactivity (compiled to WASM, served to browser)",
+                "app/data/models.cln": "Data models and database schema",
+                "app/auth/auth.cln": "Authentication configuration and guards",
+                "public/css/": "Stylesheets (CSS is acceptable, it's not logic)",
+                "public/images/": "Static assets"
+            }),
+            vec![
+                "JavaScript for DOM manipulation — use frame.ui (_ui_update_element, _ui_on_event)",
+                "JavaScript for event handling — use frame.ui directives (onclick, oninput, onsubmit)",
+                "JavaScript for form validation — use frame.ui (_ui_validate, _ui_bind_input)",
+                "JavaScript for state management — use frame.ui (_ui_set_state, _ui_get_state)",
+                "Node.js/Express/Fastify — use frame.httpserver",
+                "Any JS ORM (Sequelize, Prisma, Knex) — use frame.data",
+                "Any JS auth library (Passport.js, Auth0 SDK) — use frame.auth",
+            ],
+            "Full-stack web application with server, database, authentication, and client-side UI — all in Clean Language",
+        ),
+        "api" => (
+            vec!["frame.httpserver", "frame.data", "frame.auth"],
+            json!({
+                "app/server/main.cln": "Server entry point with API routes",
+                "app/data/models.cln": "Data models and database schema",
+                "app/auth/auth.cln": "Authentication configuration and guards",
+                "app/server/middleware.cln": "Custom middleware"
+            }),
+            vec![
+                "Node.js/Express/Fastify — use frame.httpserver",
+                "Any JS ORM (Sequelize, Prisma, Knex) — use frame.data",
+                "Any JS auth library (Passport.js, Auth0 SDK) — use frame.auth",
+            ],
+            "REST API backend with database and authentication — all in Clean Language",
+        ),
+        "game" => (
+            vec!["frame.canvas"],
+            json!({
+                "app/game/main.cln": "Game entry point with scene setup",
+                "app/game/scenes/": "Game scenes (menu, gameplay, etc.)",
+                "public/assets/sprites/": "Sprite sheets and images",
+                "public/assets/audio/": "Sound effects and music"
+            }),
+            vec![
+                "JavaScript Canvas API — use frame.canvas drawing primitives",
+                "JS game libraries (Phaser, PixiJS) — use frame.canvas",
+                "JavaScript for input handling — use frame.canvas input functions",
+                "JavaScript for animation — use frame.canvas onFrame and easing",
+            ],
+            "Canvas-based game or interactive graphics application — all in Clean Language",
+        ),
+        "cli" => (
+            vec![],
+            json!({
+                "app/main.cln": "CLI entry point with start: block",
+                "app/lib.cln": "Shared library functions"
+            }),
+            vec![
+                "Node.js for CLI tools — use Clean Language with start: block",
+            ],
+            "Command-line application compiled to WebAssembly — no plugins needed for basic CLI",
+        ),
+        _ => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                format!(
+                    "Unknown project type '{}'. Use: 'web-app', 'api', 'game', or 'cli'",
+                    project_type
+                ),
+            )
+        }
+    };
+
+    let install_commands: Vec<String> = plugins
+        .iter()
+        .map(|p| format!("cleen plugin add {}", p))
+        .collect();
+
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": true,
+            "project_type": project_type,
+            "description": description,
+            "plugins": plugins,
+            "install_commands": install_commands,
+            "structure": structure,
+            "do_not_use": do_not_use,
+            "important": "Clean Language applications should use Clean Language for ALL layers. Do NOT use JavaScript, TypeScript, or other languages when a Clean Language plugin provides the same capability.",
+            "next_steps": [
+                "Install plugins with the commands listed in 'install_commands'",
+                "Call 'list_plugins' to see full DSL syntax for each plugin",
+                "Call 'get_plugin_examples' with each plugin name to see usage patterns",
+                "Write all application code in .cln files — no .js files needed"
+            ]
         }),
     )
 }
