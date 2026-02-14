@@ -10,13 +10,11 @@ start:
 	print("")
 	testComplexConditionals()
 	print("")
-	print("All conditional tests completed!")// Spec Section: 4.4 - Comparison Operators
+	print("All conditional tests completed!")
+// Spec Section: 4.4 - Comparison Operators
 // Spec Section: 4.5 - Logical Operators
 // Spec Section: 5.1 - If/Else Statements
-// Spec Section: 7.6 - compare Namespace
-// Spec Section: 7.7 - conditional Namespace
-// Spec Section: 7.8 - logical Namespace
-// Tests: Conditional expressions and comparisons using stdlib functions
+// Tests: Conditional expressions using operators and if/else
 
 functions:
 
@@ -26,19 +24,28 @@ functions:
 		integer a = 10
 		integer b = 5
 
-		// Test basic conditional
-		boolean comparison = compare.integer.greaterThan(a, b)
-		integer result = conditional.integer(comparison, a, b)
+		// Test basic conditional using operators
+		integer result = 0
+		if a > b
+			result = a
+		else
+			result = b
 		print("Max of 10 and 5: " + result.toString())
 
 		// Test with equality
-		boolean isEqual = compare.integer.equal(a, a)
-		integer equal = conditional.integer(isEqual, 100, 200)
+		integer equal = 0
+		if a == a
+			equal = 100
+		else
+			equal = 200
 		print("Equal test (should be 100): " + equal.toString())
 
 		// Test less than
-		boolean isLess = compare.integer.lessThan(b, a)
-		integer min = conditional.integer(isLess, b, a)
+		integer min = 0
+		if b < a
+			min = b
+		else
+			min = a
 		print("Min of 10 and 5: " + min.toString())
 
 	void testNumberConditionals()
@@ -48,13 +55,19 @@ functions:
 		number y = 2.71
 
 		// Test number conditional
-		boolean numComparison = compare.number.greaterThan(x, y)
-		number maxNum = conditional.number(numComparison, x, y)
+		number maxNum = 0.0
+		if x > y
+			maxNum = x
+		else
+			maxNum = y
 		print("Max of 3.14 and 2.71: " + maxNum.toString())
 
 		// Test number equality
-		boolean numEqual = compare.number.equal(x, x)
-		number equalNum = conditional.number(numEqual, 100.0, 200.0)
+		number equalNum = 0.0
+		if x == x
+			equalNum = 100.0
+		else
+			equalNum = 200.0
 		print("Equal test (should be 100.0): " + equalNum.toString())
 
 	void testLogicalOperations()
@@ -64,21 +77,16 @@ functions:
 		integer b = 5
 		integer c = 15
 
-		// Test logical AND
-		boolean greater = compare.integer.greaterThan(a, b)
-		boolean less = compare.integer.lessThan(a, c)
-		boolean andResult = logical.and(greater, less)
+		// Test logical AND using operators
+		boolean andResult = (a > b) and (a < c)
 		print("10 > 5 AND 10 < 15: " + andResult.toString())
 
-		// Test logical OR
-		boolean equal = compare.integer.equal(a, b)
-		boolean greaterOr = compare.integer.greaterThan(a, b)
-		boolean orResult = logical.or(equal, greaterOr)
+		// Test logical OR using operators
+		boolean orResult = (a == b) or (a > b)
 		print("10 == 5 OR 10 > 5: " + orResult.toString())
 
-		// Test logical NOT
-		boolean equalNot = compare.integer.equal(a, b)
-		boolean negResult = logical.not(equalNot)
+		// Test logical NOT using operator
+		boolean negResult = not (a == b)
 		print("NOT (10 == 5): " + negResult.toString())
 
 	void testComplexConditionals()
@@ -86,11 +94,12 @@ functions:
 		print("=== Testing Complex Conditionals ===")
 		integer score = 85
 
-		// Test nested conditionals for grade assignment
-		boolean gradeA = compare.integer.greaterEqual(score, 90)
-		boolean gradeB = compare.integer.greaterEqual(score, 80)
-		boolean gradeC = compare.integer.greaterEqual(score, 70)
-
-		string grade = conditional.string(gradeA, "A", conditional.string(gradeB, "B", conditional.string(gradeC, "C", "F")))
+		// Test nested conditionals using if/else
+		string grade = "F"
+		if score >= 90
+			grade = "A"
+		else if score >= 80
+			grade = "B"
+		else if score >= 70
+			grade = "C"
 		print("Score " + score.toString() + " gets grade: " + grade)
-

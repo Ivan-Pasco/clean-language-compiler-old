@@ -2365,34 +2365,6 @@ impl MirCodeGenerator<'_> {
                     // that handle the expansion automatically. The wrapper receives original
                     // Clean Language string pointers and expands them to (ptr+4, len) pairs.
                     // No special handling needed here - just use normal load_operand.
-                    Some("conditional.number") => {
-                        // conditional.number(bool, f64, f64) -> f64
-                        // Need to convert integer arguments to f64
-                        debug_mir!(": Matched conditional.number, converting integer args to f64");
-                        for (i, arg) in arguments.iter().enumerate() {
-                            self.load_operand(arg)?;
-                            // Convert second and third arguments (true/false values) from i32 to f64 if needed
-                            if i > 0 && matches!(arg, MirOperand::Constant(MirConstant::Integer(_))) {
-                                self.current_instructions.push(Instruction::F64ConvertI32S);
-                            } else if i > 0 {
-                                if let Some(MirOperand::Value(value_id)) = Some(arg) {
-                                    if let Some(mir_type) = self.value_to_type.get(value_id) {
-                                        if matches!(
-                                            mir_type,
-                                            MirType::I32
-                                                | MirType::I8
-                                                | MirType::I16
-                                                | MirType::U8
-                                                | MirType::U16
-                                                | MirType::U32
-                                        ) {
-                                            self.current_instructions.push(Instruction::F64ConvertI32S);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
                     Some(name) if name.starts_with("math.") => {
                         // CRITICAL FIX: Math functions expect f64 parameters
                         // Convert i32 (integer) arguments to f64 (number) automatically

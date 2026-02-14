@@ -118,6 +118,8 @@ These are essential implementation rules that must be followed by the Clean Lang
 
 8. **One way to do things**
    - Basic math: Use operators (`a + b`, `a * b`)
+   - Comparisons: Use operators (`a == b`, `a > b`, `a >= b`)
+   - Logic: Use operators (`a and b`, `a or b`, `not a`)
    - Advanced math: Use functions (`math.sqrt()`, `math.sin()`)
    - Object operations: Use method-style (`text.length()`, `value.toString()`)
    - Utility functions: Use namespace calls (`string.concat()`, `list.sort()`)

@@ -1866,7 +1866,7 @@ pub fn parse_static_method_call(pair: Pair<Rule>) -> Result<Expression, Compiler
     }
 
     // Split the full_class_name to handle multi-level namespaces
-    // e.g., "compare.integer" -> namespace=["compare"], class_name="integer"
+    // e.g., "math.abs" -> namespace=["math"], class_name="abs"
     //       "Math" -> namespace=[], class_name="Math"
     let parts: Vec<&str> = full_class_name.split('.').collect();
     let (namespace, class_name) = if parts.len() > 1 {

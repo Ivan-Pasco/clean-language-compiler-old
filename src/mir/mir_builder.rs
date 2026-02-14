@@ -3408,24 +3408,9 @@ impl MirBuilder {
                     } else if func_name == "list.size" || func_name == "list.length" {
                         // list.size always returns Integer
                         ConcreteType::Integer
-                    } else if func_name == "conditional.number" {
-                        // CRITICAL FIX: conditional.number always returns Number (f64)
-                        // The typechecker may not properly propagate this for namespace calls
-                        ConcreteType::Number
-                    } else if func_name == "conditional.integer"
-                        || func_name == "conditional.boolean"
-                    {
-                        // conditional.integer and conditional.boolean return Integer/Boolean
-                        ConcreteType::Integer
                     } else if func_name.starts_with("math.") {
                         // CRITICAL FIX: All math namespace functions return Number (f64)
                         ConcreteType::Number
-                    } else if func_name.starts_with("compare.number") {
-                        // compare.number functions return Boolean
-                        ConcreteType::Boolean
-                    } else if func_name.starts_with("compare.integer") {
-                        // compare.integer functions return Boolean
-                        ConcreteType::Boolean
                     } else if func_name.ends_with(".toNumber") {
                         // CRITICAL FIX: All .toNumber() methods return Number (f64)
                         // This includes string.toNumber, integer.toNumber, boolean.toNumber, number.toNumber

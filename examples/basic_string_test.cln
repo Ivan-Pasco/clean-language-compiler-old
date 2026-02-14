@@ -1,8 +1,8 @@
-start()
+start:
 	string text = "Hello"
-	integer len = StringUtils.length(text)
+	integer len = string.length(text)
 	print("Length: " + len.toString())
-	
+
 	string world = " World!"
-	string combined = StringUtils.concat(text, world)
-	print("Combined: " + combined) 
+	string combined = string.concat(text, world)
+	print("Combined: " + combined)

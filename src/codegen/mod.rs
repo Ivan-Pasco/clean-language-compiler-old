@@ -1996,56 +1996,6 @@ impl CodeGenerator {
                     }
                 }
 
-                // Check if this is a namespace function call like conditional.integer(), compare.integer.greaterThan(), etc.
-                if let Expression::Variable(namespace) = object.as_ref() {
-                    if matches!(namespace.as_str(), "conditional" | "compare" | "logical") {
-                        // This is a namespace function call - treat as namespace.function(args)
-                        let full_function_name = format!("{}.{}", namespace, method);
-
-                        // Special handling for conditional.number - convert integer args to f64
-                        if full_function_name == "conditional.number" && arguments.len() == 3 {
-                            // First argument: boolean condition (i32)
-                            self.generate_expression(&arguments[0], instructions)?;
-
-                            // Second argument: true value - convert to f64 if integer
-                            let arg1_type =
-                                self.generate_expression(&arguments[1], instructions)?;
-                            if arg1_type == WasmType::I32 {
-                                // Convert i32 to f64
-                                instructions.push(Instruction::F64ConvertI32S);
-                            }
-
-                            // Third argument: false value - convert to f64 if integer
-                            let arg2_type =
-                                self.generate_expression(&arguments[2], instructions)?;
-                            if arg2_type == WasmType::I32 {
-                                // Convert i32 to f64
-                                instructions.push(Instruction::F64ConvertI32S);
-                            }
-                        } else {
-                            // Generate arguments normally for other namespace functions
-                            for arg in arguments {
-                                self.generate_expression(arg, instructions)?;
-                            }
-                        }
-
-                        // Find the function index
-                        if let Some(function_index) = self.get_function_index(&full_function_name) {
-                            instructions.push(Instruction::Call(function_index));
-                            return Ok(self.get_function_return_type_by_name(&full_function_name));
-                        } else {
-                            return Err(CompilerError::codegen_error(
-                                format!("Namespace function '{}' not found", full_function_name),
-                                Some(format!(
-                                    "Function '{}' may not be registered in the standard library",
-                                    full_function_name
-                                )),
-                                None,
-                            ));
-                        }
-                    }
-                }
-
                 // Check if this is a type conversion method only if not a class method
                 if self.is_type_conversion_method(method) {
                     // println!("DEBUG: Processing type conversion method '{method}' via generate_type_conversion_method");
@@ -3366,55 +3316,9 @@ impl CodeGenerator {
             Expression::PropertyAccess {
                 object, property, ..
             } => {
-                // Handle property access to stdlib namespaces
-                if let Expression::Variable(namespace) = object.as_ref() {
-                    if matches!(namespace.as_str(), "conditional" | "compare" | "logical") {
-                        // This is a property access to a stdlib namespace function
-                        // The actual function should be called with arguments, but due to parser issues,
-                        // we're getting PropertyAccess instead of MethodCall
-
-                        // Check if this is part of a function call pattern
-                        let qualified_name = format!("{namespace}.{property}");
-
-                        // WORKAROUND: Since this PropertyAccess should represent a function call,
-                        // and the parser is not generating the right AST, we need to return
-                        // a value that represents the result of calling this function.
-
-                        // For conditional functions, we need to know the arguments to determine the result.
-                        // Since we don't have the arguments in PropertyAccess, we'll return a placeholder
-                        // that indicates this represents the result of a conditional function call.
-
-                        // The semantic analyzer already validates this and returns Type::Any,
-                        // so we can return a default value that will be compatible with the expected type.
-
-                        match qualified_name.as_str() {
-                            "conditional.integer" => {
-                                // Return 0 as default integer value
-                                instructions.push(Instruction::I32Const(0));
-                                Ok(WasmType::I32)
-                            }
-                            "conditional.number" => {
-                                // Return 0.0 as default number value
-                                instructions.push(Instruction::F64Const(0.0));
-                                Ok(WasmType::F64)
-                            }
-                            "conditional.string" => {
-                                // Return empty string (represented as string pool index 0)
-                                instructions.push(Instruction::I32Const(0));
-                                Ok(WasmType::I32)
-                            }
-                            "conditional.boolean" => {
-                                // Return false as default boolean value
-                                instructions.push(Instruction::I32Const(0));
-                                Ok(WasmType::I32)
-                            }
-                            _ => {
-                                // For compare and logical functions, return default boolean (false)
-                                instructions.push(Instruction::I32Const(0));
-                                Ok(WasmType::I32)
-                            }
-                        }
-                    } else {
+                // Handle property access to objects
+                if let Expression::Variable(_namespace) = object.as_ref() {
+                    {
                         // Handle regular property access on objects
                         let object_type = self.generate_expression(object, instructions)?;
                         match object_type {
@@ -3514,49 +3418,6 @@ impl CodeGenerator {
                                 None,
                             )),
                         }
-                    }
-                } else if let Expression::PropertyAccess {
-                    object: nested_object,
-                    property: nested_property,
-                    ..
-                } = object.as_ref()
-                {
-                    // Handle nested property access like compare.integer.greaterThan
-                    if let Expression::Variable(base_name) = nested_object.as_ref() {
-                        // Build the qualified name: base.nested_property.property
-                        let qualified_name = format!("{base_name}.{nested_property}.{property}");
-
-                        // This is likely a function reference that should be called with arguments
-                        // For now, return a placeholder that represents this function reference
-                        match qualified_name.as_str() {
-                            name if name.starts_with("compare.") => {
-                                // For comparison functions, return default boolean (false)
-                                instructions.push(Instruction::I32Const(0));
-                                Ok(WasmType::I32)
-                            }
-                            name if name.starts_with("conditional.") => {
-                                // For conditional functions, return default based on the final type
-                                if name.contains(".number") {
-                                    instructions.push(Instruction::F64Const(0.0));
-                                    Ok(WasmType::F64)
-                                } else {
-                                    // Default for .integer, .string, and other types
-                                    instructions.push(Instruction::I32Const(0));
-                                    Ok(WasmType::I32)
-                                }
-                            }
-                            _ => {
-                                // For other cases, return default boolean
-                                instructions.push(Instruction::I32Const(0));
-                                Ok(WasmType::I32)
-                            }
-                        }
-                    } else {
-                        Err(CompilerError::codegen_error(
-                            "Complex nested property access not supported",
-                            Some("Only simple nested property access is supported (e.g., module.submodule.property)".to_string()),
-                            None
-                        ))
                     }
                 } else {
                     Err(CompilerError::codegen_error(
@@ -6367,16 +6228,6 @@ impl CodeGenerator {
             "input.integer" | "input.range" => WasmType::I32,
             "input.number" => WasmType::F64,
             "input.yesNo" => WasmType::I32, // Boolean
-
-            // Comparison and logical functions
-            name if name.starts_with("compare.") => WasmType::I32, // Boolean result
-            name if name.starts_with("logical.") => WasmType::I32, // Boolean result
-
-            // Conditional functions
-            name if name.starts_with("conditional.") => match name {
-                "conditional.number" => WasmType::F64,
-                _ => WasmType::I32,
-            },
 
             // List operations
             name if name.contains("list.") || name.contains("List.") => match name {

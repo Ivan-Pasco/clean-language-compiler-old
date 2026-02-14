@@ -267,81 +267,6 @@ impl<'a> TypeInference<'a> {
             );
         }
 
-        // Find StringUtils namespace functions
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("StringUtils_length", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![ConcreteType::String],
-                    return_type: Box::new(ConcreteType::Integer),
-                    is_background: false,
-                },
-            );
-        }
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("StringUtils_concat", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![ConcreteType::String, ConcreteType::String],
-                    return_type: Box::new(ConcreteType::String),
-                    is_background: false,
-                },
-            );
-        }
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("StringUtils_substring", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![
-                        ConcreteType::String,
-                        ConcreteType::Integer,
-                        ConcreteType::Integer,
-                    ],
-                    return_type: Box::new(ConcreteType::String),
-                    is_background: false,
-                },
-            );
-        }
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("StringUtils_indexOf", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![ConcreteType::String, ConcreteType::String],
-                    return_type: Box::new(ConcreteType::Integer),
-                    is_background: false,
-                },
-            );
-        }
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("StringUtils_replace", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![
-                        ConcreteType::String,
-                        ConcreteType::String,
-                        ConcreteType::String,
-                    ],
-                    return_type: Box::new(ConcreteType::String),
-                    is_background: false,
-                },
-            );
-        }
-
         // Add namespace symbols to type environment
         // This allows namespace identifiers to be recognized as valid symbols
         if let Some(symbol_id) = self
@@ -2409,7 +2334,6 @@ impl<'a> TypeInference<'a> {
                         || function.starts_with("math.")
                         || function.starts_with("list.")
                         || function.starts_with("array.")
-                        || function.starts_with("compare.")
                         || function.starts_with("file.")
                         || function.starts_with("http."));
 
@@ -2659,7 +2583,7 @@ impl<'a> TypeInference<'a> {
                     tast_arguments.push(self.infer_expression(arg)?);
                 }
 
-                // Handle namespace.class.method() calls (e.g., compare.integer.greaterThan)
+                // Handle namespace.class.method() calls
                 let full_class_name = if !namespace.is_empty() {
                     format!("{}.{}", namespace.join("."), class_name)
                 } else {
@@ -3745,36 +3669,6 @@ impl<'a> TypeInference<'a> {
                 Ok(ConcreteType::Boolean)
             }
 
-            // StringUtils static methods
-            ("StringUtils", "length") => {
-                validate_arg_count(1, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Integer)
-            }
-            ("StringUtils", "concat") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                Ok(ConcreteType::String)
-            }
-            ("StringUtils", "substring") => {
-                validate_arg_count(3, arg_count, &full_method_name)?;
-                Ok(ConcreteType::String)
-            }
-            ("StringUtils", "indexOf") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Integer)
-            }
-            ("StringUtils", "replace") => {
-                validate_arg_count(3, arg_count, &full_method_name)?;
-                Ok(ConcreteType::String)
-            }
-            ("StringUtils", "toUpperCase") => {
-                validate_arg_count(1, arg_count, &full_method_name)?;
-                Ok(ConcreteType::String)
-            }
-            ("StringUtils", "toLowerCase") => {
-                validate_arg_count(1, arg_count, &full_method_name)?;
-                Ok(ConcreteType::String)
-            }
-
             // Integer static methods
             ("Integer", "parse") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
@@ -3793,65 +3687,6 @@ impl<'a> TypeInference<'a> {
             ("Number", "toString") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
                 Ok(ConcreteType::String)
-            }
-
-            // compare.integer static methods (all require 2 arguments)
-            ("compare.integer", "equal") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                tracing::debug!("DEBUG: Validation passed for equal");
-                Ok(ConcreteType::Boolean)
-            }
-            ("compare.integer", "notEqual") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                tracing::debug!("DEBUG: Validation passed for notEqual");
-                Ok(ConcreteType::Boolean)
-            }
-            ("compare.integer", "lessThan") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                tracing::debug!("DEBUG: Validation passed for lessThan");
-                Ok(ConcreteType::Boolean)
-            }
-            ("compare.integer", "greaterThan") => {
-                tracing::debug!("DEBUG: About to validate greaterThan");
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                tracing::trace!(
-                    "DEBUG: Validation passed for greaterThan - THIS SHOULD NOT PRINT IF ERROR"
-                );
-                Ok(ConcreteType::Boolean)
-            }
-            ("compare.integer", "lessEqual") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Boolean)
-            }
-            ("compare.integer", "greaterEqual") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Boolean)
-            }
-
-            // compare.number static methods (all require 2 arguments)
-            ("compare.number", "equal") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Boolean)
-            }
-            ("compare.number", "notEqual") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Boolean)
-            }
-            ("compare.number", "lessThan") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Boolean)
-            }
-            ("compare.number", "greaterThan") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Boolean)
-            }
-            ("compare.number", "lessEqual") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Boolean)
-            }
-            ("compare.number", "greaterEqual") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Boolean)
             }
 
             // list static methods - CRITICAL FIX: Add return types for list namespace functions

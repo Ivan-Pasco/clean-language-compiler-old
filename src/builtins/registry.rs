@@ -67,18 +67,15 @@ impl BuiltinType {
 /// Categories for organizing builtin functions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinCategory {
-    IO,        // print, input
-    Math,      // abs, sqrt, pow, sin, cos, etc.
-    String,    // string operations
-    List,      // list operations
-    Type,      // type conversion
-    Compare,   // comparison operations
-    Logical,   // logical operations
-    File,      // file operations
-    Http,      // HTTP operations
-    Memory,    // memory management
-    Condition, // conditional operations
-    Json,      // JSON operations  // BOOK: json-module
+    IO,     // print, input
+    Math,   // abs, sqrt, pow, sin, cos, etc.
+    String, // string operations
+    List,   // list operations
+    Type,   // type conversion
+    File,   // file operations
+    Http,   // HTTP operations
+    Memory, // memory management
+    Json,   // JSON operations  // BOOK: json-module
 }
 
 /// A builtin function definition
@@ -211,16 +208,10 @@ impl BuiltinRegistry {
         registry.register_io_functions();
         registry.register_math_functions();
         registry.register_type_conversion_functions();
-        registry.register_math_class();
-        registry.register_string_utils_class();
-        registry.register_string_class();
         registry.register_integer_class();
         registry.register_math_namespace();
         registry.register_string_namespace();
         registry.register_list_namespace();
-        registry.register_compare_namespace();
-        registry.register_conditional_namespace();
-        registry.register_logical_namespace();
         registry.register_json_namespace(); // BOOK: json-module
 
         registry
@@ -325,109 +316,6 @@ impl BuiltinRegistry {
         for func in type_functions {
             self.functions.insert(func.name.clone(), func);
         }
-    }
-
-    /// Register Math class with static methods
-    fn register_math_class(&mut self) {
-        let math_class = BuiltinClass::new("Math").with_methods(vec![
-            BuiltinMethod::new("abs", vec![BuiltinType::Number], BuiltinType::Number),
-            BuiltinMethod::new("floor", vec![BuiltinType::Number], BuiltinType::Integer),
-            BuiltinMethod::new("ceil", vec![BuiltinType::Number], BuiltinType::Integer),
-            BuiltinMethod::new("round", vec![BuiltinType::Number], BuiltinType::Integer),
-            BuiltinMethod::new("sqrt", vec![BuiltinType::Number], BuiltinType::Number),
-            BuiltinMethod::new(
-                "pow",
-                vec![BuiltinType::Number, BuiltinType::Number],
-                BuiltinType::Number,
-            ),
-            BuiltinMethod::new("sin", vec![BuiltinType::Number], BuiltinType::Number),
-            BuiltinMethod::new("cos", vec![BuiltinType::Number], BuiltinType::Number),
-            BuiltinMethod::new("tan", vec![BuiltinType::Number], BuiltinType::Number),
-            BuiltinMethod::new(
-                "max",
-                vec![BuiltinType::Number, BuiltinType::Number],
-                BuiltinType::Number,
-            ),
-            BuiltinMethod::new(
-                "min",
-                vec![BuiltinType::Number, BuiltinType::Number],
-                BuiltinType::Number,
-            ),
-        ]);
-
-        self.classes.insert("Math".to_string(), math_class);
-    }
-
-    /// Register StringUtils class with static methods
-    fn register_string_utils_class(&mut self) {
-        let stringutils_class = BuiltinClass::new("StringUtils").with_methods(vec![
-            BuiltinMethod::new("length", vec![BuiltinType::String], BuiltinType::Integer),
-            BuiltinMethod::new(
-                "concat",
-                vec![BuiltinType::String, BuiltinType::String],
-                BuiltinType::String,
-            ),
-            BuiltinMethod::new(
-                "substring",
-                vec![
-                    BuiltinType::String,
-                    BuiltinType::Integer,
-                    BuiltinType::Integer,
-                ],
-                BuiltinType::String,
-            ),
-            BuiltinMethod::new(
-                "indexOf",
-                vec![BuiltinType::String, BuiltinType::String],
-                BuiltinType::Integer,
-            ),
-            // 3-arg indexOf with startIndex for searching from a specific position
-            BuiltinMethod::new(
-                "indexOf",
-                vec![
-                    BuiltinType::String,
-                    BuiltinType::String,
-                    BuiltinType::Integer,
-                ],
-                BuiltinType::Integer,
-            ),
-            BuiltinMethod::new(
-                "replace",
-                vec![
-                    BuiltinType::String,
-                    BuiltinType::String,
-                    BuiltinType::String,
-                ],
-                BuiltinType::String,
-            ),
-            BuiltinMethod::new(
-                "toUpperCase",
-                vec![BuiltinType::String],
-                BuiltinType::String,
-            ),
-            BuiltinMethod::new(
-                "toLowerCase",
-                vec![BuiltinType::String],
-                BuiltinType::String,
-            ),
-        ]);
-
-        self.classes
-            .insert("StringUtils".to_string(), stringutils_class);
-    }
-
-    /// Register String class with static methods
-    fn register_string_class(&mut self) {
-        let string_class = BuiltinClass::new("String").with_methods(vec![
-            BuiltinMethod::new(
-                "fromCharCode",
-                vec![BuiltinType::Integer],
-                BuiltinType::String,
-            ),
-            BuiltinMethod::new("isEmpty", vec![BuiltinType::String], BuiltinType::Boolean),
-        ]);
-
-        self.classes.insert("String".to_string(), string_class);
     }
 
     /// Register Integer class with static methods
@@ -603,30 +491,6 @@ impl BuiltinRegistry {
                 BuiltinType::Number,
                 BuiltinCategory::Math,
             ),
-            BuiltinFunction::new(
-                "add",
-                vec![BuiltinType::Number, BuiltinType::Number],
-                BuiltinType::Number,
-                BuiltinCategory::Math,
-            ),
-            BuiltinFunction::new(
-                "subtract",
-                vec![BuiltinType::Number, BuiltinType::Number],
-                BuiltinType::Number,
-                BuiltinCategory::Math,
-            ),
-            BuiltinFunction::new(
-                "multiply",
-                vec![BuiltinType::Number, BuiltinType::Number],
-                BuiltinType::Number,
-                BuiltinCategory::Math,
-            ),
-            BuiltinFunction::new(
-                "divide",
-                vec![BuiltinType::Number, BuiltinType::Number],
-                BuiltinType::Number,
-                BuiltinCategory::Math,
-            ),
         ]);
 
         self.namespaces.insert("math".to_string(), math_ns);
@@ -796,6 +660,12 @@ impl BuiltinRegistry {
                 BuiltinType::String,
                 BuiltinCategory::String,
             ),
+            BuiltinFunction::new(
+                "fromCharCode",
+                vec![BuiltinType::Integer],
+                BuiltinType::String,
+                BuiltinCategory::String,
+            ),
         ]);
 
         self.namespaces.insert("string".to_string(), string_ns);
@@ -920,109 +790,6 @@ impl BuiltinRegistry {
         ]);
 
         self.namespaces.insert("list".to_string(), list_ns);
-    }
-
-    /// Register compare namespace
-    fn register_compare_namespace(&mut self) {
-        let compare_ns = BuiltinNamespace::new("compare").with_functions(vec![
-            BuiltinFunction::new(
-                "equals",
-                vec![BuiltinType::Any, BuiltinType::Any],
-                BuiltinType::Boolean,
-                BuiltinCategory::Compare,
-            ),
-            BuiltinFunction::new(
-                "notEquals",
-                vec![BuiltinType::Any, BuiltinType::Any],
-                BuiltinType::Boolean,
-                BuiltinCategory::Compare,
-            ),
-            BuiltinFunction::new(
-                "lessThan",
-                vec![BuiltinType::Number, BuiltinType::Number],
-                BuiltinType::Boolean,
-                BuiltinCategory::Compare,
-            ),
-            BuiltinFunction::new(
-                "lessThanOrEqual",
-                vec![BuiltinType::Number, BuiltinType::Number],
-                BuiltinType::Boolean,
-                BuiltinCategory::Compare,
-            ),
-            BuiltinFunction::new(
-                "greaterThan",
-                vec![BuiltinType::Number, BuiltinType::Number],
-                BuiltinType::Boolean,
-                BuiltinCategory::Compare,
-            ),
-            BuiltinFunction::new(
-                "greaterThanOrEqual",
-                vec![BuiltinType::Number, BuiltinType::Number],
-                BuiltinType::Boolean,
-                BuiltinCategory::Compare,
-            ),
-        ]);
-
-        self.namespaces.insert("compare".to_string(), compare_ns);
-    }
-
-    /// Register conditional namespace
-    fn register_conditional_namespace(&mut self) {
-        let conditional_ns = BuiltinNamespace::new("conditional").with_functions(vec![
-            BuiltinFunction::new(
-                "if",
-                vec![BuiltinType::Boolean, BuiltinType::Any, BuiltinType::Any],
-                BuiltinType::Any,
-                BuiltinCategory::Condition,
-            ),
-            BuiltinFunction::new(
-                "when",
-                vec![BuiltinType::Boolean, BuiltinType::Any],
-                BuiltinType::Any,
-                BuiltinCategory::Condition,
-            ),
-            BuiltinFunction::new(
-                "unless",
-                vec![BuiltinType::Boolean, BuiltinType::Any],
-                BuiltinType::Any,
-                BuiltinCategory::Condition,
-            ),
-        ]);
-
-        self.namespaces
-            .insert("conditional".to_string(), conditional_ns);
-    }
-
-    /// Register logical namespace
-    fn register_logical_namespace(&mut self) {
-        let logical_ns = BuiltinNamespace::new("logical").with_functions(vec![
-            BuiltinFunction::new(
-                "and",
-                vec![BuiltinType::Boolean, BuiltinType::Boolean],
-                BuiltinType::Boolean,
-                BuiltinCategory::Logical,
-            ),
-            BuiltinFunction::new(
-                "or",
-                vec![BuiltinType::Boolean, BuiltinType::Boolean],
-                BuiltinType::Boolean,
-                BuiltinCategory::Logical,
-            ),
-            BuiltinFunction::new(
-                "not",
-                vec![BuiltinType::Boolean],
-                BuiltinType::Boolean,
-                BuiltinCategory::Logical,
-            ),
-            BuiltinFunction::new(
-                "xor",
-                vec![BuiltinType::Boolean, BuiltinType::Boolean],
-                BuiltinType::Boolean,
-                BuiltinCategory::Logical,
-            ),
-        ]);
-
-        self.namespaces.insert("logical".to_string(), logical_ns);
     }
 
     /// Register json namespace (json.textToData, json.dataToText, etc.)
@@ -1265,13 +1032,23 @@ mod tests {
         assert!(registry.get_function("abs").is_some());
 
         // Check classes
-        assert!(registry.get_class("Math").is_some());
-        assert!(registry.get_class("StringUtils").is_some());
+        assert!(registry.get_class("Integer").is_some());
 
         // Check namespaces
         assert!(registry.get_namespace("math").is_some());
         assert!(registry.get_namespace("string").is_some());
         assert!(registry.get_namespace("list").is_some());
+        assert!(registry.get_namespace("json").is_some());
+
+        // Verify removed namespaces are gone
+        assert!(registry.get_namespace("compare").is_none());
+        assert!(registry.get_namespace("conditional").is_none());
+        assert!(registry.get_namespace("logical").is_none());
+
+        // Verify removed classes are gone
+        assert!(registry.get_class("Math").is_none());
+        assert!(registry.get_class("StringUtils").is_none());
+        assert!(registry.get_class("String").is_none());
     }
 
     #[test]
@@ -1282,15 +1059,22 @@ mod tests {
         assert!(sin.is_some());
         assert_eq!(sin.unwrap().name, "sin");
         assert_eq!(sin.unwrap().parameters.len(), 1);
+
+        // Verify fromCharCode moved to string namespace
+        let from_char = registry.get_namespace_function("string", "fromCharCode");
+        assert!(from_char.is_some());
+
+        // Verify math.add was removed (use + operator instead)
+        assert!(registry.get_namespace_function("math", "add").is_none());
     }
 
     #[test]
     fn test_class_method_lookup() {
         let registry = BuiltinRegistry::new();
 
-        let floor = registry.get_class_method("Math", "floor");
-        assert!(floor.is_some());
-        assert_eq!(floor.unwrap().name, "floor");
+        let parse = registry.get_class_method("Integer", "parse");
+        assert!(parse.is_some());
+        assert_eq!(parse.unwrap().name, "parse");
     }
 
     #[test]

@@ -1,17 +1,21 @@
 start:
 	print("Conditional Simple Test")
 	testConditionals()
-	print("Test completed")// Simple test of conditional functions
+	print("Test completed")
+// Simple test of conditional operators
 
 functions:
 	void testConditionals()
-		print("Testing conditional functions")
+		print("Testing conditional operators")
 		integer a = 10
 		integer b = 5
 
-		boolean greater = compare.integer.greaterThan(a, b)
+		boolean greater = a > b
 		print("10 > 5: " + greater.toString())
 
-		integer max = conditional.integer(greater, a, b)
+		integer max = 0
+		if greater
+			max = a
+		else
+			max = b
 		print("Max of 10 and 5: " + max.toString())
-

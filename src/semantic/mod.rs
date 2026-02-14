@@ -1047,106 +1047,6 @@ impl SemanticAnalyzer {
             vec![(vec![Type::String], Type::Boolean, 1)],
         );
 
-        // Conditional expression functions
-        self.function_table.insert(
-            "conditional.integer".to_string(),
-            vec![(
-                vec![Type::Boolean, Type::Integer, Type::Integer],
-                Type::Integer,
-                3,
-            )],
-        );
-        self.function_table.insert(
-            "conditional.number".to_string(),
-            vec![(
-                vec![Type::Boolean, Type::Number, Type::Number],
-                Type::Number,
-                3,
-            )],
-        );
-        self.function_table.insert(
-            "conditional.string".to_string(),
-            vec![(
-                vec![Type::Boolean, Type::String, Type::String],
-                Type::String,
-                3,
-            )],
-        );
-        self.function_table.insert(
-            "conditional.boolean".to_string(),
-            vec![(
-                vec![Type::Boolean, Type::Boolean, Type::Boolean],
-                Type::Boolean,
-                3,
-            )],
-        );
-
-        // Comparison functions that return boolean conditions
-        self.function_table.insert(
-            "compare.integer.equal".to_string(),
-            vec![(vec![Type::Integer, Type::Integer], Type::Boolean, 2)],
-        );
-        self.function_table.insert(
-            "compare.integer.notEqual".to_string(),
-            vec![(vec![Type::Integer, Type::Integer], Type::Boolean, 2)],
-        );
-        self.function_table.insert(
-            "compare.integer.lessThan".to_string(),
-            vec![(vec![Type::Integer, Type::Integer], Type::Boolean, 2)],
-        );
-        self.function_table.insert(
-            "compare.integer.greaterThan".to_string(),
-            vec![(vec![Type::Integer, Type::Integer], Type::Boolean, 2)],
-        );
-        self.function_table.insert(
-            "compare.integer.lessEqual".to_string(),
-            vec![(vec![Type::Integer, Type::Integer], Type::Boolean, 2)],
-        );
-        self.function_table.insert(
-            "compare.integer.greaterEqual".to_string(),
-            vec![(vec![Type::Integer, Type::Integer], Type::Boolean, 2)],
-        );
-
-        // Number comparisons
-        self.function_table.insert(
-            "compare.number.equal".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Boolean, 2)],
-        );
-        self.function_table.insert(
-            "compare.number.lessThan".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Boolean, 2)],
-        );
-        self.function_table.insert(
-            "compare.number.greaterThan".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Boolean, 2)],
-        );
-        self.function_table.insert(
-            "compare.number.greaterEqual".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Boolean, 2)],
-        );
-        self.function_table.insert(
-            "compare.number.lessEqual".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Boolean, 2)],
-        );
-        self.function_table.insert(
-            "compare.number.notEqual".to_string(),
-            vec![(vec![Type::Number, Type::Number], Type::Boolean, 2)],
-        );
-
-        // Logical functions for combining conditions
-        self.function_table.insert(
-            "logical.and".to_string(),
-            vec![(vec![Type::Boolean, Type::Boolean], Type::Boolean, 2)],
-        );
-        self.function_table.insert(
-            "logical.or".to_string(),
-            vec![(vec![Type::Boolean, Type::Boolean], Type::Boolean, 2)],
-        );
-        self.function_table.insert(
-            "logical.not".to_string(),
-            vec![(vec![Type::Boolean], Type::Boolean, 1)],
-        );
-
         // List operations - module.function() syntax
         // List method-style functions (0 arguments - object is implicit)
         self.function_table.insert(
@@ -3436,7 +3336,7 @@ impl SemanticAnalyzer {
                 // Special handling for stdlib namespace property access
                 if let Expression::Variable(module_name) = &**object {
                     if self.is_stdlib_namespace(module_name) {
-                        // This is accessing a property on a stdlib namespace like conditional.integer
+                        // This is accessing a property on a stdlib namespace
                         // Return a special function type that can be called
                         return Ok(Type::Any); // Return Any to indicate this is a valid callable reference
                     }
@@ -3486,7 +3386,7 @@ impl SemanticAnalyzer {
                     }
                     Type::Any => {
                         // Handle property access on Any type (typically stdlib namespace results)
-                        // This allows chained property access like compare.integer.greaterThan
+                        // This allows chained property access for namespace methods
                         // Since the object resolved to Any (likely a stdlib namespace),
                         // allow property access and return Any to enable further chaining
                         Ok(Type::Any)
@@ -3725,7 +3625,7 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                // Check for nested namespace method calls (e.g., compare.integer.greaterThan())
+                // Check for nested namespace method calls (e.g., Math.integer.max())
                 if let Expression::PropertyAccess {
                     object: namespace_obj,
                     property: namespace_prop,
@@ -3828,30 +3728,6 @@ impl SemanticAnalyzer {
                                     Ok(Type::String)
                                 }
                             };
-                        }
-                        "conditional" => {
-                            let function_name = format!("conditional.{method}");
-                            return self.check_function_call(
-                                &function_name,
-                                arguments,
-                                Some(location.clone()),
-                            );
-                        }
-                        "compare" => {
-                            let function_name = format!("compare.{method}");
-                            return self.check_function_call(
-                                &function_name,
-                                arguments,
-                                Some(location.clone()),
-                            );
-                        }
-                        "logical" => {
-                            let function_name = format!("logical.{method}");
-                            return self.check_function_call(
-                                &function_name,
-                                arguments,
-                                Some(location.clone()),
-                            );
                         }
                         "list" => {
                             // Handle list namespace calls directly
@@ -4144,14 +4020,6 @@ impl SemanticAnalyzer {
                     || class_name == "file"
                     || class_name == "http"
                     || class_name == "console"
-                    || class_name == "compare"
-                    || class_name == "conditional"
-                    || class_name == "logical"
-                    || class_name == "compare.integer"
-                    || class_name == "compare.number"
-                    || class_name == "conditional.integer"
-                    || class_name == "conditional.number"
-                    || class_name == "conditional.string"
                 {
                     // Properly resolve static method calls using the function table
                     let qualified_name = format!("{}.{}", class_name.to_lowercase(), method);
@@ -5377,10 +5245,10 @@ impl SemanticAnalyzer {
                     Some(location.clone())
                 ))
             }
-            // Special handling for Type::Any - typically stdlib namespace results like compare.integer
+            // Special handling for Type::Any - typically stdlib namespace results
             Type::Any => {
                 // When we have Type::Any from stdlib namespace access, try to construct the qualified function name
-                // This handles cases like compare.integer.greaterThan(a, b) where compare.integer resolves to Any
+                // This handles cases like namespace.property.method(a, b) where namespace.property resolves to Any
                 if let Expression::PropertyAccess {
                     object: nested_obj,
                     property,
