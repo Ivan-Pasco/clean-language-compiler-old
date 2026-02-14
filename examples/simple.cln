@@ -1,2 +1,2 @@
-start()
-	return 42
+start:
+	print(42)

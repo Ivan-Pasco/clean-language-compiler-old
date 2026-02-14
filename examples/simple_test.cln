@@ -1,6 +1,6 @@
 // Simple test program using new Clean Language specification
 
-start()
+start:
 	integer x = 5
 	integer y = 10
 	integer result = x + y

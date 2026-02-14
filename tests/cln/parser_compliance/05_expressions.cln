@@ -93,7 +93,9 @@ class TestData
 	string name
 
 	constructor()
-		name = "test"functions:
+		name = "test"
+
+functions:
 	integer calculateSum(integer x, integer y)
 		return x + y
 

@@ -46,8 +46,8 @@ start:
 	print("int:8 == int:16: " + equal.toString())
 
 	// Test 8: Assignment with widening
-	integer:8 source = 42
-	integer:32 dest = source
+	integer:8 origin = 42
+	integer:32 dest = origin
 	print("Widened assignment: " + dest.toString())
 
 	print("Type widening test completed")

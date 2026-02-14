@@ -21,10 +21,10 @@ start:
 	print("result = a + b = " + result.toString())
 
 	// Test 4: Assignment from another variable
-	integer source = 100
+	integer origin = 100
 	integer target = 0
-	target = source
-	print("target = source = " + target.toString())
+	target = origin
+	print("target = origin = " + target.toString())
 
 	// Test 5: Chained computation through assignments
 	integer val = 2

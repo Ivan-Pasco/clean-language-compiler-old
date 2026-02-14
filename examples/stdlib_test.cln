@@ -1,7 +1,7 @@
 // Standard Library Test Suite in Clean Language
 // Converted from test framework syntax to standard Clean Language
 
-start()
+start:
 	print("Running Standard Library Tests...")
 
 	testRandomNumbers()

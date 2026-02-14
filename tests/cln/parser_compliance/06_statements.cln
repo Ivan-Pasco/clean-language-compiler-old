@@ -1,23 +1,23 @@
-# Parser Compliance Test - Statements
-# This test verifies all statement types are properly parsed
+// Parser Compliance Test - Statements
+// This test verifies all statement types are properly parsed
 
 start:
-	# Variable declarations (type-first)
+	// Variable declarations (type-first)
 	integer count = 0
 	string message = "hello"
 	boolean active = true
 	list<integer> numbers = [1, 2, 3]
 
-	# Variable declarations without initialization
+	// Variable declarations without initialization
 	number value
 	string name
 
-	# Assignment statements
+	// Assignment statements
 	count = 10
 	message = "updated"
 	numbers[0] = 99
 
-	# Print statements (various forms)
+	// Print statements (various forms)
 	print(count)
 	print "Direct message"
 	print(count, message, active)
@@ -25,50 +25,50 @@ start:
 	print("With newline") +
 	print("Print line") +
 
-	# Error statement
+	// Error statement
 	if count < 0
 		error("Invalid count")
 
-	# Return statement (in function context)
+	// Return statement (in function context)
 	testStatements()
 
 class StatementTest
 	integer value = 0
 
 	constructor(integer initial)
-		# Assignment in constructor
+		// Assignment in constructor
 		value = initial
 
-		# Conditional in constructor
+		// Conditional in constructor
 		if initial < 0
 			value = 0
 
 	functions:
 		void updateValue(integer new_value)
-			# Assignment in method
+			// Assignment in method
 			value = new_value
 
-			# Print in method
+			// Print in method
 			print("Value updated to:", value)
 
 		integer processValue()
-			# Local variable declaration
+			// Local variable declaration
 			integer temp = value * 2
 
-			# Conditional return
+			// Conditional return
 			if temp > 100
 				return 100
 			else
 				return temp
 
-# Basic statement parsing completed successfullyfunctions:
+// Basic statement parsing completed successfully
+
+functions:
 	void testStatements()
 		print("Statement test completed")
 
 	integer valueFunction()
 		return 42
 
-	integer safeFunction(integer value)
-		return value * 2
-
-# Test statements in different contexts
+	integer safeFunction(integer val)
+		return val * 2

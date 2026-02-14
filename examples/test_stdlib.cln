@@ -1,2 +1,3 @@
-start()
-	abs(-42) 
+start:
+	number val = -42.0
+	print(math.abs(val))

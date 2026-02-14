@@ -63,7 +63,9 @@ class TypedClass
 
 		// Method with generic return
 		any getGeneric()
-			return namefunctions:
+			return name
+
+functions:
 	// Function with various parameter and return types
 	integer simpleFunction(integer a, string b)
 		return a

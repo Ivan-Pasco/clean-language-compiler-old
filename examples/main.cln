@@ -1,4 +1,4 @@
 // clean-language-compiler - Clean Language Package
 
-function start()
+start:
 	print("Hello from clean-language-compiler!")
