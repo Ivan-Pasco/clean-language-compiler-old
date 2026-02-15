@@ -25,14 +25,6 @@ impl HoverProvider {
         }
     }
 
-    /// Create a hover provider with plugin support (WASM plugins only)
-    pub fn with_plugins(registry: Arc<PluginRegistry>) -> Self {
-        Self {
-            plugin_registry: Some(registry),
-            language_registry: None,
-        }
-    }
-
     /// Create a hover provider with both plugin and language registries
     pub fn with_language_registry(
         plugin_registry: Arc<PluginRegistry>,
@@ -42,16 +34,6 @@ impl HoverProvider {
             plugin_registry: Some(plugin_registry),
             language_registry: Some(language_registry),
         }
-    }
-
-    /// Set the plugin registry (for dynamic updates)
-    pub fn set_plugin_registry(&mut self, registry: Arc<PluginRegistry>) {
-        self.plugin_registry = Some(registry);
-    }
-
-    /// Set the language registry (for dynamic updates)
-    pub fn set_language_registry(&mut self, registry: Arc<LanguageRegistry>) {
-        self.language_registry = Some(registry);
     }
 
     pub async fn provide_hover(&self, text: &Rope, position: Position) -> Option<Hover> {

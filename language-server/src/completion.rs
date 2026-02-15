@@ -14,7 +14,6 @@ use clean_language_compiler::plugins::{
     LanguageRegistry, PluginCompletionItem, PluginCompletionKind, PluginLspContext, PluginRegistry,
 };
 use ropey::Rope;
-use std::path::Path;
 use std::sync::Arc;
 use tower_lsp::lsp_types::*;
 
@@ -33,14 +32,6 @@ impl CompletionProvider {
         }
     }
 
-    /// Create a completion provider with plugin support (WASM plugins only)
-    pub fn with_plugins(registry: Arc<PluginRegistry>) -> Self {
-        Self {
-            plugin_registry: Some(registry),
-            language_registry: None,
-        }
-    }
-
     /// Create a completion provider with both plugin and language registries
     pub fn with_language_registry(
         plugin_registry: Arc<PluginRegistry>,
@@ -50,16 +41,6 @@ impl CompletionProvider {
             plugin_registry: Some(plugin_registry),
             language_registry: Some(language_registry),
         }
-    }
-
-    /// Set the plugin registry (for dynamic updates)
-    pub fn set_plugin_registry(&mut self, registry: Arc<PluginRegistry>) {
-        self.plugin_registry = Some(registry);
-    }
-
-    /// Set the language registry (for dynamic updates)
-    pub fn set_language_registry(&mut self, registry: Arc<LanguageRegistry>) {
-        self.language_registry = Some(registry);
     }
 
     pub async fn provide_completions(
@@ -342,35 +323,6 @@ impl CompletionProvider {
                     insert_text: Some(keyword.name.clone()),
                     ..Default::default()
                 });
-            }
-        }
-
-        completions
-    }
-
-    /// Provide completions with file path context for path-based plugin activation
-    pub async fn provide_completions_with_path(
-        &self,
-        text: &Rope,
-        position: Position,
-        file_path: Option<&Path>,
-    ) -> Vec<CompletionItem> {
-        let mut completions = self.provide_completions(text, position).await;
-
-        // Check if file path matches a plugin's owned paths
-        if let (Some(path), Some(registry)) = (file_path, &self.language_registry) {
-            if let Some(path_str) = path.to_str() {
-                if let Some(plugin_name) = registry.plugin_for_path(path_str) {
-                    // Boost completions from the owning plugin
-                    for completion in &mut completions {
-                        if let Some(detail) = &completion.detail {
-                            if detail.contains(plugin_name) {
-                                // This completion is from the owning plugin, boost its sort order
-                                completion.sort_text = Some(format!("0_{}", completion.label));
-                            }
-                        }
-                    }
-                }
             }
         }
 

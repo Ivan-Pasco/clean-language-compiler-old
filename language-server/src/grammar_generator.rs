@@ -280,14 +280,13 @@ impl GrammarGenerator {
 mod tests {
     use super::*;
     use clean_language_compiler::plugins::{
-        PluginCompletionDef, PluginFunctionDef, PluginKeyword, PluginLanguage, PluginManifest,
-        PluginTypeDef,
+        PluginFunctionDef, PluginKeyword, PluginLanguage, PluginManifest, PluginTypeDef,
     };
     use std::collections::HashMap;
 
     fn create_test_manifest() -> PluginManifest {
         use clean_language_compiler::plugins::plugin_abi::{
-            PluginCompatibility, PluginExports, PluginHandles, PluginInfo,
+            PluginCompatibility, PluginExports, PluginInfo,
         };
 
         PluginManifest {
@@ -329,6 +328,7 @@ mod tests {
                 completions: vec![],
                 owns_paths: vec![],
             },
+            ai: Default::default(),
         }
     }
 

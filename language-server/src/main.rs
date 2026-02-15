@@ -381,10 +381,7 @@ impl Backend {
             Arc::clone(&language_registry),
         ));
 
-        let diagnostics_provider =
-            Arc::new(DiagnosticsProvider::with_language_registry(Arc::clone(
-                &language_registry,
-            )));
+        let diagnostics_provider = Arc::new(DiagnosticsProvider::new());
 
         Self {
             client,
@@ -415,10 +412,7 @@ impl Backend {
             Arc::clone(&language_registry),
         ));
 
-        let diagnostics_provider =
-            Arc::new(DiagnosticsProvider::with_language_registry(Arc::clone(
-                &language_registry,
-            )));
+        let diagnostics_provider = Arc::new(DiagnosticsProvider::new());
 
         Self {
             client,
