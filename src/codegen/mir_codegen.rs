@@ -4417,8 +4417,9 @@ impl MirCodeGenerator<'_> {
             MirOperand::Constant(constant) => matches!(constant, MirConstant::String(_)),
             MirOperand::Value(value_id) => {
                 if let Some(mir_type) = self.value_to_type.get(value_id) {
-                    // Strings are represented as Ptr(I8) in MIR
-                    matches!(mir_type, MirType::Ptr(inner) if matches!(inner.as_ref(), MirType::I8))
+                    // Strings are represented as Ptr(I8) for string literals and Ptr(U8) for
+                    // host function results (toString, string operations). Both are string pointers.
+                    matches!(mir_type, MirType::Ptr(inner) if matches!(inner.as_ref(), MirType::I8 | MirType::U8))
                 } else {
                     false
                 }

@@ -140,6 +140,23 @@ The runtime platform architecture is documented in [../platform-architecture/](.
 
 When modifying host functions or adding new ones, always update the platform architecture documentation.
 
+### WAT Spec Compliance (Host Function Signatures)
+
+**CRITICAL: The compiler must generate WASM imports that exactly match the host bridge signatures.**
+
+The clean-server enforces host function signatures via a machine-checkable WAT contract at
+`clean-server/host-bridge/tests/spec_compliance.wat`. This file declares every host function
+import with its exact WASM signature. If the compiler generates imports with wrong parameter
+counts or types, WASM module instantiation will fail at runtime.
+
+#### Rules for Generating WASM Imports
+
+1. ALL string input parameters use raw `(ptr: i32, len: i32)` pairs — NOT length-prefixed single pointers
+2. Integer values use `i64` (not `i32`) for: `print_integer`, `int_to_string`, `string_to_int`
+3. When adding or modifying built-in function codegen, check the WAT spec file for the correct signature
+4. Reference: `clean-server/host-bridge/tests/spec_compliance.wat` and `platform-architecture/HOST_BRIDGE.md`
+5. The cross-component prompt `compiler-host-bridge-signature-update-feb2026.md` documents all signature changes
+
 ## Common Commands
 
 ### Building and Testing

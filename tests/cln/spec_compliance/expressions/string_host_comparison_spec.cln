@@ -1,0 +1,51 @@
+// Test: String equality for host function return values
+// This tests that strings returned from host functions (toString, etc.)
+// can be compared with == and != operators correctly
+
+start:
+	// Test 1: toString() result compared with literal
+	integer x = 42
+	string result = x.toString()
+	boolean eq1 = result == "42"
+	print("toString == literal: " + eq1.toString())
+
+	// Test 2: integer.toString() compared with literal
+	integer y = 100
+	string s = y.toString()
+	boolean eq2 = s == "100"
+	print("int100 toString == 100: " + eq2.toString())
+
+	// Test 3: string concatenation result vs literal
+	string a = "hello"
+	string b = " world"
+	string c = a + b
+	boolean eq3 = c == "hello world"
+	print("concat == literal: " + eq3.toString())
+
+	// Test 4: Reverse comparison (literal == host result)
+	integer z = 7
+	string zs = z.toString()
+	boolean eq4 = "7" == zs
+	print("literal == toString: " + eq4.toString())
+
+	// Test 5: Not-equal check
+	integer w = 99
+	string ws = w.toString()
+	boolean neq1 = ws != "100"
+	print("toString != literal: " + neq1.toString())
+
+	// Test 6: Two host results compared
+	integer p = 42
+	integer q = 42
+	string ps = p.toString()
+	string qs = q.toString()
+	boolean eq6 = ps == qs
+	print("toString == toString: " + eq6.toString())
+
+	// Test 7: Different host results not equal
+	integer r1 = 10
+	integer r2 = 20
+	string rs1 = r1.toString()
+	string rs2 = r2.toString()
+	boolean neq2 = rs1 != rs2
+	print("diff toString !=: " + neq2.toString())
