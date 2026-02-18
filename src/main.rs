@@ -315,6 +315,33 @@ enum Commands {
         #[arg(short, long, default_value = "generic")]
         format: String,
     },
+    /// Configure compiler settings (e.g., telemetry)
+    #[command(subcommand)]
+    Config(ConfigCommands),
+    /// View fix status of reported compiler errors
+    Fixes {
+        /// Show fixes since this version
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Show only pending (unresolved) reports
+        #[arg(long)]
+        pending: bool,
+    },
+    /// Report a compiler error manually
+    Report {
+        /// Error code to report (e.g., SYN001)
+        #[arg(long)]
+        error: Option<String>,
+
+        /// Minimal reproduction code
+        #[arg(long)]
+        code: Option<String>,
+
+        /// Description of the issue
+        #[arg(long)]
+        description: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -402,6 +429,22 @@ enum PackageCommands {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum ConfigCommands {
+    /// Get a configuration value
+    Get {
+        /// Configuration key (e.g., 'telemetry')
+        key: String,
+    },
+    /// Set a configuration value
+    Set {
+        /// Configuration key (e.g., 'telemetry')
+        key: String,
+        /// Value to set (e.g., 'on', 'off')
+        value: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
@@ -433,6 +476,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         json_mode: args.json,
         quiet: args.quiet,
     };
+
+    // Telemetry: first-run prompt + version change checks (interactive commands only)
+    if !args.quiet && !args.json {
+        if let Commands::Compile { .. } | Commands::Build { .. } | Commands::Run { .. } =
+            &args.command
+        {
+            clean_language_compiler::telemetry::maybe_prompt_telemetry();
+            clean_language_compiler::telemetry::check_version_change();
+        }
+    }
 
     match args.command {
         Commands::Build {
@@ -517,6 +570,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::McpServer {} => clean_language_compiler::mcp::run_mcp_server().await?,
         Commands::McpConfig { format } => handle_mcp_config(&format)?,
+        Commands::Config(config_cmd) => handle_config(config_cmd, &output_config)?,
+        Commands::Fixes { since, pending } => handle_fixes(since, pending, &output_config)?,
+        Commands::Report {
+            error,
+            code,
+            description,
+        } => handle_report(error, code, description, &output_config)?,
     }
 
     Ok(())
@@ -1025,6 +1085,8 @@ async fn handle_compile(
             Err(errors) => {
                 let source = fs::read_to_string(&input).unwrap_or_default();
                 output_config.report_errors(&errors, Some(&source));
+                // Auto-report compile failure if telemetry is enabled
+                clean_language_compiler::telemetry::report_compile_failure(&errors, &input);
                 return Err(format!("Compilation failed with {} errors", errors.len()).into());
             }
         };
@@ -2205,4 +2267,292 @@ fn handle_mcp_config(format: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+// ============================================================================
+// Config, Fixes, and Report command handlers
+// ============================================================================
+
+fn handle_config(
+    cmd: ConfigCommands,
+    output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use clean_language_compiler::telemetry::TelemetryConfig;
+
+    match cmd {
+        ConfigCommands::Get { key } => match key.as_str() {
+            "telemetry" => {
+                let config = TelemetryConfig::load();
+                if output_config.json_mode {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&config).unwrap_or_else(|_| "{}".to_string())
+                    );
+                } else {
+                    println!("Telemetry: {}", if config.enabled { "on" } else { "off" });
+                    println!("Consent level: {}", config.consent_level);
+                    println!("Anonymous ID: {}", config.anonymous_id);
+                    println!(
+                        "Email: {}",
+                        config.contact_email.as_deref().unwrap_or("(not set)")
+                    );
+                }
+            }
+            "email" => {
+                let config = TelemetryConfig::load();
+                println!("{}", config.contact_email.as_deref().unwrap_or("(not set)"));
+            }
+            other => {
+                eprintln!("Unknown config key: {}", other);
+                eprintln!("Available keys: telemetry, email");
+                std::process::exit(1);
+            }
+        },
+        ConfigCommands::Set { key, value } => match key.as_str() {
+            "telemetry" => {
+                let mut config = TelemetryConfig::load();
+                config.enabled = matches!(value.as_str(), "on" | "true" | "yes" | "1");
+                config.save()?;
+                println!(
+                    "Telemetry {}",
+                    if config.enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+            }
+            "email" => {
+                let mut config = TelemetryConfig::load();
+                if value.is_empty() || value == "off" || value == "none" || value == "clear" {
+                    config.contact_email = None;
+                    config.save()?;
+                    println!("Email cleared");
+                } else {
+                    config.contact_email = Some(value);
+                    config.save()?;
+                    println!("Email saved. You'll be notified when reported bugs are fixed.");
+                }
+            }
+            other => {
+                eprintln!("Unknown config key: {}", other);
+                eprintln!("Available keys: telemetry, email");
+                std::process::exit(1);
+            }
+        },
+    }
+    Ok(())
+}
+
+fn handle_fixes(
+    since: Option<String>,
+    pending_only: bool,
+    output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use clean_language_compiler::telemetry::{ReportStatus, ReportStore};
+
+    let store = ReportStore::load();
+    let reports = store.get_all_reports();
+
+    if reports.is_empty() {
+        if output_config.json_mode {
+            println!("{{\"reports\": []}}");
+        } else {
+            println!("No reported errors tracked on this machine.");
+            println!("Use the MCP report_error tool or `cln report` to report compiler bugs.");
+        }
+        return Ok(());
+    }
+
+    // Apply filters
+    let filtered: Vec<_> = reports
+        .iter()
+        .filter(|r| {
+            if pending_only {
+                return r.status != ReportStatus::Resolved;
+            }
+            if let Some(ref ver) = since {
+                return r.compiler_version.as_str() >= ver.as_str();
+            }
+            true
+        })
+        .collect();
+
+    if output_config.json_mode {
+        let json_reports: Vec<serde_json::Value> = filtered
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "report_id": r.report_id,
+                    "error_code": r.error_code,
+                    "summary": r.summary,
+                    "status": r.status.to_string(),
+                    "resolved_in": r.resolved_in,
+                    "reported_at": r.reported_at.to_rfc3339()
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&json_reports)?);
+        return Ok(());
+    }
+
+    println!("Your reported errors — Fix Status");
+    println!("{}", "\u{2501}".repeat(50));
+    println!();
+
+    let mut resolved_count = 0;
+    for r in &filtered {
+        let symbol = match r.status {
+            ReportStatus::Resolved => {
+                resolved_count += 1;
+                "\u{2713}"
+            }
+            ReportStatus::InProgress | ReportStatus::Acknowledged => "\u{25F7}",
+            ReportStatus::WontFix => "\u{2717}",
+            ReportStatus::Reported => "\u{25CB}",
+        };
+
+        let status_detail = match &r.status {
+            ReportStatus::Resolved => r
+                .resolved_in
+                .as_ref()
+                .map(|v| format!("Fixed in {}", v))
+                .unwrap_or_else(|| "Fixed".to_string()),
+            ReportStatus::InProgress => "In progress".to_string(),
+            ReportStatus::Acknowledged => "Acknowledged".to_string(),
+            ReportStatus::WontFix => "Won't fix".to_string(),
+            ReportStatus::Reported => {
+                let days = (chrono::Utc::now() - r.reported_at).num_days();
+                if days == 0 {
+                    "Reported today".to_string()
+                } else if days == 1 {
+                    "Reported yesterday".to_string()
+                } else {
+                    format!("Reported {} days ago", days)
+                }
+            }
+        };
+
+        println!(
+            "{} {:<8} {:<40} {}",
+            symbol,
+            r.error_code,
+            truncate_string(&r.summary, 40),
+            status_detail
+        );
+    }
+
+    println!();
+    println!(
+        "You've reported {} errors. {} have been fixed.",
+        filtered.len(),
+        resolved_count
+    );
+
+    Ok(())
+}
+
+fn handle_report(
+    error: Option<String>,
+    code: Option<String>,
+    description: Option<String>,
+    _output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use clean_language_compiler::telemetry::{
+        submit_report, ErrorReport, ReportError, ReportStore,
+    };
+
+    let error_code = error.unwrap_or_else(|| "USR001".to_string());
+    let message = description.unwrap_or_else(|| "Manually reported error".to_string());
+
+    // Generate report ID
+    let report_id = {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let a: u32 = rng.gen();
+        let b: u16 = rng.gen();
+        let c: u16 = (rng.gen::<u16>() & 0x0FFF) | 0x4000;
+        let d: u16 = (rng.gen::<u16>() & 0x3FFF) | 0x8000;
+        let e: u64 = rng.gen::<u64>() & 0xFFFF_FFFF_FFFF;
+        format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}", a, b, c, d, e)
+    };
+
+    let mut report = ErrorReport::new(
+        report_id.clone(),
+        ReportError {
+            code: error_code.clone(),
+            category: "unknown".to_string(),
+            component: "unknown".to_string(),
+            severity: "bug".to_string(),
+            message: message.clone(),
+            file_context: None,
+        },
+        "manual",
+        "error_with_code",
+    );
+
+    if let Some(ref repro_code) = code {
+        report.reproduction = Some(
+            clean_language_compiler::telemetry::report::ReportReproduction {
+                minimal_code: Some(repro_code.clone()),
+                expected_behavior: None,
+                actual_behavior: None,
+                spec_reference: None,
+            },
+        );
+    }
+
+    // Attach stored email if available
+    {
+        let config = clean_language_compiler::telemetry::TelemetryConfig::load();
+        if let Some(ref email) = config.contact_email {
+            report.user.anonymous = false;
+            report.user.contact = Some(email.clone());
+        }
+    }
+
+    // Track locally
+    let mut store = ReportStore::load();
+    store.add_report(&report);
+    let _ = store.save();
+
+    // Submit
+    let result = submit_report(&report);
+
+    match result {
+        clean_language_compiler::telemetry::SubmitResult::Submitted {
+            report_id,
+            tracking_url,
+        } => {
+            println!("Error report submitted successfully!");
+            println!("Report ID: {}", report_id);
+            println!("Tracking: {}", tracking_url);
+        }
+        clean_language_compiler::telemetry::SubmitResult::Queued {
+            report_id,
+            local_path,
+        } => {
+            println!("Report saved locally (backend not yet available).");
+            println!("Report ID: {}", report_id);
+            println!("Local path: {}", local_path);
+            println!("It will be sent when the error reporting service is available.");
+        }
+        clean_language_compiler::telemetry::SubmitResult::Error { message } => {
+            eprintln!("Failed to save report: {}", message);
+        }
+    }
+
+    println!();
+    println!("Thank you for helping improve Clean Language!");
+
+    Ok(())
+}
+
+/// Truncate a string to max_len, adding "..." if truncated
+fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len.saturating_sub(3)])
+    }
 }

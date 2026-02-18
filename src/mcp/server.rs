@@ -944,6 +944,89 @@ fn get_available_tools() -> Vec<Tool> {
                 required: vec!["project_type".to_string()],
             },
         },
+        // ====================================================================
+        // Error Reporting & Fix Notification Tools
+        // ====================================================================
+        Tool {
+            name: "report_error".to_string(),
+            description: "Report a compiler or runtime error to the Clean Language team. Generates a structured bug report with AI-enhanced context. Requires explicit user consent before sending. The report is anonymous by default and never includes the user's actual source code — only an AI-generated minimal reproduction. Call this when you detect a likely compiler bug (not a user code error).".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "error_code": {
+                        "type": "string",
+                        "description": "The error code (e.g., 'SYN001', 'SEM003'). Use error codes from the compiler diagnostics."
+                    },
+                    "error_message": {
+                        "type": "string",
+                        "description": "The error message as reported by the compiler."
+                    },
+                    "component": {
+                        "type": "string",
+                        "description": "Which component produced the error.",
+                        "enum": ["parser", "semantic", "codegen", "runtime", "plugin", "cli", "unknown"]
+                    },
+                    "severity": {
+                        "type": "string",
+                        "description": "Severity classification of the error.",
+                        "enum": ["bug", "crash", "regression", "unexpected_behavior"]
+                    },
+                    "minimal_repro": {
+                        "type": "string",
+                        "description": "Minimal Clean Language code that reproduces the error. IMPORTANT: This must be an AI-generated minimal reproduction, NOT the user's actual source code."
+                    },
+                    "expected_behavior": {
+                        "type": "string",
+                        "description": "What the correct behavior should be according to the Language Specification."
+                    },
+                    "actual_behavior": {
+                        "type": "string",
+                        "description": "What actually happens when the code is compiled or executed."
+                    },
+                    "spec_reference": {
+                        "type": "string",
+                        "description": "Reference to the relevant Language Specification section, if applicable."
+                    },
+                    "ai_analysis": {
+                        "type": "string",
+                        "description": "AI's analysis of the root cause and potential fix."
+                    },
+                    "suggested_component_file": {
+                        "type": "string",
+                        "description": "The source file in the compiler that likely needs fixing (e.g., 'parser/token_parser.rs')."
+                    },
+                    "consent_level": {
+                        "type": "string",
+                        "description": "What level of detail the user consented to share. Default: error_with_code.",
+                        "enum": ["error_only", "error_with_code", "full"]
+                    },
+                    "user_contact": {
+                        "type": "string",
+                        "description": "Optional contact info if the user wants follow-up. Only include if explicitly provided by the user."
+                    }
+                }),
+                required: vec![
+                    "error_code".to_string(),
+                    "error_message".to_string(),
+                    "component".to_string(),
+                    "severity".to_string(),
+                ],
+            },
+        },
+        Tool {
+            name: "check_reported_fixes".to_string(),
+            description: "Check if any previously reported errors have been fixed. Returns a list of resolved errors with the version that includes the fix. Call this at the start of a session to inform the user about fixes to bugs they reported. Only checks errors reported from this machine.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "include_all": {
+                        "type": "boolean",
+                        "description": "If true, returns all tracked reports regardless of status. If false (default), returns only reports with status changes since last check."
+                    }
+                }),
+                required: vec![],
+            },
+        },
     ]
 }
 
@@ -1002,6 +1085,8 @@ fn handle_tools_call(id: serde_json::Value, params: Option<serde_json::Value>) -
         "get_plugin_examples" => tool_get_plugin_examples(id, arguments),
         "list_ecosystem" => tool_list_ecosystem(id, arguments),
         "get_stack_recommendation" => tool_get_stack_recommendation(id, arguments),
+        "report_error" => tool_report_error(id, arguments),
+        "check_reported_fixes" => tool_check_reported_fixes(id, arguments),
         _ => JsonRpcResponse::error(
             id,
             error_codes::METHOD_NOT_FOUND,
@@ -2258,8 +2343,8 @@ Call `list_plugins` to see what each plugin provides:
             "success": true,
             "quick_reference": quick_ref,
             "version": crate::VERSION,
-            "tools_available": 15,
-            "tip": "Use 'check' for fast iteration, 'compile' when ready for WASM."
+            "tools_available": 17,
+            "tip": "Use 'check' for fast iteration, 'compile' when ready for WASM. Use 'report_error' to report compiler bugs, 'check_reported_fixes' to see if your reported bugs have been fixed."
         }),
     )
 }
@@ -2381,6 +2466,334 @@ fn tool_get_stack_recommendation(
             ]
         }),
     )
+}
+
+// ============================================================================
+// Error Reporting & Fix Notification Tool Handlers
+// ============================================================================
+
+/// Tool: report_error - Submit a structured error report
+fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    use crate::telemetry::{
+        report::{ReportAiContext, ReportError, ReportReproduction},
+        ErrorReport, ReportStore,
+    };
+
+    // Extract required fields
+    let error_code = match args.get("error_code").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Missing 'error_code' parameter".to_string(),
+            )
+        }
+    };
+
+    let error_message = match args.get("error_message").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Missing 'error_message' parameter".to_string(),
+            )
+        }
+    };
+
+    let component = match args.get("component").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Missing 'component' parameter".to_string(),
+            )
+        }
+    };
+
+    let severity = match args.get("severity").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Missing 'severity' parameter".to_string(),
+            )
+        }
+    };
+
+    // Extract optional fields
+    let consent_level = args
+        .get("consent_level")
+        .and_then(|v| v.as_str())
+        .unwrap_or("error_with_code");
+    let user_contact = args
+        .get("user_contact")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    // Determine error category from code prefix
+    let category = if error_code.starts_with("SYN") {
+        "syntax"
+    } else if error_code.starts_with("SEM") {
+        "semantic"
+    } else if error_code.starts_with("COM") {
+        "codegen"
+    } else if error_code.starts_with("RUN") {
+        "runtime"
+    } else if error_code.starts_with("SYS") {
+        "system"
+    } else {
+        "unknown"
+    };
+
+    // Generate report ID
+    let report_id = generate_report_id();
+
+    // Build the report
+    let mut report = ErrorReport::new(
+        report_id.clone(),
+        ReportError {
+            code: error_code,
+            category: category.to_string(),
+            component,
+            severity,
+            message: error_message,
+            file_context: None,
+        },
+        "mcp_ai",
+        consent_level,
+    );
+
+    // Set user contact: prefer explicit param, fall back to stored email
+    if user_contact.is_some() {
+        report.user.anonymous = false;
+        report.user.contact = user_contact;
+    } else {
+        let config = crate::telemetry::TelemetryConfig::load();
+        if let Some(ref email) = config.contact_email {
+            report.user.anonymous = false;
+            report.user.contact = Some(email.clone());
+        }
+    }
+
+    // Add reproduction info (respecting consent level)
+    if consent_level != "error_only" {
+        report.reproduction = Some(ReportReproduction {
+            minimal_code: args
+                .get("minimal_repro")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            expected_behavior: args
+                .get("expected_behavior")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            actual_behavior: args
+                .get("actual_behavior")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            spec_reference: args
+                .get("spec_reference")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+        });
+    }
+
+    // Add AI context (only at "full" consent)
+    if consent_level == "full" {
+        report.ai_context = Some(ReportAiContext {
+            analysis: args
+                .get("ai_analysis")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            suggested_component: args
+                .get("suggested_component_file")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            suggested_fix: None,
+            confidence: None,
+        });
+    }
+
+    // Store locally for fix notification tracking
+    let mut store = ReportStore::load();
+    store.add_report(&report);
+    let _ = store.save();
+
+    // Attempt to submit to backend (falls back to queue)
+    let result = crate::telemetry::submit_report(&report);
+
+    match result {
+        crate::telemetry::SubmitResult::Submitted {
+            report_id,
+            tracking_url,
+        } => JsonRpcResponse::success(
+            id,
+            json!({
+                "success": true,
+                "report_id": report_id,
+                "tracking_url": tracking_url,
+                "message": "Error report submitted successfully. Thank you for helping improve Clean Language!"
+            }),
+        ),
+        crate::telemetry::SubmitResult::Queued {
+            report_id,
+            local_path,
+        } => JsonRpcResponse::success(
+            id,
+            json!({
+                "success": true,
+                "queued": true,
+                "report_id": report_id,
+                "local_path": local_path,
+                "message": "Report saved locally. It will be sent when connectivity to the error reporting service is available."
+            }),
+        ),
+        crate::telemetry::SubmitResult::Error { message } => JsonRpcResponse::success(
+            id,
+            json!({
+                "success": false,
+                "error": message,
+                "message": "Failed to save error report. The error has been noted locally."
+            }),
+        ),
+    }
+}
+
+/// Tool: check_reported_fixes - Check for updates on previously reported errors
+fn tool_check_reported_fixes(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    use crate::telemetry::{report::ReportStatus, ReportStore};
+
+    let include_all = args
+        .get("include_all")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let mut store = ReportStore::load();
+    let all_reports = store.get_all_reports();
+
+    if all_reports.is_empty() {
+        return JsonRpcResponse::success(
+            id,
+            json!({
+                "success": true,
+                "fixes": [],
+                "pending": [],
+                "current_version": crate::VERSION,
+                "has_updates": false,
+                "message": "No error reports tracked on this machine."
+            }),
+        );
+    }
+
+    // Collect report IDs for backend status check
+    let report_ids: Vec<String> = all_reports
+        .iter()
+        .filter(|r| r.status != ReportStatus::Resolved || include_all)
+        .map(|r| r.report_id.clone())
+        .collect();
+
+    // Try to fetch updates from backend (returns empty vec if offline)
+    let updates = crate::telemetry::submit::check_report_statuses(&report_ids);
+
+    // Apply any updates from backend
+    for update in &updates {
+        let status = match update.status.as_str() {
+            "acknowledged" => ReportStatus::Acknowledged,
+            "in_progress" => ReportStatus::InProgress,
+            "resolved" => ReportStatus::Resolved,
+            "wont_fix" => ReportStatus::WontFix,
+            _ => continue,
+        };
+
+        store.update_status(
+            &update.report_id,
+            status,
+            update.fixed_in_version.clone(),
+            update.fix_description.clone(),
+            update.fix_pr.clone(),
+        );
+    }
+
+    // Save any status updates
+    if !updates.is_empty() {
+        let _ = store.save();
+    }
+
+    // Build response — split into fixes (resolved) and pending (everything else)
+    let all_reports = store.get_all_reports();
+
+    let fixes: Vec<serde_json::Value> = all_reports
+        .iter()
+        .filter(|r| r.status == ReportStatus::Resolved)
+        .filter(|r| include_all || !r.notified)
+        .map(|r| {
+            json!({
+                "report_id": r.report_id,
+                "error_code": r.error_code,
+                "summary": r.summary,
+                "status": "resolved",
+                "fixed_in_version": r.resolved_in,
+                "fix_description": r.fix_description,
+                "fix_pr": r.fix_pr,
+                "update_command": r.resolved_in.as_ref().map(|v| format!("cleen install {}", v))
+            })
+        })
+        .collect();
+
+    let pending: Vec<serde_json::Value> = all_reports
+        .iter()
+        .filter(|r| r.status != ReportStatus::Resolved)
+        .map(|r| {
+            json!({
+                "report_id": r.report_id,
+                "error_code": r.error_code,
+                "summary": r.summary,
+                "status": r.status.to_string(),
+                "reported_at": r.reported_at.to_rfc3339()
+            })
+        })
+        .collect();
+
+    let has_updates = !fixes.is_empty() || !updates.is_empty();
+
+    // Collect IDs of resolved reports to mark as notified
+    let to_notify: Vec<String> = all_reports
+        .iter()
+        .filter(|r| r.status == ReportStatus::Resolved && !r.notified)
+        .map(|r| r.report_id.clone())
+        .collect();
+
+    // Mark new fixes as notified (separate borrow scope)
+    for report_id in &to_notify {
+        store.mark_notified(report_id);
+    }
+    let _ = store.save();
+
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": true,
+            "fixes": fixes,
+            "pending": pending,
+            "current_version": crate::VERSION,
+            "has_updates": has_updates
+        }),
+    )
+}
+
+/// Generate a UUID v4-format report ID
+fn generate_report_id() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let a: u32 = rng.gen();
+    let b: u16 = rng.gen();
+    let c: u16 = (rng.gen::<u16>() & 0x0FFF) | 0x4000;
+    let d: u16 = (rng.gen::<u16>() & 0x3FFF) | 0x8000;
+    let e: u64 = rng.gen::<u64>() & 0xFFFF_FFFF_FFFF;
+    format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}", a, b, c, d, e)
 }
 
 /// Convert a CompilerError to JSON for MCP responses
