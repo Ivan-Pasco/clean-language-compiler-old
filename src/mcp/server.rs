@@ -2082,13 +2082,19 @@ Clean Language applications should use Clean Language for ALL layers. Do NOT use
 | Authentication   | frame.auth       | Sessions, JWT, roles, CSRF, password hashing     | Passport.js, Auth0 SDK            |
 
 ### When to use JavaScript
-- NEVER for DOM manipulation (use frame.ui: _ui_update_element, _ui_on_event, _ui_set_state)
-- NEVER for event handling (use frame.ui: onclick, oninput, onsubmit directives)
-- NEVER for form validation (use frame.ui: _ui_validate, _ui_bind_input)
+- NEVER for DOM manipulation (use frame.ui)
+- NEVER for event handling (use frame.ui directives: onclick, oninput, onsubmit)
+- NEVER for form validation (use frame.ui)
 - NEVER for canvas/graphics (use frame.canvas)
 - NEVER for HTTP servers (use frame.httpserver)
 - NEVER for database access (use frame.data)
 - ONLY as a last resort when no Clean Language plugin covers the specific browser API needed
+
+### Naming Convention — IMPORTANT
+Clean Language uses **dot notation** for all function calls: `string.length()`, `math.abs()`, `list.push()`.
+NEVER use underscore-style names like `_ui_update_element` or `string_compare` in Clean Language code.
+Underscore names are internal host bridge identifiers — they are NOT part of the Clean Language API.
+Always use the dot-notation form shown in the plugin documentation and this reference.
 
 Call `get_stack_recommendation` with a project type for a tailored plugin list and file structure.
 
@@ -2378,13 +2384,14 @@ fn tool_get_stack_recommendation(
                 "public/images/": "Static assets"
             }),
             vec![
-                "JavaScript for DOM manipulation — use frame.ui (_ui_update_element, _ui_on_event)",
+                "JavaScript for DOM manipulation — use frame.ui (ui.update, ui.onEvent)",
                 "JavaScript for event handling — use frame.ui directives (onclick, oninput, onsubmit)",
-                "JavaScript for form validation — use frame.ui (_ui_validate, _ui_bind_input)",
-                "JavaScript for state management — use frame.ui (_ui_set_state, _ui_get_state)",
+                "JavaScript for form validation — use frame.ui (ui.validate, ui.bindInput)",
+                "JavaScript for state management — use frame.ui (ui.setState, ui.getState)",
                 "Node.js/Express/Fastify — use frame.httpserver",
                 "Any JS ORM (Sequelize, Prisma, Knex) — use frame.data",
                 "Any JS auth library (Passport.js, Auth0 SDK) — use frame.auth",
+                "Underscore-style function names — always use dot notation (string.length, math.abs, list.push)",
             ],
             "Full-stack web application with server, database, authentication, and client-side UI — all in Clean Language",
         ),
