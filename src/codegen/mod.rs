@@ -9160,7 +9160,7 @@ impl CodeGenerator {
             // Session management functions
             // =========================================
 
-            // _session_create(user_id: i32, rolePtr: i32, roleLen: i32, claimsPtr: i32, claimsLen: i32) -> i32 (returns session_id string pointer)
+            // _session_store(user_id: i32, rolePtr: i32, roleLen: i32, claimsPtr: i32, claimsLen: i32) -> i32 (returns session_id string pointer)
             let session_create_type = self.add_function_type(
                 &[
                     WasmType::I32, // user_id (Clean Language integer = i32)
@@ -9173,13 +9173,13 @@ impl CodeGenerator {
             )?;
             self.import_section.import(
                 "env",
-                "_session_create",
+                "_session_store",
                 wasm_encoder::EntityType::Function(session_create_type),
             );
             self.http_import_indices
-                .insert("_session_create".to_string(), self.function_count);
+                .insert("_session_store".to_string(), self.function_count);
             self.function_map
-                .insert("_session_create".to_string(), self.function_count);
+                .insert("_session_store".to_string(), self.function_count);
             self.function_count += 1;
 
             // _session_get() -> i32 (returns session JSON string pointer)
@@ -9195,31 +9195,31 @@ impl CodeGenerator {
                 .insert("_session_get".to_string(), self.function_count);
             self.function_count += 1;
 
-            // _session_destroy() -> i32 (returns 1 if destroyed, 0 if not)
+            // _session_delete() -> i32 (returns 1 if deleted, 0 if not)
             let session_destroy_type = self.add_function_type(&[], Some(WasmType::I32))?;
             self.import_section.import(
                 "env",
-                "_session_destroy",
+                "_session_delete",
                 wasm_encoder::EntityType::Function(session_destroy_type),
             );
             self.http_import_indices
-                .insert("_session_destroy".to_string(), self.function_count);
+                .insert("_session_delete".to_string(), self.function_count);
             self.function_map
-                .insert("_session_destroy".to_string(), self.function_count);
+                .insert("_session_delete".to_string(), self.function_count);
             self.function_count += 1;
 
-            // _session_set_cookie(cookiePtr: i32, cookieLen: i32) -> i32
+            // _http_set_cookie(cookiePtr: i32, cookieLen: i32) -> i32
             let session_set_cookie_type =
                 self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
             self.import_section.import(
                 "env",
-                "_session_set_cookie",
+                "_http_set_cookie",
                 wasm_encoder::EntityType::Function(session_set_cookie_type),
             );
             self.http_import_indices
-                .insert("_session_set_cookie".to_string(), self.function_count);
+                .insert("_http_set_cookie".to_string(), self.function_count);
             self.function_map
-                .insert("_session_set_cookie".to_string(), self.function_count);
+                .insert("_http_set_cookie".to_string(), self.function_count);
             self.function_count += 1;
 
             // =========================================

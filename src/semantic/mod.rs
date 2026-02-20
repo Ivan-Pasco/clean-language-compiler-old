@@ -1262,9 +1262,9 @@ impl SemanticAnalyzer {
         );
 
         // Session management functions
-        // _session_create(user_id: integer, role: string, claims: string) -> string (session_id)
+        // _session_store(user_id: integer, role: string, claims: string) -> string (session_id)
         self.function_table.insert(
-            "_session_create".to_string(),
+            "_session_store".to_string(),
             vec![(
                 vec![Type::Integer, Type::String, Type::String],
                 Type::String,
@@ -1274,14 +1274,14 @@ impl SemanticAnalyzer {
         // _session_get() -> string (session JSON or empty)
         self.function_table
             .insert("_session_get".to_string(), vec![(vec![], Type::String, 0)]);
-        // _session_destroy() -> integer (1 if destroyed, 0 if no session)
+        // _session_delete() -> integer (1 if deleted, 0 if no session)
         self.function_table.insert(
-            "_session_destroy".to_string(),
+            "_session_delete".to_string(),
             vec![(vec![], Type::Integer, 0)],
         );
-        // _session_set_cookie(cookie: string) -> integer
+        // _http_set_cookie(cookie: string) -> integer
         self.function_table.insert(
-            "_session_set_cookie".to_string(),
+            "_http_set_cookie".to_string(),
             vec![(vec![Type::String], Type::Integer, 1)],
         );
 

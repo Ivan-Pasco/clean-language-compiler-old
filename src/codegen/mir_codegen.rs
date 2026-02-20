@@ -6054,9 +6054,9 @@ impl MirCodeGenerator<'_> {
                 Some(WasmType::I32),
             ),
             // Session management functions
-            // _session_create: (integer user_id, string role, string claims) -> string (session_id)
+            // _session_store: (integer user_id, string role, string claims) -> string (session_id)
             (
-                "_session_create",
+                "_session_store",
                 vec![
                     BuiltinType::Integer,
                     BuiltinType::String,
@@ -6064,9 +6064,9 @@ impl MirCodeGenerator<'_> {
                 ],
                 Some(WasmType::I32),
             ),
-            // _session_set_cookie: (string cookie) -> i32
+            // _http_set_cookie: (string cookie) -> i32
             (
-                "_session_set_cookie",
+                "_http_set_cookie",
                 vec![BuiltinType::String],
                 Some(WasmType::I32),
             ),

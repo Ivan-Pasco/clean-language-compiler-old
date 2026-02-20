@@ -2586,11 +2586,11 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
             |_: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
         )
         .ok();
-    // Session: _session_create(user_id: i32, rolePtr: i32, roleLen: i32, claimsPtr: i32, claimsLen: i32) -> i32
+    // Session: _session_store(user_id: i32, rolePtr: i32, roleLen: i32, claimsPtr: i32, claimsLen: i32) -> i32
     linker
         .func_wrap(
             "env",
-            "_session_create",
+            "_session_store",
             |_: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
         )
         .ok();
@@ -2598,13 +2598,13 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
     linker
         .func_wrap("env", "_session_get", || -> i32 { 0 })
         .ok();
-    // Session: _session_destroy() -> i32
+    // Session: _session_delete() -> i32
     linker
-        .func_wrap("env", "_session_destroy", || -> i32 { 0 })
+        .func_wrap("env", "_session_delete", || -> i32 { 0 })
         .ok();
-    // Session: _session_set_cookie(cookiePtr: i32, cookieLen: i32) -> i32
+    // Session: _http_set_cookie(cookiePtr: i32, cookieLen: i32) -> i32
     linker
-        .func_wrap("env", "_session_set_cookie", |_: i32, _: i32| -> i32 { 0 })
+        .func_wrap("env", "_http_set_cookie", |_: i32, _: i32| -> i32 { 0 })
         .ok();
     // Auth: _auth_get_session() -> i32
     linker

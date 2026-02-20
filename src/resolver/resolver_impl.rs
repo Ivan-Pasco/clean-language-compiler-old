@@ -2574,9 +2574,9 @@ impl NameResolver {
         );
 
         // Session management functions
-        // _session_create(user_id: integer, role: string, claims: string) -> string
+        // _session_store(user_id: integer, role: string, claims: string) -> string
         self.register_builtin_fn(
-            "_session_create",
+            "_session_store",
             vec![HirType::Integer, HirType::String, HirType::String],
             Some(HirType::String),
             builtin_location.clone(),
@@ -2588,16 +2588,16 @@ impl NameResolver {
             Some(HirType::String),
             builtin_location.clone(),
         );
-        // _session_destroy() -> integer
+        // _session_delete() -> integer
         self.register_builtin_fn(
-            "_session_destroy",
+            "_session_delete",
             vec![],
             Some(HirType::Integer),
             builtin_location.clone(),
         );
-        // _session_set_cookie(cookie: string) -> integer
+        // _http_set_cookie(cookie: string) -> integer
         self.register_builtin_fn(
-            "_session_set_cookie",
+            "_http_set_cookie",
             vec![HirType::String],
             Some(HirType::Integer),
             builtin_location.clone(),

@@ -2242,10 +2242,10 @@ impl WasmPluginAdapter {
         )?;
 
         // Session stubs - signatures from codegen/mod.rs
-        // _session_create: (user_id: i32, role_ptr: i32, role_len: i32, claims_ptr: i32, claims_len: i32) -> i32
+        // _session_store: (user_id: i32, role_ptr: i32, role_len: i32, claims_ptr: i32, claims_len: i32) -> i32
         linker.func_wrap(
             "env",
-            "_session_create",
+            "_session_store",
             |mut caller: Caller<'_, PluginState>, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 {
                 caller.data_mut().allocate(4) as i32
             },
@@ -2254,16 +2254,16 @@ impl WasmPluginAdapter {
         linker.func_wrap("env", "_session_get", |_: Caller<'_, PluginState>| -> i32 {
             0
         })?;
-        // _session_destroy: () -> i32 (no params - returns 1 if destroyed)
+        // _session_delete: () -> i32 (no params - returns 1 if deleted)
         linker.func_wrap(
             "env",
-            "_session_destroy",
+            "_session_delete",
             |_: Caller<'_, PluginState>| -> i32 { 0 },
         )?;
-        // _session_set_cookie: (cookie_ptr: i32, cookie_len: i32) -> i32
+        // _http_set_cookie: (cookie_ptr: i32, cookie_len: i32) -> i32
         linker.func_wrap(
             "env",
-            "_session_set_cookie",
+            "_http_set_cookie",
             |_: Caller<'_, PluginState>, _: i32, _: i32| -> i32 { 0 },
         )?;
 

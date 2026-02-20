@@ -243,18 +243,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "_http_route_protected",
         |_: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
     )?;
-    // Session: _session_create(user_id: i32, rolePtr: i32, roleLen: i32, claimsPtr: i32, claimsLen: i32) -> i32
+    // Session: _session_store(user_id: i32, rolePtr: i32, roleLen: i32, claimsPtr: i32, claimsLen: i32) -> i32
     linker.func_wrap(
         "env",
-        "_session_create",
+        "_session_store",
         |_: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
     )?;
     // Session: _session_get() -> i32
     linker.func_wrap("env", "_session_get", || -> i32 { 0 })?;
-    // Session: _session_destroy() -> i32
-    linker.func_wrap("env", "_session_destroy", || -> i32 { 0 })?;
-    // Session: _session_set_cookie(cookiePtr: i32, cookieLen: i32) -> i32
-    linker.func_wrap("env", "_session_set_cookie", |_: i32, _: i32| -> i32 { 0 })?;
+    // Session: _session_delete() -> i32
+    linker.func_wrap("env", "_session_delete", || -> i32 { 0 })?;
+    // Session: _http_set_cookie(cookiePtr: i32, cookieLen: i32) -> i32
+    linker.func_wrap("env", "_http_set_cookie", |_: i32, _: i32| -> i32 { 0 })?;
     // Auth: _auth_get_session() -> i32
     linker.func_wrap("env", "_auth_get_session", || -> i32 { 0 })?;
     // Auth: _auth_require_auth() -> i32
