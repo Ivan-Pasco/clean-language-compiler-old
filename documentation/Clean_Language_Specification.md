@@ -2550,8 +2550,9 @@ start:
     // Read a configuration file
     string config = file.read("settings.txt")
 
-    // Process a log file line by line
-    list<string> logLines = file.lines("app.log")
+    // Process a log file line by line (read content, then split by newline)
+    string logContent = file.read("app.log")
+    list<string> logLines = logContent.split("\n")
 
     // Save user data
     file.write("user_data.txt", "John Doe, 25, Engineer")
@@ -3500,8 +3501,8 @@ functions:
         spec "specs/authentication.spec.cln"
         require password.length() >= 8
 
-        salt = crypto.generateSalt(10)
-        return crypto.bcrypt(password, salt)
+        // _crypto_hash_password is provided by the frame.auth plugin
+        return _crypto_hash_password(password)
 
     boolean compareHashes(string hash1, string hash2)
         intent "Securely compare two password hashes in constant time"
@@ -3509,7 +3510,8 @@ functions:
         require hash1.length() > 0
         require hash2.length() > 0
 
-        return crypto.constantTimeCompare(hash1, hash2)
+        // _crypto_verify_password is provided by the frame.auth plugin
+        return _crypto_verify_password(hash1, hash2)
 
 tests:
     test "authenticate valid user"
