@@ -1599,6 +1599,184 @@ pub fn gen_trim(malloc_func: u32) -> Vec<Instruction<'static>> {
     ]
 }
 
+/// Generate WASM instructions for string to uppercase conversion.
+/// Parameters: local 0 = str_ptr
+/// Locals: 1=str_len, 2=new_ptr, 3=i (loop counter), 4=ch
+pub fn gen_to_upper(malloc_func: u32) -> Vec<Instruction<'static>> {
+    vec![
+        // Get string length -> local 1
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: STRING_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(1),
+        // Allocate new string: len + STRING_DATA_OFFSET bytes -> local 2
+        Instruction::LocalGet(1),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::Call(malloc_func),
+        Instruction::LocalSet(2),
+        // Write length to new string header
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32Store(MemArg {
+            offset: STRING_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        // i = 0
+        Instruction::I32Const(0),
+        Instruction::LocalSet(3),
+        // Loop over each character
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        // if i >= str_len, exit
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(1),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+        // Load byte from original string at data offset + i
+        Instruction::LocalGet(0),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(3),
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(4),
+        // If 'a'(97) <= ch <= 'z'(122): ch -= 32
+        Instruction::LocalGet(4),
+        Instruction::I32Const(97),
+        Instruction::I32GeU,
+        Instruction::LocalGet(4),
+        Instruction::I32Const(122),
+        Instruction::I32LeU,
+        Instruction::I32And,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(4),
+        Instruction::I32Const(32),
+        Instruction::I32Sub,
+        Instruction::LocalSet(4),
+        Instruction::End,
+        // Store converted byte to new string at data offset + i
+        Instruction::LocalGet(2),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(3),
+        Instruction::I32Add,
+        Instruction::LocalGet(4),
+        Instruction::I32Store8(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        // i++
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::Br(0),
+        Instruction::End, // end loop
+        Instruction::End, // end block
+        // Return new string ptr
+        Instruction::LocalGet(2),
+    ]
+}
+
+/// Generate WASM instructions for string to lowercase conversion.
+/// Parameters: local 0 = str_ptr
+/// Locals: 1=str_len, 2=new_ptr, 3=i (loop counter), 4=ch
+pub fn gen_to_lower(malloc_func: u32) -> Vec<Instruction<'static>> {
+    vec![
+        // Get string length -> local 1
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: STRING_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(1),
+        // Allocate new string: len + STRING_DATA_OFFSET bytes -> local 2
+        Instruction::LocalGet(1),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::Call(malloc_func),
+        Instruction::LocalSet(2),
+        // Write length to new string header
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32Store(MemArg {
+            offset: STRING_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        // i = 0
+        Instruction::I32Const(0),
+        Instruction::LocalSet(3),
+        // Loop over each character
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        // if i >= str_len, exit
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(1),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+        // Load byte from original string at data offset + i
+        Instruction::LocalGet(0),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(3),
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(4),
+        // If 'A'(65) <= ch <= 'Z'(90): ch += 32
+        Instruction::LocalGet(4),
+        Instruction::I32Const(65),
+        Instruction::I32GeU,
+        Instruction::LocalGet(4),
+        Instruction::I32Const(90),
+        Instruction::I32LeU,
+        Instruction::I32And,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(4),
+        Instruction::I32Const(32),
+        Instruction::I32Add,
+        Instruction::LocalSet(4),
+        Instruction::End,
+        // Store converted byte to new string at data offset + i
+        Instruction::LocalGet(2),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(3),
+        Instruction::I32Add,
+        Instruction::LocalGet(4),
+        Instruction::I32Store8(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        // i++
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::Br(0),
+        Instruction::End, // end loop
+        Instruction::End, // end block
+        // Return new string ptr
+        Instruction::LocalGet(2),
+    ]
+}
+
 /// Get local variables needed for each string function
 pub fn get_locals(func_name: &str) -> Vec<(u32, ValType)> {
     match func_name {

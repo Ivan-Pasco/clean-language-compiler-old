@@ -227,8 +227,8 @@ impl CodeGenerator {
         self.register_import_function("env", "string_index_of_from", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
         // 3-arg lastIndexOf with startIndex for searching from a specific position (backwards)
         self.register_import_function("env", "string_last_index_of_from", vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string_to_upper", vec![ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string_to_lower", vec![ValType::I32], vec![ValType::I32])?;
+        // string_to_upper and string_to_lower are registered as native WASM functions
+        // in register_string_trim_imports() with correct ASCII case conversion logic.
 
         // Native trim implementation (replaces host import)
         let trim_instructions = native_stdlib::string_ops::gen_trim(malloc_idx);
@@ -361,12 +361,9 @@ impl CodeGenerator {
         if let Some(substring_idx) = self.get_function_index("string_substring") {
             self.add_function_alias("string.substring", substring_idx);
         }
-        self.register_import_function("env", "string.toUpperCase", vec![ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string.toLowerCase", vec![ValType::I32], vec![ValType::I32])?;
-
-        // Also register the underscore versions for method calls
-        self.register_import_function("env", "string_toUpperCase", vec![ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string_toLowerCase", vec![ValType::I32], vec![ValType::I32])?;
+        // string.toUpperCase, string.toLowerCase, and underscore variants are registered
+        // as native WASM functions in register_string_trim_imports() with correct
+        // ASCII case conversion logic. No host imports needed here.
 
         Ok(())
     }
@@ -526,10 +523,9 @@ impl CodeGenerator {
         self.register_import_function("env", "string.toNumber", vec![ValType::I32], vec![ValType::F64])?;
         self.register_import_function("env", "string.toBoolean", vec![ValType::I32], vec![ValType::I32])?;
         
-        // String operations (require host functions)
-        self.register_import_function("env", "string.toUpperCase", vec![ValType::I32], vec![ValType::I32])?;
-        self.register_import_function("env", "string.toLowerCase", vec![ValType::I32], vec![ValType::I32])?;
-        
+        // string.toUpperCase and string.toLowerCase are native WASM functions registered
+        // in register_string_trim_imports() - no host imports needed here.
+
         Ok(())
     }
 

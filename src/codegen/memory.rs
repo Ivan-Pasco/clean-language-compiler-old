@@ -16,7 +16,7 @@ use wasm_encoder::{ConstExpr, DataSection, Instruction, ValType};
 /// Memory safety configuration constants
 #[allow(dead_code)]
 const GUARD_PAGE_SIZE: usize = 512; // 512 bytes guard pages (reduced for single-page WASM)
-const MAX_MEMORY_SIZE: usize = 65536; // 64KB total limit (1 WASM page)
+const MAX_MEMORY_SIZE: usize = 262144; // 256KB limit (4 WASM pages) — matches native_stdlib::HEAP_START
 const MEMORY_ALIGNMENT: usize = 8; // 8-byte alignment
 #[allow(dead_code)]
 const POISON_PATTERN: u8 = 0xDE; // Pattern for poisoned memory

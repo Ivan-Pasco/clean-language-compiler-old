@@ -5582,6 +5582,42 @@ impl CodeGenerator {
         self.add_function_alias("string_trim_end", trim_end_idx);
         self.add_function_alias("string.trimEnd", trim_end_idx);
 
+        // NATIVE: string_to_upper - converts string to uppercase (ASCII)
+        let to_upper_instructions = native_stdlib::string_ops::gen_to_upper(malloc_idx);
+        let to_upper_idx = self.register_function_with_locals(
+            "__string_to_upper",
+            &[WasmType::I32],    // str_ptr
+            Some(WasmType::I32), // returns new_ptr
+            &[
+                WasmType::I32, // str_len
+                WasmType::I32, // new_ptr
+                WasmType::I32, // i (loop counter)
+                WasmType::I32, // ch
+            ],
+            &to_upper_instructions,
+        )?;
+        self.add_function_alias("string_to_upper", to_upper_idx);
+        self.add_function_alias("string.toUpperCase", to_upper_idx);
+        self.add_function_alias("string_toUpperCase", to_upper_idx);
+
+        // NATIVE: string_to_lower - converts string to lowercase (ASCII)
+        let to_lower_instructions = native_stdlib::string_ops::gen_to_lower(malloc_idx);
+        let to_lower_idx = self.register_function_with_locals(
+            "__string_to_lower",
+            &[WasmType::I32],    // str_ptr
+            Some(WasmType::I32), // returns new_ptr
+            &[
+                WasmType::I32, // str_len
+                WasmType::I32, // new_ptr
+                WasmType::I32, // i (loop counter)
+                WasmType::I32, // ch
+            ],
+            &to_lower_instructions,
+        )?;
+        self.add_function_alias("string_to_lower", to_lower_idx);
+        self.add_function_alias("string.toLowerCase", to_lower_idx);
+        self.add_function_alias("string_toLowerCase", to_lower_idx);
+
         Ok(())
     }
 
