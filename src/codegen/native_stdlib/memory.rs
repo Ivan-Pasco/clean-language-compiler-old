@@ -19,13 +19,15 @@ use super::{ALIGNMENT, HEAP_PTR_GLOBAL};
 ///   1. Read current heap pointer from global 0
 ///   2. Align the requested size to 8 bytes
 ///   3. Calculate new heap pointer
-///   4. Store new heap pointer
-///   5. Return original pointer
+///   4. Grow memory if new_ptr exceeds current memory size
+///   5. Store new heap pointer
+///   6. Return original pointer
 pub fn gen_malloc() -> Vec<Instruction<'static>> {
     vec![
         // local 0: size (parameter)
         // local 1: current_ptr (to be allocated)
         // local 2: aligned_size
+        // local 3: new_ptr (used for memory.grow check)
 
         // Read current heap pointer -> save to local 1
         Instruction::GlobalGet(HEAP_PTR_GLOBAL),
@@ -37,11 +39,34 @@ pub fn gen_malloc() -> Vec<Instruction<'static>> {
         Instruction::I32Const(!(ALIGNMENT - 1) as i32), // 0xFFFFFFF8
         Instruction::I32And,
         Instruction::LocalSet(2), // aligned_size
-        // Calculate new heap pointer: current_ptr + aligned_size
+        // Calculate new heap pointer: current_ptr + aligned_size -> local 3
         Instruction::LocalGet(1), // current_ptr
         Instruction::LocalGet(2), // aligned_size
         Instruction::I32Add,
+        Instruction::LocalSet(3), // new_ptr
+        // Grow memory if new_ptr exceeds current memory size.
+        // memory.size returns pages (64KB each), so current_bytes = pages * 65536.
+        // If new_ptr > current_bytes, grow by enough pages.
+        Instruction::LocalGet(3),   // new_ptr
+        Instruction::MemorySize(0), // current pages
+        Instruction::I32Const(16),  // shift left by 16 = multiply by 65536
+        Instruction::I32Shl,        // current_bytes
+        Instruction::I32GtU,        // new_ptr > current_bytes?
+        Instruction::If(BlockType::Empty),
+        // Need to grow: pages_needed = (new_ptr - current_bytes + 65535) / 65536
+        // Simplified: grow by (new_ptr >> 16) - memory.size + 1 pages (at least 1)
+        Instruction::LocalGet(3), // new_ptr
+        Instruction::I32Const(16),
+        Instruction::I32ShrU,       // new_ptr / 65536
+        Instruction::MemorySize(0), // current pages
+        Instruction::I32Sub,        // pages above current
+        Instruction::I32Const(1),
+        Instruction::I32Add,        // +1 to ensure enough
+        Instruction::MemoryGrow(0), // grow memory, returns old size or -1
+        Instruction::Drop,          // ignore result (we proceed regardless)
+        Instruction::End,
         // Store new heap pointer
+        Instruction::LocalGet(3),
         Instruction::GlobalSet(HEAP_PTR_GLOBAL),
         // Return original pointer
         Instruction::LocalGet(1),
@@ -115,6 +140,7 @@ pub fn malloc_locals() -> Vec<(u32, ValType)> {
     vec![
         (1, ValType::I32), // current_ptr
         (1, ValType::I32), // aligned_size
+        (1, ValType::I32), // new_ptr (for memory.grow check)
     ]
 }
 

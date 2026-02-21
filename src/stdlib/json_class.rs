@@ -174,6 +174,7 @@ impl JsonClass {
             &[
                 WasmType::I32, // Local 1: position_ptr (allocated temp)
                 WasmType::I32, // Local 2: length
+                WasmType::I32, // Local 3: string_end (heap guard temp)
             ],
             self.generate_text_to_data_instructions(value_idx, malloc_index),
         )?;
@@ -188,6 +189,7 @@ impl JsonClass {
             &[
                 WasmType::I32, // Local 1: position_ptr (allocated temp)
                 WasmType::I32, // Local 2: length
+                WasmType::I32, // Local 3: string_end (heap guard temp)
             ],
             self.generate_try_text_to_data_instructions(value_idx, malloc_index),
         )?;
@@ -880,25 +882,17 @@ impl JsonClass {
         parse_value_index: u32,
         malloc_index: u32,
     ) -> Vec<Instruction<'static>> {
+        // HEAP_PTR_GLOBAL = 0 (from native_stdlib/mod.rs)
+        const HEAP_PTR_GLOBAL: u32 = 0;
+
         vec![
             // Local variable declarations:
             // Local 0: string_ptr (parameter)
             // Local 1: position_ptr (allocated temp for tracking parse position)
             // Local 2: length (string length)
+            // Local 3: string_end (temp for heap guard)
 
-            // Step 1: Allocate 4 bytes for position storage
-            Instruction::I32Const(4),
-            Instruction::Call(malloc_index),
-            Instruction::LocalSet(1), // position_ptr
-            // Step 2: Initialize position to 0
-            Instruction::LocalGet(1), // position_ptr
-            Instruction::I32Const(0),
-            Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Step 3: Get string length (stored at offset 0 in string)
+            // Step 1: Get string length (needed for heap guard before any malloc)
             Instruction::LocalGet(0), // string_ptr
             Instruction::I32Load(wasm_encoder::MemArg {
                 offset: 0,
@@ -906,7 +900,45 @@ impl JsonClass {
                 memory_index: 0,
             }),
             Instruction::LocalSet(2), // length
-            // Step 4: Call value parser
+            // Step 2: HEAP GUARD - Ensure __heap_ptr is past the input string.
+            // When a host function (e.g. _db_query) writes a string into WASM memory
+            // without going through WASM's __malloc, __heap_ptr may still point BELOW
+            // the string. Subsequent WASM-side malloc calls would then return addresses
+            // that overlap with the string, corrupting it during parsing.
+            //
+            // Fix: compute string_end = (string_ptr + 4 + length + 7) & ~7
+            // If __heap_ptr < string_end, advance it.
+            Instruction::LocalGet(0), // string_ptr
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(2), // length
+            Instruction::I32Add,
+            Instruction::I32Const(7),
+            Instruction::I32Add,
+            Instruction::I32Const(-8), // 0xFFFFFFF8 = ~7
+            Instruction::I32And,       // aligned string_end
+            Instruction::LocalSet(3),  // store in temp local
+            // Compare: if __heap_ptr < string_end, advance it
+            Instruction::GlobalGet(HEAP_PTR_GLOBAL),
+            Instruction::LocalGet(3), // string_end
+            Instruction::I32LtU,      // __heap_ptr < string_end?
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(3),                // string_end
+            Instruction::GlobalSet(HEAP_PTR_GLOBAL), // advance heap past string
+            Instruction::End,
+            // Step 3: Allocate 4 bytes for position storage (now safe from overlap)
+            Instruction::I32Const(4),
+            Instruction::Call(malloc_index),
+            Instruction::LocalSet(1), // position_ptr
+            // Step 4: Initialize position to 0
+            Instruction::LocalGet(1), // position_ptr
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Step 5: Call value parser
             // This handles all JSON types: null, boolean, number, string, array, object
             Instruction::LocalGet(0), // string_ptr
             Instruction::LocalGet(1), // position_ptr

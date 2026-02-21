@@ -17,6 +17,9 @@ static NEXT_ALLOCATION_OFFSET: Mutex<usize> = Mutex::new(262144);
 static SCOPE_MARKS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 // Helper function to allocate memory for a string in WASM memory
+// CRITICAL: This must keep WASM global 0 (__heap_ptr) in sync with the host-side
+// allocation offset so that WASM-side malloc doesn't return addresses that overlap
+// with host-allocated data.
 fn allocate_string_in_memory(
     memory: &Memory,
     caller: &mut Caller<'_, ()>,
@@ -25,19 +28,41 @@ fn allocate_string_in_memory(
     let string_bytes = string_value.as_bytes();
     let total_size = 4 + string_bytes.len(); // 4 bytes for length + string content
 
-    // Get the next allocation offset
+    // Step 1: Sync host-side offset with WASM __heap_ptr (global 0).
+    // The WASM side may have advanced __heap_ptr via its own malloc calls,
+    // so we must take the maximum of both to avoid overlapping allocations.
+    let wasm_heap = if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
+        heap_global.get(&mut *caller).i32().unwrap_or(0) as usize
+    } else {
+        0
+    };
+
     let mut next_offset = NEXT_ALLOCATION_OFFSET.lock().unwrap();
+    if wasm_heap > *next_offset {
+        *next_offset = wasm_heap;
+    }
+
     let offset = *next_offset;
-    *next_offset += (total_size + 7) & !7; // Align to 8-byte boundary for next allocation
+    let aligned_end = offset + ((total_size + 7) & !7);
+    *next_offset = aligned_end;
     drop(next_offset);
 
-    // Get mutable memory data
-    let data = memory.data_mut(caller);
+    // Step 2: Grow memory if needed
+    let current_pages = memory.size(&caller) as usize;
+    let current_bytes = current_pages * 65536;
+    if aligned_end > current_bytes {
+        let needed_pages = ((aligned_end - current_bytes + 65535) / 65536) as u64;
+        if memory.grow(&mut *caller, needed_pages).is_err() {
+            println!("⚠️  WARNING: memory.grow failed for {needed_pages} pages");
+            return 0;
+        }
+    }
 
-    // Ensure we have enough memory
-    if offset + total_size >= data.len() {
+    // Step 3: Write string data
+    let data = memory.data_mut(&mut *caller);
+    if offset + total_size > data.len() {
         println!("⚠️  WARNING: Not enough WASM memory for string allocation. Offset: {offset}, Size: {total_size}, Memory: {memory_len}", memory_len = data.len());
-        return 0; // Return null pointer on failure
+        return 0;
     }
 
     // Store length in first 4 bytes (little-endian)
@@ -45,6 +70,13 @@ fn allocate_string_in_memory(
 
     // Store string content
     data[offset + 4..offset + 4 + string_bytes.len()].copy_from_slice(string_bytes);
+
+    // Step 4: Update WASM global 0 (__heap_ptr) so WASM-side malloc starts PAST this allocation
+    if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
+        heap_global
+            .set(&mut *caller, wasmtime::Val::I32(aligned_end as i32))
+            .ok();
+    }
 
     offset as i32
 }
@@ -1127,24 +1159,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // List data: num_parts * 4 bytes (string pointers)
             let list_size = 16 + (num_parts * 4);
 
-            // Use a proper heap allocation strategy
-            // Memory layout: static data up to ~4400, then heap starts
-            // Read current heap pointer from global at offset 0 (initialized to 4 means empty)
-            let global_heap_ptr_offset = 0usize;
-            let current_heap = u32::from_le_bytes([
-                data[global_heap_ptr_offset],
-                data[global_heap_ptr_offset + 1],
-                data[global_heap_ptr_offset + 2],
-                data[global_heap_ptr_offset + 3],
-            ]) as usize;
+            // Read current heap pointer from WASM global 0 (__heap_ptr), NOT from linear memory.
+            // Also sync with host-side NEXT_ALLOCATION_OFFSET to avoid overlapping allocations.
+            let current_heap =
+                if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
+                    heap_global.get(&mut caller).i32().unwrap_or(0) as usize
+                } else {
+                    0
+                };
 
-            // If heap pointer is at initial value (0-4 or any small value), start after static data
-            // Static data typically ends around 4500 based on string pool usage
-            let list_ptr = if current_heap < 5000 {
-                5000
-            } else {
-                current_heap
-            };
+            let mut next_offset_guard = NEXT_ALLOCATION_OFFSET.lock().unwrap();
+            let sync_heap = (*next_offset_guard).max(current_heap);
+
+            let list_ptr = sync_heap;
             let mut next_ptr = list_ptr + list_size;
 
             // Allocate string pointers
@@ -1156,12 +1183,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 next_ptr += str_allocation;
             }
 
-            // Update heap pointer for future allocations
-            let new_heap_ptr = next_ptr as u32;
+            // Align and update both allocation trackers
+            let new_heap_ptr = ((next_ptr + 7) & !7) as u32;
+            *next_offset_guard = new_heap_ptr as usize;
+            drop(next_offset_guard);
+
+            // Grow memory if needed
+            let current_bytes = memory.size(&caller) as usize * 65536;
+            if (new_heap_ptr as usize) > current_bytes {
+                let needed_pages = ((new_heap_ptr as usize - current_bytes + 65535) / 65536) as u64;
+                let _ = memory.grow(&mut caller, needed_pages);
+            }
+
+            // Update WASM global __heap_ptr
+            if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
+                heap_global
+                    .set(&mut caller, wasmtime::Val::I32(new_heap_ptr as i32))
+                    .ok();
+            }
 
             let data_mut = memory.data_mut(&mut caller);
-            data_mut[global_heap_ptr_offset..global_heap_ptr_offset + 4]
-                .copy_from_slice(&new_heap_ptr.to_le_bytes());
 
             // Write list header
             data_mut[list_ptr..list_ptr + 4].copy_from_slice(&(num_parts as u32).to_le_bytes()); // size
