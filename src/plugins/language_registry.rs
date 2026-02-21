@@ -457,6 +457,8 @@ mod tests {
                 owns_paths: vec!["app/data/".to_string()],
             },
             ai: Default::default(),
+            paths: Default::default(),
+            enforcement: Default::default(),
         }
     }
 

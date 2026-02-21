@@ -1322,7 +1322,54 @@ impl MultiFileCompiler {
         );
         let parsed_ast = parser.parse_program()?;
 
-        // Stage 2.5: Plugin Expansion - transform framework blocks into Clean AST
+        // Stage 2.5a: Plugin Enforcement
+        if let Some(ref registry) = self.config.plugin_registry {
+            let enforcement_rules: Vec<(String, crate::plugins::plugin_abi::PluginEnforcement)> =
+                registry
+                    .loaded_manifests()
+                    .iter()
+                    .filter(|(_, m)| {
+                        !m.enforcement.restricted_functions.is_empty()
+                            || !m.enforcement.required_blocks.is_empty()
+                            || !m.enforcement.block_folder_rules.is_empty()
+                    })
+                    .map(|(name, m)| (name.clone(), m.enforcement.clone()))
+                    .collect();
+
+            if !enforcement_rules.is_empty() {
+                let file_str = file_path.to_string_lossy();
+                let result = crate::plugins::enforcement::enforce_rules(
+                    &parsed_ast,
+                    &file_str,
+                    &enforcement_rules,
+                );
+                for warning in &result.warnings {
+                    eprintln!(
+                        "warning[{}]: {} ({})",
+                        warning.plugin, warning.message, warning.suggestion
+                    );
+                }
+                if !result.errors.is_empty() {
+                    return Err(CompilerError::PluginError {
+                        message: result
+                            .errors
+                            .iter()
+                            .map(|e| format!("{} ({})", e.message, e.suggestion))
+                            .collect::<Vec<_>>()
+                            .join("; "),
+                        location: Some(SourceLocation {
+                            file: file_path.to_string_lossy().to_string(),
+                            line: 1,
+                            column: 1,
+                            byte_start: None,
+                            byte_end: None,
+                        }),
+                    });
+                }
+            }
+        }
+
+        // Stage 2.5b: Plugin Expansion - transform framework blocks into Clean AST
         let ast = if let Some(ref registry) = self.config.plugin_registry {
             tracing::debug!(
                 file = %file_path.display(),

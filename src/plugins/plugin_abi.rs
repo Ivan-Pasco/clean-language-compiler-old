@@ -22,6 +22,12 @@ pub struct PluginManifest {
     /// AI context for agent-assisted development
     #[serde(default)]
     pub ai: PluginAiContext,
+    /// Path ownership for manifest-driven plugin detection
+    #[serde(default)]
+    pub paths: PluginPaths,
+    /// Enforcement rules for project structure conventions
+    #[serde(default)]
+    pub enforcement: PluginEnforcement,
 }
 
 /// Basic plugin information
@@ -144,6 +150,86 @@ pub struct PluginAiContext {
     /// Constraints or rules that AI agents should follow when generating code for this plugin
     #[serde(default)]
     pub constraints: Vec<String>,
+}
+
+/// Path ownership for manifest-driven plugin detection
+///
+/// When `implicit_import` is true, the compiler will automatically activate
+/// this plugin for files located in any of the `owns` directories.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginPaths {
+    /// Directories this plugin owns (e.g., ["app/backend/", "app/backend/api/"])
+    #[serde(default)]
+    pub owns: Vec<String>,
+    /// Whether to auto-create owned directories when compiling
+    #[serde(default)]
+    pub auto_create: bool,
+    /// File patterns this plugin applies to (e.g., ["*.cln"])
+    #[serde(default)]
+    pub patterns: Vec<String>,
+    /// Whether files in owned paths should implicitly import this plugin
+    #[serde(default)]
+    pub implicit_import: bool,
+}
+
+/// Enforcement rules for project structure conventions
+///
+/// Plugins can declare rules that the compiler will check during compilation.
+/// Rules can emit warnings or errors depending on the `severity` level.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginEnforcement {
+    /// "warn" for diagnostic warnings, "error" for compile errors
+    #[serde(default = "default_enforcement_severity")]
+    pub severity: String,
+    /// Functions that should not be called directly (use DSL blocks instead)
+    #[serde(default)]
+    pub restricted_functions: Vec<RestrictedFunction>,
+    /// Blocks required when a file is in a specific folder
+    #[serde(default)]
+    pub required_blocks: Vec<RequiredBlock>,
+    /// Blocks that should only appear in specific folders
+    #[serde(default)]
+    pub block_folder_rules: Vec<BlockFolderRule>,
+}
+
+fn default_enforcement_severity() -> String {
+    "warn".to_string()
+}
+
+/// A function that plugins restrict from direct use
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestrictedFunction {
+    /// The raw bridge function name (e.g., "_http_route")
+    pub name: String,
+    /// What to use instead (e.g., "endpoints:")
+    pub use_instead: String,
+    /// Human-readable message explaining the restriction
+    #[serde(default)]
+    pub message: String,
+}
+
+/// A block required when a file is in a specific folder
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequiredBlock {
+    /// Folder path pattern (e.g., "app/backend/api/")
+    pub folder: String,
+    /// Required block name (e.g., "endpoints")
+    pub block: String,
+    /// Human-readable message
+    #[serde(default)]
+    pub message: String,
+}
+
+/// A rule restricting where a block can appear
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockFolderRule {
+    /// Block name (e.g., "endpoints")
+    pub block: String,
+    /// Allowed folder paths (e.g., ["app/backend/", "app/server/"])
+    pub allowed_in: Vec<String>,
+    /// Human-readable message
+    #[serde(default)]
+    pub message: String,
 }
 
 /// Bridge section in plugin.toml

@@ -75,6 +75,7 @@
 
 mod app_config;
 mod discovery;
+pub mod enforcement;
 mod expander;
 pub mod language_registry;
 pub mod plugin_abi;

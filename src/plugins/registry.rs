@@ -149,6 +149,8 @@ pub struct PluginRegistry {
     /// Bridge functions from all loaded plugins
     /// These are functions that plugins expect the runtime to provide (e.g., _db_query)
     bridge_functions: Vec<BridgeFunction>,
+    /// Full plugin manifests for enforcement rules and path detection
+    manifests: HashMap<String, crate::plugins::plugin_abi::PluginManifest>,
 }
 
 impl Default for PluginRegistry {
@@ -170,6 +172,7 @@ impl PluginRegistry {
             handlers: HashMap::new(),
             registered_plugins: Vec::new(),
             bridge_functions: Vec::new(),
+            manifests: HashMap::new(),
         }
     }
 
@@ -367,6 +370,13 @@ impl PluginRegistry {
     /// Get a bridge function by name
     pub fn get_bridge_function(&self, name: &str) -> Option<&BridgeFunction> {
         self.bridge_functions.iter().find(|f| f.name == name)
+    }
+
+    /// Get all loaded plugin manifests
+    ///
+    /// Returns the full manifests for enforcement rules, path detection, etc.
+    pub fn loaded_manifests(&self) -> &HashMap<String, crate::plugins::plugin_abi::PluginManifest> {
+        &self.manifests
     }
 
     // ========================================================================
@@ -587,6 +597,7 @@ impl fmt::Debug for PluginRegistry {
 pub struct PluginRegistryBuilder {
     plugins: Vec<Arc<dyn FrameworkPlugin>>,
     bridge_functions: Vec<BridgeFunction>,
+    manifests: HashMap<String, crate::plugins::plugin_abi::PluginManifest>,
 }
 
 impl PluginRegistryBuilder {
@@ -595,6 +606,7 @@ impl PluginRegistryBuilder {
         Self {
             plugins: Vec::new(),
             bridge_functions: Vec::new(),
+            manifests: HashMap::new(),
         }
     }
 
@@ -653,6 +665,23 @@ impl PluginRegistryBuilder {
         self
     }
 
+    /// Add a full plugin manifest for enforcement and path detection
+    ///
+    /// # Arguments
+    /// * `name` - Plugin name
+    /// * `manifest` - The full plugin manifest
+    ///
+    /// # Returns
+    /// Self for method chaining
+    pub fn add_manifest(
+        mut self,
+        name: String,
+        manifest: crate::plugins::plugin_abi::PluginManifest,
+    ) -> Self {
+        self.manifests.insert(name, manifest);
+        self
+    }
+
     /// Build the immutable plugin registry
     ///
     /// This validates that there are no block type conflicts between plugins.
@@ -702,6 +731,7 @@ impl PluginRegistryBuilder {
             handlers,
             registered_plugins,
             bridge_functions: self.bridge_functions,
+            manifests: self.manifests,
         })
     }
 }

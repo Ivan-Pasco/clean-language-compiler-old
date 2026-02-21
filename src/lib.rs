@@ -516,7 +516,43 @@ pub fn compile_with_plugins_and_opt_level(
         "Stage 2 complete: AST created"
     );
 
-    // Stage 2.5: Plugin Expansion - transform framework blocks into Clean AST
+    // Stage 2.5a: Plugin Enforcement - check project structure conventions
+    {
+        let enforcement_rules: Vec<(String, plugins::plugin_abi::PluginEnforcement)> = registry
+            .loaded_manifests()
+            .iter()
+            .filter(|(_, m)| {
+                !m.enforcement.restricted_functions.is_empty()
+                    || !m.enforcement.required_blocks.is_empty()
+                    || !m.enforcement.block_folder_rules.is_empty()
+            })
+            .map(|(name, m)| (name.clone(), m.enforcement.clone()))
+            .collect();
+
+        if !enforcement_rules.is_empty() {
+            let enforcement_result =
+                plugins::enforcement::enforce_rules(&parsed_ast, file_path, &enforcement_rules);
+
+            for warning in &enforcement_result.warnings {
+                eprintln!(
+                    "warning[{}]: {} ({})",
+                    warning.plugin, warning.message, warning.suggestion
+                );
+            }
+            if !enforcement_result.errors.is_empty() {
+                return Err(enforcement_result
+                    .errors
+                    .into_iter()
+                    .map(|e| CompilerError::PluginError {
+                        message: format!("{} ({})", e.message, e.suggestion),
+                        location: None,
+                    })
+                    .collect());
+            }
+        }
+    }
+
+    // Stage 2.5b: Plugin Expansion - transform framework blocks into Clean AST
     tracing::debug!("Starting Stage 2.5: Plugin Expansion");
     use crate::plugins::PluginExpander;
     let mut expander = PluginExpander::new(registry);
@@ -1010,6 +1046,41 @@ fn detect_plugins_from_path<P: AsRef<std::path::Path>>(file_path: P) -> Vec<Stri
     }
 
     plugins
+}
+
+/// Auto-detect plugins using loaded plugin manifests.
+///
+/// Uses `[paths]` section from plugin.toml files to determine which plugins
+/// should be activated for a given file path, based on the plugin's `owns`
+/// directories and `implicit_import` flag.
+///
+/// Falls back to `detect_plugins_from_path()` if no manifests provide matches.
+#[allow(dead_code)]
+fn detect_plugins_from_manifests<P: AsRef<std::path::Path>>(
+    file_path: P,
+    manifests: &std::collections::HashMap<String, plugins::plugin_abi::PluginManifest>,
+) -> Vec<String> {
+    let path_str = file_path.as_ref().to_string_lossy();
+    let mut result = Vec::new();
+
+    for (name, manifest) in manifests {
+        if manifest.paths.implicit_import {
+            for owned_path in &manifest.paths.owns {
+                if path_str.contains(owned_path.as_str()) {
+                    result.push(name.clone());
+                    break;
+                }
+            }
+        }
+    }
+
+    // Fall back to hardcoded detection if no manifests matched
+    if result.is_empty() {
+        return detect_plugins_from_path(file_path);
+    }
+
+    result.dedup();
+    result
 }
 
 /// Compiles a multi-file Clean Language program from an entry file
