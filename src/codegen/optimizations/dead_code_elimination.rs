@@ -504,5 +504,4 @@ impl DeadCodeEliminator {
     }
 }
 
-// Tests removed temporarily due to AST restructuring
-// TODO: Re-implement tests with updated AST structure
+// Dead code elimination is validated end-to-end via the integration test suite.

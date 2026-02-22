@@ -6326,11 +6326,6 @@ impl CodeGenerator {
         // Get the current function index (this will be the index for the new function)
         let function_index = self.function_count;
 
-        // DEBUG: Print function registration info for function 75
-        if function_index == 75 {
-            // println!("DEBUG: Function index 75 is '{name}'");
-        }
-
         // Register with instruction_generator for internal tracking
         // Pass the function_index so InstructionGenerator uses the same index
         self.instruction_generator.register_function(
@@ -6394,72 +6389,6 @@ impl CodeGenerator {
     ) -> Result<u32, CompilerError> {
         // Get the current function index (this will be the index for the new function)
         let function_index = self.function_count;
-
-        // DEBUG: Print function registration info for function 75
-        if function_index == 75 {
-            // println!("DEBUG: Function index 75 is '{name}'");
-        }
-
-        // DEBUG: Print function registration info for function 183
-        if function_index == 183 {
-            // println!("DEBUG: Function index 183 is '{name}'");
-        }
-
-        // DEBUG: Print function registration info for function 253
-        if function_index == 253 {
-            // println!("DEBUG: Function index 253 is '{name}'");
-        }
-
-        // DEBUG: Print function registration info for function 267
-        if function_index == 267 {
-            // println!("DEBUG: Function index 267 is '{name}'");
-        }
-
-        // DEBUG: Print function registration info for function 249
-        if function_index == 249 {
-            // println!("DEBUG: Function index 249 is '{name}' with params={params:?} return_type={return_type:?}");
-            // println!("DEBUG: Function 249 instructions: {instructions:?}");
-        }
-
-        // DEBUG: Print function registration info for function 268
-        if function_index == 268 {
-            // println!("DEBUG: Function index 268 is '{name}'");
-        }
-
-        // DEBUG: Print function registration info for function 269
-        if function_index == 269 {
-            // println!("DEBUG: Function index 269 is '{name}'");
-        }
-
-        // DEBUG: Print function registration info for function 272
-        if function_index == 272 {
-            // println!("DEBUG: Function index 272 is '{name}'");
-        }
-
-        // DEBUG: Print function registration info for function 277
-        if function_index == 277 {
-            // println!("DEBUG: Function index 277 is '{name}'");
-        }
-
-        // DEBUG: Print function registration info for function 278
-        if function_index == 278 {
-            // println!("DEBUG: Function index 278 is '{name}'");
-        }
-
-        // DEBUG: Print function registration info for function 284
-        if function_index == 284 {
-            // println!("DEBUG: Function index 284 is '{name}'");
-        }
-
-        // DEBUG: Print function registration info for function 286
-        if function_index == 286 {
-            // println!("DEBUG: Function index 286 is '{name}'");
-        }
-
-        // DEBUG: Print function registration info for function 295
-        if function_index == 295 {
-            // println!("DEBUG: Function index 295 is '{name}'");
-        }
 
         // Register with instruction_generator for internal tracking
         // Pass the function_index so InstructionGenerator uses the same index
@@ -6640,8 +6569,8 @@ impl CodeGenerator {
         // Add the try block instructions directly
         instructions.extend(try_instructions);
 
-        // TODO: Implement proper exception handling when WASM exception handling is stable
-        // For now, we just execute the try block and ignore the catch block
+        // WASM exception handling proposal is not yet stable. The try block executes
+        // directly; catch blocks are parsed but not emitted as WASM try-catch.
 
         Ok(())
     }

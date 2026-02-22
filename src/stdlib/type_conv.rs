@@ -124,58 +124,35 @@ impl TypeConvOperations {
             self.generate_parse_bool_function(),
         )?;
 
-        // Boolean to string conversion - required for .toString() method calls
-        register_stdlib_function(
-            codegen,
-            "bool_to_string",
-            &params_to_types(&[(WasmType::I32, "value".to_string())]),
-            Some(WasmType::I32),
-            self.generate_bool_to_string_function(),
-        )?;
+        // NOTE: bool_to_string is registered as a NATIVE function with alias in mod.rs
+        // (register_memory_operations → __bool_to_string → alias "bool_to_string").
+        // Do NOT register a stub here — it would shadow the native implementation that uses
+        // properly allocated memory addresses for "true" and "false" strings.
 
-        // Integer to string conversion - DISABLED: use host import instead
-        // The int_to_string function is imported from the host environment in register_type_conversion_imports()
-        // register_stdlib_function(
-        //     codegen,
-        //     "int_to_string",
-        //     &params_to_types(&[(WasmType::I32, "value".to_string())]),
-        //     Some(WasmType::I32),
-        //     self.generate_int_to_string_function(),
-        // )?;
+        // NOTE: int_to_string is registered as a NATIVE function with alias in mod.rs.
+        // Do NOT register it here.
 
-        // Float to string conversion - DISABLED to use host function instead
-        // register_stdlib_function(
-        //     codegen,
-        //     "float_to_string",
-        //     &params_to_types(&[(WasmType::F64, "value".to_string())]),
-        //     Some(WasmType::I32),
-        //     self.generate_float_to_string_function(),
-        // )?;
+        // NOTE: float_to_string is registered as a HOST IMPORT by builtin_generator.rs.
+        // Do NOT register a stub here.
 
-        // Add a separate number_to_string for explicit F64 conversion
-        register_stdlib_function(
-            codegen,
-            "number_to_string",
-            &params_to_types(&[(WasmType::F64, "value".to_string())]),
-            Some(WasmType::I32),
-            self.generate_float_to_string_function(),
-        )?;
+        // number_to_string: alias to float_to_string (the host import for F64 → string).
+        // This is what the semantic layer and resolver call when converting a number to string.
+        // By aliasing rather than registering a new stub function, we ensure the correct
+        // host implementation is called at runtime.
+        if let Some(float_to_string_idx) = codegen.get_function_index("float_to_string") {
+            codegen.add_function_alias("number_to_string", float_to_string_idx);
+        }
+        // Fallback: also try number.toString (registered by builtin_generator.rs)
+        else if let Some(num_tostring_idx) = codegen.get_function_index("number.toString") {
+            codegen.add_function_alias("number_to_string", num_tostring_idx);
+        }
 
-        register_stdlib_function(
-            codegen,
-            "string_to_int",
-            &params_to_types(&[(WasmType::I32, "str_ptr".to_string())]),
-            Some(WasmType::I32),
-            self.generate_string_to_int_function(),
-        )?;
+        // NOTE: string_to_int is registered as a NATIVE function with alias in mod.rs
+        // (register_memory_operations → __string_to_int → alias "string_to_int").
+        // Do NOT register a stub here — it would shadow the native decimal string parser.
 
-        register_stdlib_function(
-            codegen,
-            "string_to_float",
-            &params_to_types(&[(WasmType::I32, "str_ptr".to_string())]),
-            Some(WasmType::F64),
-            self.generate_string_to_float_function(),
-        )?;
+        // NOTE: string_to_float is registered as a HOST IMPORT by builtin_generator.rs.
+        // Do NOT register a stub here — it would shadow the host implementation.
 
         // Register float_to_int function
         register_stdlib_function(
@@ -367,52 +344,6 @@ impl TypeConvOperations {
         ]
     }
 
-    fn generate_bool_to_string_function(&self) -> Vec<Instruction> {
-        // Convert boolean to string - return proper string pointers
-        // Parameters: boolean_value (i32)
-        // Returns: string pointer (i32)
-
-        vec![
-            // Load the boolean value
-            Instruction::LocalGet(0),
-            // Check if true (non-zero) or false (zero)
-            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-            // True case: return pointer to "true" string
-            Instruction::I32Const(300), // Pointer to pre-allocated "true" string
-            Instruction::Else,
-            // False case: return pointer to "false" string
-            Instruction::I32Const(320), // Pointer to pre-allocated "false" string
-            Instruction::End,
-        ]
-    }
-
-    #[allow(dead_code)]
-    fn generate_int_to_string_function(&self) -> Vec<Instruction> {
-        // DEPRECATED: This function is no longer used.
-        // Integer to string conversion is now handled by the host import function
-        // in register_type_conversion_imports() which delegates to the runtime.
-        //
-        // This function was a placeholder that only handled hardcoded values
-        // and caused the integer printing bug where all non-hardcoded integers
-        // printed as "42".
-
-        vec![
-            // Placeholder implementation - should never be called
-            Instruction::I32Const(320), // Return "42" - indicates this shouldn't be used
-        ]
-    }
-
-    fn generate_float_to_string_function(&self) -> Vec<Instruction> {
-        // SIMPLIFIED: Convert float to string - return fixed pointer
-        // Parameters: float_value (f64)
-        // Returns: string pointer (i32)
-
-        vec![
-            // Return the actual address where "3.14" was allocated
-            Instruction::I32Const(340), // Return pointer to "3.14" (non-overlapping)
-        ]
-    }
-
     fn generate_float_to_int_function(&self) -> Vec<Instruction> {
         vec![
             // Load the float argument
@@ -428,24 +359,6 @@ impl TypeConvOperations {
             Instruction::LocalGet(0),
             // Convert to float using convert instruction
             Instruction::F64ConvertI32S,
-        ]
-    }
-
-    fn generate_string_to_int_function(&self) -> Vec<Instruction> {
-        // SIMPLIFIED: Convert string to int - just return 3 for now
-        // Parameters: string_ptr (i32)
-        // Returns: 3 (i32) as default value (simplified to avoid control flow issues)
-        vec![
-            Instruction::I32Const(3), // Return 3 as default
-        ]
-    }
-
-    fn generate_string_to_float_function(&self) -> Vec<Instruction> {
-        // SIMPLIFIED: Convert string to float - just return 2.0 for now
-        // Parameters: string_ptr (i32)
-        // Returns: 2.0 (f64) as default value (simplified to avoid control flow issues)
-        vec![
-            Instruction::F64Const(2.0), // Return 2.0 as default
         ]
     }
 

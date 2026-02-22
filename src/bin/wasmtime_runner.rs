@@ -1296,6 +1296,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
+    // Add list.push_f64: pushes an f64 element to a list
+    // Parameters: (array_ptr: i32, value: f64) -> i32 (new array pointer or same)
+    // List memory layout: [length(4), capacity(4), type_id(4), flags(4), data...]
+    linker.func_wrap(
+        "env",
+        "list.push_f64",
+        |mut caller: Caller<'_, ()>, array_ptr: i32, value: f64| -> i32 {
+            let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+                mem
+            } else {
+                eprintln!("[list.push_f64: no memory export]");
+                return array_ptr;
+            };
+
+            let data = memory.data(&caller);
+            let ptr = array_ptr as usize;
+
+            if ptr + 16 > data.len() {
+                eprintln!("[list.push_f64: invalid pointer {}]", array_ptr);
+                return array_ptr;
+            }
+
+            // Read length from offset 0
+            let length =
+                u32::from_le_bytes([data[ptr], data[ptr + 1], data[ptr + 2], data[ptr + 3]])
+                    as usize;
+            // Read capacity from offset 4
+            let _capacity =
+                u32::from_le_bytes([data[ptr + 4], data[ptr + 5], data[ptr + 6], data[ptr + 7]])
+                    as usize;
+
+            // Data starts at offset 16, each f64 element is 8 bytes
+            let data_offset = ptr + 16;
+            let element_offset = data_offset + length * 8;
+
+            if element_offset + 8 > data.len() {
+                eprintln!("[list.push_f64: out of memory bounds]");
+                return array_ptr;
+            }
+
+            // Write the f64 value
+            let data_mut = memory.data_mut(&mut caller);
+            let bytes = value.to_le_bytes();
+            data_mut[element_offset..element_offset + 8].copy_from_slice(&bytes);
+
+            // Increment length
+            let new_length = (length + 1) as u32;
+            data_mut[ptr..ptr + 4].copy_from_slice(&new_length.to_le_bytes());
+
+            array_ptr
+        },
+    )?;
+
     // Instantiate the module
     let instance = linker.instantiate(&mut store, &module)?;
 

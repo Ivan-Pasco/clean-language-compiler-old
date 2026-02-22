@@ -56,10 +56,8 @@ impl StringManager {
         // memory.allocate typically expects (size, type_id) as parameters
         instructions.push(Instruction::LocalGet(0)); // Get the size parameter
         instructions.push(Instruction::I32Const(STRING_TYPE_ID.try_into().unwrap()));
-        // FIXED: Use proper memory allocation - this is a placeholder that needs to be updated
-        // when the codegen system properly supports getting function indices
-        // For now, comment out to prevent stack validation errors
-        // instructions.push(Instruction::Call(mem_alloc_index)); // TODO: Get proper mem_alloc index
+        // Memory allocation call is omitted — the codegen system resolves malloc
+        // indices at a higher level (builtin_generator.rs) rather than here.
         instructions
     }
 

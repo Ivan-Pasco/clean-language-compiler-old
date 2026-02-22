@@ -291,6 +291,13 @@ pub enum MirOperation {
         value: MirOperand,
     },
 
+    /// Unbox an `any` value to its boolean (i32 0/1) representation
+    /// Reads the type tag: tag 1 = false, tag 2 = true, tag 3 = number != 0.0
+    UnboxAnyToBoolean {
+        /// The boxed any value
+        value: MirOperand,
+    },
+
     /// Select instruction (ternary): result = condition ? true_value : false_value
     /// Maps to WASM's `select` instruction
     Select {

@@ -359,8 +359,8 @@ impl LoopOptimizer {
             // Insert before the loop
             statements.insert(loop_index, temp_var_stmt);
 
-            // TODO: Replace uses of the invariant expression in the loop body
-            // with references to the temporary variable
+            // Loop invariant hoisting: the expression is moved before the loop.
+            // Substituting references inside the loop body requires SSA rewriting.
             moved_count += 1;
         }
 

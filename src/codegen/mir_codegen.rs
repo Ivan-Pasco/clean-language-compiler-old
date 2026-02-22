@@ -392,6 +392,23 @@ impl MirCodeGenerator<'_> {
                 debug_mir!("DEBUG MIR: External function imports registered");
             }
 
+            // CRITICAL FIX: Pre-register list.push_f64 as an import BEFORE any local functions.
+            // In WASM binary format, all imports must come before local functions in the index space.
+            // If this import is registered after local functions start (e.g., in register_list_operations),
+            // it causes a function index mismatch: the compiler assigns one index but the WASM binary
+            // assigns a different one, leading to type mismatch validation errors.
+            {
+                use crate::types::WasmType;
+                self.wasm_generator
+                    .register_import_function(
+                        "env",
+                        "list.push_f64",
+                        &[WasmType::I32, WasmType::F64],
+                        Some(WasmType::I32),
+                    )
+                    .map_err(|e| vec![e])?;
+                debug_mir!("DEBUG MIR: Pre-registered list.push_f64 import");
+            }
             // CRITICAL: Register math operations (abs, max, min, sqrt, pow, etc.)
             debug_mir!("DEBUG MIR: Registering math operation imports");
             self.wasm_generator
@@ -3186,6 +3203,35 @@ impl MirCodeGenerator<'_> {
                     // No destination - drop the unboxed value to avoid stack pollution
                     self.current_instructions.push(Instruction::Drop);
                     debug_mir!("UnboxAnyToF64: No destination, dropped result");
+                }
+            }
+
+            MirOperation::UnboxAnyToBoolean { value } => {
+                debug_mir!(?value, "Processing UnboxAnyToBoolean");
+
+                // Load the boxed any pointer onto the stack
+                self.load_operand(value)?;
+
+                // Boxed Any layout: [type_tag: i32 @ offset 0] [value: i32/f64 @ offset 4]
+                // Type tags: 1 = false, 2 = true, 3 = number, 4 = string, 5 = array, 6 = object
+                // For boolean: tag == 2 means true (return 1), anything else involving tag 1 = false
+                // Simple approach: read tag, check if tag == 2
+                self.current_instructions
+                    .push(Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+                self.current_instructions.push(Instruction::I32Const(2));
+                self.current_instructions.push(Instruction::I32Eq);
+                // Result: 1 if tag was 2 (true), 0 otherwise (including tag 1 = false)
+
+                if let Some(dest) = instruction.dest {
+                    self.store_to_local(dest)?;
+                    debug_mir!("UnboxAnyToBoolean completed successfully");
+                } else {
+                    self.current_instructions.push(Instruction::Drop);
+                    debug_mir!("UnboxAnyToBoolean: No destination, dropped result");
                 }
             }
 

@@ -482,6 +482,9 @@ impl DeadCodeEliminationPass {
             MirOperation::UnboxAnyToF64 { value } => {
                 self.mark_operand_live(value, function);
             }
+            MirOperation::UnboxAnyToBoolean { value } => {
+                self.mark_operand_live(value, function);
+            }
             MirOperation::Store { .. } => {
                 // Store is handled separately in optimize_function
             }

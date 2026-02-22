@@ -3628,6 +3628,40 @@ impl MirBuilder {
                     return Ok(result_id);
                 }
 
+                // Handle Any.toBoolean() EARLY for chained calls like p.bool.toBoolean()
+                // The boxed Any value has type tag at offset 0: tag 1=false, tag 2=true.
+                // We use UnboxAnyToBoolean to correctly read the tag and return 0 or 1.
+                if matches!(&receiver_actual_type, ConcreteType::Any) && method_name == "toBoolean"
+                {
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        MirType::I32,
+                        expression.location.clone(),
+                    );
+
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::UnboxAnyToBoolean {
+                            value: MirOperand::Value(receiver_id),
+                        },
+                        location: expression.location.clone(),
+                    };
+
+                    self.add_instruction(context, instruction);
+
+                    trace!(
+                        result_id = ?result_id,
+                        receiver_id = ?receiver_id,
+                        "Any.toBoolean() with UnboxAnyToBoolean operation (early detection)"
+                    );
+
+                    return Ok(result_id);
+                }
+
                 // CRITICAL FIX: Handle Array/List methods FIRST, regardless of method_symbol
                 // These methods have non-zero method_symbol (e.g., 103) but need special handling
                 // to use the correct stdlib function indices
