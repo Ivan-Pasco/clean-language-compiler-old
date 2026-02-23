@@ -1,0 +1,35 @@
+// Spec Section: 6.1 - String Operations
+// Tests: String replace method (instance method)
+// Requirement: .replace() string method
+
+start:
+	// Test case 1: Basic replace
+	string s = "hello world"
+	string r1 = s.replace("world", "clean")
+	printl(r1)
+	// Expected: hello clean
+
+	// Test case 2: Multiple occurrences (replaces all)
+	string r2 = "aabaa".replace("a", "x")
+	printl(r2)
+	// Expected: xxbxx
+
+	// Test case 3: No match
+	string r3 = s.replace("xyz", "abc")
+	printl(r3)
+	// Expected: hello world
+
+	// Test case 4: Replace with empty string (deletion)
+	string r4 = "hello world".replace(" world", "")
+	printl(r4)
+	// Expected: hello
+
+	// Test case 5: Chained replacements (HTML escaping use case)
+	string html = "<div>&"
+	html = html.replace("&", "&amp;")
+	html = html.replace("<", "&lt;")
+	html = html.replace(">", "&gt;")
+	printl(html)
+	// Expected: &lt;div&gt;&amp;
+
+	printl("String replace tests completed")
