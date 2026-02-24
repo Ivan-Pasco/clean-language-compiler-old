@@ -16,6 +16,33 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Derive a unique module name from a companion file path relative to the pages directory.
+///
+/// Examples:
+/// - `app/pages/dashboard.cln` → `pages_dashboard`
+/// - `app/pages/blog/[slug].cln` → `pages_blog_slug`
+fn derive_companion_module_name(path: &Path, base_dir: &Path) -> String {
+    let relative = path.strip_prefix(base_dir).unwrap_or(path);
+    relative
+        .to_str()
+        .unwrap_or("")
+        .trim_end_matches(".cln")
+        .replace('/', "_")
+        .replace('[', "")
+        .replace(']', "")
+}
+
+/// Prefix companion functions with the module name to avoid conflicts.
+///
+/// Transforms `any guard()` → `any {module}_guard()` and `any load()` → `any {module}_load()`.
+fn prefix_companion_functions(source: &str, module_name: &str) -> String {
+    source
+        .replace("any guard(", &format!("any {}_guard(", module_name))
+        .replace("any load(", &format!("any {}_load(", module_name))
+        .replace("guard()", &format!("{}_guard()", module_name))
+        .replace("load()", &format!("{}_load()", module_name))
+}
+
 /// Represents an extracted import with additional metadata
 #[derive(Debug, Clone)]
 struct ExtractedImport {
@@ -137,19 +164,37 @@ impl MultiFileCompilerConfig {
 
 /// Represents an HTML page discovered during compilation
 ///
-/// Pages use the `.html.cln` extension to indicate they should be processed
-/// by the Clean Language compiler. Regular `.html` files are static and
-/// served as-is without processing.
+/// Pages are `.html` files optionally paired with a companion `.cln` file
+/// that provides server-side logic (guard, load functions).
 #[derive(Debug, Clone)]
 pub struct HtmlPage {
-    /// File path to the HTML page (.html.cln file)
+    /// File path to the HTML page (.html file)
     pub file_path: PathBuf,
-    /// Route path derived from file path (e.g., "/blog/[slug].html.cln" -> "/blog/:slug")
+    /// Route path derived from file path (e.g., "/blog/[slug].html" -> "/blog/:slug")
     pub route_path: String,
     /// Raw HTML content
     pub html_content: String,
     /// Page metadata (title, layout, etc.)
     pub metadata: HtmlPageMetadata,
+    /// Optional companion .cln file with guard/load functions
+    pub companion: Option<CompanionFile>,
+}
+
+/// Companion .cln file paired with an HTML page
+///
+/// Provides server-side logic: guard() for auth checks and load() for data fetching.
+#[derive(Debug, Clone)]
+pub struct CompanionFile {
+    /// Path to the companion .cln file
+    pub file_path: PathBuf,
+    /// Raw source code of the companion file
+    pub source: String,
+    /// Whether the companion defines a guard() function
+    pub has_guard: bool,
+    /// Whether the companion defines a load() function
+    pub has_load: bool,
+    /// Unique module name derived from path (e.g., "pages_dashboard")
+    pub module_name: String,
 }
 
 /// Metadata extracted from HTML page
@@ -445,17 +490,13 @@ impl MultiFileCompiler {
                 // Recurse into subdirectories
                 let mut sub_pages = self.scan_html_files(&path, base_dir)?;
                 pages.append(&mut sub_pages);
-            } else if self.is_html_cln_file(&path) {
-                // Process .html.cln file (pages that need Clean Language processing)
-                // Regular .html files are static and not processed here
-                match self.process_html_file(&path, base_dir) {
+            } else if self.is_html_page_file(&path) {
+                // Process .html file — check for companion .cln file
+                let companion = self.find_companion_file(&path, base_dir);
+                match self.process_html_file(&path, base_dir, companion) {
                     Ok(page) => pages.push(page),
                     Err(e) => {
-                        tracing::warn!(
-                            "Failed to process .html.cln file {}: {:?}",
-                            path.display(),
-                            e
-                        );
+                        tracing::warn!("Failed to process HTML page {}: {:?}", path.display(), e);
                     }
                 }
             }
@@ -464,20 +505,49 @@ impl MultiFileCompiler {
         Ok(pages)
     }
 
-    /// Check if a file has the .html.cln extension
-    ///
-    /// Only .html.cln files are processed by the compiler.
-    /// Regular .html files are static and served as-is.
-    fn is_html_cln_file(&self, path: &Path) -> bool {
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        file_name.ends_with(".html.cln")
+    /// Check if a file is an HTML page (.html extension)
+    fn is_html_page_file(&self, path: &Path) -> bool {
+        path.extension().map_or(false, |ext| ext == "html")
     }
 
-    /// Process a single .html.cln file into an HtmlPage
+    /// Look for a companion .cln file for the given .html file
+    fn find_companion_file(&self, html_path: &Path, base_dir: &Path) -> Option<CompanionFile> {
+        let companion_path = html_path.with_extension("cln");
+        if !companion_path.exists() {
+            return None;
+        }
+
+        let source = match fs::read_to_string(&companion_path) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to read companion file {}: {}",
+                    companion_path.display(),
+                    e
+                );
+                return None;
+            }
+        };
+
+        let has_guard = source.contains("any guard(") || source.contains("guard()");
+        let has_load = source.contains("any load(") || source.contains("load()");
+        let module_name = derive_companion_module_name(&companion_path, base_dir);
+
+        Some(CompanionFile {
+            file_path: companion_path,
+            source,
+            has_guard,
+            has_load,
+            module_name,
+        })
+    }
+
+    /// Process a single .html file into an HtmlPage
     fn process_html_file(
         &self,
         file_path: &Path,
         base_dir: &Path,
+        companion: Option<CompanionFile>,
     ) -> Result<HtmlPage, CompilerError> {
         let html_content = fs::read_to_string(file_path).map_err(|e| {
             CompilerError::io_error(
@@ -498,11 +568,12 @@ impl MultiFileCompiler {
             route_path,
             html_content,
             metadata,
+            companion,
         })
     }
 
     /// Convert file path to route path
-    /// e.g., /pages/blog/[slug].html.cln -> /blog/:slug
+    /// e.g., /pages/blog/[slug].html -> /blog/:slug
     fn file_path_to_route(&self, file_path: &Path, base_dir: &Path) -> String {
         let relative = file_path.strip_prefix(base_dir).unwrap_or(file_path);
 
@@ -513,12 +584,12 @@ impl MultiFileCompiler {
                 let name_str = name.to_string_lossy();
 
                 // Skip index files at the route level
-                if name_str == "index.html.cln" {
+                if name_str == "index.html" {
                     continue;
                 }
 
-                // Remove .html.cln extension (processed pages)
-                let name_str = name_str.trim_end_matches(".html.cln");
+                // Remove .html extension
+                let name_str = name_str.trim_end_matches(".html");
 
                 // Convert [param] to :param
                 let route_segment = if name_str.starts_with('[') && name_str.ends_with(']') {
@@ -815,6 +886,14 @@ impl MultiFileCompiler {
         let render_body = self.html_to_render_body(&page.html_content, registry);
         code.push_str(&render_body);
 
+        // If companion file exists, include prefixed functions after the class
+        if let Some(ref companion) = page.companion {
+            code.push_str("\n\n");
+            let prefixed_source =
+                prefix_companion_functions(&companion.source, &companion.module_name);
+            code.push_str(&prefixed_source);
+        }
+
         Ok(code)
     }
 
@@ -957,6 +1036,25 @@ impl MultiFileCompiler {
         for (i, page) in pages.iter().enumerate() {
             let class_name = self.route_to_class_name(&page.route_path);
             combined.push_str(&format!("\tstring __route_handler_{}()\n", i));
+
+            // If companion has guard, call it before rendering
+            if let Some(ref companion) = page.companion {
+                if companion.has_guard {
+                    combined.push_str(&format!(
+                        "\t\tany guard_result = {}_guard()\n",
+                        companion.module_name
+                    ));
+                    combined.push_str("\t\tif guard_result != null\n");
+                    combined.push_str("\t\t\treturn \"\"\n");
+                }
+                if companion.has_load {
+                    combined.push_str(&format!(
+                        "\t\tany data = {}_load()\n",
+                        companion.module_name
+                    ));
+                }
+            }
+
             combined.push_str(&format!("\t\t{} page = {}()\n", class_name, class_name));
             combined.push_str("\t\treturn page.render()\n\n");
         }
@@ -1551,57 +1649,68 @@ start:
         let compiler = MultiFileCompiler::new();
         let base = Path::new("/project/pages");
 
-        // Basic routes (using .html.cln extension for processed pages)
+        // Basic routes (using .html extension for pages)
         assert_eq!(
-            compiler.file_path_to_route(Path::new("/project/pages/index.html.cln"), base),
+            compiler.file_path_to_route(Path::new("/project/pages/index.html"), base),
             "/"
         );
         assert_eq!(
-            compiler.file_path_to_route(Path::new("/project/pages/about.html.cln"), base),
+            compiler.file_path_to_route(Path::new("/project/pages/about.html"), base),
             "/about"
         );
         assert_eq!(
-            compiler.file_path_to_route(Path::new("/project/pages/blog/index.html.cln"), base),
+            compiler.file_path_to_route(Path::new("/project/pages/blog/index.html"), base),
             "/blog"
         );
 
         // Nested routes
         assert_eq!(
-            compiler.file_path_to_route(Path::new("/project/pages/blog/post.html.cln"), base),
+            compiler.file_path_to_route(Path::new("/project/pages/blog/post.html"), base),
             "/blog/post"
         );
 
         // Dynamic routes
         assert_eq!(
-            compiler.file_path_to_route(Path::new("/project/pages/blog/[slug].html.cln"), base),
+            compiler.file_path_to_route(Path::new("/project/pages/blog/[slug].html"), base),
             "/blog/:slug"
         );
         assert_eq!(
-            compiler.file_path_to_route(
-                Path::new("/project/pages/users/[id]/profile.html.cln"),
-                base
-            ),
+            compiler.file_path_to_route(Path::new("/project/pages/users/[id]/profile.html"), base),
             "/users/:id/profile"
         );
     }
 
     #[test]
-    fn test_is_html_cln_file() {
+    fn test_is_html_page_file() {
         let compiler = MultiFileCompiler::new();
 
-        // Should match .html.cln files
-        assert!(compiler.is_html_cln_file(Path::new("/project/pages/index.html.cln")));
-        assert!(compiler.is_html_cln_file(Path::new("about.html.cln")));
-        assert!(compiler.is_html_cln_file(Path::new("/blog/[slug].html.cln")));
-
-        // Should NOT match regular .html files (static, not processed)
-        assert!(!compiler.is_html_cln_file(Path::new("/project/pages/index.html")));
-        assert!(!compiler.is_html_cln_file(Path::new("static.html")));
+        // Should match .html files
+        assert!(compiler.is_html_page_file(Path::new("/project/pages/index.html")));
+        assert!(compiler.is_html_page_file(Path::new("about.html")));
+        assert!(compiler.is_html_page_file(Path::new("/blog/[slug].html")));
 
         // Should NOT match other extensions
-        assert!(!compiler.is_html_cln_file(Path::new("main.cln")));
-        assert!(!compiler.is_html_cln_file(Path::new("style.css")));
-        assert!(!compiler.is_html_cln_file(Path::new("app.js")));
+        assert!(!compiler.is_html_page_file(Path::new("main.cln")));
+        assert!(!compiler.is_html_page_file(Path::new("style.css")));
+        assert!(!compiler.is_html_page_file(Path::new("app.js")));
+    }
+
+    #[test]
+    fn test_derive_companion_module_name() {
+        let base = Path::new("app/pages");
+
+        assert_eq!(
+            derive_companion_module_name(Path::new("app/pages/dashboard.cln"), base),
+            "dashboard"
+        );
+        assert_eq!(
+            derive_companion_module_name(Path::new("app/pages/blog/post.cln"), base),
+            "blog_post"
+        );
+        assert_eq!(
+            derive_companion_module_name(Path::new("app/pages/blog/[slug].cln"), base),
+            "blog_slug"
+        );
     }
 
     #[test]

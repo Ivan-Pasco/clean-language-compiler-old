@@ -1330,12 +1330,11 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
 
 /// HTML-first compilation configuration
 ///
-/// The HTML-first approach uses `.html.cln` files for pages that need
-/// Clean Language processing. Regular `.html` files are treated as static
-/// content and served as-is without processing.
+/// The HTML-first approach uses `.html` files for pages, optionally paired
+/// with companion `.cln` files that provide server-side logic (guard, load).
 #[derive(Debug, Clone)]
 pub struct HtmlFirstConfig {
-    /// Path to HTML pages directory containing `.html.cln` files (e.g., "app/pages")
+    /// Path to HTML pages directory containing `.html` files (e.g., "app/pages")
     pub pages_dir: std::path::PathBuf,
     /// Path to Clean components directory (e.g., "app/components")
     pub components_dir: std::path::PathBuf,
@@ -1362,13 +1361,10 @@ impl Default for HtmlFirstConfig {
 /// Compile an HTML-first Frame application
 ///
 /// This function:
-/// 1. Scans the pages directory for `.html.cln` files (processed pages)
+/// 1. Scans the pages directory for `.html` files, pairing with companion `.cln` files
 /// 2. Builds a component registry from Clean component files
-/// 3. Generates Clean code from HTML pages
+/// 3. Generates Clean code from HTML pages (including companion guard/load functions)
 /// 4. Compiles the generated code to WebAssembly
-///
-/// Note: Only `.html.cln` files are processed. Regular `.html` files are
-/// treated as static content and are not compiled.
 ///
 /// # Arguments
 /// * `project_dir` - Root directory of the Frame project
@@ -1474,8 +1470,7 @@ pub fn compile_html_first<P: AsRef<std::path::Path>>(
 
 /// Get information about discovered HTML pages without compiling
 ///
-/// Scans for `.html.cln` files (processed pages) in the given directory.
-/// Regular `.html` files are static and not included in the results.
+/// Scans for `.html` pages in the given directory, pairing with companion `.cln` files.
 ///
 /// Useful for build tools and debugging.
 pub fn discover_html_pages<P: AsRef<std::path::Path>>(

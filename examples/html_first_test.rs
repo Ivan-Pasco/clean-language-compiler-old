@@ -3,8 +3,8 @@
 //! Run with: cargo run --example html_first_test
 //!
 //! This test demonstrates the HTML-first compilation feature which:
-//! - Scans for `.html.cln` files (pages that need Clean Language processing)
-//! - Regular `.html` files are static and not processed
+//! - Scans for `.html` pages, pairing with optional companion `.cln` files
+//! - Companion files provide guard() and load() server-side functions
 //! - Builds a component registry from `.cln` component files
 //! - Generates Clean code from HTML pages
 //! - Compiles to WebAssembly
@@ -47,6 +47,12 @@ fn main() {
                 }
                 if !page.metadata.custom_tags.is_empty() {
                     println!("    Custom tags: {:?}", page.metadata.custom_tags);
+                }
+                if let Some(companion) = &page.companion {
+                    println!(
+                        "    Companion: {} (guard={}, load={})",
+                        companion.module_name, companion.has_guard, companion.has_load
+                    );
                 }
             }
         }

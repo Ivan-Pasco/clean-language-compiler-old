@@ -6131,6 +6131,37 @@ impl MirCodeGenerator<'_> {
                 vec![BuiltinType::String],
                 Some(WasmType::I32),
             ),
+            // Response functions
+            // _res_redirect: (string url, integer status_code) -> i32
+            (
+                "_res_redirect",
+                vec![BuiltinType::String, BuiltinType::Integer],
+                Some(WasmType::I32),
+            ),
+            // _res_set_header: (string name, string value) -> i32
+            (
+                "_res_set_header",
+                vec![BuiltinType::String, BuiltinType::String],
+                Some(WasmType::I32),
+            ),
+            // _res_status: (integer code) -> void
+            ("_res_status", vec![BuiltinType::Integer], None),
+            // _http_respond: (integer status, string content_type, string body) -> i32 (ptr)
+            (
+                "_http_respond",
+                vec![
+                    BuiltinType::Integer,
+                    BuiltinType::String,
+                    BuiltinType::String,
+                ],
+                Some(WasmType::I32),
+            ),
+            // _http_redirect: (integer status, string url) -> i32 (ptr)
+            (
+                "_http_redirect",
+                vec![BuiltinType::Integer, BuiltinType::String],
+                Some(WasmType::I32),
+            ),
         ];
 
         for (func_name, param_types, wasm_return) in http_server_functions {

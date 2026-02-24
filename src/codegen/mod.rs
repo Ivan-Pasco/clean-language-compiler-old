@@ -9222,6 +9222,93 @@ impl CodeGenerator {
             self.function_map
                 .insert("_auth_has_any_role".to_string(), self.function_count);
             self.function_count += 1;
+
+            // =========================================
+            // Response functions
+            // =========================================
+
+            // _res_redirect(urlPtr: i32, urlLen: i32, status_code: i32) -> i32
+            let res_redirect_type = self.add_function_type(
+                &[WasmType::I32, WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+            )?;
+            self.import_section.import(
+                "env",
+                "_res_redirect",
+                wasm_encoder::EntityType::Function(res_redirect_type),
+            );
+            self.http_import_indices
+                .insert("_res_redirect".to_string(), self.function_count);
+            self.function_map
+                .insert("_res_redirect".to_string(), self.function_count);
+            self.function_count += 1;
+
+            // _res_set_header(namePtr: i32, nameLen: i32, valuePtr: i32, valueLen: i32) -> i32
+            let res_set_header_type = self.add_function_type(
+                &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+            )?;
+            self.import_section.import(
+                "env",
+                "_res_set_header",
+                wasm_encoder::EntityType::Function(res_set_header_type),
+            );
+            self.http_import_indices
+                .insert("_res_set_header".to_string(), self.function_count);
+            self.function_map
+                .insert("_res_set_header".to_string(), self.function_count);
+            self.function_count += 1;
+
+            // _res_status(code: i32) -> void
+            let res_status_type = self.add_function_type(&[WasmType::I32], None)?;
+            self.import_section.import(
+                "env",
+                "_res_status",
+                wasm_encoder::EntityType::Function(res_status_type),
+            );
+            self.http_import_indices
+                .insert("_res_status".to_string(), self.function_count);
+            self.function_map
+                .insert("_res_status".to_string(), self.function_count);
+            self.function_count += 1;
+
+            // _http_respond(status: i32, content_typePtr: i32, content_typeLen: i32, bodyPtr: i32, bodyLen: i32) -> i32
+            let http_respond_type = self.add_function_type(
+                &[
+                    WasmType::I32,
+                    WasmType::I32,
+                    WasmType::I32,
+                    WasmType::I32,
+                    WasmType::I32,
+                ],
+                Some(WasmType::I32),
+            )?;
+            self.import_section.import(
+                "env",
+                "_http_respond",
+                wasm_encoder::EntityType::Function(http_respond_type),
+            );
+            self.http_import_indices
+                .insert("_http_respond".to_string(), self.function_count);
+            self.function_map
+                .insert("_http_respond".to_string(), self.function_count);
+            self.function_count += 1;
+
+            // _http_redirect(status: i32, urlPtr: i32, urlLen: i32) -> i32
+            let http_redirect_type = self.add_function_type(
+                &[WasmType::I32, WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+            )?;
+            self.import_section.import(
+                "env",
+                "_http_redirect",
+                wasm_encoder::EntityType::Function(http_redirect_type),
+            );
+            self.http_import_indices
+                .insert("_http_redirect".to_string(), self.function_count);
+            self.function_map
+                .insert("_http_redirect".to_string(), self.function_count);
+            self.function_count += 1;
         } // end if include_server_imports
 
         Ok(())

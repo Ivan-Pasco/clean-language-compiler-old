@@ -1312,6 +1312,37 @@ impl SemanticAnalyzer {
             vec![(vec![Type::String], Type::Integer, 1)],
         );
 
+        // Response functions (for sending responses from handlers)
+        // _res_redirect(url: string, status_code: integer) -> integer (boolean: 1 if redirect set)
+        self.function_table.insert(
+            "_res_redirect".to_string(),
+            vec![(vec![Type::String, Type::Integer], Type::Integer, 2)],
+        );
+        // _res_set_header(name: string, value: string) -> integer (boolean: 1 if header set)
+        self.function_table.insert(
+            "_res_set_header".to_string(),
+            vec![(vec![Type::String, Type::String], Type::Integer, 2)],
+        );
+        // _res_status(code: integer) -> void
+        self.function_table.insert(
+            "_res_status".to_string(),
+            vec![(vec![Type::Integer], Type::Void, 1)],
+        );
+        // _http_respond(status: integer, content_type: string, body: string) -> string (ptr)
+        self.function_table.insert(
+            "_http_respond".to_string(),
+            vec![(
+                vec![Type::Integer, Type::String, Type::String],
+                Type::String,
+                3,
+            )],
+        );
+        // _http_redirect(status: integer, url: string) -> string (ptr)
+        self.function_table.insert(
+            "_http_redirect".to_string(),
+            vec![(vec![Type::Integer, Type::String], Type::String, 2)],
+        );
+
         // Register method-style functions for type-based method calls
         self.register_method_style_functions();
     }
