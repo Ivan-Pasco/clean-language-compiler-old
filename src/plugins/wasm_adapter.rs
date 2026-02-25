@@ -1527,6 +1527,59 @@ impl WasmPluginAdapter {
         )?;
 
         // =========================================
+        // LIST NAMESPACE - List/array operations
+        // =========================================
+
+        // env.list.push_f64 - Push an f64 element to a list
+        // List header: [length: i32, capacity: i32, type_tag: i32, flags: i32] (16 bytes)
+        // Data starts at offset 16, each f64 element is 8 bytes
+        linker.func_wrap(
+            "env",
+            "list.push_f64",
+            |mut caller: Caller<'_, PluginState>, array_ptr: i32, value: f64| -> i32 {
+                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(m) => m,
+                    None => {
+                        eprintln!("[list.push_f64: no memory export]");
+                        return array_ptr;
+                    }
+                };
+
+                let data = memory.data(&caller);
+                let ptr = array_ptr as usize;
+
+                if ptr + 16 > data.len() {
+                    eprintln!("[list.push_f64: invalid pointer {}]", array_ptr);
+                    return array_ptr;
+                }
+
+                // Read length from offset 0
+                let length =
+                    u32::from_le_bytes([data[ptr], data[ptr + 1], data[ptr + 2], data[ptr + 3]])
+                        as usize;
+
+                // Data starts at offset 16, each f64 element is 8 bytes
+                let element_offset = ptr + 16 + length * 8;
+
+                if element_offset + 8 > data.len() {
+                    eprintln!("[list.push_f64: out of memory bounds]");
+                    return array_ptr;
+                }
+
+                // Write the f64 value
+                let data_mut = memory.data_mut(&mut caller);
+                let bytes = value.to_le_bytes();
+                data_mut[element_offset..element_offset + 8].copy_from_slice(&bytes);
+
+                // Increment length
+                let new_length = (length + 1) as u32;
+                data_mut[ptr..ptr + 4].copy_from_slice(&new_length.to_le_bytes());
+
+                array_ptr
+            },
+        )?;
+
+        // =========================================
         // MEMORY_RUNTIME NAMESPACE - Memory management
         // =========================================
 
