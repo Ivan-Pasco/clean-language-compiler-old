@@ -2769,6 +2769,12 @@ impl TokenParser {
 
                 // Check for apply block: identifier: or identifier.method:
                 if self.check(&TokenKind::Colon) {
+                    // Check if identifier is a registered plugin block name (e.g., html, component)
+                    if self.plugin_keywords.contains(&first_name) {
+                        // This is a plugin framework block inside a function body
+                        self.cursor -= 1;
+                        return self.parse_framework_block();
+                    }
                     // This is a function apply block: FUNCTION:
                     // Move cursor back to re-parse the identifier
                     self.cursor -= 1;
