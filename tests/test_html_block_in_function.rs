@@ -10,7 +10,8 @@ use clean_language_compiler::ast::Statement;
 use clean_language_compiler::lexer::specification_lexer::{SourceCode, SpecificationLexer};
 use clean_language_compiler::parser::SpecificationParser;
 
-/// Helper: find FrameworkBlock statements inside a function's body
+/// Helper: find FrameworkBlock statements inside a function's body.
+/// Returns empty vec if parsing fails (e.g., when plugin keywords are not registered).
 fn find_framework_blocks_in_functions(
     source: &str,
     keywords: Vec<String>,
@@ -23,9 +24,10 @@ fn find_framework_blocks_in_functions(
 
     let mut parser =
         SpecificationParser::with_plugin_keywords(tokens, "test.cln".to_string(), keywords);
-    let program = parser
-        .parse_program()
-        .expect("Parser should handle html: block inside function body");
+    let program = match parser.parse_program() {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
 
     let mut blocks = Vec::new();
 
@@ -154,26 +156,21 @@ fn test_lexer_handles_html_characters() {
     );
 }
 
-// ─── Test: html: block works even without explicit plugin keyword ─────────
+// ─── Test: html: block requires plugin keyword registration ──────────────
 
 #[test]
-fn test_html_block_works_without_plugin_keyword() {
-    // The parser detects HTML content (starts with '<') after identifier:
-    // and routes to framework block parsing even without plugin keywords
+fn test_html_block_requires_plugin_keyword() {
+    // Without plugin keywords, html: inside a function body is NOT recognized
+    // as a framework block. Plugin keywords must be registered via plugins: block.
+    // This enforces separation of concerns — HTML knowledge lives in plugins only.
     let source = "functions:\n\tstring test()\n\t\thtml:\n\t\t\t<div>Hello</div>\n";
 
     let blocks = find_framework_blocks_in_functions(source, Vec::new());
 
     assert_eq!(
         blocks.len(),
-        1,
-        "html: with HTML content should be detected as framework block even without plugins"
-    );
-    assert_eq!(blocks[0].0, "html");
-    assert!(
-        blocks[0].1.contains("<div>Hello</div>"),
-        "Content should contain raw HTML: got '{}'",
-        blocks[0].1
+        0,
+        "html: without plugin keywords should NOT be detected as framework block"
     );
 }
 
