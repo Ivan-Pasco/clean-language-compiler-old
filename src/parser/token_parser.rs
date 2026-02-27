@@ -54,11 +54,14 @@ pub struct TokenParser {
     paren_depth: usize, // Track parenthesis depth for multiline expression support
     /// Plugin-defined keywords that don't require colons (e.g., "data" from frame.data)
     plugin_keywords: HashSet<String>,
+    /// Original source text for raw content extraction in framework blocks
+    source_content: String,
 }
 
 impl TokenParser {
     pub fn new(token_stream: TokenStream, file_path: String) -> Self {
         Self {
+            source_content: token_stream.source_content,
             tokens: token_stream.tokens,
             cursor: 0,
             file_path,
@@ -80,6 +83,7 @@ impl TokenParser {
         plugin_keywords: Vec<String>,
     ) -> Self {
         Self {
+            source_content: token_stream.source_content,
             tokens: token_stream.tokens,
             cursor: 0,
             file_path,
@@ -1535,6 +1539,87 @@ impl TokenParser {
         self.parse_function()
     }
 
+    /// Extract raw block content from source text using byte positions.
+    ///
+    /// Instead of reconstructing text from individual tokens (which destroys HTML/template formatting),
+    /// this method uses the original source text and byte positions to extract content verbatim.
+    /// It strips the block-level indentation (tabs) from each line.
+    fn extract_block_content_raw(&mut self, block_indent_level: usize) -> String {
+        // Record byte position of first content token
+        let content_start_byte = self.current().location.byte_start;
+
+        // Skip through all tokens in the block using the same Indent/Dedent boundary logic
+        while !self.is_at_end() {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check for dedent that exits the block
+            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                if *dedent_level < block_indent_level {
+                    // Block ended, don't consume the dedent
+                    break;
+                } else {
+                    // Dedent within the block, consume it
+                    self.bump();
+                    continue;
+                }
+            }
+
+            // Check for indent at lower level than block
+            if let TokenKind::Indent(indent_level) = self.current_kind() {
+                if *indent_level < block_indent_level {
+                    // Not part of this block
+                    break;
+                }
+                self.bump(); // Consume indent
+            }
+
+            // Consume all tokens on the line
+            while !self.is_at_end()
+                && !matches!(
+                    self.current_kind(),
+                    TokenKind::Newline | TokenKind::Dedent(_)
+                )
+            {
+                self.bump();
+            }
+
+            // Consume newline if present
+            if matches!(self.current_kind(), TokenKind::Newline) {
+                self.bump();
+            }
+        }
+
+        // Record byte position of the token after the block
+        let content_end_byte = self.current().location.byte_start;
+
+        // Extract raw text from source
+        let raw_content = match (content_start_byte, content_end_byte) {
+            (Some(start), Some(end)) if start < end && end <= self.source_content.len() => {
+                self.source_content[start..end].to_string()
+            }
+            _ => String::new(),
+        };
+
+        // Strip block-level indentation from each line and clean up
+        let mut content_lines = Vec::new();
+        for line in raw_content.lines() {
+            // Strip exactly block_indent_level tabs from the start of each line
+            let mut stripped = line;
+            for _ in 0..block_indent_level {
+                stripped = stripped.strip_prefix('\t').unwrap_or(stripped);
+            }
+            content_lines.push(stripped);
+        }
+
+        // Join and trim trailing whitespace
+        let content = content_lines.join("\n");
+        content.trim_end().to_string()
+    }
+
     /// Parse a framework block or plugin declaration
     ///
     /// Framework blocks use colon: "identifier:", "identifier string:", "identifier identifier:"
@@ -1610,9 +1695,6 @@ impl TokenParser {
         self.eat(&TokenKind::Newline);
         self.skip_whitespace();
 
-        // Collect indented content (same logic as parse_framework_block)
-        let mut content_lines = Vec::new();
-
         // Determine the block's indentation level
         let block_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
             if let TokenKind::Indent(level) = self.current_kind() {
@@ -1624,105 +1706,8 @@ impl TokenParser {
             1
         };
 
-        // Collect all lines that are indented at or deeper than block_indent_level
-        while !self.is_at_end() {
-            self.skip_whitespace();
-
-            if self.is_at_end() {
-                break;
-            }
-
-            // Check for dedent that exits the block
-            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
-                if *dedent_level < block_indent_level {
-                    break;
-                } else {
-                    self.bump();
-                    continue;
-                }
-            }
-
-            // Consume indent
-            if let TokenKind::Indent(indent_level) = self.current_kind() {
-                if *indent_level < block_indent_level {
-                    break;
-                }
-                self.bump();
-            }
-
-            // Collect line content with smart spacing (same logic as parse_framework_block)
-            let mut line_text = String::new();
-            let mut prev_kind: Option<TokenKind> = None;
-
-            while !self.is_at_end()
-                && !matches!(
-                    self.current_kind(),
-                    TokenKind::Newline | TokenKind::Dedent(_)
-                )
-            {
-                let token = self.current();
-                let curr_kind = token.kind.clone();
-
-                // Determine if we need a space before this token
-                let needs_space = if let Some(ref prev) = prev_kind {
-                    let should_skip_space = matches!(
-                        (&curr_kind, prev),
-                        (_, TokenKind::LeftBrace)
-                            | (TokenKind::RightBrace, _)
-                            | (TokenKind::Dot, _)
-                            | (_, TokenKind::Dot)
-                            | (TokenKind::Greater, TokenKind::Minus)
-                            | (TokenKind::Divide, _)
-                            | (_, TokenKind::Divide)
-                            | (_, TokenKind::InterpolationStart)
-                            | (TokenKind::InterpolationMid, _)
-                            | (_, TokenKind::InterpolationMid)
-                            | (TokenKind::InterpolationEnd, _)
-                    );
-                    !should_skip_space
-                } else {
-                    false
-                };
-
-                if needs_space && !line_text.is_empty() {
-                    line_text.push(' ');
-                }
-
-                // Handle interpolation tokens - reconstruct the curly braces
-                match &curr_kind {
-                    TokenKind::InterpolationStart => {
-                        line_text.push_str(&token.text);
-                        line_text.push('{');
-                    }
-                    TokenKind::InterpolationMid => {
-                        line_text.push('}');
-                        line_text.push_str(&token.text);
-                        line_text.push('{');
-                    }
-                    TokenKind::InterpolationEnd => {
-                        line_text.push('}');
-                        line_text.push_str(&token.text);
-                    }
-                    _ => {
-                        line_text.push_str(&token.text);
-                    }
-                }
-
-                prev_kind = Some(curr_kind);
-                self.bump();
-            }
-
-            if !line_text.is_empty() {
-                content_lines.push(line_text);
-            }
-
-            // Consume newline
-            if matches!(self.current_kind(), TokenKind::Newline) {
-                self.bump();
-            }
-        }
-
-        let content = content_lines.join("\n");
+        // Extract raw content from source using byte positions
+        let content = self.extract_block_content_raw(block_indent_level);
 
         debug!(
             block_name = %block_name,
@@ -1795,9 +1780,6 @@ impl TokenParser {
         self.eat(&TokenKind::Newline);
         self.skip_whitespace();
 
-        // Collect indented content as raw text
-        let mut content_lines = Vec::new();
-
         // Determine the block's indentation level
         let block_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
             if let TokenKind::Indent(level) = self.current_kind() {
@@ -1809,120 +1791,12 @@ impl TokenParser {
             1
         };
 
-        // Collect all lines that are indented at or deeper than block_indent_level
-        while !self.is_at_end() {
-            self.skip_whitespace();
-
-            if self.is_at_end() {
-                break;
-            }
-
-            // Check for dedent that exits the block
-            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
-                if *dedent_level < block_indent_level {
-                    // Block ended, don't consume the dedent
-                    break;
-                } else {
-                    // Dedent within the block, consume it
-                    self.bump();
-                    continue;
-                }
-            }
-
-            // Consume indent
-            if let TokenKind::Indent(indent_level) = self.current_kind() {
-                if *indent_level < block_indent_level {
-                    // Not part of this block
-                    break;
-                }
-                self.bump(); // Consume indent
-            }
-
-            // Collect the line content with smart spacing
-            let mut line_text = String::new();
-            let mut prev_kind: Option<TokenKind> = None;
-
-            while !self.is_at_end()
-                && !matches!(
-                    self.current_kind(),
-                    TokenKind::Newline | TokenKind::Dedent(_)
-                )
-            {
-                let token = self.current();
-                let curr_kind = token.kind.clone();
-
-                // Determine if we need a space before this token
-                let needs_space = if let Some(ref prev) = prev_kind {
-                    // Default: add space
-                    let should_skip_space = matches!(
-                        (&curr_kind, prev),
-                        // No space: after LeftBrace
-                        (_, TokenKind::LeftBrace) |
-                        // No space: before RightBrace
-                        (TokenKind::RightBrace, _) |
-                        // No space: before/after Dot
-                        (TokenKind::Dot, _) | (_, TokenKind::Dot) |
-                        // No space: Minus followed by Greater  (->)
-                        (TokenKind::Greater, TokenKind::Minus) |
-                        // No space: before/after Divide (for paths like /users/{id})
-                        // This covers all Divide cases including /{, }/, etc.
-                        (TokenKind::Divide, _) | (_, TokenKind::Divide) |
-                        // No space: after InterpolationStart (we add { manually)
-                        (_, TokenKind::InterpolationStart) |
-                        // No space: before/after InterpolationMid (we add }{  manually)
-                        (TokenKind::InterpolationMid, _) | (_, TokenKind::InterpolationMid) |
-                        // No space: before InterpolationEnd (we add } manually)
-                        (TokenKind::InterpolationEnd, _)
-                    );
-                    !should_skip_space
-                } else {
-                    false
-                };
-
-                if needs_space && !line_text.is_empty() {
-                    line_text.push(' ');
-                }
-
-                // Handle interpolation tokens - reconstruct the curly braces
-                match &curr_kind {
-                    TokenKind::InterpolationStart => {
-                        line_text.push_str(&token.text);
-                        line_text.push('{');
-                    }
-                    TokenKind::InterpolationMid => {
-                        line_text.push('}');
-                        line_text.push_str(&token.text);
-                        line_text.push('{');
-                    }
-                    TokenKind::InterpolationEnd => {
-                        line_text.push('}');
-                        line_text.push_str(&token.text);
-                    }
-                    _ => {
-                        line_text.push_str(&token.text);
-                    }
-                }
-
-                prev_kind = Some(curr_kind);
-                self.bump();
-            }
-
-            if !line_text.is_empty() {
-                trace!(line = %line_text, "Collected framework line");
-                content_lines.push(line_text);
-            }
-
-            // Consume newline if present
-            if matches!(self.current_kind(), TokenKind::Newline) {
-                self.bump();
-            }
-        }
-
-        let content = content_lines.join("\n");
+        // Extract raw content from source using byte positions
+        let content = self.extract_block_content_raw(block_indent_level);
 
         debug!(
             block_name = %block_name,
-            line_count = content_lines.len(),
+            content_len = content.len(),
             "Parsed framework block"
         );
         trace!(content = %content, "Framework block content");

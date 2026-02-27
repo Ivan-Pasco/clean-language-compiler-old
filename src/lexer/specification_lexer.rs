@@ -101,7 +101,11 @@ impl<'a> SpecificationLexer<'a> {
             }
         }
 
-        Ok(TokenStream::new(tokens, self.source_map.clone()))
+        Ok(TokenStream::new(
+            tokens,
+            self.source_map.clone(),
+            self.source_content.to_string(),
+        ))
     }
 
     /// Get the source map for this lexer

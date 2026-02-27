@@ -301,11 +301,17 @@ impl fmt::Display for Token {
 pub struct TokenStream {
     pub tokens: Vec<Token>,
     pub source_map: SourceMap,
+    /// Original source text for raw content extraction in framework blocks
+    pub source_content: String,
 }
 
 impl TokenStream {
-    pub fn new(tokens: Vec<Token>, source_map: SourceMap) -> Self {
-        Self { tokens, source_map }
+    pub fn new(tokens: Vec<Token>, source_map: SourceMap, source_content: String) -> Self {
+        Self {
+            tokens,
+            source_map,
+            source_content,
+        }
     }
 }
 
@@ -318,6 +324,7 @@ impl Default for TokenStream {
                 line_starts: vec![0],
                 total_bytes: 0,
             },
+            source_content: String::new(),
         }
     }
 }
