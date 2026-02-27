@@ -154,31 +154,26 @@ fn test_lexer_handles_html_characters() {
     );
 }
 
-// ─── Test: html: block not recognized without plugin keyword ─────────────
+// ─── Test: html: block works even without explicit plugin keyword ─────────
 
 #[test]
-fn test_html_block_requires_plugin_keyword() {
-    // Without "html" in plugin_keywords, html: should NOT be parsed as a framework block
+fn test_html_block_works_without_plugin_keyword() {
+    // The parser detects HTML content (starts with '<') after identifier:
+    // and routes to framework block parsing even without plugin keywords
     let source = "functions:\n\tstring test()\n\t\thtml:\n\t\t\t<div>Hello</div>\n";
 
-    let source_code = SourceCode::new(source.to_string(), "test.cln".to_string());
-    let mut lexer = SpecificationLexer::new(&source_code);
-    let tokens = lexer.tokenize().expect("Lexer should work");
+    let blocks = find_framework_blocks_in_functions(source, Vec::new());
 
-    // Parse WITHOUT plugin keywords
-    let mut parser = SpecificationParser::with_plugin_keywords(
-        tokens,
-        "test.cln".to_string(),
-        Vec::new(), // No plugin keywords
+    assert_eq!(
+        blocks.len(),
+        1,
+        "html: with HTML content should be detected as framework block even without plugins"
     );
-
-    // This should either fail or not produce a FrameworkBlock
-    let result = parser.parse_program();
-    // Without plugin keyword, html: is treated as a function apply block,
-    // which would fail on <div> content
+    assert_eq!(blocks[0].0, "html");
     assert!(
-        result.is_err(),
-        "html: without plugin keyword should not parse successfully as framework block"
+        blocks[0].1.contains("<div>Hello</div>"),
+        "Content should contain raw HTML: got '{}'",
+        blocks[0].1
     );
 }
 

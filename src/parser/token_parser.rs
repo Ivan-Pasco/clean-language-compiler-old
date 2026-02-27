@@ -2656,6 +2656,32 @@ impl TokenParser {
                         self.cursor -= 1;
                         return self.parse_framework_block();
                     }
+
+                    // Look-ahead: detect DSL/HTML content after identifier:
+                    // If the indented block starts with '<' (Less), it's HTML/XML content
+                    // that should be collected as raw text via framework block parsing,
+                    // even without an explicit plugin keyword registration.
+                    {
+                        let saved = self.cursor;
+                        self.bump(); // skip Colon
+                        self.eat(&TokenKind::Newline);
+                        let is_dsl_content = if let TokenKind::Indent(_) = self.current_kind() {
+                            let indent_cursor = self.cursor;
+                            self.bump(); // skip Indent
+                            let starts_with_html = matches!(self.current_kind(), TokenKind::Less);
+                            self.cursor = indent_cursor;
+                            starts_with_html
+                        } else {
+                            false
+                        };
+                        self.cursor = saved;
+
+                        if is_dsl_content {
+                            self.cursor -= 1; // back to identifier
+                            return self.parse_framework_block();
+                        }
+                    }
+
                     // This is a function apply block: FUNCTION:
                     // Move cursor back to re-parse the identifier
                     self.cursor -= 1;
