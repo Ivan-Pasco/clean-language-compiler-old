@@ -1633,6 +1633,13 @@ impl TokenParser {
             return self.parse_framework_block();
         }
 
+        // Plugin keyword with colon syntax (e.g., "component:" or "html:")
+        // should use the standard framework block parser, not the plugin path.
+        // The plugin path expects "keyword identifier" (e.g., "data User").
+        if self.peek_kind() == Some(&TokenKind::Colon) {
+            return self.parse_framework_block();
+        }
+
         // Plugin keyword without colon (e.g., "data User")
         let start_location = self.current().location.clone();
 
