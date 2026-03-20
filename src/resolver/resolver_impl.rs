@@ -66,6 +66,45 @@ impl NameResolver {
             None
         };
 
+        // Resolve top-level watch blocks.
+        // Watch blocks reference state variables that must already be registered
+        // in the global scope. Each body is resolved independently.
+        let mut resolved_watch_blocks: Vec<crate::resolver::ResolvedHirWatchBlock> = Vec::new();
+        for watch in &hir.watch_blocks {
+            // Resolve and validate each target name against the symbol table.
+            let mut target_symbol_ids: Vec<SymbolId> = Vec::new();
+            let mut target_resolution_failed = false;
+            for target_name in &watch.targets {
+                match self.symbol_table.lookup_symbol(target_name) {
+                    Some(sid) => target_symbol_ids.push(sid),
+                    None => {
+                        tracing::warn!(
+                            name = %target_name,
+                            "Watch target '{}' not found in symbol table — \
+                             it may be defined later or come from a plugin",
+                            target_name
+                        );
+                        // Use a sentinel SymbolId(0) so that the rest of the pipeline
+                        // can still operate; the runtime will validate at execution time.
+                        target_symbol_ids.push(SymbolId(0));
+                        target_resolution_failed = true;
+                    }
+                }
+            }
+
+            // Even when target resolution had warnings, still resolve the body so that
+            // type errors in the handler are caught at compile time.
+            let _ = target_resolution_failed; // informational only
+            let resolved_body = self.resolve_block(&watch.body)?;
+
+            resolved_watch_blocks.push(crate::resolver::ResolvedHirWatchBlock {
+                targets: watch.targets.clone(),
+                target_symbol_ids,
+                body: resolved_body,
+                location: watch.location.clone(),
+            });
+        }
+
         // Resolve external functions (WASM imports)
         let resolved_externals = self.resolve_externals(&hir.externals)?;
 
@@ -76,6 +115,7 @@ impl NameResolver {
             imports: resolved_imports,
             tests: resolved_tests,
             state: resolved_state,
+            watch_blocks: resolved_watch_blocks,
             symbol_table: self.symbol_table.clone(),
             location: hir.location,
             externals: resolved_externals,
@@ -856,6 +896,31 @@ impl NameResolver {
             });
         }
 
+        // Resolve computed state declarations.
+        // Each computed declaration body is resolved in its own block scope so
+        // that temporaries defined inside the body don't leak into the state scope.
+        let mut resolved_computed: Vec<crate::resolver::ResolvedHirComputedDeclaration> =
+            Vec::new();
+        for comp in &state_block.computed {
+            // The symbol was already registered in register_top_level_symbols; look it up.
+            let symbol_id = self
+                .symbol_table
+                .lookup_symbol_in_scope(&comp.name, ScopeId(0))
+                .ok_or_else(|| {
+                    tracing::error!("Undefined computed state variable: {}", comp.name);
+                })?;
+
+            let resolved_body = self.resolve_block(&comp.body)?;
+
+            resolved_computed.push(crate::resolver::ResolvedHirComputedDeclaration {
+                symbol_id,
+                name: comp.name.clone(),
+                computed_type: comp.computed_type.clone(),
+                body: resolved_body,
+                location: comp.location.clone(),
+            });
+        }
+
         // Resolve state invariant rules
         let mut resolved_rules = Vec::new();
         for rule_expr in &state_block.rules {
@@ -865,6 +930,7 @@ impl NameResolver {
 
         Ok(ResolvedHirStateBlock {
             declarations: resolved_declarations,
+            computed: resolved_computed,
             rules: resolved_rules,
             scope: state_block.scope,
             location: state_block.location.clone(),

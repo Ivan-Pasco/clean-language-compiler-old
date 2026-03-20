@@ -1,26 +1,26 @@
 // Spec Section: 6.1 - String Operations
 // Tests: String replace all occurrences
-// Requirement: replaceAll function
+// Requirement: replace function (replaces all occurrences)
 
 start:
 	// Test case 1: Replace all occurrences
 	string text = "foo bar foo baz foo"
-	string replaced = text.replaceAll("foo", "qux")
+	string replaced = text.replace("foo", "qux")
 	print("Replaced: " + replaced)
 
 	// Test case 2: Replace with empty string (deletion)
 	string withSpaces = "hello   world"
-	string noSpaces = withSpaces.replaceAll(" ", "")
+	string noSpaces = withSpaces.replace(" ", "")
 	print("No spaces: " + noSpaces)
 
 	// Test case 3: No matches to replace
 	string original = "Hello World"
-	string unchanged = original.replaceAll("xyz", "abc")
+	string unchanged = original.replace("xyz", "abc")
 	print("Unchanged: " + unchanged)
 
 	// Test case 4: Replace single character
 	string dots = "a.b.c.d"
-	string underscores = dots.replaceAll(".", "_")
+	string underscores = dots.replace(".", "_")
 	print("Underscores: " + underscores)
 
 	print("String replace all tests completed")

@@ -2198,52 +2198,6 @@ impl WasmPluginAdapter {
         )?;
 
         // =========================================
-        // Legacy host functions (for compatibility)
-        // =========================================
-
-        // env.debug_print (legacy)
-        linker.func_wrap(
-            "env",
-            "debug_print",
-            |mut caller: Caller<'_, PluginState>, ptr: i32, len: i32| {
-                if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    let data = memory.data(&caller);
-                    if let Some(slice) = data.get(ptr as usize..(ptr + len) as usize) {
-                        if let Ok(s) = std::str::from_utf8(slice) {
-                            eprintln!("[Plugin Debug] {}", s);
-                        }
-                    }
-                }
-            },
-        )?;
-
-        // env.alloc (legacy)
-        linker.func_wrap(
-            "env",
-            "alloc",
-            |mut caller: Caller<'_, PluginState>, size: i32| -> i32 {
-                let state = caller.data_mut();
-                state.allocate(size as usize) as i32
-            },
-        )?;
-
-        // env.report_error (legacy)
-        linker.func_wrap(
-            "env",
-            "report_error",
-            |mut caller: Caller<'_, PluginState>, ptr: i32, len: i32| {
-                if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    let data = memory.data(&caller);
-                    if let Some(slice) = data.get(ptr as usize..(ptr + len) as usize) {
-                        if let Ok(s) = std::str::from_utf8(slice) {
-                            caller.data_mut().last_error = Some(s.to_string());
-                        }
-                    }
-                }
-            },
-        )?;
-
-        // =========================================
         // ADDITIONAL HTTP/AUTH STUBS - These are functions that plugins generate
         // as OUTPUT but don't actually call. Only add ones not already defined above.
         // =========================================

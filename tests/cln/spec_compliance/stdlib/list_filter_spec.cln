@@ -5,7 +5,7 @@ start:
 
 	iterate n in nums
 		if isEven(n)
-			evens.push(n)
+			evens.add(n)
 
 	print("Original: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]")
 	print("Evens: " + evens[0].toString() + ", " + evens[1].toString() + ", " + evens[2].toString())
@@ -16,7 +16,7 @@ start:
 
 	iterate n in mixed
 		if n > 5
-			largeNums.push(n)
+			largeNums.add(n)
 
 	print("Greater than 5: " + largeNums[0].toString() + ", " + largeNums[1].toString() + ", " + largeNums[2].toString())
 

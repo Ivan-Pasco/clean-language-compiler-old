@@ -25,7 +25,7 @@ functions:
 		taskQueue.add("Task 2")
 		taskQueue.add("Task 3")
 
-		integer queueSize = taskQueue.size()
+		integer queueSize = taskQueue.length()
 		string sizeText = queueSize.toString()
 		print("Queue size: " + sizeText)
 
@@ -37,7 +37,7 @@ functions:
 
 		string next = taskQueue.peek()
 		print("Next (peek): " + next)
-		print("Queue size after peek: " + taskQueue.size().toString())
+		print("Queue size after peek: " + taskQueue.length().toString())
 
 	void testStackBehavior()
 		print("=== Testing Stack (LIFO) Behavior ===")
@@ -48,13 +48,13 @@ functions:
 		undoStack.add("Operation 2")
 		undoStack.add("Operation 3")
 
-		print("Stack size: " + undoStack.size().toString())
+		print("Stack size: " + undoStack.length().toString())
 
-		integer lastIndex = undoStack.size() - 1
+		integer lastIndex = undoStack.length() - 1
 		string last = list.remove(undoStack, lastIndex)  // Stack removes from end (LIFO)
 		print("Undone: " + last)
 
-		integer newLastIndex = undoStack.size() - 1
+		integer newLastIndex = undoStack.length() - 1
 		string secondLast = list.remove(undoStack, newLastIndex)
 		print("Undone: " + secondLast)
 
@@ -72,7 +72,7 @@ functions:
 		uniqueNumbers.add(15)
 		uniqueNumbers.add(10)
 
-		print("Unique numbers count: " + uniqueNumbers.size().toString())
+		print("Unique numbers count: " + uniqueNumbers.length().toString())
 
 		boolean hasFive = uniqueNumbers.contains(5)
 		boolean hasTen = uniqueNumbers.contains(10)
@@ -93,7 +93,7 @@ functions:
 		uniqueQueue.add("First")
 		uniqueQueue.add("Third")
 
-		print("Unique queue size: " + uniqueQueue.size().toString())
+		print("Unique queue size: " + uniqueQueue.length().toString())
 		string removed = list.remove(uniqueQueue, 0)  // Queue behavior, remove from front
 		print("Removed from unique queue: " + removed)
 

@@ -103,6 +103,10 @@ pub struct MirBuilder {
     /// State invariant rules to be checked at operation boundaries
     /// These are evaluated at the end of start:, frame:, and handler functions
     state_rules: Vec<TastExpression>,
+
+    /// State guards - per-variable validation conditions
+    /// Maps state variable name → (guard condition expression, value_symbol_id, error_message)
+    state_guards: HashMap<String, (TastExpression, SymbolId, String)>,
 }
 
 /// Context for building a single function
@@ -200,6 +204,7 @@ impl MirBuilder {
             all_functions: Vec::new(),
             state_variables,
             state_rules: Vec::new(),
+            state_guards: HashMap::new(),
         }
     }
 
@@ -213,7 +218,7 @@ impl MirBuilder {
         // Store all functions for default parameter lookups
         self.all_functions = tast.functions.clone();
 
-        // Store state rules for operation boundary checking (start:, frame:, handlers)
+        // Store state rules and guards for runtime enforcement
         if let Some(ref state_block) = tast.state {
             self.state_rules = state_block.rules.clone();
             if !self.state_rules.is_empty() {
@@ -221,6 +226,24 @@ impl MirBuilder {
                     rule_count = self.state_rules.len(),
                     "State rules registered for operation boundary checking"
                 );
+            }
+            // Extract guards from state declarations
+            for decl in &state_block.declarations {
+                if let Some(ref guard) = decl.guard {
+                    self.state_guards.insert(
+                        decl.name.clone(),
+                        (
+                            guard.condition.clone(),
+                            guard.value_symbol_id,
+                            guard.error_message.clone(),
+                        ),
+                    );
+                    debug!(
+                        var_name = %decl.name,
+                        error_msg = %guard.error_message,
+                        "State guard registered for variable"
+                    );
+                }
             }
         }
 
@@ -233,6 +256,8 @@ impl MirBuilder {
             debug_info: None,
             symbol_name_map: HashMap::new(),
             used_plugins: Vec::new(),
+            state_rules: Vec::new(),
+            state_guards: Vec::new(),
             externals: Vec::new(),
         };
 
@@ -1170,6 +1195,72 @@ impl MirBuilder {
                         // Check if this is a state variable assignment - emit GlobalStore
                         if let Some((symbol_id, mir_type)) = self.state_variables.get(name).cloned()
                         {
+                            // Inject guard check before the assignment if this variable has a guard
+                            if let Some((guard_condition, _value_symbol_id, _error_msg)) =
+                                self.state_guards.get(name).cloned()
+                            {
+                                trace!(
+                                    var_name = %name,
+                                    "Injecting guard check before state variable assignment"
+                                );
+                                // Bind the proposed new value as 'value' in a new scope
+                                let mut guard_scope = HashMap::new();
+                                guard_scope.insert("value".to_string(), final_value_id);
+                                context.scope_stack.push(guard_scope);
+
+                                // Evaluate the guard condition
+                                let condition_value =
+                                    self.build_expression(context, &guard_condition)?;
+
+                                // Remove the guard scope
+                                context.scope_stack.pop();
+
+                                // Create trap and continue blocks
+                                let base_block_id = context.function.next_block_id;
+                                let trap_block_id = BasicBlockId(base_block_id);
+                                let continue_block_id = BasicBlockId(base_block_id + 1);
+                                context.function.next_block_id = base_block_id + 2;
+
+                                context.function.blocks.insert(
+                                    trap_block_id,
+                                    MirBasicBlock {
+                                        id: trap_block_id,
+                                        label: Some(format!("guard_{}_trap", name)),
+                                        instructions: Vec::new(),
+                                        terminator: MirTerminator::Trap,
+                                        predecessors: HashSet::new(),
+                                        successors: HashSet::new(),
+                                        location: location.clone(),
+                                    },
+                                );
+
+                                context.function.blocks.insert(
+                                    continue_block_id,
+                                    MirBasicBlock {
+                                        id: continue_block_id,
+                                        label: Some(format!("guard_{}_continue", name)),
+                                        instructions: Vec::new(),
+                                        terminator: MirTerminator::Unreachable,
+                                        predecessors: HashSet::new(),
+                                        successors: HashSet::new(),
+                                        location: location.clone(),
+                                    },
+                                );
+
+                                // Branch: if guard is true → continue, else → trap
+                                self.set_block_terminator(
+                                    context,
+                                    MirTerminator::Branch {
+                                        condition: MirOperand::Value(condition_value),
+                                        true_block: continue_block_id,
+                                        false_block: trap_block_id,
+                                    },
+                                );
+
+                                // Continue execution in the continue block
+                                self.current_block = Some(continue_block_id);
+                            }
+
                             trace!(
                                 var_name = %name,
                                 symbol_id = ?symbol_id,
@@ -3703,8 +3794,8 @@ impl MirBuilder {
                             return Ok(result_id);
                         }
                         "push" => {
-                            // list.push creates a NEW list and returns it
-                            // Use SymbolId(1004) for i32, SymbolId(1005) for f64
+                            // list.push is an alias for list.add (in-place append)
+                            // Routes to the same in-place add operation
                             let result_id = ValueId(context.function.next_value_id);
                             context.function.next_value_id += 1;
 
@@ -3715,9 +3806,9 @@ impl MirBuilder {
                                 expression.location.clone(),
                             );
 
-                            let push_symbol = match element_type.as_ref() {
-                                ConcreteType::Number => SymbolId(1005), // list.push_f64
-                                _ => SymbolId(1004),                    // list_push
+                            let add_symbol = match element_type.as_ref() {
+                                ConcreteType::Number => SymbolId(1008), // list.add_f64 (in-place)
+                                _ => SymbolId(1007),                    // list.add (in-place)
                             };
 
                             let mut args = vec![MirOperand::Value(receiver_id)];
@@ -3729,7 +3820,7 @@ impl MirBuilder {
                             let instruction = MirInstruction {
                                 dest: Some(result_id),
                                 operation: MirOperation::Call {
-                                    function: MirOperand::Function(push_symbol),
+                                    function: MirOperand::Function(add_symbol),
                                     arguments: args,
                                 },
                                 location: expression.location.clone(),
@@ -4427,20 +4518,21 @@ impl MirBuilder {
                             (list_add_symbol, args)
                         }
                         (ConcreteType::Array(element_type), "push") => {
-                            // list.push creates NEW list - use SymbolId(1004/1005)
-                            let list_push_symbol = match element_type.as_ref() {
-                                ConcreteType::Number => SymbolId(1005), // list.push_f64
-                                _ => SymbolId(1004),                    // list.push
+                            // list.push is an alias for list.add (in-place append)
+                            let list_add_symbol = match element_type.as_ref() {
+                                ConcreteType::Number => SymbolId(1008), // list.add_f64 (in-place)
+                                _ => SymbolId(1007),                    // list.add (in-place)
                             };
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
                                 args.push(MirOperand::Value(arg_id));
                             }
-                            (list_push_symbol, args)
+                            (list_add_symbol, args)
                         }
-                        (ConcreteType::Array(_), "remove" | "pop") => {
+                        (ConcreteType::Array(_), "remove" | "pop" | "removeLast") => {
                             // Call list_pop - look up from symbol table
+                            // removeLast is the canonical name for pop per spec
                             let list_pop_symbol = self
                                 .symbol_table
                                 .lookup_symbol("list_pop")
@@ -7088,25 +7180,33 @@ impl MirBuilder {
     fn get_type_byte_size(&self, concrete_type: &ConcreteType) -> usize {
         match concrete_type {
             ConcreteType::Integer => 4,
-            ConcreteType::Number => 8,           // f64
-            ConcreteType::Boolean => 4,          // Stored as i32
-            ConcreteType::String => 4,           // Pointer (i32)
-            ConcreteType::Null => 4,             // Stored as i32
-            ConcreteType::Undefined => 4,        // Stored as i32
-            ConcreteType::Array(_) => 4,         // Pointer
-            ConcreteType::Matrix(_) => 4,        // Pointer
-            ConcreteType::Pairs(_, _) => 4,      // Pointer
-            ConcreteType::Function { .. } => 4,  // Pointer
-            ConcreteType::Class { .. } => 4,     // Pointer
-            ConcreteType::Interface { .. } => 4, // Pointer
-            ConcreteType::Tuple(_) => 4,         // Pointer
-            ConcreteType::Union(_) => 4,         // Pointer (boxed)
-            ConcreteType::Intersection(_) => 4,  // Pointer (boxed)
-            ConcreteType::Generic { .. } => 4,   // Treat as pointer
-            ConcreteType::Unknown => 4,          // Default
-            ConcreteType::Never => 0,            // Never returns
-            ConcreteType::Namespace => 4,        // Not really used in memory
-            ConcreteType::Any => 12,             // Boxed: [tag:i32][value1:i32][value2:i32]
+            ConcreteType::Number => 8, // f64
+            ConcreteType::IntegerSized { bits: 8, .. } => 1,
+            ConcreteType::IntegerSized { bits: 16, .. } => 2,
+            ConcreteType::IntegerSized { bits: 32, .. } => 4,
+            ConcreteType::IntegerSized { bits: 64, .. } => 8,
+            ConcreteType::IntegerSized { .. } => 4, // fallback
+            ConcreteType::NumberSized { bits: 32 } => 4,
+            ConcreteType::NumberSized { bits: 64 } => 8,
+            ConcreteType::NumberSized { .. } => 8, // fallback
+            ConcreteType::Boolean => 4,            // Stored as i32
+            ConcreteType::String => 4,             // Pointer (i32)
+            ConcreteType::Null => 4,               // Stored as i32
+            ConcreteType::Undefined => 4,          // Stored as i32
+            ConcreteType::Array(_) => 4,           // Pointer
+            ConcreteType::Matrix(_) => 4,          // Pointer
+            ConcreteType::Pairs(_, _) => 4,        // Pointer
+            ConcreteType::Function { .. } => 4,    // Pointer
+            ConcreteType::Class { .. } => 4,       // Pointer
+            ConcreteType::Interface { .. } => 4,   // Pointer
+            ConcreteType::Tuple(_) => 4,           // Pointer
+            ConcreteType::Union(_) => 4,           // Pointer (boxed)
+            ConcreteType::Intersection(_) => 4,    // Pointer (boxed)
+            ConcreteType::Generic { .. } => 4,     // Treat as pointer
+            ConcreteType::Unknown => 4,            // Default
+            ConcreteType::Never => 0,              // Never returns
+            ConcreteType::Namespace => 4,          // Not really used in memory
+            ConcreteType::Any => 12,               // Boxed: [tag:i32][value1:i32][value2:i32]
         }
     }
 

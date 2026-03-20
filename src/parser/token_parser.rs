@@ -115,6 +115,7 @@ impl TokenParser {
         let mut statements = Vec::new();
         let screens = Vec::new(); // Always empty - screens handled as framework blocks by plugins
         let mut state: Option<crate::ast::StateBlock> = None;
+        let mut watch_blocks: Vec<crate::ast::WatchBlock> = Vec::new();
         let mut externals: Vec<crate::ast::ExternalFunction> = Vec::new();
         let mut source_block: Option<Statement> = None;
 
@@ -222,6 +223,28 @@ impl TokenParser {
                             );
                             state = Some(state_block);
                         }
+                        Err(e) => self.errors.push(e),
+                    }
+                }
+                TokenKind::Watch => {
+                    // Parse watch: block (state change observer)
+                    debug!("Parsing watch: block");
+                    match self.parse_watch_block() {
+                        Ok(watch_block) => {
+                            debug!(
+                                target_count = watch_block.targets.len(),
+                                "Parsed watch block"
+                            );
+                            watch_blocks.push(watch_block);
+                        }
+                        Err(e) => self.errors.push(e),
+                    }
+                }
+                TokenKind::Build => {
+                    // Parse build: block (compiler configuration)
+                    debug!("Parsing build: block");
+                    match self.parse_build_block() {
+                        Ok(build_stmt) => statements.push(build_stmt),
                         Err(e) => self.errors.push(e),
                     }
                 }
@@ -365,7 +388,7 @@ impl TokenParser {
             tests,
             screens,
             state,
-            watch_blocks: Vec::new(),
+            watch_blocks,
             screen_blocks: Vec::new(),
             externals,
             source_block,
@@ -3032,6 +3055,129 @@ impl TokenParser {
         })
     }
 
+    /// Parse a build: top-level block that configures compiler behaviour.
+    ///
+    /// ```text
+    /// build:
+    ///     rules = true
+    /// ```
+    ///
+    /// The `rules` key accepts `true`, `false`, or the string `"development"`.
+    /// When omitted the default value is `true` (rules checking is enabled).
+    fn parse_build_block(&mut self) -> Result<Statement, CompilerError> {
+        let build_token = self.current().clone();
+        let location = build_token.location.clone();
+
+        // Consume the 'build' keyword
+        self.bump();
+        self.skip_whitespace();
+
+        // Expect a colon after 'build'
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Skip optional newline between 'build:' and the indented body
+        if matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump();
+        }
+
+        // Determine the indent level of the block body
+        let block_level = if let TokenKind::Indent(level) = self.current_kind() {
+            *level
+        } else {
+            1
+        };
+
+        // Consume the opening indent token
+        if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            self.bump();
+        }
+
+        // Default: rules checking is enabled
+        let mut rules_value: Expression = Expression::Literal(Value::Boolean(true));
+
+        // Parse key = value assignments inside the build block
+        loop {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // A Dedent back to (or past) the enclosing level ends the block
+            if let TokenKind::Dedent(level) = self.current_kind() {
+                if *level < block_level {
+                    self.bump();
+                    break;
+                }
+            }
+
+            // Any top-level keyword also signals the end of the build block
+            if matches!(
+                self.current_kind(),
+                TokenKind::Functions
+                    | TokenKind::Class
+                    | TokenKind::Start
+                    | TokenKind::Tests
+                    | TokenKind::Import
+                    | TokenKind::State
+                    | TokenKind::Plugins
+                    | TokenKind::Source
+            ) {
+                break;
+            }
+
+            match self.current_kind() {
+                // The only currently supported key inside build: is 'rules'
+                TokenKind::Rules => {
+                    self.bump(); // consume 'rules'
+                    self.skip_whitespace();
+                    self.expect(&TokenKind::Assign)?; // consume '='
+                    self.skip_whitespace();
+
+                    rules_value = match self.current_kind() {
+                        TokenKind::True => {
+                            self.bump();
+                            Expression::Literal(Value::Boolean(true))
+                        }
+                        TokenKind::False => {
+                            self.bump();
+                            Expression::Literal(Value::Boolean(false))
+                        }
+                        TokenKind::StringLiteral(s) => {
+                            let s = s.clone();
+                            self.bump();
+                            Expression::Literal(Value::String(s))
+                        }
+                        _ => {
+                            let token = self.current().clone();
+                            return Err(CompilerError::parse_error(
+                                format!(
+                                    "Expected true, false, or a string value for 'build rules', found '{}'",
+                                    self.current_kind()
+                                ),
+                                Some(token.location.clone()),
+                                None,
+                            ));
+                        }
+                    };
+                }
+                TokenKind::Indent(_) | TokenKind::Newline => {
+                    self.bump();
+                }
+                _ => {
+                    // Skip unknown properties inside the build block to stay forward-compatible
+                    self.bump();
+                }
+            }
+        }
+
+        Ok(Statement::BuildBlock {
+            rules_enabled: rules_value,
+            location: Some(location),
+        })
+    }
+
     /// Parse a source: top-level block with spec and version fields
     /// ```text
     /// source:
@@ -4184,7 +4330,7 @@ impl TokenParser {
         self.skip_whitespace();
 
         let mut declarations: Vec<StateDeclaration> = Vec::new();
-        let computed = Vec::new(); // Will be populated when computed: blocks are parsed
+        let mut computed: Vec<crate::ast::ComputedDeclaration> = Vec::new(); // Populated when computed: blocks are parsed
 
         // Expect indentation for block body
         if !matches!(self.current_kind(), TokenKind::Indent(_))
@@ -4323,6 +4469,11 @@ impl TokenParser {
                 TokenKind::Dedent(_) => {
                     break;
                 }
+                TokenKind::Computed => {
+                    // Parse computed: block for derived state values
+                    let computed_decls = self.parse_computed_block(block_level)?;
+                    computed.extend(computed_decls);
+                }
                 TokenKind::Rules => {
                     // Parse rules: block for state invariants
                     let rules_block = self.parse_rules_block(block_level)?;
@@ -4446,6 +4597,261 @@ impl TokenParser {
         }
 
         Ok(crate::ast::RulesBlock { rules, location })
+    }
+
+    /// Parse a computed: block inside a state block.
+    ///
+    /// Syntax:
+    /// ```text
+    /// computed:
+    ///     string fullName
+    ///         return firstName + " " + lastName
+    /// ```
+    ///
+    /// Each computed declaration consists of:
+    /// - A type keyword (integer, string, number, boolean, or a class name)
+    /// - A name identifier
+    /// - An indented body containing statements (must end with a `return`)
+    fn parse_computed_block(
+        &mut self,
+        parent_block_level: usize,
+    ) -> Result<Vec<crate::ast::ComputedDeclaration>, CompilerError> {
+        // Consume "computed" keyword
+        self.expect(&TokenKind::Computed)?;
+        self.skip_whitespace();
+
+        // Consume ":"
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        let mut declarations: Vec<crate::ast::ComputedDeclaration> = Vec::new();
+
+        // Skip newline if present
+        if matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump();
+        }
+
+        // Determine the indent level for computed declarations
+        // (should be one level deeper than the parent state block)
+        let computed_level = if let TokenKind::Indent(level) = self.current_kind() {
+            *level
+        } else {
+            parent_block_level + 1
+        };
+
+        loop {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Consume matching indent tokens
+            if let TokenKind::Indent(level) = self.current_kind() {
+                if *level >= computed_level {
+                    self.bump();
+                } else {
+                    break;
+                }
+            }
+
+            // Dedent exits the computed block
+            if let TokenKind::Dedent(level) = self.current_kind() {
+                if *level < computed_level {
+                    self.bump();
+                    break;
+                }
+            }
+
+            // Top-level section keywords end the computed block
+            if matches!(
+                self.current_kind(),
+                TokenKind::Functions
+                    | TokenKind::Class
+                    | TokenKind::Start
+                    | TokenKind::Tests
+                    | TokenKind::Import
+                    | TokenKind::State
+                    | TokenKind::Rules
+            ) {
+                break;
+            }
+
+            // Skip blank lines
+            if matches!(self.current_kind(), TokenKind::Newline) {
+                self.bump();
+                continue;
+            }
+
+            // Parse the type name: integer | string | number | boolean | <Identifier>
+            let decl_location = self.current().location.clone();
+            let type_str = match self.current_kind() {
+                TokenKind::Identifier(name) => {
+                    let s = name.clone();
+                    self.bump();
+                    s
+                }
+                _ => {
+                    // Not a type declaration — stop parsing computed block
+                    break;
+                }
+            };
+
+            self.skip_whitespace();
+
+            // Parse the computed value name
+            let var_name = match self.current_kind() {
+                TokenKind::Identifier(name) => {
+                    let n = name.clone();
+                    self.bump();
+                    n
+                }
+                _ => {
+                    return Err(CompilerError::parse_error(
+                        "Expected computed value name after type in computed: block".to_string(),
+                        Some(self.current().location.clone()),
+                        Some(
+                            "Computed declarations must have format: <type> <name> (with indented body)"
+                                .to_string(),
+                        ),
+                    ));
+                }
+            };
+
+            // Convert type string to AST Type
+            let type_ = match type_str.as_str() {
+                "integer" => crate::ast::Type::Integer,
+                "number" => crate::ast::Type::Number,
+                "string" => crate::ast::Type::String,
+                "boolean" => crate::ast::Type::Boolean,
+                other => crate::ast::Type::Object(other.to_string()),
+            };
+
+            // Skip newline before the indented body
+            if matches!(self.current_kind(), TokenKind::Newline) {
+                self.bump();
+            }
+
+            // Parse the indented body using parse_block()
+            let body = self.parse_block()?;
+
+            if body.is_empty() {
+                return Err(CompilerError::parse_error(
+                    format!(
+                        "Computed value '{}' has an empty body — it must contain a return statement",
+                        var_name
+                    ),
+                    Some(decl_location.clone()),
+                    Some("Add a return statement: `return <expression>`".to_string()),
+                ));
+            }
+
+            declarations.push(crate::ast::ComputedDeclaration {
+                name: var_name,
+                type_,
+                body,
+                location: Some(decl_location),
+            });
+
+            // Skip trailing newline after each declaration
+            if matches!(self.current_kind(), TokenKind::Newline) {
+                self.bump();
+            }
+
+            // Check for indent continuing at same computed level
+            if let TokenKind::Indent(level) = self.current_kind() {
+                if *level < computed_level {
+                    break;
+                }
+            }
+        }
+
+        Ok(declarations)
+    }
+
+    /// Parse a top-level `watch` block for reactive state observation.
+    ///
+    /// Syntax:
+    /// ```text
+    /// watch count:
+    ///     print("Count changed")
+    ///
+    /// watch firstName lastName:
+    ///     print("Name changed")
+    /// ```
+    ///
+    /// The `watch` keyword is followed by one or more state variable names and
+    /// then a colon. The indented body is executed whenever any of the named
+    /// state variables change.
+    fn parse_watch_block(&mut self) -> Result<crate::ast::WatchBlock, CompilerError> {
+        let location = Some(self.current().location.clone());
+
+        // Consume "watch" keyword
+        self.expect(&TokenKind::Watch)?;
+        self.skip_whitespace();
+
+        // Parse one or more target variable names before the colon
+        let mut targets: Vec<String> = Vec::new();
+        loop {
+            match self.current_kind() {
+                TokenKind::Identifier(name) => {
+                    targets.push(name.clone());
+                    self.bump();
+                    self.skip_whitespace();
+                }
+                TokenKind::Colon => {
+                    // End of target list
+                    break;
+                }
+                _ => {
+                    return Err(CompilerError::parse_error(
+                        format!(
+                            "Expected a state variable name or ':' in watch block, found {:?}",
+                            self.current_kind()
+                        ),
+                        Some(self.current().location.clone()),
+                        Some(
+                            "Watch blocks must have format: watch <name> [<name> ...]: <body>"
+                                .to_string(),
+                        ),
+                    ));
+                }
+            }
+        }
+
+        if targets.is_empty() {
+            return Err(CompilerError::parse_error(
+                "Watch block must specify at least one state variable to observe".to_string(),
+                Some(self.current().location.clone()),
+                Some("Usage: watch <variableName>: <body>".to_string()),
+            ));
+        }
+
+        // Consume ":"
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Skip newline before the body
+        if matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump();
+        }
+
+        // Parse the indented body
+        let body = self.parse_block()?;
+
+        if body.is_empty() {
+            return Err(CompilerError::parse_error(
+                format!("Watch block for '{}' has an empty body", targets.join(", ")),
+                location.clone(),
+                Some("Add at least one statement to the watch block body".to_string()),
+            ));
+        }
+
+        Ok(crate::ast::WatchBlock {
+            targets,
+            body,
+            location,
+        })
     }
 
     /// Try to parse a guard clause following a state declaration

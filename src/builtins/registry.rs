@@ -213,6 +213,8 @@ impl BuiltinRegistry {
         registry.register_string_namespace();
         registry.register_list_namespace();
         registry.register_json_namespace(); // BOOK: json-module
+        registry.register_file_namespace();
+        registry.register_http_namespace();
 
         registry
     }
@@ -249,6 +251,13 @@ impl BuiltinRegistry {
                 BuiltinCategory::IO,
             )
             .with_wasm_import("env", "input_float"),
+            BuiltinFunction::new(
+                "inputYesNo",
+                vec![BuiltinType::String],
+                BuiltinType::Boolean,
+                BuiltinCategory::IO,
+            )
+            .with_wasm_import("env", "input_yes_no"),
         ];
 
         for func in io_functions {
@@ -309,6 +318,18 @@ impl BuiltinRegistry {
                 "toInteger",
                 vec![BuiltinType::String],
                 BuiltinType::Integer,
+                BuiltinCategory::Type,
+            ),
+            BuiltinFunction::new(
+                "toNumber",
+                vec![BuiltinType::Any],
+                BuiltinType::Number,
+                BuiltinCategory::Type,
+            ),
+            BuiltinFunction::new(
+                "toBoolean",
+                vec![BuiltinType::Any],
+                BuiltinType::Boolean,
                 BuiltinCategory::Type,
             ),
         ];
@@ -488,6 +509,12 @@ impl BuiltinRegistry {
             BuiltinFunction::new(
                 "min",
                 vec![BuiltinType::Number, BuiltinType::Number],
+                BuiltinType::Number,
+                BuiltinCategory::Math,
+            ),
+            BuiltinFunction::new(
+                "sign",
+                vec![BuiltinType::Number],
                 BuiltinType::Number,
                 BuiltinCategory::Math,
             ),
@@ -671,11 +698,17 @@ impl BuiltinRegistry {
         self.namespaces.insert("string".to_string(), string_ns);
     }
 
-    /// Register list namespace (list.size, list.push, etc.)
+    /// Register list namespace (list.length, list.add, etc.)
     fn register_list_namespace(&mut self) {
         let list_ns = BuiltinNamespace::new("list").with_functions(vec![
             BuiltinFunction::new(
                 "size",
+                vec![BuiltinType::List(Box::new(BuiltinType::Any))],
+                BuiltinType::Integer,
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "length",
                 vec![BuiltinType::List(Box::new(BuiltinType::Any))],
                 BuiltinType::Integer,
                 BuiltinCategory::List,
@@ -703,6 +736,18 @@ impl BuiltinRegistry {
             ),
             BuiltinFunction::new(
                 "pop",
+                vec![BuiltinType::List(Box::new(BuiltinType::Any))],
+                BuiltinType::Any,
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "removeLast",
+                vec![BuiltinType::List(Box::new(BuiltinType::Any))],
+                BuiltinType::Any,
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "removeLast",
                 vec![BuiltinType::List(Box::new(BuiltinType::Any))],
                 BuiltinType::Any,
                 BuiltinCategory::List,
@@ -787,6 +832,110 @@ impl BuiltinRegistry {
                 BuiltinType::List(Box::new(BuiltinType::Any)),
                 BuiltinCategory::List,
             ),
+            BuiltinFunction::new(
+                "add",
+                vec![
+                    BuiltinType::List(Box::new(BuiltinType::Any)),
+                    BuiltinType::Any,
+                ],
+                BuiltinType::List(Box::new(BuiltinType::Any)),
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "insert",
+                vec![
+                    BuiltinType::List(Box::new(BuiltinType::Any)),
+                    BuiltinType::Integer,
+                    BuiltinType::Any,
+                ],
+                BuiltinType::List(Box::new(BuiltinType::Any)),
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "remove",
+                vec![
+                    BuiltinType::List(Box::new(BuiltinType::Any)),
+                    BuiltinType::Integer,
+                ],
+                BuiltinType::Any,
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "lastIndexOf",
+                vec![
+                    BuiltinType::List(Box::new(BuiltinType::Any)),
+                    BuiltinType::Any,
+                ],
+                BuiltinType::Integer,
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "concat",
+                vec![
+                    BuiltinType::List(Box::new(BuiltinType::Any)),
+                    BuiltinType::List(Box::new(BuiltinType::Any)),
+                ],
+                BuiltinType::List(Box::new(BuiltinType::Any)),
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "sort",
+                vec![BuiltinType::List(Box::new(BuiltinType::Any))],
+                BuiltinType::List(Box::new(BuiltinType::Any)),
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "map",
+                vec![
+                    BuiltinType::List(Box::new(BuiltinType::Any)),
+                    BuiltinType::Any,
+                ],
+                BuiltinType::List(Box::new(BuiltinType::Any)),
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "filter",
+                vec![
+                    BuiltinType::List(Box::new(BuiltinType::Any)),
+                    BuiltinType::Any,
+                ],
+                BuiltinType::List(Box::new(BuiltinType::Any)),
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "reduce",
+                vec![
+                    BuiltinType::List(Box::new(BuiltinType::Any)),
+                    BuiltinType::Any,
+                    BuiltinType::Any,
+                ],
+                BuiltinType::Any,
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "forEach",
+                vec![
+                    BuiltinType::List(Box::new(BuiltinType::Any)),
+                    BuiltinType::Any,
+                ],
+                BuiltinType::Void,
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "range",
+                vec![BuiltinType::Integer, BuiltinType::Integer],
+                BuiltinType::List(Box::new(BuiltinType::Integer)),
+                BuiltinCategory::List,
+            ),
+            BuiltinFunction::new(
+                "join",
+                vec![
+                    BuiltinType::List(Box::new(BuiltinType::String)),
+                    BuiltinType::String,
+                ],
+                BuiltinType::String,
+                BuiltinCategory::List,
+            ),
         ]);
 
         self.namespaces.insert("list".to_string(), list_ns);
@@ -828,6 +977,88 @@ impl BuiltinRegistry {
         ]);
 
         self.namespaces.insert("json".to_string(), json_ns);
+    }
+
+    /// Register file namespace (file.read, file.write, etc.)
+    fn register_file_namespace(&mut self) {
+        let file_ns = BuiltinNamespace::new("file").with_functions(vec![
+            BuiltinFunction::new(
+                "read",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "lines",
+                vec![BuiltinType::String],
+                BuiltinType::List(Box::new(BuiltinType::String)),
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "write",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::Void,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "append",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::Void,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "exists",
+                vec![BuiltinType::String],
+                BuiltinType::Boolean,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "delete",
+                vec![BuiltinType::String],
+                BuiltinType::Void,
+                BuiltinCategory::IO,
+            ),
+        ]);
+
+        self.namespaces.insert("file".to_string(), file_ns);
+    }
+
+    /// Register http namespace (http.get, http.post, etc.)
+    fn register_http_namespace(&mut self) {
+        let http_ns = BuiltinNamespace::new("http").with_functions(vec![
+            BuiltinFunction::new(
+                "get",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "post",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "put",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "patch",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "delete",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+        ]);
+
+        self.namespaces.insert("http".to_string(), http_ns);
     }
 
     // ============== Query Methods ==============

@@ -81,18 +81,18 @@ start:
 		list<integer> numbers = [1, 2, 3, 4, 5]
 		list<string> words = ["apple", "banana", "cherry"]
 		// Method-style list operations (preferred pattern)
-		print("numbers.size() = " + numbers.size().toString())
-		print("words.size() = " + words.size().toString())
+		print("numbers.length() = " + numbers.length().toString())
+		print("words.length() = " + words.length().toString())
 		// List access and modification
 		integer numberElement = numbers[2]
 		print("numbers[2] = " + numberElement.toString())
 		print("words[1] = " + words[1])
 		// List utility functions (lowercase namespace)
 		list.add(numbers, 6)
-		print("After list.add(6): length = " + numbers.size().toString())
-		integer removed = list.remove(numbers, numbers.size() - 1)
+		print("After list.add(6): length = " + numbers.length().toString())
+		integer removed = list.remove(numbers, numbers.length() - 1)
 		print("Removed element: " + removed.toString())
-		print("After list.remove: length = " + numbers.size().toString())
+		print("After list.remove: length = " + numbers.length().toString())
 		// List searching with utility functions
 		print("list.contains(numbers, 3) = " + list.contains(numbers, 3).toString())
 		print("list.contains(words, \"grape\") = " + list.contains(words, "grape").toString())

@@ -37,14 +37,14 @@ start:
 	// String replacement
 	string original = "Hello Hello World"
 	string replaced = string.replace(original, "Hello", "Hi")
-	string replacedAll = string.replaceAll(original, "Hello", "Hi")
+	string replacedAll = string.replace(original, "Hello", "Hi")
 	print("Replace first: " + replaced)
 	print("Replace all: " + replacedAll)
 	// String splitting and joining
 	string csvData = "apple,banana,orange,grape"
 	list<string> fruits = string.split(csvData, ",")
 	string joined = string.join(fruits, " | ")
-	print("Split result: " + fruits.size().toString() + " items")
+	print("Split result: " + fruits.length().toString() + " items")
 	print("Joined: " + joined)
 	// Character operations
 	string word = "Clean"

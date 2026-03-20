@@ -35,9 +35,9 @@ start:
 	iterate vehicle in fleet
 		totalMaxSpeed = totalMaxSpeed + vehicle.getMaxSpeed()
 
-	integer averageSpeed = totalMaxSpeed / fleet.size()
+	integer averageSpeed = totalMaxSpeed / fleet.length()
 	print("Fleet analysis:")
-	print("Total vehicles: " + fleet.size().toString())
+	print("Total vehicles: " + fleet.length().toString())
 	print("Average max speed: " + averageSpeed.toString() + " km/h")
 
 	// Demonstrate dynamic behavior

@@ -207,8 +207,9 @@ impl JsonClass {
             .expect("__malloc must be registered before JSON stringify functions");
 
         let int_to_string_index = codegen
-            .get_function_index("int_to_string")
-            .expect("int_to_string must be registered before JSON stringify functions");
+            .get_function_index("integer.toString")
+            .or_else(|| codegen.get_function_index("int_to_string"))
+            .expect("integer.toString must be registered before JSON stringify functions");
 
         let float_to_string_index = codegen
             .get_function_index("float_to_string")

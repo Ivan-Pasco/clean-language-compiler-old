@@ -65,7 +65,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let input_file = &args[2];
-            execute_file(input_file)?;
+            let temp_output = format!("{}.wasm", input_file);
+            compile_file(input_file, &temp_output, CompilationTarget::Server)?;
+            println!(
+                "Compiled to {}. Run it with: wasmtime {}",
+                temp_output, temp_output
+            );
         }
         "help" => {
             print_usage();
@@ -141,19 +146,5 @@ fn compile_file(
         output_file,
         wasm_binary.len()
     );
-    Ok(())
-}
-
-fn execute_file(input_file: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // For now, just compile to a temporary file and notify user
-    let temp_output = format!("{}.wasm", input_file);
-    compile_file(input_file, &temp_output, CompilationTarget::Server)?;
-
-    println!("Note: Direct execution not yet implemented.");
-    println!(
-        "You can run the compiled WASM file using: wasmtime {}",
-        temp_output
-    );
-
     Ok(())
 }

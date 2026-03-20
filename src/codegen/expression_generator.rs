@@ -1438,15 +1438,35 @@ impl CodeGenerator {
     #[allow(dead_code)]
     fn generate_chained_method_call_expression(
         &mut self,
-        _object: &Expression,
-        _calls: &[(String, Vec<Expression>)],
-        _instructions: &mut Vec<Instruction>
+        object: &Expression,
+        calls: &[(String, Vec<Expression>)],
+        instructions: &mut Vec<Instruction>
     ) -> Result<WasmType, CompilerError> {
-        Err(CompilerError::codegen_error(
-            "Chained method calls not yet implemented".to_string(),
-            None,
-            None
-        ))
+        // Chained method calls are naturally handled by nested MethodCall expressions
+        // in the AST. This function handles them explicitly if they appear as a flat list.
+        let mut current_type = self.generate_expression(object, instructions)?;
+        for (method_name, args) in calls {
+            // Build a synthetic method call expression
+            // For each call in the chain, the result of the previous becomes the object
+            let mut all_args_instructions = Vec::new();
+            for arg in args {
+                self.generate_expression(arg, &mut all_args_instructions)?;
+            }
+            instructions.extend(all_args_instructions);
+
+            // Look up and call the method
+            let func_name = format!("{}", method_name);
+            if let Some(func_idx) = self.get_function_index(&func_name) {
+                instructions.push(Instruction::Call(func_idx));
+                current_type = WasmType::I32; // Most methods return i32 (pointer)
+            } else {
+                return Err(CompilerError::codegen_error(
+                    format!("Method '{}' not found in chain", method_name),
+                    None, None
+                ));
+            }
+        }
+        Ok(current_type)
     }
 
     fn generate_static_method_call_expression(

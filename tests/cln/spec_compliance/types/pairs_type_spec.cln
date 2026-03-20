@@ -9,7 +9,7 @@
 // - integer age = ages.get("Alice")
 // - boolean hasKey = ages.has("Alice")
 // - ages.remove("Bob")
-// - integer size = ages.size()
+// - integer size = ages.length()
 // - list<string> keys = ages.keys()
 // - list<integer> values = ages.values()
 

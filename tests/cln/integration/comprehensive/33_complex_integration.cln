@@ -57,7 +57,7 @@ start:
 
 	// Error handling demonstration
 	list<Shape> largeShapes = filterLargeShapes(allShapes, 25.0)
-	print("Shapes with area >= 25.0: " + largeShapes.size().toString() + " shapes")
+	print("Shapes with area >= 25.0: " + largeShapes.length().toString() + " shapes")
 
 	// Advanced operations with precision modifiers
 	integer iterations = 100
@@ -86,7 +86,7 @@ start:
 		print("  Error rate: 0%")
 
 	// Mathematical analysis of results
-	number:64 averageArea = totalArea / allShapes.size()
+	number:64 averageArea = totalArea / allShapes.length()
 	number:64 maxArea = math.max(rect1.getArea(), math.max(rect2.getArea(), math.max(circle1.getArea(), circle2.getArea())))
 	number:64 minArea = math.min(rect1.getArea(), math.min(rect2.getArea(), math.min(circle1.getArea(), circle2.getArea())))
 

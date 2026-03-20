@@ -27,13 +27,13 @@ start:
 	intList.add(1)
 	intList.add(2)
 	intList.add(3)
-	print("Integer list size: " + intList.size().toString())
+	print("Integer list size: " + intList.length().toString())
 
 	// Test 6: any in list with string elements
 	list<any> strList = []
 	strList.add("one")
 	strList.add("two")
 	strList.add("three")
-	print("String list size: " + strList.size().toString())
+	print("String list size: " + strList.length().toString())
 
 	print("any generic type tests completed")

@@ -37,8 +37,6 @@ mod wasm_module_builder;
 #[cfg(test)]
 mod tests;
 
-// Note: instruction_tests module removed due to missing implementation
-
 // Import the StringPool struct
 use self::memory::MemoryUtils;
 use binaryen_optimizer::BinaryenOptimizer;
@@ -278,12 +276,6 @@ impl CodeGenerator {
         codegen.register_method_style_imports()?;
         // Register native memory operations (includes native int_to_string, bool_to_string, etc.)
         codegen.register_memory_operations()?;
-        // DUPLICATE REGISTRATION DISABLED: StandardLibrary approach used instead
-        // codegen.register_stdlib_functions()?;
-
-        // Manually register memory.allocate for testing purposes
-        // TEMPORARILY DISABLED for debugging stack validation issues
-        // codegen.register_import_function("memory", "allocate", &[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
 
         Ok(codegen)
     }
@@ -808,22 +800,6 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Extract source location from a statement for debugging
-    #[allow(dead_code)]
-    fn get_statement_location(&self, stmt: &Statement) -> Option<SourceLocation> {
-        match stmt {
-            Statement::VariableDecl { location, .. } => location.clone(),
-            Statement::Assignment { location, .. } => location.clone(),
-            Statement::Print { location, .. } => location.clone(),
-            Statement::PrintBlock { location, .. } => location.clone(),
-            Statement::Return { location, .. } => location.clone(),
-            Statement::If { location, .. } => location.clone(),
-            Statement::Iterate { location, .. } => location.clone(),
-            Statement::Test { location, .. } => location.clone(),
-            _ => Some(SourceLocation::default()),
-        }
-    }
-
     pub fn generate_statement(
         &mut self,
         stmt: &Statement,
@@ -1185,7 +1161,10 @@ impl CodeGenerator {
                 self.generate_require_statement(condition, location, instructions)?;
             }
             // AI metadata statements — compile-time only, no code generation
-            Statement::Spec { .. } | Statement::Intent { .. } | Statement::SourceBlock { .. } => {}
+            Statement::Spec { .. }
+            | Statement::Intent { .. }
+            | Statement::SourceBlock { .. }
+            | Statement::BuildBlock { .. } => {}
         }
         Ok(())
     }
@@ -1387,18 +1366,6 @@ impl CodeGenerator {
                 if let Some(local) = self.find_local(name) {
                     instructions.push(Instruction::LocalGet(local.index));
                     Ok(WasmType::from(local.type_))
-                } else if matches!(name.as_str(), "conditional" | "compare" | "logical") {
-                    // Handle stdlib namespace identifiers that appear as standalone variables
-                    // This is a workaround for parser issues where conditional.function(...)
-                    // gets parsed as Variable("conditional") instead of PropertyAccess or MethodCall
-
-                    // Since we don't know which specific function is being referenced,
-                    // return a placeholder value that can work with any expected type
-                    // The semantic analyzer validates this and returns Type::Any
-
-                    // Return 0 as a generic placeholder (can represent false, 0, empty string, etc.)
-                    instructions.push(Instruction::I32Const(0));
-                    Ok(WasmType::I32)
                 } else {
                     // Collect all visible variables for better suggestions
                     let variables: Vec<&str> =
@@ -1882,11 +1849,9 @@ impl CodeGenerator {
                 // Call the appropriate list access function
                 if let Some(list_get_index) = self.function_map.get("list.get") {
                     instructions.push(Instruction::Call(*list_get_index));
-                } else if let Some(array_get_index) = self.function_map.get("array_get") {
-                    instructions.push(Instruction::Call(*array_get_index));
                 } else {
                     return Err(CompilerError::codegen_error(
-                        "No list access function found (list.get or array_get)",
+                        "No list access function found (list.get)",
                         Some("Register list operations to enable list access".to_string()),
                         None,
                     ));
@@ -2269,49 +2234,46 @@ impl CodeGenerator {
                     // Route List methods to proper import functions
                     match method.as_str() {
                         "add" | "push" => {
-                            // List.add(item) / List.push(item) - calls array_push or list.push import
-                            // Stack: [list_ptr, item] -> [new_list_ptr]
-                            if let Some(push_index) = self
-                                .get_function_index("array_push")
-                                .or_else(|| self.get_function_index("list.push"))
-                            {
+                            // List.add(item) / List.push(item) - calls list.add import (in-place)
+                            // push is an alias for add per spec
+                            // Stack: [list_ptr, item] -> [list_ptr]
+                            if let Some(add_index) = self.get_function_index("list.add") {
+                                instructions.push(Instruction::Call(add_index));
+                                return Ok(WasmType::I32);
+                            }
+                            // Fallback to list.push for compatibility
+                            if let Some(push_index) = self.get_function_index("list.push") {
                                 instructions.push(Instruction::Call(push_index));
                                 return Ok(WasmType::I32);
                             }
                             return Err(CompilerError::codegen_error(
-                                "List.add requires array_push import - ensure bridge provides this function",
+                                "List.add requires list.add import - ensure bridge provides this function",
                                 None,
                                 None,
                             ));
                         }
-                        "remove" | "pop" => {
-                            // List.remove() / List.pop() - calls array_pop import
+                        "remove" | "pop" | "removeLast" => {
+                            // List.remove() / List.pop() / List.removeLast() - calls list.pop import
+                            // removeLast is the canonical spec name for pop
                             // Stack: [list_ptr] -> [removed_item]
-                            if let Some(pop_index) = self
-                                .get_function_index("array_pop")
-                                .or_else(|| self.get_function_index("list.remove"))
-                            {
+                            if let Some(pop_index) = self.get_function_index("list.pop") {
                                 instructions.push(Instruction::Call(pop_index));
                                 return Ok(WasmType::I32);
                             }
                             return Err(CompilerError::codegen_error(
-                                "List.remove requires array_pop import - ensure bridge provides this function",
+                                "List.removeLast requires list.pop import - ensure bridge provides this function",
                                 None,
                                 None,
                             ));
                         }
                         "size" | "length" => {
-                            // List.size() / List.length() - calls array_length function
-                            if let Some(length_index) = self
-                                .get_function_index("array_length")
-                                .or_else(|| self.get_function_index("list.length"))
-                                .or_else(|| self.get_function_index("array.length"))
-                            {
+                            // List.size() / List.length() - calls list.length function
+                            if let Some(length_index) = self.get_function_index("list.length") {
                                 instructions.push(Instruction::Call(length_index));
                                 return Ok(WasmType::I32);
                             }
                             return Err(CompilerError::codegen_error(
-                                "List.size requires array_length function",
+                                "List.size requires list.length function",
                                 None,
                                 None,
                             ));
@@ -2320,14 +2282,8 @@ impl CodeGenerator {
                             // List.peek() - get last element without removing
                             // Implementation: get element at index (size - 1)
                             // Stack: [list_ptr] -> duplicate -> get size -> subtract 1 -> get element
-                            if let Some(length_index) = self
-                                .get_function_index("array_length")
-                                .or_else(|| self.get_function_index("list.length"))
-                            {
-                                if let Some(get_index) = self
-                                    .get_function_index("array_get")
-                                    .or_else(|| self.get_function_index("list.get"))
-                                {
+                            if let Some(length_index) = self.get_function_index("list.length") {
+                                if let Some(get_index) = self.get_function_index("list.get") {
                                     // Duplicate list pointer (need it twice: once for size, once for get)
                                     instructions.push(Instruction::LocalGet(0)); // Re-get list_ptr
                                     instructions.push(Instruction::Call(length_index)); // Get size
@@ -2345,47 +2301,38 @@ impl CodeGenerator {
                             ));
                         }
                         "contains" => {
-                            // List.contains(item) - calls array_contains import
+                            // List.contains(item) - calls list.contains import
                             // Stack: [list_ptr, item] -> [0 or 1]
-                            if let Some(contains_index) = self
-                                .get_function_index("array_contains")
-                                .or_else(|| self.get_function_index("list.contains"))
-                            {
+                            if let Some(contains_index) = self.get_function_index("list.contains") {
                                 instructions.push(Instruction::Call(contains_index));
                                 return Ok(WasmType::I32);
                             }
                             return Err(CompilerError::codegen_error(
-                                "List.contains requires array_contains import - ensure bridge provides this function",
+                                "List.contains requires list.contains import - ensure bridge provides this function",
                                 None,
                                 None,
                             ));
                         }
                         "get" => {
-                            // List.get(index) - calls array_get import
-                            if let Some(get_index) = self
-                                .get_function_index("array_get")
-                                .or_else(|| self.get_function_index("list.get"))
-                            {
+                            // List.get(index) - calls list.get import
+                            if let Some(get_index) = self.get_function_index("list.get") {
                                 instructions.push(Instruction::Call(get_index));
                                 return Ok(WasmType::I32);
                             }
                             return Err(CompilerError::codegen_error(
-                                "List.get requires array_get import - ensure bridge provides this function",
+                                "List.get requires list.get import - ensure bridge provides this function",
                                 None,
                                 None,
                             ));
                         }
                         "set" => {
-                            // List.set(index, value) - calls array_set import
-                            if let Some(set_index) = self
-                                .get_function_index("array_set")
-                                .or_else(|| self.get_function_index("list.set"))
-                            {
+                            // List.set(index, value) - calls list.set import
+                            if let Some(set_index) = self.get_function_index("list.set") {
                                 instructions.push(Instruction::Call(set_index));
                                 return Ok(WasmType::I32);
                             }
                             return Err(CompilerError::codegen_error(
-                                "List.set requires array_set import - ensure bridge provides this function",
+                                "List.set requires list.set import - ensure bridge provides this function",
                                 None,
                                 None,
                             ));
@@ -2522,12 +2469,12 @@ impl CodeGenerator {
                     }
                     "set" => {
                         // array.set(index, value) - 0-indexed assignment
-                        if let Some(set_index) = self.get_function_index("array.set") {
+                        if let Some(set_index) = self.get_function_index("list.set") {
                             instructions.push(Instruction::Call(set_index));
                             Ok(WasmType::I32) // Void represented as I32
                         } else {
                             Err(CompilerError::codegen_error(
-                                "array.set function not found",
+                                "list.set function not found",
                                 None,
                                 None,
                             ))
@@ -2535,12 +2482,12 @@ impl CodeGenerator {
                     }
                     "push" => {
                         // array.push(item) - add element to end
-                        if let Some(push_index) = self.get_function_index("array_push") {
+                        if let Some(push_index) = self.get_function_index("list.push") {
                             instructions.push(Instruction::Call(push_index));
                             Ok(WasmType::I32) // Returns new array pointer
                         } else {
                             Err(CompilerError::codegen_error(
-                                "array_push function not found",
+                                "list.push function not found",
                                 None,
                                 None,
                             ))
@@ -2548,12 +2495,12 @@ impl CodeGenerator {
                     }
                     "pop" => {
                         // array.pop() - remove and return last element
-                        if let Some(pop_index) = self.get_function_index("array_pop") {
+                        if let Some(pop_index) = self.get_function_index("list.pop") {
                             instructions.push(Instruction::Call(pop_index));
                             Ok(WasmType::I32) // Returns popped element
                         } else {
                             Err(CompilerError::codegen_error(
-                                "array_pop function not found",
+                                "list.pop function not found",
                                 None,
                                 None,
                             ))
@@ -2561,12 +2508,12 @@ impl CodeGenerator {
                     }
                     "contains" => {
                         // array.contains(item) - check if item exists
-                        if let Some(contains_index) = self.get_function_index("array_contains") {
+                        if let Some(contains_index) = self.get_function_index("list.contains") {
                             instructions.push(Instruction::Call(contains_index));
                             Ok(WasmType::I32) // Returns boolean (0/1)
                         } else {
                             Err(CompilerError::codegen_error(
-                                "array_contains function not found",
+                                "list.contains function not found",
                                 None,
                                 None,
                             ))
@@ -2574,12 +2521,12 @@ impl CodeGenerator {
                     }
                     "indexOf" => {
                         // array.indexOf(item) - find index of item
-                        if let Some(index_of_index) = self.get_function_index("array_index_of") {
+                        if let Some(index_of_index) = self.get_function_index("list.indexOf") {
                             instructions.push(Instruction::Call(index_of_index));
                             Ok(WasmType::I32) // Returns index (-1 if not found)
                         } else {
                             Err(CompilerError::codegen_error(
-                                "array_index_of function not found",
+                                "list.indexOf function not found",
                                 None,
                                 None,
                             ))
@@ -2587,12 +2534,12 @@ impl CodeGenerator {
                     }
                     "slice" => {
                         // array.slice(start, end) - extract portion of array
-                        if let Some(slice_index) = self.get_function_index("array_slice") {
+                        if let Some(slice_index) = self.get_function_index("list.slice") {
                             instructions.push(Instruction::Call(slice_index));
                             Ok(WasmType::I32) // Returns new array pointer
                         } else {
                             Err(CompilerError::codegen_error(
-                                "array_slice function not found",
+                                "list.slice function not found",
                                 None,
                                 None,
                             ))
@@ -2600,12 +2547,12 @@ impl CodeGenerator {
                     }
                     "concat" => {
                         // array.concat(other) - combine with another array
-                        if let Some(concat_index) = self.get_function_index("array_concat") {
+                        if let Some(concat_index) = self.get_function_index("list.concat") {
                             instructions.push(Instruction::Call(concat_index));
                             Ok(WasmType::I32) // Returns new array pointer
                         } else {
                             Err(CompilerError::codegen_error(
-                                "array_concat function not found",
+                                "list.concat function not found",
                                 None,
                                 None,
                             ))
@@ -2613,12 +2560,12 @@ impl CodeGenerator {
                     }
                     "reverse" => {
                         // array.reverse() - reverse array elements
-                        if let Some(reverse_index) = self.get_function_index("array_reverse") {
+                        if let Some(reverse_index) = self.get_function_index("list.reverse") {
                             instructions.push(Instruction::Call(reverse_index));
                             Ok(WasmType::I32) // Returns new array pointer
                         } else {
                             Err(CompilerError::codegen_error(
-                                "array_reverse function not found",
+                                "list.reverse function not found",
                                 None,
                                 None,
                             ))
@@ -2626,12 +2573,12 @@ impl CodeGenerator {
                     }
                     "join" => {
                         // array.join(separator) - join elements into string
-                        if let Some(join_index) = self.get_function_index("array_join") {
+                        if let Some(join_index) = self.get_function_index("list.join") {
                             instructions.push(Instruction::Call(join_index));
                             Ok(WasmType::I32) // Returns string pointer
                         } else {
                             Err(CompilerError::codegen_error(
-                                "array_join function not found",
+                                "list.join function not found",
                                 None,
                                 None,
                             ))
@@ -2699,25 +2646,25 @@ impl CodeGenerator {
                     }
                     // String methods
                     "trimStart" => {
-                        if let Some(trim_start_index) = self.get_function_index("string_trim_start")
+                        if let Some(trim_start_index) = self.get_function_index("string.trimStart")
                         {
                             instructions.push(Instruction::Call(trim_start_index));
                             Ok(WasmType::I32) // Returns string pointer
                         } else {
                             Err(CompilerError::codegen_error(
-                                "string_trim_start function not found",
+                                "string.trimStart function not found",
                                 None,
                                 None,
                             ))
                         }
                     }
                     "trimEnd" => {
-                        if let Some(trim_end_index) = self.get_function_index("string_trim_end") {
+                        if let Some(trim_end_index) = self.get_function_index("string.trimEnd") {
                             instructions.push(Instruction::Call(trim_end_index));
                             Ok(WasmType::I32) // Returns string pointer
                         } else {
                             Err(CompilerError::codegen_error(
-                                "string_trim_end function not found",
+                                "string.trimEnd function not found",
                                 None,
                                 None,
                             ))
@@ -2725,89 +2672,87 @@ impl CodeGenerator {
                     }
                     "lastIndexOf" => {
                         if let Some(last_index_of_index) =
-                            self.get_function_index("string_last_index_of")
+                            self.get_function_index("string.lastIndexOf")
                         {
                             instructions.push(Instruction::Call(last_index_of_index));
                             Ok(WasmType::I32) // Returns index
                         } else {
                             Err(CompilerError::codegen_error(
-                                "string_last_index_of function not found",
+                                "string.lastIndexOf function not found",
                                 None,
                                 None,
                             ))
                         }
                     }
                     "substring" => {
-                        if let Some(substring_index) = self.get_function_index("string_substring") {
+                        if let Some(substring_index) = self.get_function_index("string.substring") {
                             instructions.push(Instruction::Call(substring_index));
                             Ok(WasmType::I32) // Returns string pointer
                         } else {
                             Err(CompilerError::codegen_error(
-                                "string_substring function not found",
+                                "string.substring function not found",
                                 None,
                                 None,
                             ))
                         }
                     }
                     "replace" => {
-                        if let Some(replace_index) = self.get_function_index("string_replace") {
+                        if let Some(replace_index) = self.get_function_index("string.replace") {
                             instructions.push(Instruction::Call(replace_index));
                             Ok(WasmType::I32) // Returns string pointer
                         } else {
                             Err(CompilerError::codegen_error(
-                                "string_replace function not found",
+                                "string.replace function not found",
                                 None,
                                 None,
                             ))
                         }
                     }
                     "padStart" => {
-                        if let Some(pad_start_index) = self.get_function_index("string_pad_start") {
+                        if let Some(pad_start_index) = self.get_function_index("string.padStart") {
                             instructions.push(Instruction::Call(pad_start_index));
                             Ok(WasmType::I32) // Returns string pointer
                         } else {
                             Err(CompilerError::codegen_error(
-                                "string_pad_start function not found",
+                                "string.padStart function not found",
                                 None,
                                 None,
                             ))
                         }
                     }
                     "trim" => {
-                        if let Some(trim_index) = self.get_function_index("string_trim") {
+                        if let Some(trim_index) = self.get_function_index("string.trim") {
                             instructions.push(Instruction::Call(trim_index));
                             Ok(WasmType::I32) // Returns string pointer
                         } else {
                             Err(CompilerError::codegen_error(
-                                "string_trim function not found",
+                                "string.trim function not found",
                                 None,
                                 None,
                             ))
                         }
                     }
                     "toLowerCase" => {
-                        if let Some(to_lower_index) =
-                            self.get_function_index("string_to_lower_case")
+                        if let Some(to_lower_index) = self.get_function_index("string.toLowerCase")
                         {
                             instructions.push(Instruction::Call(to_lower_index));
                             Ok(WasmType::I32) // Returns string pointer
                         } else {
                             Err(CompilerError::codegen_error(
-                                "string_to_lower_case function not found",
+                                "string.toLowerCase function not found",
                                 None,
                                 None,
                             ))
                         }
                     }
                     "toUpperCase" => {
-                        if let Some(to_upper_index) =
-                            self.get_function_index("string_to_upper_case")
+                        if let Some(to_upper_index) = self.get_function_index("string.toUpperCase")
                         {
                             instructions.push(Instruction::Call(to_upper_index));
                             Ok(WasmType::I32) // Returns string pointer
                         } else {
                             Err(CompilerError::codegen_error(
-                                "string_to_upper_case function not found",
+                                "string.toUpperCase function not found",
                                 None,
                                 None,
                             ))
@@ -4311,15 +4256,6 @@ impl CodeGenerator {
         }
     }
 
-    #[allow(dead_code)]
-    fn can_convert(&self, from: WasmType, to: WasmType) -> bool {
-        match (from, to) {
-            (WasmType::I32, WasmType::F64) => true,
-            (WasmType::F64, WasmType::I32) => true,
-            _ => from == to,
-        }
-    }
-
     fn generate_conversion(
         &self,
         from: WasmType,
@@ -4425,13 +4361,6 @@ impl CodeGenerator {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn get_string_compare_index(&self) -> Result<u32, CompilerError> {
-        self.get_function_index("string.compare").ok_or_else(|| {
-            CompilerError::codegen_error("String comparison function not found", None, None)
-        })
-    }
-
     fn generate_value(
         &mut self,
         value: &Value,
@@ -4489,70 +4418,6 @@ impl CodeGenerator {
         }
     }
 
-    /// Generate a vec of try-catch instructions
-    #[allow(dead_code)]
-    fn generate_try_catch_block(
-        &mut self,
-        try_block: &[Instruction],
-        catch_tag: u32,
-    ) -> Vec<Instruction> {
-        let mut result = vec![Instruction::Try(BlockType::Empty)];
-
-        // Manually clone each instruction to avoid lifetime issues
-        for instr in try_block {
-            // Each match arm creates a new instruction, avoiding reference issues
-            let cloned_instr = match instr {
-                Instruction::I32Const(v) => Instruction::I32Const(*v),
-                Instruction::I64Const(v) => Instruction::I64Const(*v),
-                Instruction::F32Const(v) => Instruction::F32Const(*v),
-                Instruction::F64Const(v) => Instruction::F64Const(*v),
-                Instruction::I32Add => Instruction::I32Add,
-                Instruction::I32Sub => Instruction::I32Sub,
-                Instruction::I32Mul => Instruction::I32Mul,
-                Instruction::F64Add => Instruction::F64Add,
-                Instruction::F64Sub => Instruction::F64Sub,
-                Instruction::F64Mul => Instruction::F64Mul,
-                Instruction::LocalGet(i) => Instruction::LocalGet(*i),
-                Instruction::LocalSet(i) => Instruction::LocalSet(*i),
-                Instruction::LocalTee(i) => Instruction::LocalTee(*i),
-                Instruction::Call(i) => Instruction::Call(*i),
-                Instruction::If(bt) => Instruction::If(*bt),
-                Instruction::Else => Instruction::Else,
-                Instruction::End => Instruction::End,
-                Instruction::Block(bt) => Instruction::Block(*bt),
-                Instruction::Loop(bt) => Instruction::Loop(*bt),
-                Instruction::Br(depth) => Instruction::Br(*depth),
-                Instruction::BrIf(depth) => Instruction::BrIf(*depth),
-                Instruction::Return => Instruction::Return,
-                Instruction::Unreachable => Instruction::Unreachable,
-                Instruction::Drop => Instruction::Drop,
-                Instruction::I32Eqz => Instruction::I32Eqz,
-                Instruction::I32Eq => Instruction::I32Eq,
-                Instruction::I32Ne => Instruction::I32Ne,
-                Instruction::I32LtS => Instruction::I32LtS,
-                Instruction::I32LtU => Instruction::I32LtU,
-                Instruction::I32GtS => Instruction::I32GtS,
-                Instruction::I32GtU => Instruction::I32GtU,
-                Instruction::I32LeS => Instruction::I32LeS,
-                Instruction::I32LeU => Instruction::I32LeU,
-                Instruction::I32GeS => Instruction::I32GeS,
-                Instruction::I32GeU => Instruction::I32GeU,
-                Instruction::I32Load(memarg) => Instruction::I32Load(*memarg),
-                Instruction::I32Store(memarg) => Instruction::I32Store(*memarg),
-                Instruction::I32Load8U(memarg) => Instruction::I32Load8U(*memarg),
-                Instruction::I32Store8(memarg) => Instruction::I32Store8(*memarg),
-                // Default case for other instructions - add more specific cases as needed
-                _ => Instruction::Nop,
-            };
-            result.push(cloned_instr);
-        }
-
-        result.push(Instruction::Catch(catch_tag));
-        result.push(Instruction::End);
-
-        result
-    }
-
     /// Register ONLY the import functions (file, HTTP, etc.) that must come first in WASM
     /// CRITICAL: This must be called BEFORE any stdlib functions are registered
     /// because imports MUST have indices 0, 1, 2... in WASM files
@@ -4604,8 +4469,7 @@ impl CodeGenerator {
         // Delegate to the extracted stdlib generator
         self.stdlib_generator.register_stdlib_functions()?;
 
-        // Legacy implementations for functions not yet moved to stdlib_generator
-        // These will be gradually migrated to the stdlib_generator
+        // Standard library implementations
         self.register_matrix_operations()?;
         self.register_numeric_operations()?;
         self.register_list_operations()?;
@@ -4613,13 +4477,6 @@ impl CodeGenerator {
         self.register_file_operations()?;
         self.register_basic_array_get_fallback()?;
         self.pre_allocate_conversion_strings()?;
-        // self.register_console_operations()?;
-
-        // 10. Register HTTP operations - DISABLED due to Call(0) issues
-        // self.register_http_operations()?;
-
-        // 11. Register math operations
-        // self.register_math_operations()?;
 
         // 12. Register string class operations
         debug!(
@@ -4759,9 +4616,8 @@ impl CodeGenerator {
             Some(WasmType::I32),
             &malloc_instructions,
         )?;
-        // Create aliases for different access patterns
+        // Create alias for internal use
         self.add_function_alias("malloc", malloc_idx);
-        self.add_function_alias("memory.alloc", malloc_idx);
 
         // NATIVE: memcpy - byte-by-byte memory copy
         // Parameters: dest (i32), src (i32), len (i32)
@@ -4773,10 +4629,9 @@ impl CodeGenerator {
             None, // void return
             &memcpy_instructions,
         )?;
-        // Create aliases for different access patterns
+        // Create alias for internal use
         if let Some(memcpy_idx) = self.get_function_index("__memcpy") {
             self.add_function_alias("memcpy", memcpy_idx);
-            self.add_function_alias("memory.copy", memcpy_idx);
         }
 
         // NATIVE: string_concat - concatenates two strings using malloc
@@ -4789,15 +4644,9 @@ impl CodeGenerator {
             Some(WasmType::I32),
             &concat_instructions,
         )?;
-        // Create aliases for different access patterns
         // NOTE: Do NOT alias "string.concat" here - that would overwrite the host import
         // registered in builtin_generator.rs. The host import is preferred because it
         // handles memory allocation more reliably in the runtime environment.
-        if let Some(concat_idx) = self.get_function_index("__string_concat") {
-            self.add_function_alias("string_concat", concat_idx);
-            // self.add_function_alias("string.concat", concat_idx);  // REMOVED: Use host import instead
-            self.add_function_alias("native_string_concat", concat_idx);
-        }
 
         // NATIVE: string_index_of - finds substring in string
         // Parameters: str_ptr (i32), search_ptr (i32)
@@ -4809,7 +4658,6 @@ impl CodeGenerator {
             Some(WasmType::I32),
             &string_index_of_instructions,
         )?;
-        self.add_function_alias("string_index_of", string_index_of_idx);
         self.add_function_alias("string.indexOf", string_index_of_idx);
 
         // NATIVE: string_index_of_from - finds substring in string starting from index
@@ -4829,7 +4677,6 @@ impl CodeGenerator {
             ],
             &string_index_of_from_instructions,
         )?;
-        self.add_function_alias("string_index_of_from", string_index_of_from_idx);
         self.add_function_alias("string.indexOfFrom", string_index_of_from_idx);
 
         // NATIVE: string_contains - checks if string contains substring
@@ -4843,7 +4690,6 @@ impl CodeGenerator {
             Some(WasmType::I32),
             &string_contains_instructions,
         )?;
-        self.add_function_alias("string_contains", string_contains_idx);
         self.add_function_alias("string.contains", string_contains_idx);
 
         // NATIVE: string_last_index_of - finds last occurrence of substring in string
@@ -4864,7 +4710,6 @@ impl CodeGenerator {
             ], // 6 extra locals
             &string_last_index_of_instructions,
         )?;
-        self.add_function_alias("string_last_index_of", string_last_index_of_idx);
         self.add_function_alias("string.lastIndexOf", string_last_index_of_idx);
 
         // NATIVE: string_last_index_of_from - finds last occurrence of substring starting from index
@@ -4886,7 +4731,6 @@ impl CodeGenerator {
             ],
             &string_last_index_of_from_instructions,
         )?;
-        self.add_function_alias("string_last_index_of_from", string_last_index_of_from_idx);
         self.add_function_alias("string.lastIndexOfFrom", string_last_index_of_from_idx);
 
         // NATIVE: string_starts_with - checks if string starts with prefix
@@ -4900,7 +4744,6 @@ impl CodeGenerator {
             &[WasmType::I32, WasmType::I32, WasmType::I32], // 3 extra locals
             &string_starts_with_instructions,
         )?;
-        self.add_function_alias("string_starts_with", string_starts_with_idx);
         self.add_function_alias("string.startsWith", string_starts_with_idx);
 
         // NATIVE: string_ends_with - checks if string ends with suffix
@@ -4914,7 +4757,6 @@ impl CodeGenerator {
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32], // 4 extra locals
             &string_ends_with_instructions,
         )?;
-        self.add_function_alias("string_ends_with", string_ends_with_idx);
         self.add_function_alias("string.endsWith", string_ends_with_idx);
 
         // NATIVE: string_substring - extracts a substring from a string
@@ -4928,7 +4770,6 @@ impl CodeGenerator {
             &[WasmType::I32, WasmType::I32, WasmType::I32], // 3 extra locals: new_len, new_ptr, i
             &string_substring_instructions,
         )?;
-        self.add_function_alias("string_substring", string_substring_idx);
         self.add_function_alias("string.substring", string_substring_idx);
 
         // NATIVE: int_to_string - converts integer to string using malloc
@@ -4942,11 +4783,9 @@ impl CodeGenerator {
             Some(WasmType::I32),
             &int_to_string_instructions,
         )?;
-        // Create aliases for different access patterns
+        // Create aliases - int_to_string is the internal name used throughout the pipeline
         if let Some(its_idx) = self.get_function_index("__int_to_string") {
             self.add_function_alias("int_to_string", its_idx);
-            self.add_function_alias("integer_to_string", its_idx);
-            self.add_function_alias("native_int_to_string", its_idx);
             self.add_function_alias("integer.toString", its_idx);
         }
 
@@ -4963,11 +4802,9 @@ impl CodeGenerator {
             Some(WasmType::I32),
             &bool_to_string_instructions,
         )?;
-        // Create aliases for different access patterns
+        // Create aliases - bool_to_string is the internal name used throughout the pipeline
         if let Some(bts_idx) = self.get_function_index("__bool_to_string") {
             self.add_function_alias("bool_to_string", bts_idx);
-            self.add_function_alias("boolean_to_string", bts_idx);
-            self.add_function_alias("native_bool_to_string", bts_idx);
             self.add_function_alias("boolean.toString", bts_idx);
         }
 
@@ -4981,10 +4818,9 @@ impl CodeGenerator {
             Some(WasmType::I32),
             &string_to_int_instructions,
         )?;
-        // Create aliases for different access patterns
+        // Create aliases - string_to_int is the internal name used throughout the pipeline
         if let Some(sti_idx) = self.get_function_index("__string_to_int") {
             self.add_function_alias("string_to_int", sti_idx);
-            self.add_function_alias("native_string_to_int", sti_idx);
             self.add_function_alias("string.toInteger", sti_idx);
         }
 
@@ -5000,7 +4836,6 @@ impl CodeGenerator {
         )?;
         if let Some(lg_idx) = self.get_function_index("__list_get_i32") {
             self.add_function_alias("list.get", lg_idx);
-            self.add_function_alias("array_get", lg_idx);
         }
 
         // NATIVE: list_set_i32 - set element in i32 list
@@ -5015,7 +4850,6 @@ impl CodeGenerator {
         )?;
         if let Some(ls_idx) = self.get_function_index("__list_set_i32") {
             self.add_function_alias("list.set", ls_idx);
-            self.add_function_alias("array_set", ls_idx);
         }
 
         // NATIVE: list_pop_i32 - remove and return last element
@@ -5030,7 +4864,6 @@ impl CodeGenerator {
         )?;
         if let Some(lp_idx) = self.get_function_index("__list_pop_i32") {
             self.add_function_alias("list.pop", lp_idx);
-            self.add_function_alias("array_pop", lp_idx);
         }
 
         // NATIVE: list_index_of_i32 - find index of element
@@ -5058,7 +4891,6 @@ impl CodeGenerator {
         )?;
         if let Some(lc_idx) = self.get_function_index("__list_contains_i32") {
             self.add_function_alias("list.contains", lc_idx);
-            self.add_function_alias("array_contains", lc_idx);
         }
 
         // NATIVE: list_push_i32 - add element to end of list (IN-PLACE MUTATION)
@@ -5165,261 +4997,6 @@ impl CodeGenerator {
         self.memory_utils.force_string_at_address(s, target_addr)?;
         Ok(target_addr)
     }
-
-    /// Register string operation functions using WASM instructions from StringOperations
-    /// NOTE: This is the AST-based implementation. The native WASM implementation is in
-    /// builtin_generator.rs register_string_operations() which includes lastIndexOf, startsWith, etc.
-    #[allow(dead_code)]
-    fn register_string_operations_ast(&mut self) -> Result<(), CompilerError> {
-        use crate::stdlib::string_ops::StringOperations;
-
-        // Create a StringOperations instance and register its functions
-        let mut string_ops = StringOperations::new(65536); // Use same heap start
-        string_ops.register_functions(self)?;
-
-        // Register trimStart
-        let trim_start_function = ast::Function {
-            name: "string_trim_start".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![ast::Parameter {
-                name: "s".to_string(),
-                type_: ast::Type::String,
-                default_value: None,
-            }],
-            return_type: ast::Type::String,
-            body: vec![ast::Statement::Return {
-                value: Some(ast::Expression::Call(
-                    "string_trim_start_impl".to_string(),
-                    vec![ast::Expression::Variable("s".to_string())],
-                )),
-                location: None,
-            }],
-            description: Some("Trims leading whitespace from a string.".to_string()),
-            syntax: ast::FunctionSyntax::Simple,
-            visibility: ast::Visibility::Public,
-            modifier: ast::FunctionModifier::None,
-            location: None,
-        };
-        self.prepare_function_type(&trim_start_function)?;
-        self.generate_function(&trim_start_function)?;
-
-        // Register trimEnd
-        let trim_end_function = ast::Function {
-            name: "string_trim_end".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![ast::Parameter {
-                name: "s".to_string(),
-                type_: ast::Type::String,
-                default_value: None,
-            }],
-            return_type: ast::Type::String,
-            body: vec![ast::Statement::Return {
-                value: Some(ast::Expression::Call(
-                    "string_trim_end_impl".to_string(),
-                    vec![ast::Expression::Variable("s".to_string())],
-                )),
-                location: None,
-            }],
-            description: Some("Trims trailing whitespace from a string.".to_string()),
-            syntax: ast::FunctionSyntax::Simple,
-            visibility: ast::Visibility::Public,
-            modifier: ast::FunctionModifier::None,
-            location: None,
-        };
-        self.prepare_function_type(&trim_end_function)?;
-        self.generate_function(&trim_end_function)?;
-
-        // NOTE: string_last_index_of is now implemented as a native WASM function
-        // in builtin_generator.rs using gen_last_index_of() - no AST wrapper needed
-
-        // NOTE: string_substring is now implemented as a native WASM function
-        // in builtin_generator.rs using gen_substring() - no AST wrapper needed
-        // The alias string.substring -> string_substring is also registered there
-
-        // Register replace
-        let replace_function = ast::Function {
-            name: "string_replace".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![
-                ast::Parameter {
-                    name: "s".to_string(),
-                    type_: ast::Type::String,
-                    default_value: None,
-                },
-                ast::Parameter {
-                    name: "from".to_string(),
-                    type_: ast::Type::String,
-                    default_value: None,
-                },
-                ast::Parameter {
-                    name: "to".to_string(),
-                    type_: ast::Type::String,
-                    default_value: None,
-                },
-            ],
-            return_type: ast::Type::String,
-            body: vec![ast::Statement::Return {
-                value: Some(ast::Expression::Call(
-                    "string_replace_impl".to_string(),
-                    vec![
-                        ast::Expression::Variable("s".to_string()),
-                        ast::Expression::Variable("from".to_string()),
-                        ast::Expression::Variable("to".to_string()),
-                    ],
-                )),
-                location: None,
-            }],
-            description: Some(
-                "Replaces all occurrences of a substring with another substring.".to_string(),
-            ),
-            syntax: ast::FunctionSyntax::Simple,
-            visibility: ast::Visibility::Public,
-            modifier: ast::FunctionModifier::None,
-            location: None,
-        };
-        self.prepare_function_type(&replace_function)?;
-        self.generate_function(&replace_function)?;
-
-        // Register padStart
-        let pad_start_function = ast::Function {
-            name: "string_pad_start".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![
-                ast::Parameter {
-                    name: "s".to_string(),
-                    type_: ast::Type::String,
-                    default_value: None,
-                },
-                ast::Parameter {
-                    name: "length".to_string(),
-                    type_: ast::Type::Integer,
-                    default_value: None,
-                },
-                ast::Parameter {
-                    name: "pad_char".to_string(),
-                    type_: ast::Type::String,
-                    default_value: None,
-                },
-            ],
-            return_type: ast::Type::String,
-            body: vec![ast::Statement::Return {
-                value: Some(ast::Expression::Call(
-                    "string_pad_start_impl".to_string(),
-                    vec![
-                        ast::Expression::Variable("s".to_string()),
-                        ast::Expression::Variable("length".to_string()),
-                        ast::Expression::Variable("pad_char".to_string()),
-                    ],
-                )),
-                location: None,
-            }],
-            description: Some(
-                "Pads the current string with another string until it reaches a given length."
-                    .to_string(),
-            ),
-            syntax: ast::FunctionSyntax::Simple,
-            visibility: ast::Visibility::Public,
-            modifier: ast::FunctionModifier::None,
-            location: None,
-        };
-        self.prepare_function_type(&pad_start_function)?;
-        self.generate_function(&pad_start_function)?;
-
-        // Register existing string operations that may not be registered yet
-        let trim_function = ast::Function {
-            name: "string_trim".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![ast::Parameter {
-                name: "s".to_string(),
-                type_: ast::Type::String,
-                default_value: None,
-            }],
-            return_type: ast::Type::String,
-            body: vec![ast::Statement::Return {
-                value: Some(ast::Expression::Call(
-                    "string_trim_impl".to_string(),
-                    vec![ast::Expression::Variable("s".to_string())],
-                )),
-                location: None,
-            }],
-            description: Some("Trims leading and trailing whitespace from a string.".to_string()),
-            syntax: ast::FunctionSyntax::Simple,
-            visibility: ast::Visibility::Public,
-            modifier: ast::FunctionModifier::None,
-            location: None,
-        };
-        self.prepare_function_type(&trim_function)?;
-        self.generate_function(&trim_function)?;
-
-        let to_lower_function = ast::Function {
-            name: "string_to_lower_case".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![ast::Parameter {
-                name: "s".to_string(),
-                type_: ast::Type::String,
-                default_value: None,
-            }],
-            return_type: ast::Type::String,
-            body: vec![ast::Statement::Return {
-                value: Some(ast::Expression::Variable("s".to_string())),
-                location: None,
-            }],
-            description: Some("Converts a string to lowercase.".to_string()),
-            syntax: ast::FunctionSyntax::Simple,
-            visibility: ast::Visibility::Public,
-            modifier: ast::FunctionModifier::None,
-            location: None,
-        };
-        self.prepare_function_type(&to_lower_function)?;
-        self.generate_function(&to_lower_function)?;
-
-        let to_upper_function = ast::Function {
-            name: "string_to_upper_case".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![ast::Parameter {
-                name: "s".to_string(),
-                type_: ast::Type::String,
-                default_value: None,
-            }],
-            return_type: ast::Type::String,
-            body: vec![ast::Statement::Return {
-                value: Some(ast::Expression::Variable("s".to_string())),
-                location: None,
-            }],
-            description: Some("Converts a string to uppercase.".to_string()),
-            syntax: ast::FunctionSyntax::Simple,
-            visibility: ast::Visibility::Public,
-            modifier: ast::FunctionModifier::None,
-            location: None,
-        };
-        self.prepare_function_type(&to_upper_function)?;
-        self.generate_function(&to_upper_function)?;
-
-        Ok(())
-    }
-
-    // REMOVED: register_console_operations - obsolete duplicate code
-    // ConsoleOperations from console_ops.rs was generating buggy wrapper functions
-    // that called env.input but didn't DROP the i32 return value, causing WASM validation errors.
-    // builtin_generator.rs already registers the correct imports with proper signatures.
-    // /// Register console operation functions using ConsoleOperations class
-    // #[allow(dead_code)]
-    // fn register_console_operations(&mut self) -> Result<(), CompilerError> {
-    //     use crate::stdlib::console_ops::ConsoleOperations;
-    //
-    //     // Create a ConsoleOperations instance and register its functions
-    //     let console_ops = ConsoleOperations::new(65536); // Use same heap start as other operations
-    //     console_ops.register_functions(self)?;
-    //
-    //     Ok(())
-    // }
 
     /// Register HTTP operation functions using HttpClass
     fn register_http_operations(&mut self) -> Result<(), CompilerError> {
@@ -5574,12 +5151,9 @@ impl CodeGenerator {
             &trim_end_instructions,
         )?;
 
-        // Add aliases for both underscore and dot notation access patterns
-        self.add_function_alias("string_trim", trim_idx);
+        // Add canonical dot-notation aliases
         self.add_function_alias("string.trim", trim_idx);
-        self.add_function_alias("string_trim_start", trim_start_idx);
         self.add_function_alias("string.trimStart", trim_start_idx);
-        self.add_function_alias("string_trim_end", trim_end_idx);
         self.add_function_alias("string.trimEnd", trim_end_idx);
 
         // NATIVE: string_to_upper - converts string to uppercase (ASCII)
@@ -5596,9 +5170,7 @@ impl CodeGenerator {
             ],
             &to_upper_instructions,
         )?;
-        self.add_function_alias("string_to_upper", to_upper_idx);
         self.add_function_alias("string.toUpperCase", to_upper_idx);
-        self.add_function_alias("string_toUpperCase", to_upper_idx);
 
         // NATIVE: string_to_lower - converts string to lowercase (ASCII)
         let to_lower_instructions = native_stdlib::string_ops::gen_to_lower(malloc_idx);
@@ -5614,9 +5186,7 @@ impl CodeGenerator {
             ],
             &to_lower_instructions,
         )?;
-        self.add_function_alias("string_to_lower", to_lower_idx);
         self.add_function_alias("string.toLowerCase", to_lower_idx);
-        self.add_function_alias("string_toLowerCase", to_lower_idx);
 
         Ok(())
     }
@@ -5635,9 +5205,8 @@ impl CodeGenerator {
             Some(WasmType::I32),
         )?;
 
-        // Add alias for internal use
+        // Add canonical alias
         self.add_function_alias("string.compare", idx);
-        self.add_function_alias("string_compare", idx);
 
         Ok(())
     }
@@ -5656,13 +5225,10 @@ impl CodeGenerator {
             Some(WasmType::I32),
         )?;
 
-        // Add aliases for internal use
+        // Add canonical aliases
         self.add_function_alias("string.replace", idx);
-        self.add_function_alias("string_replace", idx);
-        self.add_function_alias("string_replace_impl", idx);
         // replaceAll uses the same host function (replaces all occurrences)
         self.add_function_alias("string.replaceAll", idx);
-        self.add_function_alias("string_replaceAll", idx);
 
         Ok(())
     }
@@ -5737,7 +5303,12 @@ impl CodeGenerator {
 
     #[allow(dead_code)]
     fn register_basic_array_get_fallback(&mut self) -> Result<(), CompilerError> {
-        // Register a basic array_get fallback function
+        // Only register the fallback if list.get is not already registered
+        if self.function_map.contains_key("list.get") {
+            return Ok(());
+        }
+
+        // Register a basic list.get fallback function
         // This follows WebAssembly best practices for memory layout
         // Memory layout: [length:i32][elem0][elem1][elem2]...
         let instructions = vec![
@@ -5752,17 +5323,13 @@ impl CodeGenerator {
             Instruction::I32Add, // Calculate element pointer
         ];
 
-        // Use CodeGenerator::register_function to ensure proper index tracking
-        let function_index = self.register_function(
-            "array_get",
+        // Register under canonical name list.get
+        self.register_function(
+            "list.get",
             &[WasmType::I32, WasmType::I32], // List pointer and index
             Some(WasmType::I32),             // Return element pointer
             &instructions,
         )?;
-
-        // Also register as list.get for the new naming scheme
-        // Note: This creates an alias to the same function
-        self.add_function_alias("list.get", function_index);
 
         Ok(())
     }
@@ -5801,286 +5368,6 @@ impl CodeGenerator {
             // For other expressions, default to i32
             _ => Ok(WasmType::I32),
         }
-    }
-
-    /// Create AST function definitions for stdlib functions
-    #[allow(dead_code)]
-    #[allow(clippy::vec_init_then_push)]
-    fn create_stdlib_ast_functions(&self) -> Result<Vec<ast::Function>, CompilerError> {
-        use crate::ast::{FunctionModifier, FunctionSyntax, Parameter, Visibility};
-
-        let mut functions = Vec::new();
-
-        // Removed hardcoded abs function - let stdlib registration handle it to avoid conflicts
-
-        // Note: print and printl functions are now imported from the host environment
-        // instead of being defined as stdlib functions
-
-        // list_get(list: List, index: Integer) -> Integer
-        functions.push(AstFunction {
-            name: "array_get".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![
-                Parameter {
-                    name: "array".to_string(),
-                    type_: Type::List(Box::new(Type::Integer)),
-                    default_value: None,
-                },
-                Parameter {
-                    name: "index".to_string(),
-                    type_: Type::Integer,
-                    default_value: None,
-                },
-            ],
-            return_type: Type::Integer,
-            body: vec![
-                // Real implementation using memory operations
-                // Get array pointer and index
-                Statement::VariableDecl {
-                    name: "array_ptr".to_string(),
-                    type_: Type::Integer,
-                    initializer: Some(Expression::Variable("array".to_string())),
-                    location: None,
-                },
-                Statement::VariableDecl {
-                    name: "element_offset".to_string(),
-                    type_: Type::Integer,
-                    initializer: Some(Expression::Binary(
-                        Box::new(Expression::Variable("index".to_string())),
-                        BinaryOperator::Multiply,
-                        Box::new(Expression::Literal(Value::Integer(8))), // 8 bytes per element
-                    )),
-                    location: None,
-                },
-                Statement::Return {
-                    value: Some(Expression::Literal(Value::Integer(0))), // Simplified return for now
-                    location: None,
-                },
-            ],
-            description: Some("Gets an element from an array".to_string()),
-            syntax: FunctionSyntax::Simple,
-            visibility: Visibility::Public,
-            modifier: FunctionModifier::None,
-            location: None,
-        });
-
-        // list_length(list: List) -> Integer
-        functions.push(AstFunction {
-            name: "array_length".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![Parameter {
-                name: "array".to_string(),
-                type_: Type::List(Box::new(Type::Integer)),
-                default_value: None,
-            }],
-            return_type: Type::Integer,
-            body: vec![
-                // Real implementation using memory operations
-                // Load array length from memory header
-                Statement::Return {
-                    value: Some(Expression::Literal(Value::Integer(0))), // Simplified for now
-                    location: None,
-                },
-            ],
-            description: Some("Gets the length of an array".to_string()),
-            syntax: FunctionSyntax::Simple,
-            visibility: Visibility::Public,
-            modifier: FunctionModifier::None,
-            location: None,
-        });
-
-        // assert(condition: Boolean) -> Void
-        // Temporarily disable assert function to isolate stack issues
-        // functions.push(AstFunction {
-        //     name: "assert".to_string(),
-        //     type_parameters: vec![],
-        //     type_constraints: vec![],
-        //     parameters: vec![
-        //         Parameter {
-        //             name: "condition".to_string(),
-        //             type_: Type::Boolean,
-        //             default_value: None,
-        //         }
-        //     ],
-        //     return_type: Type::Void,
-        //     body: vec![
-        //         // Add a minimal statement to avoid empty body issues
-        //         Statement::Expression {
-        //             expr: Expression::Literal(Value::Boolean(true)),
-        //             location: None,
-        //         }
-        //     ],
-        //     description: Some("Asserts that a condition is true".to_string()),
-        //     syntax: FunctionSyntax::Simple,
-        //     visibility: Visibility::Public,
-        //     modifier: FunctionModifier::None,
-        //     location: None,
-        // });
-
-        // string_concat(str1: String, str2: String) -> String - TEMPORARILY DISABLED
-        // functions.push(AstFunction {
-        //     name: "string_concat".to_string(),
-        //     type_parameters: vec![],
-        //     type_constraints: vec![],
-        //     parameters: vec![
-        //         Parameter {
-        //             name: "str1".to_string(),
-        //             type_: Type::String,
-        //             default_value: None,
-        //         },
-        //         Parameter {
-        //             name: "str2".to_string(),
-        //             type_: Type::String,
-        //             default_value: None,
-        //         }
-        //     ],
-        //     return_type: Type::String,
-        //     body: vec![
-        //         // Placeholder implementation - would need memory operations
-        //         // Return a literal string pointer for now instead of parameter access
-        //         Statement::Return {
-        //             value: Some(Expression::Literal(Value::Integer(1024))),
-        //             location: None,
-        //         }
-        //     ],
-        //     description: Some("Concatenates two strings".to_string()),
-        //     syntax: FunctionSyntax::Simple,
-        //     visibility: Visibility::Public,
-        //     modifier: FunctionModifier::None,
-        //     location: None,
-        // });
-
-        // string_compare() -> Integer (TEMPORARILY DISABLED for debugging)
-        // functions.push(AstFunction {
-        //     name: "string_compare".to_string(),
-        //     type_parameters: vec![],
-        //     type_constraints: vec![],
-        //     parameters: vec![], // No parameters to avoid variable access issues
-        //     return_type: Type::Integer,
-        //     body: vec![
-        //         // Placeholder implementation - would need memory operations
-        //         // Return 0 (equal) for now
-        //         Statement::Return {
-        //             value: Some(Expression::Literal(Value::Integer(0))),
-        //             location: None,
-        //         }
-        //     ],
-        //     description: Some("Compares two strings".to_string()),
-        //     syntax: FunctionSyntax::Simple,
-        //     visibility: Visibility::Public,
-        //     modifier: FunctionModifier::None,
-        //     location: None,
-        // });
-
-        // HTTP functions are now handled specially in generate_expression
-        // and call import functions directly, so we don't need AST functions for them
-
-        // length(value: Any) -> Integer (TEMPORARILY DISABLED for debugging)
-        // functions.push(AstFunction {
-        //     name: "length".to_string(),
-        //     type_parameters: vec![],
-        //     type_constraints: vec![],
-        //     parameters: vec![
-        //         Parameter {
-        //             name: "value".to_string(),
-        //             type_: Type::Any,
-        //             default_value: None,
-        //         }
-        //     ],
-        //     return_type: Type::Integer,
-        //     body: vec![
-        //         // Placeholder implementation - return 5 for now
-        //         Statement::Return {
-        //             value: Some(Expression::Literal(Value::Integer(5))),
-        //             location: None,
-        //         }
-        //     ],
-        //     description: Some("Returns the length of a string or array".to_string()),
-        //     syntax: FunctionSyntax::Simple,
-        //     visibility: Visibility::Public,
-        //     modifier: FunctionModifier::None,
-        //     location: None,
-        // });
-
-        // mustBeTrue(condition: Boolean) -> Void
-        functions.push(AstFunction {
-            name: "mustBeTrue".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![Parameter {
-                name: "condition".to_string(),
-                type_: Type::Boolean,
-                default_value: None,
-            }],
-            return_type: Type::Void,
-            body: vec![
-                // Truly void function body - no expressions that would leave values on stack
-                // In a real implementation this would check the condition and panic if false
-            ],
-            description: Some("Ensures that a condition is true".to_string()),
-            syntax: FunctionSyntax::Simple,
-            visibility: Visibility::Public,
-            modifier: FunctionModifier::None,
-            location: None,
-        });
-
-        // mustBeFalse(condition: Boolean) -> Void
-        functions.push(AstFunction {
-            name: "mustBeFalse".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![Parameter {
-                name: "condition".to_string(),
-                type_: Type::Boolean,
-                default_value: None,
-            }],
-            return_type: Type::Void,
-            body: vec![
-                // Truly void function body - no expressions that would leave values on stack
-                // In a real implementation this would check the condition and panic if true
-            ],
-            description: Some("Ensures that a condition is false".to_string()),
-            syntax: FunctionSyntax::Simple,
-            visibility: Visibility::Public,
-            modifier: FunctionModifier::None,
-            location: None,
-        });
-
-        // mustBeEqual(value1: Any, value2: Any) -> Void
-        functions.push(AstFunction {
-            name: "mustBeEqual".to_string(),
-            type_parameters: vec![],
-            type_constraints: vec![],
-            parameters: vec![
-                Parameter {
-                    name: "value1".to_string(),
-                    type_: Type::Any,
-                    default_value: None,
-                },
-                Parameter {
-                    name: "value2".to_string(),
-                    type_: Type::Any,
-                    default_value: None,
-                },
-            ],
-            return_type: Type::Void,
-            body: vec![
-                // Truly void function body - no expressions that would leave values on stack
-                // In a real implementation this would compare the values and panic if not equal
-            ],
-            description: Some("Ensures that two values are equal".to_string()),
-            syntax: FunctionSyntax::Simple,
-            visibility: Visibility::Public,
-            modifier: FunctionModifier::None,
-            location: None,
-        });
-
-        // Note: length, isEmpty, isNotEmpty, isDefined, isNotDefined, keepBetween
-        // are now ONLY available as method-style calls, not as traditional functions
-
-        Ok(functions)
     }
 
     // Add delegate methods to use instruction_generator
@@ -6295,20 +5582,11 @@ impl CodeGenerator {
     }
 
     pub fn get_array_get(&self) -> u32 {
-        // Try to get list.get function (modern stdlib naming)
-        if let Some(&index) = self.function_map.get("list.get") {
-            return index;
-        }
-        // Fallback to legacy array_get naming
-        if let Some(&index) = self.function_map.get("array_get") {
-            return index;
-        }
-        // Fallback when array_get function is not found
-        0
+        self.function_map.get("list.get").copied().unwrap_or(0)
     }
 
     pub fn get_array_length(&self) -> u32 {
-        self.function_map.get("array_length").copied().unwrap_or(0)
+        self.function_map.get("list.length").copied().unwrap_or(0)
     }
 
     pub fn get_matrix_get(&self) -> u32 {
@@ -10064,50 +9342,6 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Generate a dedicated test runner function (legacy - not used by MirCodeGenerator)
-    #[allow(dead_code)]
-    fn generate_test_runner_function(
-        &mut self,
-        tests: &[crate::ast::TestCase],
-    ) -> Result<(), CompilerError> {
-        // Create a dedicated test runner function
-        let function_name = "runTests".to_string();
-        let function_index = self.function_count;
-
-        // Register the function
-        self.function_map
-            .insert(function_name.clone(), function_index);
-        self.function_names.push(function_name.clone());
-        self.function_count += 1;
-
-        // Create function type (no parameters, no return value)
-        let type_index = self.add_function_type(&[], None)?;
-        self.function_section.function(type_index);
-
-        // Generate function body with local variables for test results
-        let mut instructions = Vec::new();
-        let locals = vec![(2, wasm_encoder::ValType::I32)]; // Two locals for test result comparison
-
-        // Generate test execution code
-        self.generate_tests_block_runner(tests, &mut instructions)?;
-
-        // Create function body
-        let mut function_body = wasm_encoder::Function::new(locals);
-        for instruction in instructions {
-            function_body.instruction(&instruction);
-        }
-        self.code_section.function(&function_body);
-
-        // Export the test runner function
-        self.export_section.export(
-            &function_name,
-            wasm_encoder::ExportKind::Func,
-            function_index,
-        );
-
-        Ok(())
-    }
-
     fn generate_expression_statement(
         &mut self,
         expr: &Expression,
@@ -10533,93 +9767,6 @@ impl CodeGenerator {
         self.assemble_module()
     }
 
-    /// Track all variables in the start function for automatic getter generation (legacy)
-    /// DISABLED: Let runtime code generation handle all expressions properly
-    #[allow(dead_code)]
-    fn track_start_function_result(
-        &mut self,
-        _start_function: &AstFunction,
-    ) -> Result<(), CompilerError> {
-        // DISABLED: All the problematic compile-time evaluation is removed
-        // Variables will be handled by proper WASM runtime code generation
-
-        self.start_function_variables.clear();
-        // println!("DEBUG: Variable tracking disabled - using runtime code generation");
-
-        // Set minimal defaults for any legacy code that still expects these
-        self.last_result_value = Some(0);
-        self.last_result_type = Some(Type::Number);
-
-        Ok(())
-    }
-
-    /// REMOVED: track_statements_in_context - no longer needed with runtime code generation
-    ///
-    /// Extract constant values from simple expressions for result tracking (legacy method)
-    #[allow(dead_code)]
-    fn extract_constant_value(&self, expr: &Expression) -> Option<i32> {
-        self.extract_simple_constant_value(expr)
-    }
-
-    /// Extract constant values only from truly simple literal expressions
-    /// This should NOT evaluate expressions involving variables or complex operations
-    #[allow(clippy::only_used_in_recursion)]
-    fn extract_simple_constant_value(&self, expr: &Expression) -> Option<i32> {
-        match expr {
-            Expression::Literal(value) => match value {
-                Value::Integer(i) => Some(*i as i32),
-                Value::Number(f) => Some(*f as i32),
-                Value::Boolean(b) => Some(if *b { 1 } else { 0 }),
-                _ => None,
-            },
-            // Only allow binary operations between two literals (no variables)
-            Expression::Binary(left, op, right) => {
-                if let (Expression::Literal(left_lit), Expression::Literal(right_lit)) =
-                    (left.as_ref(), right.as_ref())
-                {
-                    if let (Some(l), Some(r)) = (
-                        self.extract_simple_constant_value(&Expression::Literal(left_lit.clone())),
-                        self.extract_simple_constant_value(&Expression::Literal(right_lit.clone())),
-                    ) {
-                        match op {
-                            BinaryOperator::Add => Some(l + r),
-                            BinaryOperator::Subtract => Some(l - r),
-                            BinaryOperator::Multiply => Some(l * r),
-                            BinaryOperator::Divide => {
-                                if r != 0 {
-                                    Some(l / r)
-                                } else {
-                                    None
-                                }
-                            }
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    // Don't evaluate expressions involving variables
-                    None
-                }
-            }
-            _ => None, // Don't evaluate anything else at compile time
-        }
-    }
-
-    /// Generate getter functions for all variables in start function + get_result for backward compatibility (legacy)
-    #[allow(dead_code)]
-    fn generate_getter_functions(&mut self) -> Result<(), CompilerError> {
-        // Generate individual getter functions for each variable
-        for (var_name, (var_type, var_value)) in &self.start_function_variables.clone() {
-            self.generate_single_getter_function(&format!("get_{var_name}"), var_type, *var_value)?;
-        }
-
-        // Generate get_result function for backward compatibility
-        self.generate_get_result_function()?;
-
-        Ok(())
-    }
-
     /// Generate a single getter function for a variable (legacy)
     #[allow(dead_code)]
     fn generate_single_getter_function(
@@ -10743,87 +9890,6 @@ impl CodeGenerator {
 
         // Note: Function will be exported by the general export loop
         Ok(())
-    }
-
-    /// Generate constructor body with field initialization (legacy)
-    #[allow(dead_code)]
-    fn generate_constructor_body(&self, class: &Class) -> Result<Vec<Statement>, CompilerError> {
-        let mut body = Vec::new();
-
-        // Calculate total size needed for object (4 bytes per field for simplicity)
-        let object_size = class.fields.len() * 4;
-
-        // Allocate memory for the object - for now we'll use a simple pointer value
-        // In a full implementation, this would call a memory allocator
-        body.push(Statement::VariableDecl {
-            name: "object_ptr".to_string(),
-            type_: Type::Integer,
-            initializer: Some(Expression::Literal(Value::Integer(
-                1000 + object_size as i64,
-            ))), // Simple mock allocation
-            location: Some(SourceLocation {
-                file: String::new(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            }),
-        });
-
-        // Generate field initialization statements
-        for field in &class.fields {
-            let default_value = match field.type_ {
-                Type::Integer => Value::Integer(0),
-                Type::Number => Value::Number(0.0),
-                Type::String => Value::String("".to_string()),
-                Type::Boolean => Value::Boolean(false),
-                Type::List(_) => {
-                    // Create empty list assignment
-                    body.push(Statement::Assignment {
-                        target: field.name.clone(),
-                        value: Expression::Call(
-                            "list.allocate".to_string(),
-                            vec![Expression::Literal(Value::Integer(0))],
-                        ),
-                        location: Some(SourceLocation {
-                            file: String::new(),
-                            line: 0,
-                            column: 0,
-                            byte_start: None,
-                            byte_end: None,
-                        }),
-                    });
-                    continue;
-                }
-                _ => Value::Integer(0), // Default for other types
-            };
-
-            body.push(Statement::Assignment {
-                target: field.name.clone(),
-                value: Expression::Literal(default_value),
-                location: Some(SourceLocation {
-                    file: String::new(),
-                    line: 0,
-                    column: 0,
-                    byte_start: None,
-                    byte_end: None,
-                }),
-            });
-        }
-
-        // Return the object pointer
-        body.push(Statement::Return {
-            value: Some(Expression::Variable("object_ptr".to_string())),
-            location: Some(SourceLocation {
-                file: String::new(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            }),
-        });
-
-        Ok(body)
     }
 
     /// Search for a method in the class hierarchy (current class and all parent classes)

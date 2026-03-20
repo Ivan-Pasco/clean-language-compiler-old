@@ -79,6 +79,7 @@ pub enum TokenKind {
     Spec,        // spec - AI metadata: links function to specification
     Intent,      // intent - AI metadata: describes function purpose
     Source,      // source - AI metadata: marks file as generated from spec
+    Build,       // build - Build configuration block
 
     // Operators (§5.1 - Binary and Unary operators from specification)
     Plus,     // +
@@ -209,6 +210,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Spec => write!(f, "spec"),
             TokenKind::Intent => write!(f, "intent"),
             TokenKind::Source => write!(f, "source"),
+            TokenKind::Build => write!(f, "build"),
 
             // Operators
             TokenKind::Plus => write!(f, "+"),
@@ -432,6 +434,7 @@ impl Keywords {
             "spec" => Some(TokenKind::Spec),
             "intent" => Some(TokenKind::Intent),
             "source" => Some(TokenKind::Source),
+            "build" => Some(TokenKind::Build),
             _ => None,
         }
     }
@@ -480,6 +483,7 @@ impl TokenKind {
             TokenKind::Spec => "spec".to_string(),
             TokenKind::Intent => "intent".to_string(),
             TokenKind::Source => "source".to_string(),
+            TokenKind::Build => "build".to_string(),
             TokenKind::If => "if".to_string(),
             TokenKind::Import => "import".to_string(),
             TokenKind::In => "in".to_string(),

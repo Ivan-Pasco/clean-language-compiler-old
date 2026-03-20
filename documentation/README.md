@@ -1,213 +1,88 @@
 # Clean Language Compiler Documentation
 
-This directory contains comprehensive documentation for the Clean Language compiler project.
+## Authoritative References
 
-> 📖 **Cross-Reference**: See [Clean Language Specification](../docs/language/Clean_Language_Specification.md) for the complete language definition and [CLAUDE.md](../CLAUDE.md) for development commands.
+| Document | Purpose |
+|----------|---------|
+| [Clean Language Specification](./Clean_Language_Specification.md) | **Single source of truth** for the language: syntax, types, semantics |
+| [Execution Layers](../../platform-architecture/EXECUTION_LAYERS.md) | What each layer does — read before implementing any function |
+| [Architecture Boundaries](../../system-documents/ARCHITECTURE_BOUNDARIES.md) | What each component is and is not responsible for |
 
-## Quick Start
+## Compiler Documentation
 
-If you're new to this project, start here:
+### Getting Started
 
-1. **[Project Overview](./project-overview.md)** - High-level architecture and design principles
-2. **[Development Guide](./development-guide.md)** - Best practices and workflows for development
-3. **[Multi-Runtime and Target-Aware Compilation](./multi-runtime-targets.md)** - WebAssembly runtime selection and target optimization
-4. **[WebAssembly Documentation](./webassembly.md)** - Code generation and WASM integration
-5. **[Parser Documentation](./parser.md)** - Parsing system and grammar details
-6. **[Semantic Analysis](./semantic-analysis.md)** - Type checking and semantic validation
-7. **[Standard Library](./standard-library.md)** - Built-in functions and runtime system
-8. **[Language Server](./language-server.md)** - IDE support and LSP implementation
+| Document | When to Read |
+|----------|-------------|
+| [Project Overview](./project-overview.md) | First time working with the project |
+| [Development Guide](./development-guide.md) | Before implementing features or fixing bugs |
 
-## Documentation Structure
+### Compiler Pipeline
 
-### 📋 **[Project Overview](./project-overview.md)**
-- System architecture and compilation pipeline
-- Key design principles and language features
-- Performance characteristics and integration points
-- Extension mechanisms and development workflows
+| Document | Covers |
+|----------|--------|
+| [Parser](./parser.md) | Pest grammar, AST generation, error recovery |
+| [AST Reference](./ast-reference.md) | AST node types and structure |
+| [Semantic Analysis](./semantic-analysis.md) | Type checking, scope management, validation |
+| [Compilation Pipeline](./compilation-pipeline.md) | HIR → MIR → WASM transformation pipeline |
+| [WebAssembly](./webassembly.md) | WASM code generation, memory management |
 
-**When to read**: First time working with the project, need high-level understanding
+### Language Features
 
-### 🛠️ **[Development Guide](./development-guide.md)**
-- Step-by-step workflows for common development tasks
-- Best practices and coding patterns
-- Debugging techniques and testing strategies
-- Security considerations and performance optimization
+| Document | Covers |
+|----------|--------|
+| [Standard Library](./standard-library.md) | Built-in functions, namespaces, host imports |
+| [Error Handling Guide](./error-handling-guide.md) | Error recovery system, onError syntax |
+| [Memory Management](./memory-management.md) | WASM memory layout, bump allocator, GC |
+| [Pattern System](./clean_pattern_system_specification.md) | Pattern matching specification |
+| [Plugin Architecture](./Plugin-Architecture.md) | Plugin system, plugin.toml, bridge functions |
 
-**When to read**: Before implementing new features, fixing bugs, or making changes
+### Tooling
 
-### 🎯 **[Multi-Runtime and Target-Aware Compilation](./multi-runtime-targets.md)**
-- Multi-runtime support (Wasmtime, Wasmer) with automatic selection
-- Target-aware compilation for web, Node.js, native, embedded, and WASI
-- Optimization profiles and performance tuning strategies
-- CLI integration and configuration management
+| Document | Covers |
+|----------|--------|
+| [Language Server](./language-server.md) | LSP implementation, IDE integration |
+| [Multi-Runtime Targets](./multi-runtime-targets.md) | Wasmtime/Wasmer selection, target optimization |
+| [Testing Strategy](./testing-strategy.md) | Test organization, testing approaches |
 
-**When to read**: Deploying to specific platforms, optimizing for performance, or using multiple runtimes
+## Platform Architecture (Shared)
 
-### ⚙️ **[WebAssembly Documentation](./webassembly.md)**
-- Code generation architecture and instruction generation
-- Memory management system and type mapping
-- Integration with runtime and host environment
-- Optimization strategies and debugging techniques
+These documents live in `platform-architecture/` and are shared across all components:
 
-**When to read**: Working on code generation, memory management, or WASM output
-
-### 📝 **[Parser Documentation](./parser.md)**
-- Grammar definition and parsing architecture
-- AST generation and error recovery systems
-- Expression and statement parsing details
-- Integration with semantic analysis
-
-**When to read**: Modifying syntax, fixing parse errors, or extending grammar
-
-### 🔍 **[Semantic Analysis](./semantic-analysis.md)**
-- Type system implementation and checking
-- Scope management and symbol resolution
-- Function overloading and class inheritance
-- Error handling and diagnostic systems
-
-**When to read**: Working on type checking, semantic validation, or error reporting
-
-### 📚 **[Standard Library](./standard-library.md)**
-- Built-in function implementation and organization
-- Memory management and WebAssembly integration
-- Host import patterns and runtime considerations
-- Extension patterns for new functionality
-
-**When to read**: Adding standard library functions, debugging runtime issues
-
-### 🔧 **[Language Server](./language-server.md)**
-- LSP implementation for IDE integration and support
-- Real-time syntax analysis and intelligent autocompletion
-- VS Code extension development and other editor integrations
-- Language server maintenance and update procedures
-
-**When to read**: Setting up IDE support, extending language server features, debugging editor integration
-
-## Key Resources
-
-### Language Specification
-The authoritative language specification is located at:
-- **Primary**: `/docs/language/Clean_Language_Specification.md`
-- **CLAUDE.md**: Root directory - Contains compiler instructions and development rules
-
-### Critical Project Files
-- **Grammar**: `src/parser/grammar.pest` - Defines Clean Language syntax
-- **Main Library**: `src/lib.rs` - Programmatic compiler API
-- **AST Definitions**: `src/ast/mod.rs` - Abstract syntax tree structures
-- **Tasks**: `TASKS.md` - Current issues and development priorities
-
-### Testing and Examples
-- **Test Suite**: `tests/` - Comprehensive test coverage
-- **Examples**: `examples/` - Sample Clean Language programs
-- **Demo Programs**: `demo_examples/` - Curated example programs
+| Document | Covers |
+|----------|--------|
+| [Host Bridge](../../platform-architecture/HOST_BRIDGE.md) | Layer 2: portable host functions |
+| [Memory Model](../../platform-architecture/MEMORY_MODEL.md) | WASM memory layout, string format |
+| [Server Extensions](../../platform-architecture/SERVER_EXTENSIONS.md) | Layer 3: HTTP server functions |
+| [Implementing a New Host](../../platform-architecture/IMPLEMENTING_HOST.md) | Guide for new runtime implementations |
 
 ## Quick Reference
 
-### Common Development Tasks
-
-| Task | Primary Documentation | Key Files |
-|------|----------------------|-----------|
-| Add new syntax | [Parser](./parser.md) + [Development Guide](./development-guide.md) | `grammar.pest`, parser modules |
-| Fix type errors | [Semantic Analysis](./semantic-analysis.md) | `src/semantic/` modules |
-| Add stdlib function | [Standard Library](./standard-library.md) | `src/stdlib/` modules |
-| Debug WASM output | [WebAssembly](./webassembly.md) | `src/codegen/` modules |
-| Setup IDE support | [Language Server](./language-server.md) | `language-server/` modules |
-| Configure deployment targets | [Multi-Runtime Targets](./multi-runtime-targets.md) | `src/targets/`, `src/runtime/` modules |
-| Optimize performance | [Development Guide](./development-guide.md) + [Multi-Runtime Targets](./multi-runtime-targets.md) | All modules |
-
-### Debugging Quick Start
-
 ```bash
-# Parse and show AST
-cargo run --bin clean-language-compiler debug -i file.cln --show-ast
+# Build
+cargo build
 
-# Compile with detailed output
-RUST_LOG=debug cargo run --bin clean-language-compiler compile -i file.cln -o output.wasm
-
-# Examine generated WebAssembly
-cargo run --bin wasm2wat output.wasm > output.wat
-```
-
-### Testing Quick Start
-
-```bash
-# Run all tests
+# Test
 cargo test
 
-# Run specific test category
-cargo test --test integration_tests
-cargo test --test parser_tests
+# Compile a file
+cargo run --bin clean-language-compiler compile -i file.cln -o output.wasm
 
-# Run with detailed output
-cargo test -- --nocapture
+# Debug AST
+cargo run --bin clean-language-compiler debug -i file.cln --show-ast
+
+# Debug WASM
+cargo run --bin debug_wasm -- file.wasm
 ```
 
-## Architecture Summary
+## Key Source Files
 
-```
-Clean Language Source (.cln)
-           ↓
-    Parser (Pest-based)
-           ↓
-    Abstract Syntax Tree
-           ↓
-   Semantic Analysis
-           ↓
-    Code Generation
-           ↓
-   WebAssembly (.wasm)
-```
-
-**Key Components:**
-- **Parser**: Converts source code to AST using Pest grammar
-- **Semantic Analyzer**: Validates types, scopes, and language semantics
-- **Code Generator**: Produces WebAssembly bytecode with memory management
-- **Standard Library**: Provides built-in functions and runtime support
-- **Runtime**: Handles async operations, I/O, and host integration
-- **Language Server**: Provides IDE integration via Language Server Protocol (LSP)
-
-## Development Principles
-
-When working on this project, always keep these principles in mind:
-
-1. **Type Safety First** - Clean Language prioritizes compile-time safety
-2. **WebAssembly Native** - All features must compile efficiently to WASM
-3. **Developer Experience** - Provide excellent error messages and debugging
-4. **Memory Safety** - Use reference counting and bounds checking
-5. **Specification Compliance** - Follow the language specification exactly
-
-## Getting Help
-
-If you encounter issues or need clarification:
-
-1. **Check the relevant documentation** in this directory
-2. **Review the Language Specification** for authoritative language rules
-3. **Examine existing code patterns** in the codebase
-4. **Look at test cases** for usage examples
-5. **Check TASKS.md** for known issues and priorities
-
-## Contributing
-
-When making changes:
-
-1. **Read the Development Guide** for workflows and best practices
-2. **Follow existing code patterns** and architectural decisions
-3. **Add comprehensive tests** for all new functionality
-4. **Update documentation** when changing behavior
-5. **Maintain WebAssembly compatibility** for all language features
-
-## Documentation Maintenance
-
-This documentation is designed to be:
-- **Accurate**: Reflects the current state of the codebase
-- **Complete**: Covers all major systems and components
-- **Practical**: Focuses on actionable information for development
-- **Up-to-date**: Maintained alongside code changes
-
-If you find inaccuracies or need additional information, the documentation should be updated to reflect the current project state.
-
----
-
-**Happy coding with Clean Language!** 🚀
-
-This documentation provides everything needed to understand and work effectively with the Clean Language compiler. Start with the Project Overview for a high-level understanding, then dive into specific areas as needed for your development tasks.
+| File | Purpose |
+|------|---------|
+| `src/parser/grammar.pest` | Clean Language grammar definition |
+| `src/ast/mod.rs` | AST node definitions |
+| `src/hir/mod.rs` | High-level IR types |
+| `src/mir/mir_types.rs` | Mid-level IR types |
+| `src/codegen/mod.rs` | WASM code generator |
+| `src/builtins/registry.rs` | Built-in function registry |
+| `TASKS.md` | Current issues and priorities |

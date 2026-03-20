@@ -17,6 +17,8 @@ pub struct TastProgram {
     pub imports: Vec<TastImport>,
     pub tests: Vec<TastTest>,
     pub state: Option<TastStateBlock>,
+    /// Top-level watch blocks (reactive state observers)
+    pub watch_blocks: Vec<TastWatchBlock>,
     pub type_env: HashMap<SymbolId, ConcreteType>,
     pub location: SourceLocation,
     /// Symbol table with all symbols (builtins + user-defined)
@@ -343,9 +345,49 @@ pub struct TastTest {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TastStateBlock {
     pub declarations: Vec<TastStateDeclaration>,
+    /// Computed (derived) state declarations whose bodies have been type-checked
+    pub computed: Vec<TastComputedDeclaration>,
     /// State invariants checked at operation boundaries (after start:, frame:, handlers)
     pub rules: Vec<TastExpression>,
     pub scope: TastStateScope,
+    pub location: SourceLocation,
+}
+
+/// Type-checked computed state declaration.
+///
+/// A computed declaration derives its value by executing `body`, which must end
+/// with a `return` statement whose type matches `computed_type`.
+///
+/// Runtime note: the runtime is responsible for tracking which mutable state
+/// variables are read during body execution and invalidating the cached result
+/// when any of those variables change.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastComputedDeclaration {
+    /// Symbol ID under which the computed value is visible as a read-only variable
+    pub symbol_id: crate::resolver::SymbolId,
+    pub name: String,
+    pub computed_type: ConcreteType,
+    /// Fully type-checked body; must terminate with a `Return` statement
+    pub body: TastBlock,
+    pub location: SourceLocation,
+}
+
+/// Type-checked watch block.
+///
+/// Each target name has been resolved to a SymbolId at parse time; the body
+/// has been type-checked for correctness. The body does not need a return
+/// value — it is executed purely for its side effects.
+///
+/// Runtime note: the runtime is responsible for hooking into state mutations
+/// and invoking watch block bodies whenever a watched variable is written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TastWatchBlock {
+    /// Names of the watched state variables (for diagnostics / code generation)
+    pub targets: Vec<String>,
+    /// Resolved symbol IDs for each target (parallel to `targets`)
+    pub target_symbol_ids: Vec<crate::resolver::SymbolId>,
+    /// Fully type-checked handler body
+    pub body: TastBlock,
     pub location: SourceLocation,
 }
 
@@ -386,6 +428,16 @@ pub enum ConcreteType {
     Boolean,
     Null,
     Undefined,
+
+    /// Precision integer types (bits: 8/16/32/64, unsigned: true/false)
+    IntegerSized {
+        bits: u8,
+        unsigned: bool,
+    },
+    /// Precision number types (bits: 32/64)
+    NumberSized {
+        bits: u8,
+    },
 
     /// Array type with element type
     Array(Box<ConcreteType>),
@@ -558,8 +610,34 @@ impl ConcreteType {
             // Exact type match
             (a, b) if a == b => true,
 
-            // Integer can be assigned to Number
+            // Integer can be assigned to Number (implicit widening)
             (ConcreteType::Integer, ConcreteType::Number) => true,
+
+            // Sized integers assignable to base Integer and Number
+            (ConcreteType::IntegerSized { .. }, ConcreteType::Integer) => true,
+            (ConcreteType::IntegerSized { .. }, ConcreteType::Number) => true,
+            (ConcreteType::Integer, ConcreteType::IntegerSized { .. }) => true,
+
+            // Sized integers assignable to wider sized integers
+            (
+                ConcreteType::IntegerSized { bits: b1, .. },
+                ConcreteType::IntegerSized { bits: b2, .. },
+            ) if b1 <= b2 => true,
+
+            // Sized numbers assignable to base Number
+            (ConcreteType::NumberSized { .. }, ConcreteType::Number) => true,
+            (ConcreteType::Number, ConcreteType::NumberSized { .. }) => true,
+
+            // Sized numbers assignable to wider sized numbers
+            (ConcreteType::NumberSized { bits: b1 }, ConcreteType::NumberSized { bits: b2 })
+                if b1 <= b2 =>
+            {
+                true
+            }
+
+            // Integer can be assigned to sized number
+            (ConcreteType::Integer, ConcreteType::NumberSized { .. }) => true,
+            (ConcreteType::IntegerSized { .. }, ConcreteType::NumberSized { .. }) => true,
 
             // Null can be assigned to any type (nullable types)
             (ConcreteType::Null, _) => true,
@@ -617,6 +695,45 @@ impl ConcreteType {
             (ConcreteType::Integer, ConcreteType::Number)
             | (ConcreteType::Number, ConcreteType::Integer) => ConcreteType::Number,
 
+            // Sized integer + Integer -> wider type
+            (ConcreteType::IntegerSized { bits, unsigned }, ConcreteType::Integer)
+            | (ConcreteType::Integer, ConcreteType::IntegerSized { bits, unsigned }) => {
+                ConcreteType::IntegerSized {
+                    bits: *bits,
+                    unsigned: *unsigned,
+                }
+            }
+
+            // Sized integer + Number -> Number
+            (ConcreteType::IntegerSized { .. }, ConcreteType::Number)
+            | (ConcreteType::Number, ConcreteType::IntegerSized { .. }) => ConcreteType::Number,
+
+            // Sized number + Number -> wider
+            (ConcreteType::NumberSized { bits }, ConcreteType::Number)
+            | (ConcreteType::Number, ConcreteType::NumberSized { bits }) => {
+                ConcreteType::NumberSized { bits: *bits }
+            }
+
+            // Two sized integers -> wider
+            (
+                ConcreteType::IntegerSized {
+                    bits: b1,
+                    unsigned: u1,
+                },
+                ConcreteType::IntegerSized {
+                    bits: b2,
+                    unsigned: u2,
+                },
+            ) => ConcreteType::IntegerSized {
+                bits: *b1.max(b2),
+                unsigned: *u1 && *u2,
+            },
+
+            // Two sized numbers -> wider
+            (ConcreteType::NumberSized { bits: b1 }, ConcreteType::NumberSized { bits: b2 }) => {
+                ConcreteType::NumberSized { bits: *b1.max(b2) }
+            }
+
             // Array types with compatible elements
             (ConcreteType::Array(a), ConcreteType::Array(b)) => {
                 ConcreteType::Array(Box::new(a.common_supertype(b)))
@@ -634,7 +751,13 @@ impl ConcreteType {
 
     /// Check if this is a numeric type
     pub fn is_numeric(&self) -> bool {
-        matches!(self, ConcreteType::Integer | ConcreteType::Number)
+        matches!(
+            self,
+            ConcreteType::Integer
+                | ConcreteType::Number
+                | ConcreteType::IntegerSized { .. }
+                | ConcreteType::NumberSized { .. }
+        )
     }
 
     /// Check if this is a primitive type
@@ -665,6 +788,14 @@ impl std::fmt::Display for ConcreteType {
         match self {
             ConcreteType::Integer => write!(f, "integer"),
             ConcreteType::Number => write!(f, "number"),
+            ConcreteType::IntegerSized { bits, unsigned } => {
+                if *unsigned {
+                    write!(f, "integer:{}u", bits)
+                } else {
+                    write!(f, "integer:{}", bits)
+                }
+            }
+            ConcreteType::NumberSized { bits } => write!(f, "number:{}", bits),
             ConcreteType::String => write!(f, "string"),
             ConcreteType::Boolean => write!(f, "boolean"),
             ConcreteType::Null => write!(f, "null"),

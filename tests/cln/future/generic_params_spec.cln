@@ -14,7 +14,7 @@ functions:
 		return items.get(0)
 
 	any getLastInt(list<any> items)
-		integer lastIndex = items.size() - 1
+		integer lastIndex = items.length() - 1
 		return items.get(lastIndex)
 
 	void printAnyInt(any value)

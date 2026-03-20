@@ -38,6 +38,8 @@ pub struct ResolvedHirProgram {
     pub imports: Vec<ResolvedHirImport>,
     pub tests: Vec<ResolvedHirTest>,
     pub state: Option<ResolvedHirStateBlock>,
+    /// Top-level watch blocks (reactive state observers)
+    pub watch_blocks: Vec<ResolvedHirWatchBlock>,
     pub symbol_table: GlobalSymbolTable,
     pub location: SourceLocation,
     /// External functions (WASM imports from host)
@@ -142,9 +144,42 @@ pub struct ResolvedHirTest {
 #[derive(Debug, Clone)]
 pub struct ResolvedHirStateBlock {
     pub declarations: Vec<ResolvedHirStateDeclaration>,
+    /// Computed (derived) state declarations
+    pub computed: Vec<ResolvedHirComputedDeclaration>,
     /// State invariants checked at operation boundaries
     pub rules: Vec<ResolvedHirExpression>,
     pub scope: HirStateScope,
+    pub location: SourceLocation,
+}
+
+/// Resolved computed state declaration — a derived value that is recomputed
+/// whenever its source state variables change.
+///
+/// The `body` must contain a `return` statement. At compile time, only the
+/// types are validated; dependency tracking is a runtime concern.
+#[derive(Debug, Clone)]
+pub struct ResolvedHirComputedDeclaration {
+    /// Symbol ID for the computed variable (registered as read-only state)
+    pub symbol_id: SymbolId,
+    pub name: String,
+    pub computed_type: HirType,
+    pub body: ResolvedHirBlock,
+    pub location: SourceLocation,
+}
+
+/// Resolved watch block — a reactive observer that fires when named state
+/// variables are mutated at runtime.
+///
+/// Compile-time validation ensures that every target name refers to a known
+/// symbol in the current state scope. The body is type-checked for statement
+/// correctness but does not need to return a value.
+#[derive(Debug, Clone)]
+pub struct ResolvedHirWatchBlock {
+    /// Names of state variables being observed
+    pub targets: Vec<String>,
+    /// Resolved symbol IDs for each target (parallel to `targets`)
+    pub target_symbol_ids: Vec<SymbolId>,
+    pub body: ResolvedHirBlock,
     pub location: SourceLocation,
 }
 

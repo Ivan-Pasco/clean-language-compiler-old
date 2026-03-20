@@ -8,7 +8,7 @@ start:
 	integer chain_result = nested[0][1]
 
 	// Test method calls
-	numbers.push(precision_val)
+	numbers.add(precision_val)
 
 	// Test functions
 	list<integer> processed = processNumbers(numbers)
@@ -55,6 +55,6 @@ functions:
 		iterate i in 0 to input.length() - 1
 			integer value = input[i]
 			if value > 0
-				result.push(value * 2)
+				result.add(value * 2)
 		return result
 

@@ -1,5 +1,60 @@
 # Clean Language Compiler - Implementation Tasks
 
+## ✅ RESOLVED: Precision Modifiers Lost During Type Inference
+
+**Priority**: CRITICAL - Silent data loss
+**Discovered**: March 20, 2026
+**Resolved**: March 20, 2026
+**Status**: ✅ COMPLETE
+
+### Solution
+Added `IntegerSized { bits, unsigned }` and `NumberSized { bits }` variants to `ConcreteType`. Fixed `hir_type_to_concrete_type()` to preserve precision. Fixed `from_concrete_type()` in MIR to map integer:64→I64, number:32→F32, etc. Updated all match arms including `is_assignable_to`, `common_supertype`, `is_numeric`, `get_type_byte_size`, and Display.
+
+---
+
+## ✅ RESOLVED: Computed State Wired Through Pipeline
+
+**Priority**: CRITICAL
+**Discovered**: March 20, 2026
+**Resolved**: March 20, 2026
+**Status**: ✅ COMPLETE
+
+Added `computed:` block parsing to token parser's state block. Added `TastComputedDeclaration` to type checker. Computed declarations are now parsed, type-checked, and available in TAST. Runtime auto-recalculation depends on host runtime dependency tracking.
+
+---
+
+## ✅ RESOLVED: Watch Blocks Wired Through Pipeline
+
+**Priority**: CRITICAL
+**Discovered**: March 20, 2026
+**Resolved**: March 20, 2026
+**Status**: ✅ COMPLETE
+
+Added `TastWatchBlock` to type checker. Watch blocks are now parsed at top level, type-checked for body correctness, and available in TAST. Runtime invocation on state change depends on host runtime hooking into state mutations.
+
+---
+
+## ✅ RESOLVED: State Rules Enforced at Runtime
+
+**Priority**: MEDIUM-HIGH
+**Discovered**: March 20, 2026
+**Status**: ✅ Already implemented via MIR inject_rules_checking
+
+State rules ARE enforced at runtime. The MIR builder extracts rules from TAST, injects Branch+Trap blocks at the end of start/frame functions. MIR codegen emits WASM `unreachable` for trap blocks.
+
+---
+
+## ✅ RESOLVED: State Guards Enforced at Runtime
+
+**Priority**: MEDIUM-HIGH
+**Discovered**: March 20, 2026
+**Resolved**: March 20, 2026
+**Status**: ✅ COMPLETE
+
+Guard conditions are now injected before GlobalStore operations in the MIR builder. When a state variable has a guard, the proposed new value is bound as 'value' in a new scope, the guard condition is evaluated, and execution traps if the condition is false.
+
+---
+
 ## ✅ RESOLVED: Selective Bridge Function Imports
 
 **Priority**: ENHANCEMENT - Optimizes compiled WASM size

@@ -49,6 +49,14 @@ pub struct MirProgram {
     #[allow(dead_code)]
     pub used_plugins: Vec<String>,
 
+    /// State rules (invariants) — tracked here for tooling/debugging
+    /// Actual enforcement is done via MirTerminator::Trap blocks injected into start/frame functions
+    pub state_rules: Vec<MirStateRule>,
+
+    /// State guards — per-variable validation
+    /// Actual enforcement is done via guard checks injected before state variable assignments
+    pub state_guards: Vec<MirStateGuard>,
+
     /// External functions (WASM imports from host)
     /// These generate import entries during code generation
     pub externals: Vec<MirExternalFunction>,
@@ -71,6 +79,66 @@ pub struct MirExternalFunction {
 
     /// Source location for debugging
     pub location: SourceLocation,
+}
+
+/// State rule — a boolean invariant that must hold at operation boundaries
+#[derive(Debug, Clone)]
+pub struct MirStateRule {
+    /// The boolean expression that must be true
+    pub condition: MirExpression,
+    /// Source location for error reporting
+    pub location: SourceLocation,
+}
+
+/// State guard — per-variable validation checked before assignment
+#[derive(Debug, Clone)]
+pub struct MirStateGuard {
+    /// The state variable this guard applies to
+    pub variable_symbol_id: SymbolId,
+    /// The variable name for error messages
+    pub variable_name: String,
+    /// The boolean condition (uses 'value' binding for the proposed new value)
+    pub condition: MirExpression,
+    /// Error message shown on guard violation
+    pub error_message: String,
+    /// Source location for error reporting
+    pub location: SourceLocation,
+}
+
+/// Simplified MIR expression for state rules/guards (evaluated at runtime)
+#[derive(Debug, Clone)]
+pub enum MirExpression {
+    /// Compare: left op right → boolean
+    Compare {
+        left: Box<MirExpression>,
+        op: MirCompareOp,
+        right: Box<MirExpression>,
+    },
+    /// Logical AND
+    And(Box<MirExpression>, Box<MirExpression>),
+    /// Logical OR
+    Or(Box<MirExpression>, Box<MirExpression>),
+    /// Logical NOT
+    Not(Box<MirExpression>),
+    /// Read a global state variable
+    GlobalGet(SymbolId),
+    /// Integer constant
+    IntConst(i64),
+    /// Float constant
+    FloatConst(f64),
+    /// Boolean constant
+    BoolConst(bool),
+}
+
+/// Comparison operator for MIR expressions
+#[derive(Debug, Clone)]
+pub enum MirCompareOp {
+    Equal,
+    NotEqual,
+    LessThan,
+    LessEqual,
+    GreaterThan,
+    GreaterEqual,
 }
 
 /// MIR function representation
@@ -634,8 +702,46 @@ impl MirType {
     /// Convert from TAST ConcreteType to MIR type
     pub fn from_concrete_type(concrete_type: &ConcreteType) -> Self {
         match concrete_type {
-            ConcreteType::Integer => MirType::I32, // CRITICAL FIX: Integers are i32 in WASM, not i64
+            ConcreteType::Integer => MirType::I32,
             ConcreteType::Number => MirType::F64,
+            // Precision integer types → appropriate WASM integer sizes
+            ConcreteType::IntegerSized {
+                bits: 8,
+                unsigned: false,
+            } => MirType::I8,
+            ConcreteType::IntegerSized {
+                bits: 8,
+                unsigned: true,
+            } => MirType::U8,
+            ConcreteType::IntegerSized {
+                bits: 16,
+                unsigned: false,
+            } => MirType::I16,
+            ConcreteType::IntegerSized {
+                bits: 16,
+                unsigned: true,
+            } => MirType::U16,
+            ConcreteType::IntegerSized {
+                bits: 32,
+                unsigned: false,
+            } => MirType::I32,
+            ConcreteType::IntegerSized {
+                bits: 32,
+                unsigned: true,
+            } => MirType::U32,
+            ConcreteType::IntegerSized {
+                bits: 64,
+                unsigned: false,
+            } => MirType::I64,
+            ConcreteType::IntegerSized {
+                bits: 64,
+                unsigned: true,
+            } => MirType::U64,
+            ConcreteType::IntegerSized { .. } => MirType::I32, // fallback for other sizes
+            // Precision number types → appropriate WASM float sizes
+            ConcreteType::NumberSized { bits: 32 } => MirType::F32,
+            ConcreteType::NumberSized { bits: 64 } => MirType::F64,
+            ConcreteType::NumberSized { .. } => MirType::F64, // fallback
             ConcreteType::String => MirType::Ptr(Box::new(MirType::I8)), // Strings are i32 pointer to [len|content] - use Ptr(I8) for consistent type tracking with string literals
             ConcreteType::Boolean => MirType::Bool,
             ConcreteType::Null => MirType::Ptr(Box::new(MirType::Void)),

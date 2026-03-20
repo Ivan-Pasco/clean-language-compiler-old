@@ -35,35 +35,17 @@ Clean Language is a modern, type-safe programming language designed to compile t
 - **Error Handling**: Comprehensive error handling and recovery mechanisms
 - **Developer Experience**: Method-style syntax and intuitive patterns
 
-### 🎯 Quality Assurance Standards
-
-**PRODUCTION QUALITY REQUIREMENT: 100% COMPILATION SUCCESS RATE**
-
-The Clean Language compiler MUST achieve and maintain:
-- **100% success rate** on ALL test files in `tests/clean_files/`
-- **Zero tolerance** for compilation failures in production
-- **Comprehensive feature support** across all language constructs
-- **Full WebAssembly compatibility** for all generated code
-
-**Quality Gates:**
-1. ALL core language features (00-20 series) MUST compile successfully
-2. ALL advanced features (21-30+ series) MUST compile successfully
-3. ALL error handling, I/O, networking, and memory management features MUST work
-4. NO placeholder implementations or partial feature support allowed
-
 ### File Extension
 Clean Language source files use the `.cln` extension.
 
-## Compiler Instructions (Core Implementation Rules)
+## Language Design Rules
 
-### 🛠 Clean Language Compiler Instructions (Core Fixes)
-
-These are essential implementation rules that must be followed by the Clean Language compiler:
+These are core design rules that define how Clean Language code must be structured:
 
 1. **Functions must be in a `functions:` block**
-   - ❌ No standalone `function name(...)` allowed at top level
-   - ✅ Use `functions:` for top-level and class functions
-   - ✅ Entry point uses `start:` block (not a function)
+   - No standalone `function name(...)` at top level
+   - Use `functions:` for top-level and class functions
+   - Entry point uses `start:` block (not a function)
    ```clean
    // ❌ Invalid
    function myFunc()
@@ -104,9 +86,8 @@ These are essential implementation rules that must be followed by the Clean Lang
    ```
 
 5. **Use lowercase namespace functions**
-   - ✅ Use `math.sqrt()`, `string.concat()`, `list.sort()` — not `Math.sqrt()`, `String.concat()`
-   - ❌ No capitalized namespace names
-   - Policy clarification: Uppercase namespace “synonyms” (e.g., `Math`, `String`, `List`, `File`, `Http`, `Console`) are not supported and must be treated as errors by the compiler. Previous drafts or tooling that accepted uppercase variants are deprecated. The grammar and semantic layers must enforce lowercase-only namespaces and emit a clear diagnostic when uppercase is used (e.g., “Use lowercase namespace ‘math.sqrt()’ instead of ‘Math.sqrt()’”).
+   - Use `math.sqrt()`, `string.concat()`, `list.concat()` — not `Math.sqrt()`, `String.concat()`
+   - Uppercase namespace names are not valid in Clean Language
 
 6. **Use natural generic container syntax**
    - ✅ `list<item>`, `matrix<type>`
@@ -121,13 +102,8 @@ These are essential implementation rules that must be followed by the Clean Lang
    - Comparisons: Use operators (`a == b`, `a > b`, `a >= b`)
    - Logic: Use operators (`a and b`, `a or b`, `not a`)
    - Advanced math: Use functions (`math.sqrt()`, `math.sin()`)
-   - Object operations: Use method-style (`text.length()`, `value.toString()`)
-   - Utility functions: Use namespace calls (`string.concat()`, `list.sort()`)
-
-### Implementation Notes
-- These rules ensure consistency with Clean's philosophy of simplicity and readability
-- The compiler should enforce these patterns and provide helpful error messages when violated
-- Generic type resolution happens at compile time based on usage context
+   - Object operations: Use method-style (`text.length()`, `value.toString()`, `items.add(x)`)
+   - Utility functions: Use namespace calls (`string.concat()`, `list.concat()`, `list.range()`)
 
 ## Lexical Structure
 
@@ -664,10 +640,6 @@ value.toString    // convert to string
 value.toBoolean   // convert to boolean
 ```
 
-**Implementation Status:**
-- ✅ **Numeric Conversions**: `integer.toNumber`, `number.toInteger`, `integer.toBoolean` fully implemented
-- ✅ **Boolean Conversions**: `integer.toBoolean` (0 = false, non-zero = true) implemented
-- ⚠️ **String Conversions**: `value.toString()` requires runtime functions (not yet implemented)
 
 **Examples:**
 ```clean
@@ -689,11 +661,11 @@ print:
     "World"
 // Equivalent to: print("Hello"), print("World")
 
-list.push:
+items.add:
     item1
     item2
     item3
-// Equivalent to: list.push(item1), list.push(item2), list.push(item3)
+// Equivalent to: items.add(item1), items.add(item2), items.add(item3)
 ```
 
 ### Variable Declarations
@@ -928,8 +900,8 @@ A.determinant()  // Matrix determinant
 obj.method()            // Method call
 obj.property            // Property access
 obj.method(arg1, arg2)  // Method with arguments
-"string".length         // Property on literal
-list.get(0)           // Built-in method
+"string".length()       // Method on literal
+myList.get(0)           // Built-in method
 ```
 
 ### Function Calls
@@ -1527,7 +1499,7 @@ tests:
     "detects empty string": string.isEmpty("") = true
     
     // Anonymous tests (no description)
-    string.toUpperCase("hi") = "HI"
+    "hi".toUpperCase() = "HI"
     math.abs(-42) = 42
     [1, 2, 3].length() = 3
 ```
@@ -1576,7 +1548,7 @@ Running tests for myprogram.cln...
 ✅ adds numbers: add(2, 3) = 5 (PASS)
 ✅ squares a number: square(4) = 16 (PASS) 
 ❌ detects empty string: string.isEmpty("") = true (FAIL: expected true, got false)
-✅ string.toUpperCase("hi") = "HI" (PASS)
+✅ "hi".toUpperCase() = "HI" (PASS)
 
 Test Results: 3 passed, 1 failed, 4 total
 ```
@@ -2153,9 +2125,9 @@ The string module provides powerful text manipulation capabilities. Whether you'
 
 ```clean
 // Core operations
-string.length(text), string.concat(a, b), string.contains(text, search)
-string.split(text, delimiter), string.upper(text), string.lower(text)
-string.trim(text), string.replace(text, old, new)
+text.length(), text.toUpperCase(), text.toLowerCase(), text.trim()
+text.contains(search), text.replace(old, new), text.split(delimiter)
+string.concat(a, b), string.join(parts, separator)
 ```
     functions:
         // Basic operations
@@ -2216,14 +2188,9 @@ string.trim(text), string.replace(text, old, new)
         
         // Advanced text manipulation - powerful tools for text transformation
         string replace(string text, string oldValue, string newValue)
-            // Replaces the first occurrence of oldValue with newValue
-            // Like find-and-replace in a word processor, but only changes the first match
-            // Example: replace("Hello Hello", "Hello", "Hi") → "Hi Hello"
-        
-        string replaceAll(string text, string oldValue, string newValue)
-            // Replaces ALL occurrences of oldValue with newValue
-            // Like find-and-replace-all - changes every match in the text
-            // Example: replaceAll("Hello Hello", "Hello", "Hi") → "Hi Hi"
+            // Replaces all occurrences of oldValue with newValue
+            // Like find-and-replace-all in a word processor
+            // Example: replace("Hello Hello", "Hello", "Hi") → "Hi Hi"
         
         list<string> split(string text, string delimiter)
             // Breaks a string into pieces using a separator character
@@ -2277,45 +2244,45 @@ string.trim(text), string.replace(text, old, new)
 start:
     // Basic text processing
     string userInput = "  Hello World!  "
-    string cleaned = string.trim(userInput)        // "Hello World!"
-    integer length = string.length(cleaned)        // 12
+    string cleaned = userInput.trim()              // "Hello World!"
+    integer length = cleaned.length()              // 12
 
     // Case normalization for comparisons
     string email1 = "USER@EXAMPLE.COM"
     string email2 = "user@example.com"
-    boolean same = string.lower(email1) == string.lower(email2)  // true
+    boolean same = email1.toLowerCase() == email2.toLowerCase()  // true
 
     // Text searching and validation
     string filename = "document.pdf"
-    boolean isPdf = string.endsWith(filename, ".pdf")     // true
-    integer dotPos = string.lastIndexOf(filename, ".")    // 8
+    boolean isPdf = filename.endsWith(".pdf")      // true
+    integer dotPos = filename.lastIndexOf(".")     // 8
 
     // URL processing
     string url = "https://api.example.com/users"
-    boolean isHttps = string.startsWith(url, "https://")  // true
-    boolean hasApi = string.contains(url, "api")          // true
+    boolean isHttps = url.startsWith("https://")  // true
+    boolean hasApi = url.contains("api")          // true
 
     // Text parsing and reconstruction
     string csvLine = "John,Doe,25,Engineer"
-    list<string> fields = string.split(csvLine, ",")     // ["John", "Doe", "25", "Engineer"]
+    list<string> fields = csvLine.split(",")       // ["John", "Doe", "25", "Engineer"]
     string fullName = string.join([fields[0], fields[1]], " ")  // "John Doe"
 
     // Text replacement and cleaning
     string messyText = "Hello    World"
-    string cleanedText = string.replaceAll(messyText, "    ", " ")  // "Hello World"
+    string cleanedText = messyText.replace("    ", " ")    // "Hello World"
 
     // Formatting and padding
     string number = "42"
-    string padded = string.padStart(number, 5, "0")       // "00042"
+    string padded = number.padStart(5, "0")        // "00042"
 
     // Character-level operations
     string word = "Hello"
-    string firstChar = string.charAt(word, 0)             // "H"
-    integer charCode = string.charCodeAt(word, 0)         // 72 (ASCII for 'H')
+    string firstChar = word.charAt(0)              // "H"
+    integer charCode = word.charCodeAt(0)          // 72 (ASCII for 'H')
 
     // Input validation
     string userField = "   "
-    boolean isValid = !string.isBlank(userField)          // false
+    boolean isValid = !userField.isBlank()         // false
 ```
 
 ### List Module
@@ -2324,16 +2291,16 @@ The list module provides powerful data collection capabilities. Whether you're m
 
 ```clean
 // Essential operations
-list.add(list, item), list.remove(list, index), list.get(list, index)
-list.size(list), list.contains(list, item)
-list.sort(list), list.reverse(list), list.join(list, separator)
+items.add(item), items.remove(index), items.get(index)
+items.length(), items.contains(item), items.sort(), items.reverse()
+list.concat(a, b), list.range(start, end), list.join(items, separator)
 ```
     functions:
         // Basic operations - fundamental list access
-        integer size(list<any> array)
+        integer length(list<any> array)
             // Returns the number of elements in the list
             // Like counting how many items are in a box
-            // Example: size([1, 2, 3]) → 3
+            // Example: length([1, 2, 3]) → 3
         
         any get(list<any> array, integer index)
             // Gets the element at the specified position
@@ -2346,15 +2313,15 @@ list.sort(list), list.reverse(list), list.join(list, separator)
             // Example: set([1, 2, 3], 1, 99) → [1, 99, 3]
         
         // Modification operations - changing array contents
-        list<any> push(list<any> array, any item)
+        list<any> add(list<any> array, any item)
             // Adds an element to the end of the list
             // Like adding a new item to the end of a list
-            // Example: push([1, 2], 3) → [1, 2, 3]
+            // Example: add([1, 2], 3) → [1, 2, 3]
         
-        any pop(list<any> array)
+        any removeLast(list<any> array)
             // Removes and returns the last element from the list
             // Like taking the top item off a stack
-            // Example: pop([1, 2, 3]) → 3, array becomes [1, 2]
+            // Example: removeLast([1, 2, 3]) → 3, array becomes [1, 2]
         
         list<any> insert(list<any> array, integer index, any item)
             // Inserts an element at a specific position
@@ -2461,52 +2428,52 @@ list.sort(list), list.reverse(list), list.join(list, separator)
             // Like counting from one number to another
             // Example: range(1, 5) → [1, 2, 3, 4, 5]
 
-// Usage Examples - Real-world array processing scenarios
+// Usage Examples - Real-world list processing scenarios
 start:
-    // Basic array operations
+    // Basic list operations
     list<integer> numbers = [1, 2, 3]
-    integer size = list.size(numbers)           // 3
-    integer first = list.get(numbers, 0)          // 1
-    list.set(numbers, 1, 99)                      // [1, 99, 3]
+    integer count = numbers.length()              // 3
+    integer first = numbers.get(0)                // 1
+    numbers.set(1, 99)                            // [1, 99, 3]
 
     // Building and modifying lists
     list<string> fruits = ["apple", "banana"]
-    fruits = list.add(fruits, "orange")          // ["apple", "banana", "orange"]
-    string lastFruit = list.remove(fruits, 2)           // "orange", fruits becomes ["apple", "banana"]
+    fruits.add("orange")                          // ["apple", "banana", "orange"]
+    string removed = fruits.remove(2)             // "orange", fruits becomes ["apple", "banana"]
 
     // Searching through data
     list<integer> scores = [85, 92, 78, 96, 88]
-    boolean hasHighScore = list.contains(scores, 96)     // true
-    integer position = list.indexOf(scores, 92)          // 1
+    boolean hasHighScore = scores.contains(96)    // true
+    integer position = scores.indexOf(92)         // 1
 
     // Data processing and transformation
     list<integer> data = [1, 2, 3, 4, 5]
-    list<integer> doubled = list.map(data, x => x * 2)  // [2, 4, 6, 8, 10]
-    list<integer> evens = list.filter(data, x => x % 2 == 0)  // [2, 4]
-    integer sum = list.reduce(data, (total, x) => total + x, 0)  // 15
+    list<integer> doubled = data.map(x => x * 2)          // [2, 4, 6, 8, 10]
+    list<integer> evens = data.filter(x => x % 2 == 0)    // [2, 4]
+    integer sum = data.reduce((total, x) => total + x, 0) // 15
 
     // List manipulation
     list<string> names1 = ["Alice", "Bob"]
     list<string> names2 = ["Charlie", "Diana"]
-    list<string> allNames = list.concat(names1, names2)  // ["Alice", "Bob", "Charlie", "Diana"]
-    list<string> reversed = list.reverse(allNames)       // ["Diana", "Charlie", "Bob", "Alice"]
+    list<string> allNames = list.concat(names1, names2)    // ["Alice", "Bob", "Charlie", "Diana"]
+    list<string> reversed = allNames.reverse()             // ["Diana", "Charlie", "Bob", "Alice"]
 
     // Working with sections of lists
     list<integer> bigList = [10, 20, 30, 40, 50]
-    list<integer> middle = list.slice(bigList, 1, 4)     // [20, 30, 40]
+    list<integer> middle = bigList.slice(1, 4)             // [20, 30, 40]
 
     // Text processing with lists
     list<string> words = ["hello", "world", "from", "Clean"]
-    string sentence = list.join(words, " ")               // "hello world from Clean"
+    string sentence = list.join(words, " ")                // "hello world from Clean"
 
     // Creating lists programmatically
-    list<string> greetings = list.fill(3, "Hello")       // ["Hello", "Hello", "Hello"]
-    list<integer> countdown = list.range(5, 1)           // [5, 4, 3, 2, 1]
+    list<string> greetings = list.fill(3, "Hello")         // ["Hello", "Hello", "Hello"]
+    list<integer> countdown = list.range(5, 1)             // [5, 4, 3, 2, 1]
 
     // Validation and utility
-    boolean isEmpty = list.isEmpty([])                    // true
-    string firstWord = list.first(words)                  // "hello"
-    string lastWord = list.last(words)                    // "Clean"
+    boolean empty = [].isEmpty()                           // true
+    string firstWord = words.first()                       // "hello"
+    string lastWord = words.last()                         // "Clean"
 ```
 
 ### File Module
@@ -2915,48 +2882,31 @@ start:
 
 ## Method-Style Syntax
 
-Clean Language uses method-style syntax as the primary pattern for object operations. This makes your code more readable and intuitive by allowing you to call functions directly on values.
+Clean Language follows the "one way to do things" principle. Every operation has exactly one name and one preferred calling style.
 
-### Primary Pattern
+### Method Style — The Primary Pattern
 
-Method-style syntax is the preferred way to work with objects and values:
-
-```clean
-// Method-style syntax (preferred)
-integer textLength = myText.length()
-string upperText = myText.toUpperCase()
-list.add(myList, item)
-value.toString()
-```
-
-### Namespace Functions
-
-For utility functions, use lowercase namespace calls:
+When an operation acts on a specific value, use method-style syntax. The value comes first, followed by a dot and the operation name:
 
 ```clean
-// Namespace functions (lowercase)
-math.sqrt(16)
-string.concat("a", "b")
-list.sort(myList)
-```
-
-### Method-Style Syntax Examples
-
-Method-style syntax is the preferred way to work with objects and values:
-
-```clean
-// Text operations
+// String operations
 string text = "Hello World"
 integer length = text.length()
 string upper = text.toUpperCase()
 string lower = text.toLowerCase()
 string trimmed = text.trim()
+boolean found = text.contains("World")
+list<string> words = text.split(" ")
+string cleaned = text.replace("Hello", "Hi")
 
 // List operations
 list<integer> numbers = [1, 2, 3]
-integer size = numbers.length()
+integer count = numbers.length()
 boolean empty = numbers.isEmpty()
 numbers.add(4)
+numbers.remove(0)
+boolean has = numbers.contains(2)
+list<integer> sorted = numbers.sort()
 
 // Value conversions
 integer age = 25
@@ -2969,38 +2919,32 @@ user.age
 user.toString()
 ```
 
-### Namespace Functions
+### Namespace Functions — For Utilities Only
 
-For utility functions, use lowercase namespace calls:
+Namespace functions are used only when an operation does not belong to a single value — typically utility functions with multiple independent inputs:
 
 ```clean
-// Math operations
+// Math utilities (no single owner)
 math.sqrt(16)
 math.max(10, 20)
-math.pi()
+math.pow(2, 8)
 
-// String operations
-string.concat("Hello", "World")
-string.split("a,b,c", ",")
-string.trim("  text  ")
+// Creating new collections
+list.concat(listA, listB)
+list.range(1, 10)
+list.fill(5, 0)
 
-// List operations
-list.sort(myList)
-list.reverse(myList)
-list.join(myList, ", ")
+// Joining (utility taking a list + separator)
+string.concat("Hello", " World")
+list.join(words, ", ")
+string.join(parts, "-")
 ```
 
-### When to Use Each Style
+### The Rule
 
-**Use Method Style When:**
-- Working with a specific value (like `text.length()`)
-- Accessing object properties (like `user.name`)
-- Converting values (like `value.toString()`)
-
-**Use Namespace Functions When:**
-- Calling utility functions (like `math.sqrt()`)
-- Working with multiple parameters (like `string.concat()`)
-- Using library functions (like `list.sort()`)
+- If the operation acts **on a value** → use method style: `value.operation()`
+- If the operation **creates something new** from multiple inputs → use namespace: `module.operation(a, b)`
+- Every operation has **one name** — no aliases, no shortcuts, no alternate forms
 
 ## Modules and Imports
 
@@ -3220,7 +3164,7 @@ import:
 
 start:
     number pi = math.pi
-    string upper = string.toUpperCase("hello")
+    string upper = "hello".toUpperCase()
     list<integer> nums = list.range(1, 10)
 ```
 
@@ -4226,7 +4170,7 @@ screen Home:
             visitCount = visitCount + 1
 
         void addItem(string item)
-            recentItems.push(item)
+            recentItems.add(item)
 
         void clearHistory()
             reset recentItems

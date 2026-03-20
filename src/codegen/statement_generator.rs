@@ -60,10 +60,8 @@ impl CodeGenerator {
             Statement::Error { message, .. } => {
                 self.generate_error_statement(message, instructions)
             },
-            Statement::RangeIterate { iterator, start: _, end: _, step: _, body, .. } => {
-                // Create a range expression from start, end, step - placeholder for now
-                let range_expr = Expression::Literal(Value::Integer(0));
-                self.generate_range_iterate_statement(&iterator, &range_expr, body, instructions)
+            Statement::RangeIterate { iterator, start, end, step, body, .. } => {
+                self.generate_range_iterate_with_bounds(iterator, start, end, step.as_ref(), body, instructions)
             },
             Statement::Iterate { iterator, collection, body, .. } => {
                 self.generate_iterate_statement(&iterator, collection, body, instructions)
@@ -383,7 +381,7 @@ impl CodeGenerator {
         // Special handling for list mutating methods like .add(), .remove(), etc.
         // These should update the variable in-place: `list.add(item)` becomes `list = list.add(item)`
         if let Expression::MethodCall { object, method, arguments, .. } = expr {
-            if matches!(method.as_str(), "add" | "remove" | "insert" | "pop" | "push" | "clear") {
+            if matches!(method.as_str(), "add" | "remove" | "insert" | "pop" | "push" | "clear" | "removeLast") {
                 // Check if object is a simple variable (not a complex expression)
                 if let Expression::Variable(var_name) = object.as_ref() {
                     // Check if this variable exists and is a list type
@@ -568,27 +566,39 @@ impl CodeGenerator {
     #[allow(dead_code)]
     fn generate_background_statement(
         &mut self,
-        _statements: &[Statement],
-        _instructions: &mut Vec<Instruction>,
+        statements: &[Statement],
+        instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
-        Err(CompilerError::codegen_error(
-            "Background statements not yet implemented".to_string(),
-            None,
-            None
-        ))
+        // In single-threaded WASM, background statements execute synchronously
+        for stmt in statements {
+            self.generate_statement(stmt, instructions)?;
+        }
+        Ok(())
     }
 
     fn generate_later_assignment_statement(
         &mut self,
-        _target: &str,
-        _value: &Expression,
-        _instructions: &mut Vec<Instruction>,
+        target: &str,
+        value: &Expression,
+        instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
-        Err(CompilerError::codegen_error(
-            "Later assignment not yet implemented".to_string(),
-            None,
-            None
-        ))
+        // In single-threaded WASM, later assignments execute synchronously
+        // Generate the expression value
+        let expr_type = self.generate_expression(value, instructions)?;
+
+        // Find or create the target variable
+        if let Some(local_info) = self.find_local(target) {
+            instructions.push(Instruction::LocalSet(local_info.index));
+        } else {
+            // Create new local for this variable
+            let local_index = self.add_local(expr_type);
+            instructions.push(Instruction::LocalSet(local_index));
+            self.variable_map.insert(target.to_string(), super::LocalVarInfo {
+                index: local_index,
+                type_: expr_type.into(),
+            });
+        }
+        Ok(())
     }
 
     fn generate_error_statement(
@@ -603,18 +613,77 @@ impl CodeGenerator {
         Ok(())
     }
 
-    fn generate_range_iterate_statement(
+    fn generate_range_iterate_with_bounds(
         &mut self,
-        _variable: &str,
-        _range_expr: &Expression,
-        _body: &[Statement],
-        _instructions: &mut Vec<Instruction>,
+        iterator: &str,
+        start: &Expression,
+        end: &Expression,
+        step: Option<&Expression>,
+        body: &[Statement],
+        instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
-        Err(CompilerError::codegen_error(
-            "Range iteration not yet implemented".to_string(),
-            None,
-            None
-        ))
+        // Allocate locals for counter, end value, and step
+        let counter_index = self.add_local(WasmType::I32);
+        let end_index = self.add_local(WasmType::I32);
+        let step_index = self.add_local(WasmType::I32);
+
+        // Register the iterator variable
+        self.variable_map.insert(
+            iterator.to_string(),
+            super::LocalVarInfo {
+                index: counter_index,
+                type_: wasm_encoder::ValType::I32,
+            },
+        );
+
+        // Initialize counter = start
+        self.generate_expression(start, instructions)?;
+        instructions.push(Instruction::LocalSet(counter_index));
+
+        // Initialize end value
+        self.generate_expression(end, instructions)?;
+        instructions.push(Instruction::LocalSet(end_index));
+
+        // Initialize step (default = 1)
+        if let Some(step_expr) = step {
+            self.generate_expression(step_expr, instructions)?;
+        } else {
+            instructions.push(Instruction::I32Const(1));
+        }
+        instructions.push(Instruction::LocalSet(step_index));
+
+        // Block (exit target) > Loop (continue target)
+        instructions.push(Instruction::Block(BlockType::Empty));
+        instructions.push(Instruction::Loop(BlockType::Empty));
+
+        // Check: counter < end (for positive step) — exit if false
+        instructions.push(Instruction::LocalGet(counter_index));
+        instructions.push(Instruction::LocalGet(end_index));
+        instructions.push(Instruction::I32LtS);
+        instructions.push(Instruction::I32Eqz);
+        instructions.push(Instruction::BrIf(1)); // Exit if counter >= end
+
+        // Generate body
+        for stmt in body {
+            self.generate_statement(stmt, instructions)?;
+        }
+
+        // counter += step
+        instructions.push(Instruction::LocalGet(counter_index));
+        instructions.push(Instruction::LocalGet(step_index));
+        instructions.push(Instruction::I32Add);
+        instructions.push(Instruction::LocalSet(counter_index));
+
+        // Branch back to loop
+        instructions.push(Instruction::Br(0));
+
+        // End loop, end block
+        instructions.push(Instruction::End);
+        instructions.push(Instruction::End);
+
+        // Clean up iterator variable
+        self.variable_map.remove(iterator);
+        Ok(())
     }
 
     fn generate_iterate_statement(

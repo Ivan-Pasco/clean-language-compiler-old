@@ -23,8 +23,6 @@ pub mod runtime_trait;
 pub mod wasmer_config;
 pub mod wasmtime_runtime;
 
-// Note: async_tests module removed due to missing implementation
-
 /// Enhanced WebAssembly runtime with async support
 #[cfg(feature = "wasmtime-runtime")]
 pub struct CleanRuntime {

@@ -4,7 +4,7 @@ start:
 	list<integer> doubled = []
 
 	iterate n in nums
-		doubled.push(doubleValue(n))
+		doubled.add(doubleValue(n))
 
 	print("Original: [1, 2, 3, 4, 5]")
 	print("Doubled manually: " + doubled[0].toString() + ", " + doubled[1].toString() + ", " + doubled[2].toString())
@@ -12,7 +12,7 @@ start:
 	// Test case 2: Another manual map
 	list<integer> tripled = []
 	iterate n in nums
-		tripled.push(tripleValue(n))
+		tripled.add(tripleValue(n))
 
 	print("Tripled manually: " + tripled[0].toString() + ", " + tripled[1].toString() + ", " + tripled[2].toString())
 

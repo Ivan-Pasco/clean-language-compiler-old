@@ -761,19 +761,10 @@ pub fn compile_with_external_plugins_and_opt_level(
     opt_level: u8,
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
     // Extract plugins from plugins: block in source
-    let mut plugin_names = extract_plugins(source);
-
-    // Auto-detect plugins based on file path (implicit imports)
-    let auto_detected = detect_plugins_from_path(file_path);
-    for plugin in auto_detected {
-        if !plugin_names.contains(&plugin) {
-            tracing::debug!(plugin = %plugin, "Auto-detected plugin from path");
-            plugin_names.push(plugin);
-        }
-    }
+    let plugin_names = extract_plugins(source);
 
     if plugin_names.is_empty() {
-        // No plugins declared or auto-detected, compile without external plugins
+        // No plugins declared, compile without external plugins
         tracing::debug!("No plugins found, compiling without external plugins");
         return compile_pure(source, file_path);
     }
@@ -984,77 +975,11 @@ fn extract_plugins(source: &str) -> Vec<String> {
     plugins
 }
 
-/// Auto-detect plugins based on file path and directory structure.
-///
-/// This enables implicit plugin loading based on folder conventions:
-/// - `app/api/`, `app/backend/api/`, `app/server/api/` → `frame.httpserver`
-/// - `app/data/`, `app/server/models/` → `frame.data`
-/// - `app/auth/`, `app/config/auth/` → `frame.auth`
-/// - `app/canvas/` → `frame.canvas`
-/// - `app/ui/`, `app/components/` → `frame.ui`
-///
-/// # Arguments
-/// * `file_path` - Path to the .cln file being compiled
-///
-/// # Returns
-/// Vector of plugin names that should be auto-injected based on path
-fn detect_plugins_from_path<P: AsRef<std::path::Path>>(file_path: P) -> Vec<String> {
-    let path_str = file_path.as_ref().to_string_lossy().to_lowercase();
-    let mut plugins = Vec::new();
-
-    // HTTP Server plugin - for API endpoints
-    let is_api = path_str.contains("/api/")
-        || path_str.contains("/backend/api/")
-        || path_str.contains("/server/api/")
-        || path_str.contains("/endpoints/");
-
-    if is_api {
-        plugins.push("frame.httpserver".to_string());
-        // API endpoints commonly use database and auth
-        plugins.push("frame.data".to_string());
-        plugins.push("frame.auth".to_string());
-    }
-
-    // Data plugin - for models and database operations (standalone data files)
-    if path_str.contains("/data/")
-        || path_str.contains("/models/")
-        || path_str.contains("/server/models/")
-    {
-        if !plugins.contains(&"frame.data".to_string()) {
-            plugins.push("frame.data".to_string());
-        }
-    }
-
-    // Auth plugin - for authentication configuration (standalone auth files)
-    if path_str.contains("/auth/") || path_str.contains("/config/auth/") {
-        if !plugins.contains(&"frame.auth".to_string()) {
-            plugins.push("frame.auth".to_string());
-        }
-    }
-
-    // Canvas plugin - for canvas/graphics applications
-    if path_str.contains("/canvas/") {
-        plugins.push("frame.canvas".to_string());
-    }
-
-    // UI plugin - for UI components
-    if path_str.contains("/ui/")
-        || path_str.contains("/components/")
-        || path_str.contains("/screens/")
-    {
-        plugins.push("frame.ui".to_string());
-    }
-
-    plugins
-}
-
 /// Auto-detect plugins using loaded plugin manifests.
 ///
 /// Uses `[paths]` section from plugin.toml files to determine which plugins
 /// should be activated for a given file path, based on the plugin's `owns`
 /// directories and `implicit_import` flag.
-///
-/// Falls back to `detect_plugins_from_path()` if no manifests provide matches.
 #[allow(dead_code)]
 fn detect_plugins_from_manifests<P: AsRef<std::path::Path>>(
     file_path: P,
@@ -1072,11 +997,6 @@ fn detect_plugins_from_manifests<P: AsRef<std::path::Path>>(
                 }
             }
         }
-    }
-
-    // Fall back to hardcoded detection if no manifests matched
-    if result.is_empty() {
-        return detect_plugins_from_path(file_path);
     }
 
     result.dedup();
@@ -1138,18 +1058,9 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
     })?;
 
     // Extract plugin names from plugins: block
-    let mut plugin_names = extract_plugins(&entry_source);
+    let plugin_names = extract_plugins(&entry_source);
 
-    // Auto-detect plugins based on file path (implicit imports)
-    let auto_detected = detect_plugins_from_path(&entry_path);
-    for plugin in auto_detected {
-        if !plugin_names.contains(&plugin) {
-            tracing::debug!(plugin = %plugin, "Auto-detected plugin from path");
-            plugin_names.push(plugin);
-        }
-    }
-
-    // Load plugins if any are declared or auto-detected
+    // Load plugins if any are declared
     let registry = if !plugin_names.is_empty() {
         tracing::info!(plugins = ?plugin_names, "Loading plugins for multi-file compilation");
 

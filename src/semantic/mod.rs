@@ -3072,9 +3072,10 @@ impl SemanticAnalyzer {
                 Ok(())
             }
             // AI metadata statements — compile-time only, no semantic checking needed
-            Statement::Spec { .. } | Statement::Intent { .. } | Statement::SourceBlock { .. } => {
-                Ok(())
-            }
+            Statement::Spec { .. }
+            | Statement::Intent { .. }
+            | Statement::SourceBlock { .. }
+            | Statement::BuildBlock { .. } => Ok(()),
         }
     }
 

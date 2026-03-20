@@ -6,13 +6,13 @@
 start:
 	// Method calls as statements
 	list<integer> numbers = [1, 2, 3]
-	numbers.push(42)
-	numbers.push(99)
+	numbers.add(42)
+	numbers.add(99)
 
 	// Property access (method call)
 	string text = "hello"
 	integer length = text.length()
 
 	print("Method calls test successful!")
-	print("List size: " + numbers.size().toString())
+	print("List size: " + numbers.length().toString())
 	print("String length: " + length.toString())

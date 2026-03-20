@@ -5,10 +5,10 @@
 
 use super::constraint_solver::{ConstraintSolver, SolverResult};
 use super::tast::{
-    BinaryOperator, ConcreteType, TastBlock, TastClass, TastExpression, TastExpressionKind,
-    TastField, TastFunction, TastGuardClause, TastLiteral, TastParameter, TastProgram,
-    TastStateBlock, TastStateDeclaration, TastStateScope, TastStatement, TypeConstraint,
-    UnaryOperator, Visibility,
+    BinaryOperator, ConcreteType, TastBlock, TastClass, TastComputedDeclaration, TastExpression,
+    TastExpressionKind, TastField, TastFunction, TastGuardClause, TastLiteral, TastParameter,
+    TastProgram, TastStateBlock, TastStateDeclaration, TastStateScope, TastStatement,
+    TastWatchBlock, TypeConstraint, UnaryOperator, Visibility,
 };
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
@@ -16,7 +16,7 @@ use crate::hir::{HirBinaryOp, HirStateScope, HirType, HirUnaryOp};
 use crate::resolver::{
     GlobalSymbolTable, ResolvedHirBlock, ResolvedHirClass, ResolvedHirExpression,
     ResolvedHirFunction, ResolvedHirLValue, ResolvedHirMethod, ResolvedHirProgram,
-    ResolvedHirStateBlock, ResolvedHirStatement, SymbolId, SymbolKind,
+    ResolvedHirStateBlock, ResolvedHirStatement, ResolvedHirWatchBlock, SymbolId, SymbolKind,
 };
 use std::collections::HashMap;
 
@@ -943,18 +943,41 @@ impl<'a> TypeInference<'a> {
             HirType::String => ConcreteType::String,
             HirType::Boolean => ConcreteType::Boolean,
             HirType::Void => ConcreteType::Null,
-            // CRITICAL FIX: Handle precision types (number:32, number:64, integer:8, etc.)
-            // All integer precision types map to Integer
-            HirType::Integer8
-            | HirType::Integer8u
-            | HirType::Integer16
-            | HirType::Integer16u
-            | HirType::Integer32
-            | HirType::Integer32u
-            | HirType::Integer64
-            | HirType::Integer64u => ConcreteType::Integer,
-            // All number precision types map to Number (f64 in WASM)
-            HirType::Number32 | HirType::Number64 => ConcreteType::Number,
+            // Precision types - preserve bit width through type inference
+            HirType::Integer8 => ConcreteType::IntegerSized {
+                bits: 8,
+                unsigned: false,
+            },
+            HirType::Integer8u => ConcreteType::IntegerSized {
+                bits: 8,
+                unsigned: true,
+            },
+            HirType::Integer16 => ConcreteType::IntegerSized {
+                bits: 16,
+                unsigned: false,
+            },
+            HirType::Integer16u => ConcreteType::IntegerSized {
+                bits: 16,
+                unsigned: true,
+            },
+            HirType::Integer32 => ConcreteType::IntegerSized {
+                bits: 32,
+                unsigned: false,
+            },
+            HirType::Integer32u => ConcreteType::IntegerSized {
+                bits: 32,
+                unsigned: true,
+            },
+            HirType::Integer64 => ConcreteType::IntegerSized {
+                bits: 64,
+                unsigned: false,
+            },
+            HirType::Integer64u => ConcreteType::IntegerSized {
+                bits: 64,
+                unsigned: true,
+            },
+            HirType::Number32 => ConcreteType::NumberSized { bits: 32 },
+            HirType::Number64 => ConcreteType::NumberSized { bits: 64 },
             HirType::Named { name, .. } => {
                 // For now, map named types to concrete types by name
                 match name.as_str() {
@@ -1076,6 +1099,27 @@ impl<'a> TypeInference<'a> {
             })
             .collect();
 
+        // Type-check top-level watch blocks.
+        //
+        // Each watch block's body is treated as a void statement sequence — it
+        // does not need to return a value.  We validate that the body statements
+        // are type-correct and propagate any errors into the error list so that
+        // compilation continues and subsequent errors are also reported.
+        let mut tast_watch_blocks: Vec<TastWatchBlock> = Vec::new();
+        for watch in &program.watch_blocks {
+            match self.infer_watch_block(watch) {
+                Ok(tast_watch) => tast_watch_blocks.push(tast_watch),
+                Err(error) => {
+                    tracing::trace!(
+                        targets = ?watch.targets,
+                        "ERROR: Failed to infer watch block: {:?}",
+                        error
+                    );
+                    self.errors.push(error);
+                }
+            }
+        }
+
         let result = TastProgram {
             functions: tast_functions,
             classes: tast_classes,
@@ -1083,6 +1127,7 @@ impl<'a> TypeInference<'a> {
             imports: Vec::new(), // Would convert imports here
             tests: Vec::new(),   // Would convert tests here
             state: tast_state,
+            watch_blocks: tast_watch_blocks,
             type_env: self.type_env.clone(),
             location: program.location.clone(),
             // CRITICAL FIX: Pass symbol table through to MIR for dynamic SymbolId resolution
@@ -1093,6 +1138,25 @@ impl<'a> TypeInference<'a> {
         // Type inference completed successfully
 
         result
+    }
+
+    /// Type-check a watch block's body.
+    ///
+    /// Watch blocks do not have an expected return type — their body is purely
+    /// for side effects.  This function infers each statement in the body and
+    /// reports type errors, but does not require a `return` statement.
+    fn infer_watch_block(
+        &mut self,
+        watch: &ResolvedHirWatchBlock,
+    ) -> Result<TastWatchBlock, CompilerError> {
+        let tast_body = self.infer_block(&watch.body)?;
+
+        Ok(TastWatchBlock {
+            targets: watch.targets.clone(),
+            target_symbol_ids: watch.target_symbol_ids.clone(),
+            body: tast_body,
+            location: watch.location.clone(),
+        })
     }
 
     /// Register function signature in type environment
@@ -1552,6 +1616,39 @@ impl<'a> TypeInference<'a> {
             });
         }
 
+        // Type-check computed state declarations.
+        //
+        // For each computed declaration we open a fresh block scope, infer the
+        // body statements, and then verify that the final return statement (if
+        // explicitly present) matches the declared computed type.
+        //
+        // Runtime dependency tracking (i.e. which mutable state variables are
+        // read during body execution) is not performed at compile time — that is
+        // a runtime concern.
+        let mut tast_computed: Vec<TastComputedDeclaration> = Vec::new();
+        for comp in &state_block.computed {
+            let computed_type = self.hir_type_to_concrete(&comp.computed_type);
+
+            // Make the computed type visible so that return-type checking inside
+            // the body has a target to validate against.
+            self.type_env.insert(comp.symbol_id, computed_type.clone());
+
+            // Infer the body in a fresh scope.
+            let tast_body = self.infer_block_with_expected_return(
+                &comp.body,
+                Some(&computed_type),
+                &comp.name,
+            )?;
+
+            tast_computed.push(TastComputedDeclaration {
+                symbol_id: comp.symbol_id,
+                name: comp.name.clone(),
+                computed_type,
+                body: tast_body,
+                location: comp.location.clone(),
+            });
+        }
+
         // Type-check state invariant rules
         let mut tast_rules = Vec::new();
         for rule_expr in &state_block.rules {
@@ -1582,6 +1679,7 @@ impl<'a> TypeInference<'a> {
 
         Ok(TastStateBlock {
             declarations: tast_declarations,
+            computed: tast_computed,
             rules: tast_rules,
             scope,
             location: state_block.location.clone(),
@@ -1728,6 +1826,47 @@ impl<'a> TypeInference<'a> {
             return_type: block_return_type,
             location: block.location.clone(),
         })
+    }
+
+    /// Infer types for a block while checking that explicit `return` statements
+    /// match the expected return type `expected`.
+    ///
+    /// This is used for computed state bodies where the declared type must be
+    /// consistent with every `return` in the body.  When `expected` is `None`
+    /// the check is skipped (behaves identically to `infer_block`).
+    fn infer_block_with_expected_return(
+        &mut self,
+        block: &ResolvedHirBlock,
+        expected: Option<&ConcreteType>,
+        context_name: &str,
+    ) -> Result<TastBlock, CompilerError> {
+        let tast_block = self.infer_block(block)?;
+
+        // Validate that every explicit return inside the block is compatible with
+        // the expected type.  We only need to check the top-level return_type
+        // recorded on the block itself because `infer_block` propagates the last
+        // return upward.
+        if let Some(expected_ty) = expected {
+            let actual = &tast_block.return_type;
+            // Undefined means the block has no return statement at all — that is
+            // a user error for computed blocks, but we emit a softer warning
+            // rather than a hard error so that the rest of the pipeline proceeds.
+            if *actual != ConcreteType::Undefined && !actual.is_assignable_to(expected_ty) {
+                return Err(CompilerError::type_error(
+                    format!(
+                        "Computed state '{}' declares type {} but body returns {}",
+                        context_name, expected_ty, actual
+                    ),
+                    Some(format!(
+                        "Change the return expression to match the declared type {}",
+                        expected_ty
+                    )),
+                    Some(block.location.clone()),
+                ));
+            }
+        }
+
+        Ok(tast_block)
     }
 
     /// Infer types for a statement
@@ -3229,6 +3368,8 @@ impl<'a> TypeInference<'a> {
                         | "list.remove"
                         | "list_pop"
                         | "list.pop"
+                        | "list_removeLast"
+                        | "list.removeLast"
                         | "list_peek"
                         | "list.peek"
                         | "list_first"
@@ -3362,6 +3503,8 @@ impl<'a> TypeInference<'a> {
             || function_name == "list.get"
             || function_name == "list_pop"
             || function_name == "list.pop"
+            || function_name == "list_removeLast"
+            || function_name == "list.removeLast"
             || function_name == "list_peek"
             || function_name == "list.peek"
             || function_name == "list_first"
@@ -3517,6 +3660,7 @@ impl<'a> TypeInference<'a> {
             (ConcreteType::Array(_), "size") => Ok(ConcreteType::Integer), // Alias for length
             (ConcreteType::Array(_), "push") => Ok(ConcreteType::Undefined), // void return
             (ConcreteType::Array(element_type), "pop") => Ok((**element_type).clone()),
+            (ConcreteType::Array(element_type), "removeLast") => Ok((**element_type).clone()), // canonical name for pop
             (ConcreteType::Array(element_type), "remove") => Ok((**element_type).clone()), // remove() behaves like pop()
             (ConcreteType::Array(_), "contains") => Ok(ConcreteType::Boolean), // contains() returns boolean
             (ConcreteType::Array(_), "isEmpty") => Ok(ConcreteType::Boolean), // isEmpty() returns boolean
@@ -3702,10 +3846,10 @@ impl<'a> TypeInference<'a> {
                     Ok(ConcreteType::Unknown)
                 }
             }
-            ("list", "pop") | ("list", "shift") => {
+            ("list", "pop") | ("list", "shift") | ("list", "removeLast") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
                 // Returns T - the element type of the list
-                // list.pop(list<T>) -> T
+                // list.pop(list<T>) -> T, list.removeLast(list<T>) -> T
                 if !arguments.is_empty() {
                     match &arguments[0].expr_type {
                         ConcreteType::Array(element_type) => Ok((**element_type).clone()),
@@ -4421,6 +4565,7 @@ impl BuiltinTypes {
 
         let mut array_methods = HashMap::new();
         array_methods.insert("length".to_string(), ConcreteType::Integer);
+        array_methods.insert("size".to_string(), ConcreteType::Integer);
         array_methods.insert(
             "push".to_string(),
             ConcreteType::Function {

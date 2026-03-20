@@ -600,6 +600,14 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
+    // Top-level: build configuration block
+    // Configures compiler behaviour for features like rules checking.
+    // `rules_enabled` is true, false, or the string "development".
+    BuildBlock {
+        rules_enabled: Expression,
+        location: Option<SourceLocation>,
+    },
+
     // Framework extension block (for Clean Frame plugins)
     // Generic container for DSL blocks like endpoints:, data, component
     // These are expanded by plugins before HIR transformation

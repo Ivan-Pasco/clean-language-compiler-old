@@ -40,6 +40,6 @@ start:
 	// Test 7: Uninitialized list
 	list<integer> numbers
 	numbers = [1, 2, 3, 4, 5]
-	print("Uninitialized list size: " + numbers.size().toString())
+	print("Uninitialized list size: " + numbers.length().toString())
 
 	print("Uninitialized variables tests completed")

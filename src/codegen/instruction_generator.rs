@@ -6,6 +6,7 @@ use crate::types::WasmType;
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
 // Removed unused import DEFAULT_ALIGN
+
 use super::type_manager::TypeManager;
 
 /// Represents a local variable in a function
@@ -788,8 +789,9 @@ impl InstructionGenerator {
                         }
                     }
                     WasmType::I32 => {
-                        // For I32, we need to convert it to a string using int_to_string
-                        if let Some(int_to_string_index) = self.get_function_index("int_to_string")
+                        // For I32, we need to convert it to a string using integer.toString
+                        if let Some(int_to_string_index) =
+                            self.get_function_index("integer.toString")
                         {
                             instructions.push(Instruction::Call(int_to_string_index));
 
@@ -911,7 +913,7 @@ impl InstructionGenerator {
 
                 instructions.push(Instruction::LocalGet(array_ptr_index));
 
-                if let Some(array_length_index) = self.get_function_index("array_length") {
+                if let Some(array_length_index) = self.get_function_index("list.length") {
                     instructions.push(Instruction::Call(array_length_index));
 
                     let length_index = self.current_locals.len() as u32;
@@ -937,7 +939,7 @@ impl InstructionGenerator {
                     instructions.push(Instruction::LocalGet(array_ptr_index));
                     instructions.push(Instruction::LocalGet(counter_index));
 
-                    if let Some(array_get_index) = self.get_function_index("array_get") {
+                    if let Some(array_get_index) = self.get_function_index("list.get") {
                         instructions.push(Instruction::Call(array_get_index));
 
                         instructions.push(Instruction::I32Load(MemArg {
@@ -964,14 +966,14 @@ impl InstructionGenerator {
                         self.variable_map.remove(iterator);
                     } else {
                         return Err(CompilerError::codegen_error(
-                            "array_get function not found",
+                            "list.get function not found",
                             None,
                             None,
                         ));
                     }
                 } else {
                     return Err(CompilerError::codegen_error(
-                        "array_length function not found",
+                        "list.length function not found",
                         None,
                         None,
                     ));
@@ -1319,11 +1321,91 @@ impl InstructionGenerator {
                     Ok(WasmType::I32)
                 }
             }
-            Value::Pairs(_pairs) => {
-                // Pairs literals - for now, return a placeholder
-                // Full implementation would allocate memory and store key-value pairs
-                instructions.push(Instruction::I32Const(0));
-                Ok(WasmType::I32)
+            Value::Pairs(pairs) => {
+                // Pairs literal: allocate a structure storing [count][key0][val0][key1][val1]...
+                // Each slot is 4 bytes (I32 pointer for strings/values).
+                // Total size: (1 + 2 * pair_count) * 4 bytes.
+                let pair_count = pairs.len() as i32;
+                let pairs_size = (1 + 2 * pair_count) * 4;
+
+                if let Some(alloc_fn) = self.get_function_index("allocate_memory") {
+                    // Allocate memory for the pairs structure
+                    instructions.push(Instruction::I32Const(pairs_size));
+                    instructions.push(Instruction::Call(alloc_fn));
+
+                    // Store the pairs pointer in a local variable
+                    let pairs_ptr_local = self.current_locals.len() as u32;
+                    self.current_locals.push(LocalVarInfo {
+                        index: pairs_ptr_local,
+                        type_: wasm_encoder::ValType::I32,
+                    });
+                    instructions.push(Instruction::LocalSet(pairs_ptr_local));
+
+                    // Store the pair count at offset 0
+                    instructions.push(Instruction::LocalGet(pairs_ptr_local));
+                    instructions.push(Instruction::I32Const(pair_count));
+                    instructions.push(Instruction::I32Store(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+
+                    // Store each key-value pair starting at offset 4
+                    for (i, (key, val)) in pairs.iter().enumerate() {
+                        let key_offset = ((1 + 2 * i) * 4) as u64;
+                        let val_offset = ((2 + 2 * i) * 4) as u64;
+
+                        // Store key pointer
+                        instructions.push(Instruction::LocalGet(pairs_ptr_local));
+                        let key_type = self.generate_value(key, instructions)?;
+                        // Normalize key to I32 (all string/integer keys are I32-representable)
+                        match key_type {
+                            WasmType::I32 => {}
+                            WasmType::F32 => {
+                                instructions.push(Instruction::I32ReinterpretF32);
+                            }
+                            WasmType::F64 => {
+                                instructions.push(Instruction::I32TruncSatF64S);
+                            }
+                            _ => {}
+                        }
+                        instructions.push(Instruction::I32Store(wasm_encoder::MemArg {
+                            offset: key_offset,
+                            align: 2,
+                            memory_index: 0,
+                        }));
+
+                        // Store value pointer
+                        instructions.push(Instruction::LocalGet(pairs_ptr_local));
+                        let val_type = self.generate_value(val, instructions)?;
+                        // Normalize value to I32
+                        match val_type {
+                            WasmType::I32 => {}
+                            WasmType::F32 => {
+                                instructions.push(Instruction::I32ReinterpretF32);
+                            }
+                            WasmType::F64 => {
+                                instructions.push(Instruction::I32TruncSatF64S);
+                            }
+                            _ => {}
+                        }
+                        instructions.push(Instruction::I32Store(wasm_encoder::MemArg {
+                            offset: val_offset,
+                            align: 2,
+                            memory_index: 0,
+                        }));
+                    }
+
+                    // Return the pairs structure pointer
+                    instructions.push(Instruction::LocalGet(pairs_ptr_local));
+                    Ok(WasmType::I32)
+                } else {
+                    // No allocator: for an empty pairs literal return a minimal valid pointer (0),
+                    // which signals "empty pairs" to the runtime. Non-empty pairs without an
+                    // allocator cannot be stored, so we return 0 and let the runtime handle it.
+                    instructions.push(Instruction::I32Const(0));
+                    Ok(WasmType::I32)
+                }
             }
         }
     }
@@ -1620,14 +1702,12 @@ impl InstructionGenerator {
             ));
         }
 
-        // Get the list_get function index (fallback to array_get)
+        // Get the list_get function index
         if let Some(list_get_index) = self.get_function_index("list.get") {
             instructions.push(Instruction::Call(list_get_index));
-        } else if let Some(array_get_index) = self.get_function_index("array_get") {
-            instructions.push(Instruction::Call(array_get_index));
         } else {
             return Err(CompilerError::codegen_error(
-                "No list access function found (list.get or array_get)",
+                "No list access function found (list.get)",
                 Some("Register list operations to enable list access".to_string()),
                 None,
             ));

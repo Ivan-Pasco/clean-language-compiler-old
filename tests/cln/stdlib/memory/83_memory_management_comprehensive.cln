@@ -14,7 +14,7 @@ start:
 	list<SimpleObject> objects = []
 	objects.add(obj1)
 	objects.add(obj2)
-	print("Created list with " + objects.size().toString() + " objects")
+	print("Created list with " + objects.length().toString() + " objects")
 
 	// Test string memory management with small strings
 	string result = ""

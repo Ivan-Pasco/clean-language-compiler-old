@@ -20,11 +20,6 @@ use std::fmt;
 pub mod specification_lexer;
 pub mod specification_token;
 
-// Legacy modules removed - using only specification-compliant lexer
-// pub mod indentation;
-// pub mod lexer_impl;
-// pub mod token;
-
 // Main exports - specification-compliant lexer is now primary
 pub use specification_lexer::*;
 pub use specification_token::*;

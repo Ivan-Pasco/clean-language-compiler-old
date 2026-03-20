@@ -739,9 +739,14 @@ impl GlobalSymbolTable {
                 HirType::String,
             ),
             // List namespace functions
-            // Canonical: list_size (not list_length - see Clean Language Specification)
+            // Both list.size and list.length are supported; length is canonical per spec
             (
                 "list.size",
+                vec![HirType::List(Box::new(HirType::Number))],
+                HirType::Integer,
+            ),
+            (
+                "list.length",
                 vec![HirType::List(Box::new(HirType::Number))],
                 HirType::Integer,
             ),
@@ -762,6 +767,11 @@ impl GlobalSymbolTable {
             ),
             (
                 "list.pop",
+                vec![HirType::List(Box::new(HirType::Number))],
+                HirType::Number,
+            ),
+            (
+                "list.removeLast",
                 vec![HirType::List(Box::new(HirType::Number))],
                 HirType::Number,
             ),
@@ -1039,13 +1049,15 @@ impl GlobalSymbolTable {
         self.builtins.insert(string_namespace_id);
 
         // Create list namespace
-        // Canonical: list_size (not list_length - see Clean Language Specification)
+        // list.length is canonical per spec; list.size retained for compatibility
         let list_functions = vec![
             self.lookup_symbol("list.size").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.length").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list.isEmpty").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list.isNotEmpty").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list.push").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list.pop").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.removeLast").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list.get").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list.remove").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list.peek").unwrap_or(SymbolId(0)),

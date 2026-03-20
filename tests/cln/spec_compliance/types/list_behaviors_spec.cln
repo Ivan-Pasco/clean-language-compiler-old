@@ -26,7 +26,7 @@ start:
 	uniqueSet.add(5)
 	uniqueSet.add(10)
 	uniqueSet.add(5)
-	integer size = uniqueSet.size()
+	integer size = uniqueSet.length()
 	print("Unique set size (should be 2): " + size.toString())
 
 	print("List behaviors test completed")

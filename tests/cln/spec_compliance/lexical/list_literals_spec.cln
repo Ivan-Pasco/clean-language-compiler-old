@@ -32,7 +32,7 @@ start:
 
 	// Test 6: List operations
 	list<integer> data = [100, 200, 300]
-	integer size = data.size()
+	integer size = data.length()
 	print("List size: " + size.toString())
 
 	print("List literals test completed")

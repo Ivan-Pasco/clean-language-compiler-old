@@ -58,7 +58,7 @@ functions:
 		visitors.add("Bob")       // Ignored (duplicate)
 
 		print("Attempted to add: Alice, Bob, Alice, Charlie, Bob")
-		print("Unique visitors count: " + visitors.size().toString())
+		print("Unique visitors count: " + visitors.length().toString())
 
 		// Check Alice
 		boolean hasAlice = visitors.contains("Alice")
@@ -84,7 +84,7 @@ functions:
 		uniqueQueue.add("Second")
 		uniqueQueue.add("First")    // Should be ignored
 		uniqueQueue.add("Third")
-		print("Unique queue size: " + uniqueQueue.size().toString())
+		print("Unique queue size: " + uniqueQueue.length().toString())
 
 		// Unique stack - LIFO with no duplicates
 		list<integer> uniqueStack = []
@@ -93,7 +93,7 @@ functions:
 		uniqueStack.add(20)
 		uniqueStack.add(10)         // Should be ignored
 		uniqueStack.add(30)
-		print("Unique stack size: " + uniqueStack.size().toString())
+		print("Unique stack size: " + uniqueStack.length().toString())
 
 	void testBehaviorSwitching()
 		print("=== Dynamic Behavior Switching ===")
@@ -102,13 +102,13 @@ functions:
 		// Start as default list (already has 1)
 		dynamicList.add(2)
 		dynamicList.add(3)
-		print("Default list size: " + dynamicList.size().toString())
+		print("Default list size: " + dynamicList.length().toString())
 
 		// Switch to unique behavior
 		dynamicList.type = "unique"
 		dynamicList.add(3)          // Should be ignored (duplicate)
 		dynamicList.add(4)          // Should be added
-		print("After switching to unique: " + dynamicList.size().toString())
+		print("After switching to unique: " + dynamicList.length().toString())
 
 		// Switch to stack behavior
 		dynamicList.type = "pile"

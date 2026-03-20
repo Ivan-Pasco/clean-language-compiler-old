@@ -9,7 +9,7 @@ start:
 	lineUnique.add(2)
 	lineUnique.add(1)
 	lineUnique.add(3)
-	integer lineUniqueSize = lineUnique.size()
+	integer lineUniqueSize = lineUnique.length()
 	print("Line-unique size (should be 3): " + lineUniqueSize.toString())
 
 	// FIFO behavior
@@ -23,7 +23,7 @@ start:
 	pileUnique.add("banana")
 	pileUnique.add("apple")
 	pileUnique.add("cherry")
-	integer pileUniqueSize = pileUnique.size()
+	integer pileUniqueSize = pileUnique.length()
 	print("Pile-unique size (should be 3): " + pileUniqueSize.toString())
 
 	// LIFO behavior

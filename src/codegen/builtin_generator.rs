@@ -649,13 +649,13 @@ impl CodeGenerator {
             },
             "size" | "length" => {
                 // Get array/list length
-                let func_index = self.get_function_index_or_error("array_length")?;
+                let func_index = self.get_function_index_or_error("list.length")?;
                 instructions.push(Instruction::Call(func_index));
                 Ok(WasmType::I32)
             },
             "isEmpty" => {
                 // Check if array is empty (length == 0)
-                let func_index = self.get_function_index_or_error("array_length")?;
+                let func_index = self.get_function_index_or_error("list.length")?;
                 instructions.push(Instruction::Call(func_index));
                 instructions.push(Instruction::I32Const(0));
                 instructions.push(Instruction::I32Eq);
@@ -663,7 +663,7 @@ impl CodeGenerator {
             },
             "isNotEmpty" => {
                 // Check if array is not empty (length != 0)
-                let func_index = self.get_function_index_or_error("array_length")?;
+                let func_index = self.get_function_index_or_error("list.length")?;
                 instructions.push(Instruction::Call(func_index));
                 instructions.push(Instruction::I32Const(0));
                 instructions.push(Instruction::I32Ne);
@@ -671,31 +671,31 @@ impl CodeGenerator {
             },
             "get" => {
                 // Get element at index
-                let func_index = self.get_function_index_or_error("array_get")?;
+                let func_index = self.get_function_index_or_error("list.get")?;
                 instructions.push(Instruction::Call(func_index));
                 Ok(WasmType::I32)
             },
             "set" => {
                 // Set element at index
-                let func_index = self.get_function_index_or_error("array_set")?;
+                let func_index = self.get_function_index_or_error("list.set")?;
                 instructions.push(Instruction::Call(func_index));
                 Ok(WasmType::I32)
             },
             "push" => {
                 // Add element to end of array
-                let func_index = self.get_function_index_or_error("array_push")?;
+                let func_index = self.get_function_index_or_error("list.push")?;
                 instructions.push(Instruction::Call(func_index));
                 Ok(WasmType::I32)
             },
             "pop" => {
                 // Remove and return last element
-                let func_index = self.get_function_index_or_error("array_pop")?;
+                let func_index = self.get_function_index_or_error("list.pop")?;
                 instructions.push(Instruction::Call(func_index));
                 Ok(WasmType::I32)
             },
             "contains" => {
                 // Check if array contains element
-                let func_index = self.get_function_index_or_error("array_contains")?;
+                let func_index = self.get_function_index_or_error("list.contains")?;
                 instructions.push(Instruction::Call(func_index));
                 Ok(WasmType::I32)
             },
@@ -703,11 +703,11 @@ impl CodeGenerator {
                 // Remove element from array (supports both index and no-args versions)
                 if arguments.len() == 1 {
                     // Only array argument - remove last element (like pop)
-                    let func_index = self.get_function_index_or_error("array_pop")?;
+                    let func_index = self.get_function_index_or_error("list.pop")?;
                     instructions.push(Instruction::Call(func_index));
                 } else {
                     // Array + index argument - remove at index
-                    let func_index = self.get_function_index_or_error("array_pop")?; // Use pop for now
+                    let func_index = self.get_function_index_or_error("list.pop")?; // Use pop for now
                     instructions.push(Instruction::Call(func_index));
                 }
                 Ok(WasmType::I32)
