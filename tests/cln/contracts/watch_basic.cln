@@ -1,0 +1,11 @@
+// Test: Watch blocks — reactive observer executed after state mutations
+
+start:
+	counter = 1
+	counter = 2
+
+state:
+	integer counter = 0
+
+watch counter:
+	print("Counter changed to: " + counter.toString())

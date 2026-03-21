@@ -1,0 +1,19 @@
+// Test computed state properties
+// Computed properties derive their value from other state on every read
+
+start:
+	print("Width: " + width.toString())
+	print("Height: " + height.toString())
+	print("Area: " + area.toString())
+
+	width = 20
+	print("After width change:")
+	print("Area: " + area.toString())
+
+state:
+	integer width = 10
+	integer height = 5
+
+	computed:
+		integer area
+			return width * height

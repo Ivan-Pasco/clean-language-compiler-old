@@ -678,16 +678,6 @@ impl BuiltinRegistry {
                 BuiltinCategory::String,
             ),
             BuiltinFunction::new(
-                "replaceAll",
-                vec![
-                    BuiltinType::String,
-                    BuiltinType::String,
-                    BuiltinType::String,
-                ],
-                BuiltinType::String,
-                BuiltinCategory::String,
-            ),
-            BuiltinFunction::new(
                 "fromCharCode",
                 vec![BuiltinType::Integer],
                 BuiltinType::String,
@@ -701,12 +691,6 @@ impl BuiltinRegistry {
     /// Register list namespace (list.length, list.add, etc.)
     fn register_list_namespace(&mut self) {
         let list_ns = BuiltinNamespace::new("list").with_functions(vec![
-            BuiltinFunction::new(
-                "size",
-                vec![BuiltinType::List(Box::new(BuiltinType::Any))],
-                BuiltinType::Integer,
-                BuiltinCategory::List,
-            ),
             BuiltinFunction::new(
                 "length",
                 vec![BuiltinType::List(Box::new(BuiltinType::Any))],
@@ -726,24 +710,12 @@ impl BuiltinRegistry {
                 BuiltinCategory::List,
             ),
             BuiltinFunction::new(
-                "push",
+                "add",
                 vec![
                     BuiltinType::List(Box::new(BuiltinType::Any)),
                     BuiltinType::Any,
                 ],
-                BuiltinType::Void,
-                BuiltinCategory::List,
-            ),
-            BuiltinFunction::new(
-                "pop",
-                vec![BuiltinType::List(Box::new(BuiltinType::Any))],
-                BuiltinType::Any,
-                BuiltinCategory::List,
-            ),
-            BuiltinFunction::new(
-                "removeLast",
-                vec![BuiltinType::List(Box::new(BuiltinType::Any))],
-                BuiltinType::Any,
+                BuiltinType::List(Box::new(BuiltinType::Any)),
                 BuiltinCategory::List,
             ),
             BuiltinFunction::new(
@@ -828,15 +800,6 @@ impl BuiltinRegistry {
                     BuiltinType::List(Box::new(BuiltinType::Any)),
                     BuiltinType::Integer,
                     BuiltinType::Integer,
-                ],
-                BuiltinType::List(Box::new(BuiltinType::Any)),
-                BuiltinCategory::List,
-            ),
-            BuiltinFunction::new(
-                "add",
-                vec![
-                    BuiltinType::List(Box::new(BuiltinType::Any)),
-                    BuiltinType::Any,
                 ],
                 BuiltinType::List(Box::new(BuiltinType::Any)),
                 BuiltinCategory::List,

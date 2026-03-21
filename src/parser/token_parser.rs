@@ -1928,15 +1928,20 @@ impl TokenParser {
 
             trace!(token = ?self.current_kind(), "About to parse test");
 
-            // Parse test case
-            if let Ok(test) = self.parse_test() {
-                trace!(description = ?test.description, "Parsed test");
-                tests.push(test);
-            } else {
-                trace!("Failed to parse test, skipping line");
-                // Skip line on error
-                while !matches!(self.current_kind(), TokenKind::Newline | TokenKind::Eof) {
-                    self.bump();
+            // Parse test case using the "description": expr = expected format
+            let saved_cursor = self.cursor;
+            match self.parse_test_case_in_block() {
+                Ok(test) => {
+                    trace!(description = ?test.description, "Parsed test case");
+                    tests.push(test);
+                }
+                Err(e) => {
+                    trace!(error = ?e, "Failed to parse test case, skipping line");
+                    // Restore cursor and skip to end of line on error
+                    self.cursor = saved_cursor;
+                    while !matches!(self.current_kind(), TokenKind::Newline | TokenKind::Eof) {
+                        self.bump();
+                    }
                 }
             }
         }
@@ -1945,6 +1950,65 @@ impl TokenParser {
         Ok(tests)
     }
 
+    /// Parse a test case in a `tests:` block.
+    ///
+    /// Supports two formats:
+    /// - Named:     `"description": expr = expected`
+    /// - Anonymous: `expr = expected`
+    ///
+    /// The `=` here is the assertion operator (TokenKind::Assign), not `==`.
+    fn parse_test_case_in_block(&mut self) -> Result<TestCase, CompilerError> {
+        let start_location = self.current().location.clone();
+
+        // Attempt to parse an optional description string followed by ':'
+        let description = if let TokenKind::StringLiteral(desc) = self.current_kind() {
+            let desc_text = desc.clone();
+            let saved = self.cursor;
+            self.bump(); // consume the string literal
+            self.skip_whitespace();
+
+            if self.check(&TokenKind::Colon) {
+                self.bump(); // consume ':'
+                self.skip_whitespace();
+                Some(desc_text)
+            } else {
+                // No colon after the string — this string is not a description;
+                // restore cursor and parse the whole line as an anonymous test.
+                self.cursor = saved;
+                None
+            }
+        } else {
+            None
+        };
+
+        // Parse the test expression (left-hand side of the assertion)
+        let test_expression = self.parse_expression()?;
+        self.skip_whitespace();
+
+        // Expect the assertion `=` operator (TokenKind::Assign, not `==`)
+        if !self.check(&TokenKind::Assign) {
+            return Err(CompilerError::syntax_error(
+                "Expected '=' in test assertion (format: expr = expected)",
+                Some("Use 'expr = expected_value' syntax in tests: block".to_string()),
+                Some(self.current().location.clone()),
+            ));
+        }
+        self.bump(); // consume '='
+        self.skip_whitespace();
+
+        // Parse the expected value expression (right-hand side)
+        let expected_value = self.parse_expression()?;
+
+        Ok(TestCase {
+            description,
+            test_expression,
+            expected_value,
+            location: Some(start_location),
+        })
+    }
+
+    /// Parse a named `test "description":` block (used at statement level, not inside tests: block).
+    #[allow(dead_code)]
     fn parse_test(&mut self) -> Result<TestCase, CompilerError> {
         trace!(cursor = self.cursor, token = ?self.current_kind(), "Starting test parse");
 

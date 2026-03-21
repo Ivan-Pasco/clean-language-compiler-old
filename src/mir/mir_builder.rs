@@ -17,7 +17,7 @@ use crate::mir::mir_types::{
 use crate::resolver::SymbolId;
 use crate::typechecker::tast::{
     BinaryOperator, ConcreteType, TastBlock, TastClass, TastExpression, TastExpressionKind,
-    TastFunction, TastLiteral, TastProgram, TastStatement, UnaryOperator,
+    TastFunction, TastLiteral, TastProgram, TastStatement, UnaryOperator, Visibility,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, trace, warn};
@@ -107,6 +107,31 @@ pub struct MirBuilder {
     /// State guards - per-variable validation conditions
     /// Maps state variable name → (guard condition expression, value_symbol_id, error_message)
     state_guards: HashMap<String, (TastExpression, SymbolId, String)>,
+
+    /// Watch block handlers: state variable name → list of watch function SymbolIds.
+    ///
+    /// When a state variable is mutated, a call is emitted for every SymbolId registered
+    /// under that variable's name.  Watch functions are given synthetic SymbolIds starting
+    /// at 2000 to avoid clashing with user-defined symbols (1–999) and the MIR-internal
+    /// synthetic builtins (1000–1011).
+    watch_handlers: HashMap<String, Vec<SymbolId>>,
+
+    /// Counter for allocating synthetic SymbolIds for watch handler functions.
+    next_watch_symbol_id: usize,
+
+    /// Computed property name → (SymbolId, return MirType) mapping.
+    ///
+    /// Populated during `build()` when computed declarations are lowered into
+    /// `__computed_{name}` getter functions.  At variable-read sites, if the
+    /// variable name is present in this map, a Call instruction to the getter
+    /// function is emitted instead of a GlobalLoad.
+    ///
+    /// Synthetic SymbolIds for computed getters start at 3000 to avoid
+    /// clashing with builtins (1000–1011) and watch handlers (2000+).
+    computed_properties: HashMap<String, (SymbolId, MirType)>,
+
+    /// Counter for allocating synthetic SymbolIds for computed getter functions.
+    next_computed_symbol_id: usize,
 }
 
 /// Context for building a single function
@@ -205,6 +230,10 @@ impl MirBuilder {
             state_variables,
             state_rules: Vec::new(),
             state_guards: HashMap::new(),
+            watch_handlers: HashMap::new(),
+            next_watch_symbol_id: 2000,
+            computed_properties: HashMap::new(),
+            next_computed_symbol_id: 3000,
         }
     }
 
@@ -244,6 +273,73 @@ impl MirBuilder {
                         "State guard registered for variable"
                     );
                 }
+            }
+        }
+
+        // Pre-register watch handler SymbolIds BEFORE building any functions.
+        //
+        // This two-phase approach is required: function bodies (start:, frame:, etc.) are built
+        // first and may contain state mutations.  For the GlobalStore injection to emit calls to
+        // watch handlers, `self.watch_handlers` must already be populated at that point.
+        //
+        // Phase 1 (here): allocate a SymbolId for every (target, watch_block) pair and record
+        //   the mapping so the injection code in `build_statement` can look up the handler IDs.
+        // Phase 2 (after class lowering): actually build the handler function bodies and insert
+        //   them into the MIR program.
+        //
+        // We store (target_name, fn_name, symbol_id, watch_block_index) for phase 2.
+        let mut watch_block_registrations: Vec<(String, String, SymbolId, usize)> = Vec::new();
+        for (block_idx, watch_block) in tast.watch_blocks.iter().enumerate() {
+            for target_name in &watch_block.targets {
+                let symbol_id = SymbolId(self.next_watch_symbol_id);
+                self.next_watch_symbol_id += 1;
+                let fn_name = format!("__watch_{}", target_name);
+                self.watch_handlers
+                    .entry(target_name.clone())
+                    .or_default()
+                    .push(symbol_id);
+                watch_block_registrations.push((
+                    target_name.clone(),
+                    fn_name,
+                    symbol_id,
+                    block_idx,
+                ));
+                debug!(
+                    target = %target_name,
+                    symbol_id = symbol_id.0,
+                    "Pre-registered watch handler SymbolId (phase 1)"
+                );
+            }
+        }
+
+        // Pre-register computed property getter SymbolIds BEFORE building any functions.
+        //
+        // This is the same two-phase approach used for watch handlers.  Function bodies
+        // (start:, frame:, etc.) are built first.  If they read a computed property, the
+        // Variable expression builder must already know to emit a Call rather than a
+        // GlobalLoad.  We achieve this by populating `self.computed_properties` here, so
+        // variable reads during function body building resolve correctly.
+        //
+        // Phase 1 (here): allocate SymbolIds, populate `self.computed_properties`.
+        // Phase 2 (after watch-block lowering): build the actual getter function bodies.
+        //
+        // We store (computed_name, fn_name, symbol_id) for phase 2.
+        let mut computed_registrations: Vec<(String, String, SymbolId)> = Vec::new();
+        if let Some(ref state_block) = tast.state {
+            for comp_decl in &state_block.computed {
+                let symbol_id = SymbolId(self.next_computed_symbol_id);
+                self.next_computed_symbol_id += 1;
+                let fn_name = format!("__computed_{}", comp_decl.name);
+                let return_mir_type = MirType::from_concrete_type(&comp_decl.computed_type);
+                // Populate the map so Variable expression builds will see it.
+                self.computed_properties
+                    .insert(comp_decl.name.clone(), (symbol_id, return_mir_type));
+                computed_registrations.push((comp_decl.name.clone(), fn_name, symbol_id));
+                debug!(
+                    computed_name = %comp_decl.name,
+                    symbol_id = symbol_id.0,
+                    "Pre-registered computed getter SymbolId (phase 1)"
+                );
             }
         }
 
@@ -417,6 +513,121 @@ impl MirBuilder {
                 }
                 Err(errors) => {
                     self.warnings.extend(errors);
+                }
+            }
+        }
+
+        // Phase 2: build the watch handler function bodies using the registrations
+        // created in phase 1.  Because `self.watch_handlers` is already populated,
+        // any recursive state mutation inside a watch body would also trigger the
+        // appropriate handlers (depth-first, in declaration order).
+        for (target_name, fn_name, symbol_id, block_idx) in &watch_block_registrations {
+            let watch_block = &tast.watch_blocks[*block_idx];
+
+            debug!(
+                target = %target_name,
+                symbol_id = symbol_id.0,
+                fn_name = %fn_name,
+                "Lowering watch block body to MIR function (phase 2)"
+            );
+
+            // Construct a synthetic TastFunction wrapping the watch body.
+            let synthetic_function = TastFunction {
+                symbol_id: *symbol_id,
+                name: fn_name.clone(),
+                parameters: Vec::new(),
+                return_type: ConcreteType::Undefined,
+                body: watch_block.body.clone(),
+                generic_params: Vec::new(),
+                constraints: Vec::new(),
+                is_background: false,
+                is_static: false,
+                visibility: crate::typechecker::tast::Visibility::Private,
+                location: watch_block.location.clone(),
+            };
+
+            match self.build_function(synthetic_function) {
+                Ok(mir_function) => {
+                    mir_program
+                        .symbol_name_map
+                        .insert(*symbol_id, fn_name.clone());
+                    mir_program.functions.insert(*symbol_id, mir_function);
+                    self.stats.functions_lowered += 1;
+                    debug!(
+                        target = %target_name,
+                        symbol_id = symbol_id.0,
+                        "Watch handler function built and registered"
+                    );
+                }
+                Err(errors) => {
+                    warn!(
+                        target = %target_name,
+                        error_count = errors.len(),
+                        "Failed to lower watch block body"
+                    );
+                    self.warnings.extend(errors);
+                }
+            }
+        }
+
+        // Lower computed state property getter functions (Phase 2).
+        //
+        // SymbolIds and the `self.computed_properties` map were pre-registered in Phase 1
+        // above (before function building).  Here we build the actual getter function bodies
+        // using the pre-allocated SymbolIds so the symbol_name_map and function table stay
+        // consistent.
+        if let Some(ref state_block) = tast.state {
+            // Clone the computed declarations to release the borrow on `tast.state`
+            // before calling `self.build_function()`.
+            let computed_decls = state_block.computed.clone();
+            for ((comp_name, fn_name, symbol_id), comp_decl) in
+                computed_registrations.iter().zip(computed_decls.iter())
+            {
+                debug!(
+                    computed_name = %comp_name,
+                    fn_name = %fn_name,
+                    symbol_id = symbol_id.0,
+                    return_type = ?comp_decl.computed_type,
+                    "Lowering computed property to MIR getter function (phase 2)"
+                );
+
+                // Build a synthetic TastFunction wrapping the computed body.
+                let synthetic_function = TastFunction {
+                    symbol_id: *symbol_id,
+                    name: fn_name.clone(),
+                    parameters: Vec::new(),
+                    return_type: comp_decl.computed_type.clone(),
+                    body: comp_decl.body.clone(),
+                    generic_params: Vec::new(),
+                    constraints: Vec::new(),
+                    is_background: false,
+                    is_static: false,
+                    visibility: Visibility::Private,
+                    location: comp_decl.location.clone(),
+                };
+
+                match self.build_function(synthetic_function) {
+                    Ok(mir_function) => {
+                        mir_program
+                            .symbol_name_map
+                            .insert(*symbol_id, fn_name.clone());
+                        mir_program.functions.insert(*symbol_id, mir_function);
+                        self.stats.functions_lowered += 1;
+
+                        debug!(
+                            computed_name = %comp_name,
+                            symbol_id = symbol_id.0,
+                            "Computed getter function built and registered"
+                        );
+                    }
+                    Err(errors) => {
+                        warn!(
+                            computed_name = %comp_name,
+                            error_count = errors.len(),
+                            "Failed to lower computed property body"
+                        );
+                        self.warnings.extend(errors);
+                    }
                 }
             }
         }
@@ -1277,6 +1488,29 @@ impl MirBuilder {
                                 location: location.clone(),
                             };
                             self.add_instruction(context, store_instruction);
+
+                            // After the store, call any watch handlers registered for this
+                            // state variable.  Watch handlers take no arguments and return
+                            // void — they observe the new value by reading the global directly.
+                            let watch_symbol_ids: Vec<SymbolId> =
+                                self.watch_handlers.get(name).cloned().unwrap_or_default();
+
+                            for handler_symbol_id in watch_symbol_ids {
+                                trace!(
+                                    var_name = %name,
+                                    handler_symbol_id = handler_symbol_id.0,
+                                    "Emitting watch handler call after state mutation"
+                                );
+                                let watch_call = MirInstruction {
+                                    dest: None,
+                                    operation: MirOperation::Call {
+                                        function: MirOperand::Function(handler_symbol_id),
+                                        arguments: Vec::new(),
+                                    },
+                                    location: location.clone(),
+                                };
+                                self.add_instruction(context, watch_call);
+                            }
                         } else {
                             // CRITICAL FIX: For re-assignment of existing local variables, we need to emit
                             // a Copy instruction to actually update the variable's value in the WASM local.
@@ -2707,6 +2941,46 @@ impl MirBuilder {
                     if let Some(&value_id) = scope.get(name) {
                         return Ok(value_id);
                     }
+                }
+
+                // Check if this variable refers to a computed property.
+                // Computed properties are implemented as zero-parameter getter functions
+                // named `__computed_{name}`.  Reading a computed variable emits a Call
+                // to that getter so the body is re-evaluated every time.
+                if let Some((getter_symbol_id, return_mir_type)) =
+                    self.computed_properties.get(name).cloned()
+                {
+                    trace!(
+                        computed_name = %name,
+                        getter_symbol_id = getter_symbol_id.0,
+                        return_mir_type = ?return_mir_type,
+                        "Found computed property, emitting Call to getter"
+                    );
+
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    // Register the result local so codegen can allocate a slot for it.
+                    let local = MirLocal {
+                        name: Some(format!("computed_{}", name)),
+                        local_type: return_mir_type,
+                        is_mutable: false,
+                        location: expression.location.clone(),
+                    };
+                    context.function.locals.insert(result_id, local);
+
+                    // Emit a Call instruction to the getter function.
+                    let call_instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::Call {
+                            function: MirOperand::Function(getter_symbol_id),
+                            arguments: vec![],
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, call_instruction);
+
+                    return Ok(result_id);
                 }
 
                 // Check if this is a state variable - emit GlobalLoad instruction
