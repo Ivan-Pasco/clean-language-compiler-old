@@ -380,13 +380,28 @@ impl CompletionProvider {
             ),
             self.create_method_completion(
                 "replace",
-                "Replace occurrences",
+                "Replace all occurrences",
                 "replace(${1:search}, ${2:replacement})",
             ),
             self.create_method_completion("toUpperCase", "Convert to uppercase", "toUpperCase()"),
             self.create_method_completion("toLowerCase", "Convert to lowercase", "toLowerCase()"),
             self.create_method_completion("trim", "Remove whitespace", "trim()"),
             self.create_method_completion("split", "Split string", "split(${1:delimiter})"),
+            self.create_method_completion(
+                "contains",
+                "Check if string contains substring",
+                "contains(${1:substring})",
+            ),
+            self.create_method_completion(
+                "startsWith",
+                "Check if string starts with prefix",
+                "startsWith(${1:prefix})",
+            ),
+            self.create_method_completion(
+                "endsWith",
+                "Check if string ends with suffix",
+                "endsWith(${1:suffix})",
+            ),
         ]
     }
 
@@ -402,9 +417,9 @@ impl CompletionProvider {
 
     fn get_list_methods(&self) -> Vec<CompletionItem> {
         vec![
-            self.create_method_completion("length", "Get the length of the list", "property"),
-            self.create_method_completion("push", "Add element to end", "push(${1:element})"),
-            self.create_method_completion("pop", "Remove and return last element", "pop()"),
+            self.create_method_completion("length", "Get the number of items in the list", "property"),
+            self.create_method_completion("add", "Add element to end", "add(${1:element})"),
+            self.create_method_completion("removeLast", "Remove and return last element", "removeLast()"),
             self.create_method_completion("get", "Get element at index", "get(${1:index})"),
             self.create_method_completion(
                 "set",
@@ -427,6 +442,8 @@ impl CompletionProvider {
                 "Extract portion of list",
                 "slice(${1:start}, ${2:end})",
             ),
+            self.create_method_completion("sort", "Sort the list", "sort()"),
+            self.create_method_completion("reverse", "Reverse the list", "reverse()"),
         ]
     }
 
@@ -493,9 +510,9 @@ impl CompletionProvider {
                 "${1:function_name}(${2:parameters})\n\t${3:body}",
             ),
             self.create_snippet_completion(
-                "start_function",
-                "Start function",
-                "start()\n\t${1:body}",
+                "start_block",
+                "Entry point block",
+                "start:\n\t${1:body}",
             ),
         ]
     }
@@ -518,15 +535,15 @@ impl CompletionProvider {
                 "constants:\n\t${1:constant_definitions}",
             ),
             ("types", "Types block", "types:\n\t${1:type_definitions}"),
-            ("start", "Start function", "start()\n\t${1:body}"),
+            ("start", "Entry point block", "start:\n\t${1:body}"),
             ("if", "If statement", "if ${1:condition}\n\t${2:body}"),
             ("else", "Else statement", "else\n\t${1:body}"),
-            ("while", "While loop", "while ${1:condition}\n\t${2:body}"),
             (
-                "for",
-                "For loop",
-                "for ${1:variable} in ${2:iterable}\n\t${3:body}",
+                "iterate",
+                "Iterate loop",
+                "iterate ${1:variable} in ${2:collection}\n\t${3:body}",
             ),
+            ("repeat", "Repeat loop", "repeat\n\t${1:body}"),
             ("return", "Return statement", "return ${1:value}"),
             ("extends", "Class inheritance", "extends ${1:BaseClass}"),
             ("base", "Base constructor call", "base(${1:arguments})"),
@@ -534,6 +551,36 @@ impl CompletionProvider {
                 "onError",
                 "Error handling",
                 "onError ${1:error_variable}\n\t${2:error_handling}",
+            ),
+            (
+                "state",
+                "State management block",
+                "state:\n\t${1:variable_declarations}",
+            ),
+            (
+                "watch",
+                "Watch block — reacts to state changes",
+                "watch ${1:variable}:\n\t${2:body}",
+            ),
+            (
+                "computed",
+                "Computed property — derived from state",
+                "computed ${1:type} ${2:name}:\n\t${3:expression}",
+            ),
+            (
+                "rules",
+                "Rules block — validation constraints",
+                "rules:\n\t${1:constraints}",
+            ),
+            (
+                "tests",
+                "Tests block",
+                "tests:\n\t\"${1:description}\": ${2:expr} = ${3:expected}",
+            ),
+            (
+                "plugins",
+                "Plugins block",
+                "plugins:\n\t${1:plugin_name}",
             ),
         ];
 

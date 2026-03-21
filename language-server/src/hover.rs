@@ -206,16 +206,22 @@ impl HoverProvider {
         match word {
             "functions" => Some("**functions:** Block\n\nDefines a block containing function declarations.\n\n```clean\nfunctions:\n\tinteger add(integer a, integer b)\n\t\treturn a + b\n```\n\n---\n⚡ *Built-in*".to_string()),
             "class" => Some("**class** Keyword\n\nDefines a class with optional inheritance.\n\n```clean\nclass MyClass extends BaseClass\n\tfield: string\n\tconstructor(value: string)\n\t\tfield = value\n```\n\n---\n⚡ *Built-in*".to_string()),
-            "start" => Some("**start()** Function\n\nEntry point function for Clean Language programs.\n\n```clean\nstart()\n\tprint(\"Hello, World!\")\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "start" => Some("**start:** Block\n\nEntry point block for Clean Language programs.\n\n```clean\nstart:\n\tprint(\"Hello, World!\") +\n```\n\n---\n⚡ *Built-in*".to_string()),
             "if" => Some("**if** Statement\n\nConditional execution.\n\n```clean\nif condition\n\t// code block\nelse\n\t// alternative block\n```\n\n---\n⚡ *Built-in*".to_string()),
-            "while" => Some("**while** Loop\n\nRepeats a block while condition is true.\n\n```clean\nwhile count < 10\n\tprint(count)\n\tcount = count + 1\n```\n\n---\n⚡ *Built-in*".to_string()),
-            "for" => Some("**for** Loop\n\nIterates over collections.\n\n```clean\nfor item in collection\n\tprint(item)\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "iterate" => Some("**iterate** Loop\n\nIterates over collections or ranges.\n\n```clean\niterate item in collection\n\tprint(item) +\n\niterate i in 0..10\n\tprint(i) +\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "repeat" => Some("**repeat** Loop\n\nRepeats a block indefinitely until `break`.\n\n```clean\nrepeat\n\tstring input = input(\"Continue? \")\n\tif input == \"no\"\n\t\tbreak\n```\n\n---\n⚡ *Built-in*".to_string()),
             "return" => Some("**return** Statement\n\nReturns a value from a function.\n\n```clean\nreturn value\n```\n\n---\n⚡ *Built-in*".to_string()),
             "constants" => Some("**constants:** Block\n\nDefines constant values.\n\n```clean\nconstants:\n\tPI = 3.14159\n\tMAX_SIZE = 100\n```\n\n---\n⚡ *Built-in*".to_string()),
             "types" => Some("**types:** Block\n\nDefines custom type aliases.\n\n```clean\ntypes:\n\tUserId = integer\n\tUserName = string\n```\n\n---\n⚡ *Built-in*".to_string()),
             "extends" => Some("**extends** Keyword\n\nUsed in class inheritance.\n\n```clean\nclass Child extends Parent\n\t// child class body\n```\n\n---\n⚡ *Built-in*".to_string()),
             "base" => Some("**base()** Call\n\nCalls the parent class constructor.\n\n```clean\nconstructor(value: string)\n\tbase(value)\n```\n\n---\n⚡ *Built-in*".to_string()),
-            "onError" => Some("**onError** Handler\n\nError handling mechanism.\n\n```clean\nonError error\n\tprint(\"Error occurred: \" + error)\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "onError" => Some("**onError** Handler\n\nError handling mechanism.\n\n```clean\nonError error\n\tprint(\"Error occurred: \" + error) +\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "state" => Some("**state:** Block\n\nDeclares reactive state variables.\n\n```clean\nstate:\n\tinteger counter = 0\n\tstring name = \"default\"\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "watch" => Some("**watch** Block\n\nReacts to state variable changes.\n\n```clean\nwatch counter:\n\tprint(\"Counter changed!\") +\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "computed" => Some("**computed** Property\n\nDerived value that recalculates when dependencies change.\n\n```clean\ncomputed integer total:\n\treturn price * quantity\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "rules" => Some("**rules:** Block\n\nDefines validation constraints for state variables.\n\n```clean\nrules:\n\tage >= 0\n\tname != \"\"\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "tests" => Some("**tests:** Block\n\nInline test assertions.\n\n```clean\ntests:\n\t\"addition works\": 2 + 2 = 4\n\t\"string concat\": \"a\" + \"b\" = \"ab\"\n```\n\n---\n⚡ *Built-in*".to_string()),
+            "plugins" => Some("**plugins:** Block\n\nDeclares plugin dependencies.\n\n```clean\nplugins:\n\tframe.httpserver\n\tframe.ui\n```\n\n---\n⚡ *Built-in*".to_string()),
             _ => None,
         }
     }
@@ -224,11 +230,11 @@ impl HoverProvider {
         match word {
             "integer" => Some("**integer** Type\n\nSigned integer number type.\n\n**Examples:**\n```clean\ninteger count = 42\ninteger negative = -10\n```\n\n**Methods:**\n- `toString()` - Convert to string\n- `abs()` - Absolute value\n\n---\n⚡ *Built-in*".to_string()),
             "number" => Some("**number** Type\n\nFloating-point number type.\n\n**Examples:**\n```clean\nnumber pi = 3.14159\nnumber temperature = -5.5\n```\n\n**Methods:**\n- `toString()` - Convert to string\n- `round()` - Round to nearest integer\n- `floor()` - Round down\n- `ceil()` - Round up\n\n---\n⚡ *Built-in*".to_string()),
-            "string" => Some("**string** Type\n\nText string type.\n\n**Examples:**\n```clean\nstring name = \"Alice\"\nstring greeting = \"Hello, \" + name\n```\n\n**Methods:**\n- `length` - Get string length\n- `charAt(index)` - Get character at index\n- `substring(start, end)` - Extract substring\n- `indexOf(text)` - Find text position\n- `replace(old, new)` - Replace text\n\n---\n⚡ *Built-in*".to_string()),
+            "string" => Some("**string** Type\n\nText string type.\n\n**Examples:**\n```clean\nstring name = \"Alice\"\nstring greeting = \"Hello, \" + name\n```\n\n**Methods:**\n- `length` - Get string length\n- `charAt(index)` - Get character at index\n- `substring(start, end)` - Extract substring\n- `indexOf(text)` - Find text position\n- `replace(old, new)` - Replace all occurrences\n- `toUpperCase()` - Convert to uppercase\n- `toLowerCase()` - Convert to lowercase\n- `trim()` - Remove whitespace\n- `contains(text)` - Check if contains text\n\n---\n⚡ *Built-in*".to_string()),
             "boolean" => Some("**boolean** Type\n\nBoolean true/false type.\n\n**Examples:**\n```clean\nboolean isValid = true\nboolean isEmpty = false\n```\n\n**Values:**\n- `true`\n- `false`\n\n---\n⚡ *Built-in*".to_string()),
             "void" => Some("**void** Type\n\nRepresents no return value.\n\n**Usage:**\n```clean\nvoid printMessage(string msg)\n\tprint(msg)\n\t// no return statement needed\n```\n\n---\n⚡ *Built-in*".to_string()),
             "any" => Some("**any** Type\n\nAccepts any type of value.\n\n**Usage:**\n```clean\nany value = 42\nvalue = \"text\"\nvalue = true\n```\n\n**Note:** Use sparingly for type safety.\n\n---\n⚡ *Built-in*".to_string()),
-            "list" => Some("**list<T>** Type\n\nDynamic array type.\n\n**Examples:**\n```clean\nlist<integer> numbers = [1, 2, 3]\nlist<string> names = [\"Alice\", \"Bob\"]\n```\n\n**Methods:**\n- `length` - Get list size\n- `push(item)` - Add item to end\n- `pop()` - Remove last item\n- `get(index)` - Get item at index\n\n---\n⚡ *Built-in*".to_string()),
+            "list" => Some("**list<T>** Type\n\nDynamic array type.\n\n**Examples:**\n```clean\nlist<integer> numbers = [1, 2, 3]\nlist<string> names = [\"Alice\", \"Bob\"]\n```\n\n**Methods:**\n- `length` - Get number of items\n- `add(item)` - Add item to end\n- `removeLast()` - Remove last item\n- `get(index)` - Get item at index\n- `contains(item)` - Check if list contains item\n\n---\n⚡ *Built-in*".to_string()),
             "matrix" => Some("**matrix<T>** Type\n\nTwo-dimensional array type.\n\n**Examples:**\n```clean\nmatrix<integer> grid = [[1, 2], [3, 4]]\n```\n\n**Usage:**\n- Multi-dimensional data\n- Mathematical operations\n\n---\n⚡ *Built-in*".to_string()),
             _ => None,
         }
@@ -268,7 +274,8 @@ impl HoverProvider {
     fn get_list_method_info(&self, word: &str) -> Option<String> {
         match word {
             "length" => Some("**list.length** Property\n\nGets the number of items in the list.\n\n**Type:** `integer`\n\n**Example:**\n```clean\nlist<integer> nums = [1, 2, 3]\ninteger count = nums.length  // 3\n```".to_string()),
-            "push" => Some("**list.push()** Method\n\nAdds an item to the end of the list.\n\n**Signature:**\n```clean\npush(item: T) -> void\n```\n\n**Example:**\n```clean\nlist<integer> nums = [1, 2]\nnums.push(3)  // [1, 2, 3]\n```".to_string()),
+            "add" => Some("**list.add()** Method\n\nAdds an item to the end of the list.\n\n**Signature:**\n```clean\nadd(item: T) -> void\n```\n\n**Example:**\n```clean\nlist<integer> nums = [1, 2]\nnums.add(3)  // [1, 2, 3]\n```".to_string()),
+            "removeLast" => Some("**list.removeLast()** Method\n\nRemoves and returns the last item from the list.\n\n**Signature:**\n```clean\nremoveLast() -> T\n```\n\n**Example:**\n```clean\nlist<integer> nums = [1, 2, 3]\ninteger last = nums.removeLast()  // 3\n```".to_string()),
             "get" => Some("**list.get()** Method\n\nGets the item at the specified index.\n\n**Signature:**\n```clean\nget(index: integer) -> T\n```\n\n**Example:**\n```clean\nlist<string> names = [\"Alice\", \"Bob\"]\nstring first = names.get(0)  // \"Alice\"\n```".to_string()),
             _ => None,
         }
