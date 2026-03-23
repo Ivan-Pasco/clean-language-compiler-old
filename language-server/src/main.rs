@@ -543,108 +543,207 @@ impl Backend {
     }
 
     fn tokenize_line(&self, line: &str, line_number: u32, data: &mut Vec<SemanticToken>) {
-        let keywords = [
-            "functions",
-            "class",
-            "start",
-            "if",
-            "else",
-            "while",
-            "for",
-            "return",
-            "integer",
-            "number",
-            "string",
-            "boolean",
-            "void",
-            "any",
-            "constants",
-            "types",
-            "extends",
-            "base",
-            "onError",
-            "try",
-            "catch",
+        // Core language keywords (token_type 0: KEYWORD)
+        let keywords: &[&str] = &[
+            // Control flow
+            "if", "else", "iterate", "in", "to", "step", "repeat", "break", "continue",
+            "return", "onError",
+            // Declarations
+            "functions", "class", "start", "state", "computed", "watch", "rules",
+            "constants", "tests", "build", "plugins",
+            // Modifiers
+            "private", "constant", "extends", "base", "new",
+            // Operators
+            "and", "or", "not", "is",
+            // Async
+            "later", "background",
+            // AI integration
+            "spec", "intent", "source",
+            // Error handling
+            "error", "assert",
         ];
 
-        // Built-in functions (blue - token_type 2)
-        let builtin_functions = [
-            "print", "input", "error", "Math", "String", "Integer", "Array",
+        // Type keywords (token_type 1: TYPE)
+        let type_keywords: &[&str] = &[
+            "integer", "number", "string", "boolean", "void", "any",
+            "list", "matrix", "pairs",
+            // Sized types
+            "integer:8", "integer:16", "integer:32", "integer:64",
+            "integer:8u", "integer:16u", "integer:32u", "integer:64u",
+            "number:32", "number:64",
         ];
 
-        // Plugin function prefixes (purple - token_type 10/NAMESPACE)
-        // These are functions from plugins that have a namespace prefix
-        let plugin_prefixes = [
-            "http.", "file.", "db.", "crypto.", "json.", "request.", "response.",
+        // Built-in functions/namespaces (token_type 2: FUNCTION)
+        let builtin_functions: &[&str] = &[
+            "print", "printl", "input",
+        ];
+
+        // Built-in classes/namespaces (token_type 8: CLASS)
+        let builtin_classes: &[&str] = &[
+            "Math", "String", "Integer", "List", "File", "Http", "JSON",
+        ];
+
+        // Framework block keywords (token_type 10: NAMESPACE for plugin blocks)
+        let framework_blocks: &[&str] = &[
+            "data", "migrate", "endpoints", "server", "component", "screen", "page",
+            "styles", "html", "ui", "auth", "protected", "login", "roles",
+            "canvasScene", "draw", "onFrame", "onPointerDown", "onPointerMove", "onKeyDown",
+        ];
+
+        // Sub-block keywords (token_type 9: PROPERTY)
+        let sub_blocks: &[&str] = &[
+            "where", "order", "limit", "offset", "guard", "returns", "cache", "handle",
+            "props", "render", "handlers", "session", "jwt",
+            "up", "down", "tenant", "theme", "colors", "spacing", "maxAge", "noCache",
+        ];
+
+        // HTTP methods (token_type 10: NAMESPACE)
+        let http_methods: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE"];
+
+        // Namespace prefixes for plugin/stdlib calls (token_type 10: NAMESPACE)
+        let namespace_prefixes: &[&str] = &[
+            "math.", "string.", "list.", "integer.", "file.", "json.",
+            "http.", "db.", "crypto.", "request.", "response.",
             "route.", "session.", "auth.", "cache.", "email.", "queue.", "storage.",
+            "canvas.", "sprite.", "audio.", "input.", "collision.", "camera.", "ease.",
+            "scene.", "tenant.", "Data.", "ctx.",
         ];
 
-        let mut char_offset = 0u32;
-        let mut last_line = 0u32;
+        // Also check language registry for plugin-defined functions
+        let registry_functions: Vec<&str> = self.language_registry.all_functions();
 
-        // First pass: find plugin function calls (namespace.function pattern)
-        for plugin_prefix in &plugin_prefixes {
-            if let Some(pos) = line.find(plugin_prefix) {
-                // Find the end of the function call (up to '(' or whitespace)
-                let start = pos;
-                let rest = &line[pos..];
-                let end = rest.find(|c: char| c == '(' || c.is_whitespace())
-                    .map(|e| pos + e)
-                    .unwrap_or(pos + rest.len());
+        // Collect tokens with absolute positions first, then convert to deltas
+        let mut tokens: Vec<(u32, u32, u32)> = vec![]; // (pos, len, token_type)
 
-                let func_call = &line[start..end];
-                if !func_call.is_empty() {
-                    data.push(SemanticToken {
-                        delta_line: if data.is_empty() { line_number } else { line_number - last_line },
-                        delta_start: start as u32,
-                        length: func_call.len() as u32,
-                        token_type: 10, // NAMESPACE - purple for plugin functions
-                        token_modifiers_bitset: 0,
-                    });
-                    last_line = line_number;
+        // Pass 1: Namespace-prefixed calls (e.g., math.sqrt, canvas.clear)
+        for prefix in namespace_prefixes {
+            let mut search_from = 0;
+            while search_from < line.len() {
+                if let Some(pos) = line[search_from..].find(prefix) {
+                    let abs_pos = search_from + pos;
+                    // Verify it's not inside a string or after a non-boundary char
+                    if abs_pos > 0 {
+                        let prev = line.as_bytes()[abs_pos - 1];
+                        if prev.is_ascii_alphanumeric() || prev == b'_' {
+                            search_from = abs_pos + 1;
+                            continue;
+                        }
+                    }
+                    let rest = &line[abs_pos..];
+                    let end = rest.find(|c: char| c == '(' || c.is_whitespace() || c == ')' || c == ',')
+                        .unwrap_or(rest.len());
+                    if end > prefix.len() {
+                        tokens.push((abs_pos as u32, end as u32, 10));
+                    }
+                    search_from = abs_pos + end;
+                } else {
+                    break;
                 }
             }
         }
 
-        // Second pass: keywords and built-in functions
-        for word in line.split(|c: char| !c.is_alphanumeric() && c != '_') {
-            if word.is_empty() {
-                continue;
-            }
+        // Pass 2: Words (keywords, types, functions, classes, blocks, sub-blocks)
+        let mut word_start = None;
+        let bytes = line.as_bytes();
+        for (i, &b) in bytes.iter().enumerate() {
+            let is_word_char = b.is_ascii_alphanumeric() || b == b'_';
+            if is_word_char && word_start.is_none() {
+                word_start = Some(i);
+            } else if !is_word_char && word_start.is_some() {
+                let start = word_start.unwrap();
+                let word = &line[start..i];
+                word_start = None;
 
-            if let Some(pos) = line.find(word) {
-                let word_start = pos as u32;
+                // Skip if already covered by a namespace token
+                let already_covered = tokens.iter().any(|(pos, len, _)| {
+                    let tok_start = *pos as usize;
+                    let tok_end = tok_start + *len as usize;
+                    start >= tok_start && i <= tok_end
+                });
+                if already_covered {
+                    continue;
+                }
 
+                // Classify the word
                 if keywords.contains(&word) {
-                    data.push(SemanticToken {
-                        delta_line: if data.is_empty() { line_number } else { line_number - last_line },
-                        delta_start: if last_line == line_number { word_start - char_offset } else { word_start },
-                        length: word.len() as u32,
-                        token_type: 0, // KEYWORD - blue
-                        token_modifiers_bitset: 0,
-                    });
-                    last_line = line_number;
-                    char_offset = word_start + word.len() as u32;
+                    tokens.push((start as u32, word.len() as u32, 0));
+                } else if type_keywords.contains(&word) {
+                    tokens.push((start as u32, word.len() as u32, 1));
                 } else if builtin_functions.contains(&word) {
-                    // Check if this is part of a plugin call (already handled)
-                    let is_plugin = plugin_prefixes.iter().any(|p| {
-                        line[..pos].ends_with(&p[..p.len()-1]) || // before dot
-                        line.get(pos.saturating_sub(1)..pos).map(|c| c == ".").unwrap_or(false)
-                    });
-
-                    if !is_plugin {
-                        data.push(SemanticToken {
-                            delta_line: if data.is_empty() { line_number } else { line_number - last_line },
-                            delta_start: if last_line == line_number { word_start - char_offset } else { word_start },
-                            length: word.len() as u32,
-                            token_type: 2, // FUNCTION - blue for built-in
-                            token_modifiers_bitset: 0,
-                        });
-                        last_line = line_number;
-                        char_offset = word_start + word.len() as u32;
+                    tokens.push((start as u32, word.len() as u32, 2));
+                } else if builtin_classes.contains(&word) {
+                    tokens.push((start as u32, word.len() as u32, 8));
+                } else if framework_blocks.contains(&word) {
+                    // Only classify as block if followed by ':'
+                    let rest = line[i..].trim_start();
+                    if rest.starts_with(':') || rest.is_empty() {
+                        tokens.push((start as u32, word.len() as u32, 10));
                     }
+                } else if sub_blocks.contains(&word) {
+                    let rest = line[i..].trim_start();
+                    if rest.starts_with(':') || rest.starts_with('=') || rest.is_empty() {
+                        tokens.push((start as u32, word.len() as u32, 9));
+                    }
+                } else if http_methods.contains(&word) {
+                    tokens.push((start as u32, word.len() as u32, 10));
+                } else if registry_functions.contains(&word) {
+                    tokens.push((start as u32, word.len() as u32, 2));
                 }
             }
+        }
+        // Handle word at end of line
+        if let Some(start) = word_start {
+            let word = &line[start..];
+            let already_covered = tokens.iter().any(|(pos, len, _)| {
+                let tok_start = *pos as usize;
+                let tok_end = tok_start + *len as usize;
+                start >= tok_start && line.len() <= tok_end
+            });
+            if !already_covered {
+                if keywords.contains(&word) {
+                    tokens.push((start as u32, word.len() as u32, 0));
+                } else if type_keywords.contains(&word) {
+                    tokens.push((start as u32, word.len() as u32, 1));
+                } else if builtin_functions.contains(&word) {
+                    tokens.push((start as u32, word.len() as u32, 2));
+                } else if builtin_classes.contains(&word) {
+                    tokens.push((start as u32, word.len() as u32, 8));
+                } else if framework_blocks.contains(&word) {
+                    tokens.push((start as u32, word.len() as u32, 10));
+                } else if sub_blocks.contains(&word) {
+                    tokens.push((start as u32, word.len() as u32, 9));
+                } else if http_methods.contains(&word) {
+                    tokens.push((start as u32, word.len() as u32, 10));
+                }
+            }
+        }
+
+        // Sort by position and convert to delta encoding
+        tokens.sort_by_key(|(pos, _, _)| *pos);
+
+        // Reconstruct absolute line of the last token in data
+        let prev_abs_line: u32 = data.iter().map(|tok| tok.delta_line).sum();
+
+        let mut last_pos = 0u32;
+        let mut is_first_on_this_line = true;
+
+        for (pos, len, token_type) in tokens {
+            let delta_line = line_number - prev_abs_line;
+            let delta_start = if !is_first_on_this_line {
+                pos - last_pos
+            } else {
+                pos
+            };
+
+            data.push(SemanticToken {
+                delta_line: if is_first_on_this_line { delta_line } else { 0 },
+                delta_start,
+                length: len,
+                token_type,
+                token_modifiers_bitset: 0,
+            });
+            last_pos = pos;
+            is_first_on_this_line = false;
         }
     }
 

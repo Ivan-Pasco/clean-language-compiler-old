@@ -120,9 +120,37 @@ fn get_spec_path() -> Option<String> {
     }
 
     // Try relative to CWD
-    let default_path = "documentation/Clean_Language_Specification.md";
-    if std::path::Path::new(default_path).exists() {
-        return Some(default_path.to_string());
+    let paths = [
+        "documentation/Clean_Language_Specification.md",
+        "../documentation/Clean_Language_Specification.md",
+        "docs/language/Clean_Language_Specification.md",
+    ];
+
+    for path in &paths {
+        if std::path::Path::new(path).exists() {
+            return Some(path.to_string());
+        }
+    }
+
+    // Try relative to binary location
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let spec = dir.join("../../documentation/Clean_Language_Specification.md");
+            if spec.exists() {
+                return spec.to_str().map(|s| s.to_string());
+            }
+        }
+    }
+
+    // Try home directory
+    if let Ok(home) = std::env::var("HOME") {
+        let cleen_spec = format!(
+            "{}/.cleen/specification/Clean_Language_Specification.md",
+            home
+        );
+        if std::path::Path::new(&cleen_spec).exists() {
+            return Some(cleen_spec);
+        }
     }
 
     None
@@ -683,7 +711,7 @@ fn handle_initialize(id: serde_json::Value) -> JsonRpcResponse {
             "name": "cln",
             "version": VERSION
         },
-        "instructions": "Clean Language compiler MCP server. Call 'get_quick_reference' first to learn the language syntax, types, and patterns. Call 'list_plugins' to discover framework/plugin DSL syntax, then 'get_plugin_examples' to see usage patterns. Use 'check' for fast type-checking during development, 'compile' for WebAssembly output. Call 'get_stack_recommendation' when starting a new project to get the recommended plugin stack. All 15 tools are available — get_quick_reference is the starting point. IMPORTANT: Clean Language applications should use Clean Language for ALL layers — server, database, UI, and graphics. Do NOT use JavaScript when a Clean Language plugin provides the same capability (frame.ui for DOM/events, frame.canvas for graphics). Call 'list_ecosystem' to see all available plugins."
+        "instructions": "You are working with the Clean Language compiler MCP server. Clean Language is a type-safe language that compiles to WebAssembly.\n\n## GETTING STARTED (call these tools in order)\n1. `get_quick_reference` — Learn syntax, types, patterns (CALL FIRST)\n2. `get_stack_recommendation` — Get recommended plugins for your project type\n3. `list_plugins` — See installed plugins with full DSL syntax\n4. `get_plugin_examples` — Read real example files from plugins\n\n## BEST PRACTICES FOR AI ASSISTANTS\n- ALWAYS call `get_quick_reference` at the start of a session before writing any Clean Language code\n- ALWAYS call `list_plugins` before using framework features (data:, endpoints:, component:, etc.)\n- Use `check` for fast type-checking during development (no WASM generation)\n- Use `get_specification` to look up detailed language rules\n- Use `get_architecture` to understand the execution model and host bridge\n- Clean Language applications use Clean for ALL layers — server, database, UI, graphics. NEVER use JavaScript when a Clean plugin exists.\n- Use `report_error` when you encounter what appears to be a compiler bug\n\n## KEY RULES\n- File extension: .cln\n- Indentation: tabs only (not spaces)\n- Entry point: `start:` block\n- Types: integer, number, string, boolean, list<T>, matrix<T>, pairs\n- Functions declared in `functions:` block with return type first\n- No semicolons, no curly braces\n- `return value` (no parentheses)\n- One way to do things — follow the spec exactly"
     });
     JsonRpcResponse::success(id, result)
 }
@@ -1027,6 +1055,20 @@ fn get_available_tools() -> Vec<Tool> {
                 required: vec![],
             },
         },
+        Tool {
+            name: "get_architecture".to_string(),
+            description: "Get the Clean Language platform architecture: execution layers, host bridge functions, and memory model. Essential for understanding where functions execute (compiler vs runtime vs host).".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "section": {
+                        "type": "string",
+                        "description": "Section to return: 'layers' (execution layers), 'bridge' (host bridge functions), 'memory' (WASM memory model), or 'all' (default)"
+                    }
+                }),
+                required: vec![],
+            },
+        },
     ]
 }
 
@@ -1087,6 +1129,7 @@ fn handle_tools_call(id: serde_json::Value, params: Option<serde_json::Value>) -
         "get_stack_recommendation" => tool_get_stack_recommendation(id, arguments),
         "report_error" => tool_report_error(id, arguments),
         "check_reported_fixes" => tool_check_reported_fixes(id, arguments),
+        "get_architecture" => tool_get_architecture(id, arguments),
         _ => JsonRpcResponse::error(
             id,
             error_codes::METHOD_NOT_FOUND,
@@ -1704,10 +1747,10 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
     vec![
         EcosystemPlugin {
             name: "frame.httpserver",
-            version: "2.0.0",
+            version: "2.8.0",
             category: "server",
-            description: "HTTP server plugin — routing, request context, response helpers, and authentication guards. Define REST APIs with endpoints: blocks.",
-            blocks: &["server", "endpoints"],
+            description: "HTTP server plugin — routing, request context, response helpers, authentication guards, database migrations, and multi-tenant support. Define REST APIs with endpoints: blocks.",
+            blocks: &["server", "endpoints", "migrate"],
             key_features: &[
                 "HTTP route registration (GET, POST, PUT, PATCH, DELETE)",
                 "Protected routes with role requirements",
@@ -1715,8 +1758,12 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
                 "Response helpers (JSON, HTML, redirect, error)",
                 "Response headers and caching control",
                 "Authentication guard integration",
+                "Database migration blocks (migrate:)",
+                "Multi-tenant request routing",
+                "Plugin lifecycle hooks (register_server, register_cli, register_build)",
+                "Permission enforcement — only declared bridge functions may be called",
             ],
-            bridge_function_count: 47,
+            bridge_function_count: 52,
             install: "cleen plugin add frame.httpserver",
             status: "stable",
             auto_detect_paths: &["/api/", "/backend/api/", "/server/api/", "/endpoints/"],
@@ -1726,35 +1773,44 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
                 "_http_get_body", "_http_get_cookie", "_http_set_cookie", "_http_respond_json",
                 "_http_respond_html", "_http_respond_redirect", "_http_respond_error",
                 "_http_set_header", "_http_set_cache", "_http_require_auth",
+                "_http_tenant_id", "_http_tenant_config",
+                "_migrate_run", "_migrate_rollback", "_migrate_status",
             ],
         },
         EcosystemPlugin {
             name: "frame.data",
-            version: "2.0.0",
+            version: "2.8.0",
             category: "data",
-            description: "ORM and database plugin — data models, CRUD operations, query builder, transactions, and raw SQL. Define models with data: blocks.",
-            blocks: &["data"],
+            description: "ORM and database plugin — data models, CRUD operations, query builder, transactions, raw SQL, migrations, and validation constraints. Define models with data: blocks.",
+            blocks: &["data", "migrate"],
             key_features: &[
                 "Model definition with typed fields",
                 "Query builder (find, first, count, insert, update, delete)",
                 "Filtering, sorting, and pagination",
                 "Transaction support (Data.tx:)",
                 "Raw SQL queries (db.query:, db.queryAs)",
-                "Database migrations",
+                "Database migrations (migrate: block)",
+                "Field validation constraints (required, min, max, pattern, unique)",
+                "Plugin lifecycle hooks (register_data, register_build)",
+                "Permission enforcement — only declared bridge functions may be called",
             ],
-            bridge_function_count: 2,
+            bridge_function_count: 8,
             install: "cleen plugin add frame.data",
             status: "stable",
             auto_detect_paths: &["/data/", "/models/", "/server/models/"],
             replaces: "Sequelize, Prisma, Knex, or any JS/TS ORM. Use frame.data for all database operations.",
-            permissions: &["_db_query", "_db_execute"],
+            permissions: &[
+                "_db_query", "_db_execute",
+                "_db_migrate_run", "_db_migrate_rollback", "_db_migrate_status",
+                "_db_transaction_begin", "_db_transaction_commit", "_db_transaction_rollback",
+            ],
         },
         EcosystemPlugin {
             name: "frame.auth",
-            version: "2.0.0",
+            version: "2.8.0",
             category: "auth",
-            description: "Authentication and authorization plugin — sessions, JWT tokens, password hashing, roles/permissions, CSRF protection. Configure with auth: blocks.",
-            blocks: &["auth", "protected", "login", "roles"],
+            description: "Authentication and authorization plugin — sessions, JWT tokens, password hashing, roles/permissions, CSRF protection, and multi-tenant support. Configure with auth: blocks.",
+            blocks: &["auth", "protected", "login", "roles", "tenant"],
             key_features: &[
                 "Session management (store, get, delete)",
                 "JWT token operations (sign, verify, decode)",
@@ -1764,8 +1820,12 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
                 "Permission checking",
                 "Cookie management",
                 "Environment variable access for secrets",
+                "Multi-tenant auth (tenant: sub-block)",
+                "Tenant isolation and per-tenant role configuration",
+                "Plugin lifecycle hooks (register_server)",
+                "Permission enforcement — only declared bridge functions may be called",
             ],
-            bridge_function_count: 20,
+            bridge_function_count: 24,
             install: "cleen plugin add frame.auth",
             status: "stable",
             auto_detect_paths: &["/auth/", "/config/auth/"],
@@ -1778,25 +1838,30 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
                 "_auth_check_role", "_auth_check_permission",
                 "_cookie_set", "_cookie_get", "_cookie_delete",
                 "_env_get",
+                "_tenant_get_id", "_tenant_get_config",
+                "_tenant_check_role", "_tenant_check_permission",
             ],
         },
         EcosystemPlugin {
             name: "frame.ui",
-            version: "2.1.0",
+            version: "2.8.0",
             category: "ui",
-            description: "HTML-first UI framework — components, screens, event handling, two-way binding, and hydration. Define components with component: blocks and HTML templates.",
-            blocks: &["component", "screen", "page", "styles"],
+            description: "HTML-first UI framework — components, screens, theming, event handling, two-way binding, and hydration. Define components with component: blocks and HTML templates.",
+            blocks: &["component", "screen", "page", "styles", "ui"],
             key_features: &[
                 "Component definitions with properties and slots",
-                "HTML directives (if, else, each, bind, show, validate)",
+                "HTML directives (cl-if, cl-else, cl-each, cl-bind, cl-show, cl-validate, cl-slot)",
                 "Event handling (onclick, oninput, onsubmit, etc.)",
                 "Event modifiers (prevent, stop, once, enter, escape)",
                 "Interpolation ({{escaped}} and {{{raw}}})",
                 "Hydration modes (off, on, visible, idle, only)",
                 "Two-way data binding",
                 "State management for components",
+                "Global UI theming (ui: block)",
+                "Plugin lifecycle hooks (register_server, register_build)",
+                "Permission enforcement — only declared bridge functions may be called",
             ],
-            bridge_function_count: 10,
+            bridge_function_count: 14,
             install: "cleen plugin add frame.ui",
             status: "stable",
             auto_detect_paths: &["/ui/", "/components/", "/screens/"],
@@ -1805,14 +1870,16 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
                 "_ui_render", "_ui_hydrate", "_ui_bind", "_ui_emit_event",
                 "_ui_get_state", "_ui_set_state",
                 "_dom_get_element", "_dom_set_attribute", "_dom_add_class", "_dom_remove_class",
+                "_ui_theme_get", "_ui_theme_set",
+                "_ui_validate_field", "_ui_slot_render",
             ],
         },
         EcosystemPlugin {
             name: "frame.canvas",
-            version: "2.0.0",
+            version: "2.8.0",
             category: "canvas",
-            description: "Canvas rendering and game development plugin — drawing, animation, audio, sprites, input, collision detection, and easing functions. Define scenes with canvasScene: blocks.",
-            blocks: &["canvasScene", "draw", "onFrame"],
+            description: "Canvas rendering and game development plugin — drawing, animation, audio, sprites, pointer/keyboard input, collision detection, and easing functions. Define scenes with canvasScene: blocks.",
+            blocks: &["canvasScene", "draw", "onFrame", "onPointerDown", "onPointerMove", "onKeyDown"],
             key_features: &[
                 "Drawing primitives (circles, rectangles, lines, polygons)",
                 "Text and image rendering",
@@ -1821,12 +1888,16 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
                 "Audio (sound effects and music with volume/pan control)",
                 "Sprite sheet support",
                 "Input handling (mouse, keyboard, touch, gamepad)",
+                "Pointer event blocks (onPointerDown, onPointerMove)",
+                "Keyboard event blocks (onKeyDown)",
                 "Collision detection (7 types including raycasting)",
                 "Camera and viewport control",
                 "20 easing functions",
                 "Scene management",
+                "Plugin lifecycle hooks (register_server, register_build)",
+                "Permission enforcement — only declared bridge functions may be called",
             ],
-            bridge_function_count: 127,
+            bridge_function_count: 134,
             install: "cleen plugin add frame.canvas",
             status: "stable",
             auto_detect_paths: &["/canvas/"],
@@ -1842,6 +1913,8 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
                 "_audio_play", "_audio_stop", "_audio_set_volume",
                 "_input_mouse_x", "_input_mouse_y", "_input_mouse_button",
                 "_input_key_pressed", "_input_key_held",
+                "_input_pointer_x", "_input_pointer_y", "_input_pointer_down",
+                "_input_key_down", "_input_key_code",
                 "_sprite_draw", "_sprite_set_frame",
                 "_collision_check_rect", "_collision_check_circle",
                 "_collision_raycast",
@@ -2133,10 +2206,11 @@ Clean Language applications should use Clean Language for ALL layers. Do NOT use
 - ONLY as a last resort when no Clean Language plugin covers the specific browser API needed
 
 ### Naming Convention — IMPORTANT
-Clean Language uses **dot notation** for all function calls: `string.length()`, `math.abs()`, `list.push()`.
+Clean Language uses **dot notation** for all function calls: `string.length()`, `math.abs()`, `list.add()`.
 NEVER use underscore-style names like `_ui_update_element` or `string_compare` in Clean Language code.
 Underscore names are internal host bridge identifiers — they are NOT part of the Clean Language API.
 Always use the dot-notation form shown in the plugin documentation and this reference.
+Use `list.length()` (not `list.size()`) to get the number of elements in a list.
 
 Call `get_stack_recommendation` with a project type for a tailored plugin list and file structure.
 
@@ -2149,11 +2223,14 @@ start:
 ```
 
 ## Types
-- `integer` — 64-bit signed integer
+- `integer` — 32-bit signed integer (use `integer:64` for large values)
 - `number` — 64-bit float
 - `string` — UTF-8 text
 - `boolean` — true/false
-- `Array<T>` — typed arrays (e.g., Array<integer>)
+- `list<T>` — typed resizable list (e.g., `list<integer>`, `list<string>`)
+- `matrix<T>` — 2D list (e.g., `matrix<number>`)
+- `pairs` — key-value associative container (e.g., `pairs<string, integer>`)
+- `any` — generic type parameter used in function/class definitions
 
 ## Variables
 ```
@@ -2161,6 +2238,29 @@ integer age = 25
 number pi = 3.14159
 string name = "Clean"
 boolean active = true
+list<integer> nums = [1, 2, 3]
+matrix<number> grid = [[1.0, 2.0], [3.0, 4.0]]
+pairs<string, integer> scores = {}
+```
+
+## Apply-Blocks
+Apply a function or type to each indented item:
+```
+// Call print on multiple values
+print:
+	"Hello"
+	"World"
+
+// Declare multiple variables of the same type
+integer:
+	count = 0
+	maxSize = 100
+
+// Add multiple items to a list
+nums.add:
+	10
+	20
+	30
 ```
 
 ## Functions
@@ -2180,26 +2280,57 @@ start:
 
 ## Control Flow
 ```
-// If/else — parentheses around condition
-if (x > 0)
+// If/else — no parentheses required around condition
+if x > 0
 	print("positive")
-else if (x == 0)
+else if x == 0
 	print("zero")
 else
 	print("negative")
 
-// While loop
-while (i < 10)
+// Iterate over a range
+iterate i in 1 to 10
+	print(i.toString())
+
+// Iterate with step
+iterate k in 10 to 1 step -2
+	print(k.toString())
+
+// Iterate over a list
+iterate item in myList
+	print(item.toString())
+
+// While loop (condition-based)
+integer i = 0
+while i < 10
 	print(i.toString())
 	i = i + 1
 
-// Iterate (for-each over range)
-iterate (i = 0 to 10)
-	print(i.toString())
+// Repeat loop (infinite — use break to exit)
+repeat
+	string line = input("Enter text: ")
+	if line == "quit"
+		break
+	print(line)
+```
 
-// Iterate over array
-iterate (item in myArray)
-	print(item.toString())
+## Null Handling
+```
+// Null-coalescing with 'default' operator
+string username = userData.name default "Guest"
+integer count = config.maxItems default 100
+
+// Chain defaults
+string value = primary default secondary default "fallback"
+
+// Required assertion — fails at runtime if null
+string name = maybeNull!
+
+// Safe navigation with ?.
+string city = user?.address?.city default "Unknown"
+
+// Null-coalescing operator ??
+string display = name ?? "Anonymous"
 ```
 
 ## String Operations
@@ -2211,23 +2342,23 @@ string lower = s.toLowerCase()
 string sub = s.substring(0, 5)
 boolean has = s.contains("world")
 string replaced = s.replace("world", "Clean")
-Array<string> parts = s.split(" ")
+list<string> parts = s.split(" ")
 string trimmed = s.trim()
 integer idx = s.indexOf("world")
 ```
 
 ## Math Operations
 ```
-number result = Math.sqrt(16.0)
-number sine = Math.sin(3.14)
-number cosine = Math.cos(0.0)
-number power = Math.pow(2.0, 10.0)
-number absolute = Math.abs(-5.0)
-number rounded = Math.round(3.7)
-number floored = Math.floor(3.9)
-number ceiled = Math.ceil(3.1)
-number minimum = Math.min(5.0, 3.0)
-number maximum = Math.max(5.0, 3.0)
+number result = math.sqrt(16.0)
+number sine = math.sin(3.14)
+number cosine = math.cos(0.0)
+number power = math.pow(2.0, 10.0)
+number absolute = math.abs(-5.0)
+number rounded = math.round(3.7)
+number floored = math.floor(3.9)
+number ceiled = math.ceil(3.1)
+number minimum = math.min(5.0, 3.0)
+number maximum = math.max(5.0, 3.0)
 ```
 
 ## Type Conversions
@@ -2242,23 +2373,44 @@ number fparsed = "3.14".toNumber()
 
 ## Print Output
 ```
-print("text")              // print with newline
-print("value: " + x.toString())  // concatenation
+print("text")              // print without newline
+print("value: " + x.toString())  // string concatenation
+print(x.toString()) +      // print with newline (note the '+' after the closing paren)
+printl("text")             // print with newline (alternate form)
+```
+
+## Lists
+```
+list<integer> nums = [1, 2, 3, 4, 5]
+integer first = nums[0]
+integer len = nums.length()
+nums.add(6)                // add to end
+nums.remove(0)             // remove at index
+boolean has = nums.contains(3)
+list<integer> sorted = nums.sort()
+
+// List behaviors (set .type property)
+list<string> queue = []
+queue.type = "line"        // FIFO queue: add to back, remove from front
+list<string> stack = []
+stack.type = "pile"        // LIFO stack: add/remove from top
+list<string> unique = []
+unique.type = "unique"     // Set: no duplicates allowed
 ```
 
 ## Classes
 ```
-class Person:
-	properties:
-		string name
-		integer age
+class Person
+	string name
+	integer age
 
-	constructor(string name, integer age)
-		this.name = name
-		this.age = age
+	constructor(string nameParam, integer ageParam)
+		name = nameParam
+		age = ageParam
 
-	string greet()
-		return "I'm " + this.name
+	functions:
+		string greet()
+			return "I'm " + name
 
 start:
 	Person p = Person("Alice", 30)
@@ -2268,61 +2420,104 @@ start:
 
 ## Inheritance
 ```
-class Animal:
-	properties:
-		string name
-	constructor(string name)
-		this.name = name
-	string speak()
-		return this.name + " speaks"
+class Animal
+	string name
 
-class Dog extends Animal:
-	properties:
-		string breed
-	constructor(string name, string breed)
-		base(name)
-		this.breed = breed
-	string speak()
-		return this.name + " barks"
+	constructor(string nameParam)
+		name = nameParam
+
+	functions:
+		string speak()
+			return name + " speaks"
+
+class Dog is Animal
+	string breed
+
+	constructor(string nameParam, string breedParam)
+		base(nameParam)
+		breed = breedParam
+
+	functions:
+		string speak()
+			return name + " barks"
 ```
 
-## Arrays
+## State Management
+Top-level reactive state — persists for app lifetime.
 ```
-Array<integer> nums = [1, 2, 3, 4, 5]
-integer first = nums[0]
-integer len = nums.length()
-nums.push(6)
+state:
+	integer count = 0
+	string username = ""
+
+	// Invariants checked at operation boundaries
+	rules:
+		count >= 0
+
+	// Computed (auto-updates when dependencies change)
+	computed:
+		string display
+			return "Count: " + count.toString()
+
+// Watch for changes
+watch count:
+	print("Count changed to: " + count.toString())
+
+watch (firstName, lastName):
+	print("Name changed")
 ```
 
-## Error Handling (require/rules)
+## Tests Block
+```
+tests:
+	"adds numbers": add(2, 3) = 5
+	"squares a number": square(4) = 16
+	"hi".toUpperCase() = "HI"
+	math.abs(-42) = 42
+```
+
+## Contracts (require)
 ```
 functions:
 	integer divide(integer a, integer b)
 		require b != 0
 		return a / b
 
-	integer clamp(integer val, integer min, integer max)
-		rules
-			val >= min
-			val <= max
-		return val
+	void setAge(integer age)
+		require age >= 0
+		require age <= 150
+		// implementation
 ```
 
-## Computed Properties
+## Error Handling (onError)
 ```
-class Circle:
-	properties:
-		number radius
-	constructor(number radius)
-		this.radius = radius
+functions:
+	integer divide(integer a, integer b)
+		if b == 0
+			error("Cannot divide by zero")
+		return a / b
+
+start:
+	integer result = divide(10, 0) onError 0
+```
+
+## Computed Properties (on classes)
+```
+class Circle
+	number radius
+
+	constructor(number radiusParam)
+		radius = radiusParam
+
 	computed:
-		number area = 3.14159 * this.radius * this.radius
-		number circumference = 2.0 * 3.14159 * this.radius
+		number area = 3.14159 * radius * radius
+		number circumference = 2.0 * 3.14159 * radius
 ```
 
 ## JSON Operations
 ```
-string jsonStr = json.stringify(data)
+string jsonStr = json.dataToText(data)
+any parsed = json.textToData(jsonStr)
+any safe = json.tryTextToData(maybeJson)
 ```
 
 ## Description (documentation)
@@ -2331,7 +2526,7 @@ functions:
 	integer factorial(integer n)
 		description "Calculates the factorial of n"
 		require n >= 0
-		if (n <= 1)
+		if n <= 1
 			return 1
 		return n * factorial(n - 1)
 ```
@@ -2348,6 +2543,7 @@ functions:
 
 ## Available MCP Tools
 - `get_quick_reference` — This guide (call first)
+- `get_architecture` — Execution layers, host bridge, memory model
 - `check` — Type-check code (fast, no WASM)
 - `compile` — Compile to WebAssembly
 - `parse` — Get AST as JSON
@@ -2362,6 +2558,8 @@ functions:
 - `list_ecosystem` — ALL available plugins (installed or not)
 - `get_plugin_examples` — Read plugin example files
 - `get_stack_recommendation` — Recommended plugin stack for a project type
+- `report_error` — Report a likely compiler bug
+- `check_reported_fixes` — Check if your reported bugs are fixed
 
 ## Workflow
 1. Call `get_quick_reference` (this tool) to learn base syntax
@@ -2391,8 +2589,147 @@ Call `list_plugins` to see what each plugin provides:
             "success": true,
             "quick_reference": quick_ref,
             "version": crate::VERSION,
-            "tools_available": 17,
+            "tools_available": 18,
             "tip": "Use 'check' for fast iteration, 'compile' when ready for WASM. Use 'report_error' to report compiler bugs, 'check_reported_fixes' to see if your reported bugs have been fixed."
+        }),
+    )
+}
+
+/// Tool: get_architecture - Return platform architecture, execution layers, host bridge summary
+fn tool_get_architecture(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    let section = args
+        .get("section")
+        .and_then(|v| v.as_str())
+        .unwrap_or("all");
+
+    let layers_content = r#"## Execution Layers
+
+| Layer | Component | Responsibility |
+|-------|-----------|----------------|
+| Layer 0 | Compiler | Parse, analyze, generate WASM imports (NOT implementations) |
+| Layer 1 | WASM Runtime | Pure computation (math intrinsics, memory ops) |
+| Layer 2 | Host Bridge | Portable I/O (console, file, HTTP client, DB, crypto) |
+| Layer 3 | Server Extensions | Server-only (HTTP routing, request context, sessions) |
+| Layer 4 | Plugins | Custom bridge functions via plugin.toml |
+| Layer 5 | Framework/Apps | High-level abstractions |
+
+**Rule:** If a function needs external I/O, it belongs in Layer 2+, NOT in the compiler.
+
+### Compiler Registry (Layer 0 — what belongs here)
+- Language built-ins: print, printl, input
+- Math operations: math.abs, math.sqrt, math.pow, math.sin, math.cos
+- Type conversions: toString, toInteger, toNumber
+- Namespaces: math.*, string.*, list.*, json.*
+- Pure WASM operations
+
+### What does NOT belong in the compiler
+- HTTP routing → Layer 3 / frame.httpserver plugin
+- Database queries → Layer 2 / frame.data plugin
+- File I/O → Layer 2 host bridge
+- Session management → Layer 3 / frame.auth plugin
+- DOM manipulation → Layer 4 / frame.ui plugin
+- Canvas drawing → Layer 4 / frame.canvas plugin
+"#;
+
+    let bridge_content = r#"## Host Bridge Function Categories (Layer 2)
+
+### Console I/O
+- `print(ptr, len)` — Print string without newline
+- `printl(ptr, len)` — Print string with newline
+- `print_integer(value: i64)` — Print integer
+- `print_float(value: f64)` — Print float
+- `print_boolean(value: i32)` — Print "true" or "false"
+- `input(prompt_ptr, prompt_len) -> i32` — Read line from user
+- `input_integer(prompt_ptr, prompt_len) -> i64` — Read and parse integer
+- `input_float(prompt_ptr, prompt_len) -> f64` — Read and parse float
+- `input_yesno(prompt_ptr, prompt_len) -> i32` — Read yes/no as boolean
+
+### Math (30+ functions)
+- All math functions use f64: `math_sin`, `math_cos`, `math_tan`, `math_sqrt`, `math_pow`
+- Available as both dot notation (`math.sqrt`) and underscore form (`math_sqrt`)
+- Signature conventions: `(x: f64) -> f64` for unary, `(a: f64, b: f64) -> f64` for binary
+
+### String Operations (25+ functions)
+- String parameters always passed as `(ptr: i32, len: i32)` pairs
+- String returns are i32 pointers to length-prefixed data
+- Functions: concat, substring, length, toUpperCase, toLowerCase, trim, split, replace, etc.
+- Integer operations use `i64`: `print_integer`, `int_to_string`, `string_to_int`
+
+### File I/O
+- `file_read(path_ptr, path_len) -> i32` — Read file to string
+- `file_write(path_ptr, path_len, data_ptr, data_len)` — Write string to file
+- `file_exists(path_ptr, path_len) -> i32` — Check file existence
+- `file_delete(path_ptr, path_len)` — Delete file
+
+### HTTP Client
+- `http_get(url_ptr, url_len) -> i32` — HTTP GET request
+- `http_post(url_ptr, url_len, body_ptr, body_len) -> i32` — HTTP POST request
+- `http_put`, `http_delete`, `http_patch` — Other HTTP methods
+
+### Crypto
+- `crypto_hash(data_ptr, data_len) -> i32` — Hash data (SHA-256)
+- `crypto_random_bytes(len: i32) -> i32` — Generate random bytes
+- `crypto_uuid() -> i32` — Generate UUID
+
+### JSON
+- `json_parse(ptr, len) -> i32` — Parse JSON string to internal representation
+- `json_stringify(ptr, len) -> i32` — Serialize to JSON string
+
+### WAT Spec Compliance
+- String parameters: `(ptr: i32, len: i32)` pairs
+- Integer values: `i64` for print_integer, int_to_string, string_to_int
+- Reference: clean-server/host-bridge/tests/spec_compliance.wat
+"#;
+
+    let memory_content = r#"## WASM Memory Model
+
+### Linear Memory Layout
+```
+[0 ...... 64KB]        Reserved / stack space
+[64KB .. HEAP_START]   Static data (string pool, globals)
+[HEAP_START .. top]    Dynamic heap (bump allocator)
+```
+
+### String Format
+- Strings in WASM memory are length-prefixed: `[4-byte length][UTF-8 bytes]`
+- Host functions receive `(ptr: i32, len: i32)` pairs pointing into WASM linear memory
+- Returned strings from host functions are pointers to length-prefixed data in WASM memory
+
+### Bump Allocator
+- All heap allocations use a simple bump allocator
+- Pointer advances forward on each allocation
+- No garbage collection — WASM module lifetime manages memory
+- The runtime provides `_mem_alloc(size: i32) -> i32` for dynamic allocation
+
+### Imported vs Exported Memory
+- WASM module imports memory from the host: `(import "env" "memory" (memory 1))`
+- Host bridge functions read/write into this shared memory space
+- This enables zero-copy string passing between WASM and host
+
+### Important for Plugin Authors
+- Plugin bridge functions receive string pointers into WASM memory
+- Read strings from WASM memory using the shared memory view
+- Write response strings back using `_mem_alloc` then writing into memory
+- Never hold references to WASM memory across async boundaries
+"#;
+
+    let content = match section {
+        "layers" => layers_content.to_string(),
+        "bridge" => bridge_content.to_string(),
+        "memory" => memory_content.to_string(),
+        _ => format!(
+            "{}\n\n{}\n\n{}",
+            layers_content, bridge_content, memory_content
+        ),
+    };
+
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": true,
+            "section": section,
+            "architecture": content,
+            "tip": "Use 'layers' for execution layer placement rules, 'bridge' for host function signatures, 'memory' for WASM memory layout details."
         }),
     )
 }
