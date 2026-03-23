@@ -8,6 +8,8 @@
 
 use super::{FrameworkBlock, PluginError, PluginRegistry};
 use crate::ast::{Class, ExternalFunction, Function, Program, Statement};
+use crate::error::CompilerError;
+use crate::plugins::enforcement::validate_plugin_permissions;
 
 /// AST expander that transforms framework blocks into Clean Language code
 pub struct PluginExpander<'a> {
@@ -21,6 +23,8 @@ pub struct PluginExpander<'a> {
     pending_functions: Vec<Function>,
     /// Pending external functions from plugin expansion
     pending_externals: Vec<ExternalFunction>,
+    /// Permission violations collected during expansion (non-fatal; reported as errors)
+    permission_errors: Vec<CompilerError>,
 }
 
 impl<'a> PluginExpander<'a> {
@@ -33,6 +37,7 @@ impl<'a> PluginExpander<'a> {
             pending_start: None,
             pending_functions: Vec::new(),
             pending_externals: Vec::new(),
+            permission_errors: Vec::new(),
         }
     }
 
@@ -116,6 +121,29 @@ impl<'a> PluginExpander<'a> {
                         let expansion = self.registry.expand_full(&block)?;
                         self.blocks_expanded += 1;
                         self.statements_generated += expansion.statements.len();
+
+                        // Validate that the expanded code only calls bridge functions
+                        // that the plugin declared in its [bridge] section.
+                        if let Some(plugin_name) = self
+                            .registry
+                            .get_handler(&name)
+                            .map(|h| h.name().to_string())
+                        {
+                            let violations = validate_plugin_permissions(
+                                self.registry,
+                                &plugin_name,
+                                &expansion.statements,
+                            );
+                            if !violations.is_empty() {
+                                tracing::warn!(
+                                    plugin = %plugin_name,
+                                    block = %name,
+                                    violation_count = violations.len(),
+                                    "Plugin permission violations detected in expanded code"
+                                );
+                                self.permission_errors.extend(violations);
+                            }
+                        }
 
                         // Capture start function if plugin generated one
                         if let Some(start_fn) = expansion.start_function {
@@ -387,6 +415,16 @@ impl<'a> PluginExpander<'a> {
     /// Get the number of statements generated
     pub fn statements_generated(&self) -> usize {
         self.statements_generated
+    }
+
+    /// Take ownership of any permission violation errors collected during expansion.
+    ///
+    /// Callers should check this after `expand_program` returns and incorporate
+    /// the errors into the compilation diagnostics.  Errors are non-fatal with
+    /// respect to expansion itself (expansion still succeeds), but the caller
+    /// can choose to fail compilation on any violation.
+    pub fn take_permission_errors(&mut self) -> Vec<CompilerError> {
+        std::mem::take(&mut self.permission_errors)
     }
 }
 

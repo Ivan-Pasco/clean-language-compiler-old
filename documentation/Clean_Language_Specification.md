@@ -3458,17 +3458,8 @@ functions:
         return _crypto_verify_password(hash1, hash2)
 
 tests:
-    test "authenticate valid user"
-        result = authenticateUser("john", "SecurePass123")
-        assert result == true
-
-    test "reject invalid password"
-        result = authenticateUser("john", "WrongPass")
-        assert result == false
-
-    test "reject empty username"
-        result = authenticateUser("", "SecurePass123")
-        // Should fail require check
+    "authenticate valid user": authenticateUser("john", "SecurePass123") = true
+    "reject invalid password": authenticateUser("john", "WrongPass") = false
 ```
 
 ### Use Cases

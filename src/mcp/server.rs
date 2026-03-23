@@ -1650,6 +1650,7 @@ fn tool_list_ecosystem(id: serde_json::Value, args: &serde_json::Value) -> JsonR
             "status": entry.status,
             "auto_detect_paths": entry.auto_detect_paths,
             "replaces": entry.replaces,
+            "permissions": entry.permissions,
         }));
     }
 
@@ -1687,6 +1688,9 @@ struct EcosystemPlugin {
     status: &'static str,
     auto_detect_paths: &'static [&'static str],
     replaces: &'static str,
+    /// Bridge function names this plugin declares in its [bridge] section.
+    /// These are the only functions the plugin is permitted to call at runtime.
+    permissions: &'static [&'static str],
 }
 
 /// ECOSYSTEM CATALOG — Add new plugins here
@@ -1717,6 +1721,12 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
             status: "stable",
             auto_detect_paths: &["/api/", "/backend/api/", "/server/api/", "/endpoints/"],
             replaces: "Express.js, Fastify, Koa, or any Node.js HTTP framework. Use frame.httpserver for all server-side HTTP handling.",
+            permissions: &[
+                "_http_route", "_http_get_param", "_http_get_query", "_http_get_header",
+                "_http_get_body", "_http_get_cookie", "_http_set_cookie", "_http_respond_json",
+                "_http_respond_html", "_http_respond_redirect", "_http_respond_error",
+                "_http_set_header", "_http_set_cache", "_http_require_auth",
+            ],
         },
         EcosystemPlugin {
             name: "frame.data",
@@ -1737,6 +1747,7 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
             status: "stable",
             auto_detect_paths: &["/data/", "/models/", "/server/models/"],
             replaces: "Sequelize, Prisma, Knex, or any JS/TS ORM. Use frame.data for all database operations.",
+            permissions: &["_db_query", "_db_execute"],
         },
         EcosystemPlugin {
             name: "frame.auth",
@@ -1759,6 +1770,15 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
             status: "stable",
             auto_detect_paths: &["/auth/", "/config/auth/"],
             replaces: "Passport.js, Auth0 SDK, or any JS authentication library. Use frame.auth for all authentication and authorization.",
+            permissions: &[
+                "_session_store", "_session_get", "_session_delete",
+                "_jwt_sign", "_jwt_verify", "_jwt_decode",
+                "_crypto_hash_password", "_crypto_verify_password",
+                "_csrf_token_generate", "_csrf_token_verify",
+                "_auth_check_role", "_auth_check_permission",
+                "_cookie_set", "_cookie_get", "_cookie_delete",
+                "_env_get",
+            ],
         },
         EcosystemPlugin {
             name: "frame.ui",
@@ -1781,6 +1801,11 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
             status: "stable",
             auto_detect_paths: &["/ui/", "/components/", "/screens/"],
             replaces: "JavaScript DOM manipulation, jQuery, vanilla JS event handlers, JS form validation, JS state management. Use frame.ui instead of writing any .js files for client-side interactivity.",
+            permissions: &[
+                "_ui_render", "_ui_hydrate", "_ui_bind", "_ui_emit_event",
+                "_ui_get_state", "_ui_set_state",
+                "_dom_get_element", "_dom_set_attribute", "_dom_add_class", "_dom_remove_class",
+            ],
         },
         EcosystemPlugin {
             name: "frame.canvas",
@@ -1806,6 +1831,23 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
             status: "stable",
             auto_detect_paths: &["/canvas/"],
             replaces: "JavaScript Canvas API, JS game libraries (Phaser, PixiJS). Use frame.canvas instead of writing JS for any canvas/graphics work.",
+            permissions: &[
+                "_canvas_clear", "_canvas_fill_rect", "_canvas_stroke_rect",
+                "_canvas_fill_circle", "_canvas_stroke_circle",
+                "_canvas_fill_text", "_canvas_draw_image",
+                "_canvas_translate", "_canvas_rotate", "_canvas_scale",
+                "_canvas_save", "_canvas_restore",
+                "_canvas_set_fill_color", "_canvas_set_stroke_color", "_canvas_set_line_width",
+                "_canvas_request_frame", "_canvas_get_time",
+                "_audio_play", "_audio_stop", "_audio_set_volume",
+                "_input_mouse_x", "_input_mouse_y", "_input_mouse_button",
+                "_input_key_pressed", "_input_key_held",
+                "_sprite_draw", "_sprite_set_frame",
+                "_collision_check_rect", "_collision_check_circle",
+                "_collision_raycast",
+                "_camera_set_position", "_camera_set_zoom",
+                "_scene_push", "_scene_pop",
+            ],
         },
     ]
 }

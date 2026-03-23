@@ -133,6 +133,10 @@ pub struct CodeGenerator {
 
     // Binaryen optimizer for WebAssembly optimization
     binaryen_optimizer: Option<BinaryenOptimizer>,
+
+    // Serialised plugin registrations to embed in the WASM custom section.
+    // Set via `set_plugin_registrations` before calling `generate`.
+    plugin_registrations: Option<crate::plugins::PluginRegistrations>,
 }
 
 impl Default for CodeGenerator {
@@ -229,7 +233,18 @@ impl CodeGenerator {
             stdlib_generator: StdlibGenerator::new(),
             type_converter: TypeConverter::new(),
             binaryen_optimizer: None, // Will be configured based on optimization level
+            plugin_registrations: None,
         }
+    }
+
+    /// Attach plugin lifecycle registrations so they are embedded as a custom
+    /// section in the generated WASM binary.
+    ///
+    /// Call this before invoking `generate` / `assemble_module`.  The section
+    /// is only written when there is at least one non-empty registration list,
+    /// so calling this with an all-default `PluginRegistrations` is a no-op.
+    pub fn set_plugin_registrations(&mut self, registrations: crate::plugins::PluginRegistrations) {
+        self.plugin_registrations = Some(registrations);
     }
 
     /// Enable production-level optimization using Binaryen
@@ -381,37 +396,77 @@ impl CodeGenerator {
         )?;
 
         // Apply Binaryen optimization if configured
-        if let Some(ref optimizer) = self.binaryen_optimizer {
+        let mut wasm = if let Some(ref optimizer) = self.binaryen_optimizer {
             // Check if wasm-opt is available before attempting optimization
             if !BinaryenOptimizer::is_available() {
                 log::info!("Binaryen wasm-opt not available. Consider installing Binaryen for optimization.");
                 log::info!("Install instructions: https://github.com/WebAssembly/binaryen");
-                return Ok(base_wasm);
-            }
-
-            match optimizer.optimize(&base_wasm) {
-                Ok((optimized_wasm, stats)) => {
-                    // Log optimization results
-                    log::info!("Binaryen optimization completed:");
-                    log::info!("  Original size: {} bytes", stats.original_size);
-                    log::info!("  Optimized size: {} bytes", stats.optimized_size);
-                    log::info!("  Size reduction: {:.2}%", stats.size_reduction_percent);
-                    log::info!("  Optimization time: {}ms", stats.optimization_time_ms);
-
-                    Ok(optimized_wasm)
-                }
-                Err(e) => {
-                    // Log optimization failure but continue with unoptimized WASM
-                    log::warn!(
-                        "Binaryen optimization failed: {}, using unoptimized WASM",
-                        e
-                    );
-                    Ok(base_wasm)
+                base_wasm
+            } else {
+                match optimizer.optimize(&base_wasm) {
+                    Ok((optimized_wasm, stats)) => {
+                        log::info!("Binaryen optimization completed:");
+                        log::info!("  Original size: {} bytes", stats.original_size);
+                        log::info!("  Optimized size: {} bytes", stats.optimized_size);
+                        log::info!("  Size reduction: {:.2}%", stats.size_reduction_percent);
+                        log::info!("  Optimization time: {}ms", stats.optimization_time_ms);
+                        optimized_wasm
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Binaryen optimization failed: {}, using unoptimized WASM",
+                            e
+                        );
+                        base_wasm
+                    }
                 }
             }
         } else {
-            Ok(base_wasm)
+            base_wasm
+        };
+
+        // Append a `clean_plugin_registrations` custom section when there are
+        // lifecycle registrations to embed.  Custom sections are ignored by all
+        // WASM runtimes (they never affect execution) but can be read by tools
+        // and frameworks that need to know which lifecycle hooks are active.
+        if let Some(ref registrations) = self.plugin_registrations {
+            let has_any = !registrations.server.is_empty()
+                || !registrations.cli.is_empty()
+                || !registrations.data.is_empty()
+                || !registrations.build.is_empty();
+
+            if has_any {
+                match serde_json::to_vec(registrations) {
+                    Ok(json_bytes) => {
+                        // Encode the custom section using wasm_encoder and append
+                        // the raw bytes to the assembled module.
+                        let custom = wasm_encoder::CustomSection {
+                            name: std::borrow::Cow::Borrowed("clean_plugin_registrations"),
+                            data: std::borrow::Cow::Borrowed(&json_bytes),
+                        };
+                        use wasm_encoder::Encode;
+                        // Section ID 0 (custom) must be written first, then the
+                        // encoded payload produced by CustomSection::encode().
+                        let mut section_bytes: Vec<u8> = Vec::new();
+                        section_bytes.push(0u8); // custom section ID
+                        custom.encode(&mut section_bytes);
+                        wasm.extend_from_slice(&section_bytes);
+                        log::debug!(
+                            "Embedded clean_plugin_registrations custom section ({} bytes)",
+                            json_bytes.len()
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to serialise plugin registrations for WASM custom section: {}",
+                            e
+                        );
+                    }
+                }
+            }
         }
+
+        Ok(wasm)
     }
 
     fn add_function_type(

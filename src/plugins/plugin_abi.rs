@@ -81,6 +81,26 @@ pub struct PluginExports {
     pub get_hover_info: Option<String>,
     #[serde(default)]
     pub get_diagnostics: Option<String>,
+    /// WASM export name for the server lifecycle hook.
+    /// The function signature is `() -> i32` where the returned pointer is a
+    /// length-prefixed JSON string containing a serialized `ServerRegistration`.
+    #[serde(default)]
+    pub register_server: Option<String>,
+    /// WASM export name for the CLI lifecycle hook.
+    /// The function signature is `() -> i32` where the returned pointer is a
+    /// length-prefixed JSON string containing a serialized `CliRegistration`.
+    #[serde(default)]
+    pub register_cli: Option<String>,
+    /// WASM export name for the data lifecycle hook.
+    /// The function signature is `() -> i32` where the returned pointer is a
+    /// length-prefixed JSON string containing a serialized `DataRegistration`.
+    #[serde(default)]
+    pub register_data: Option<String>,
+    /// WASM export name for the build lifecycle hook.
+    /// The function signature is `() -> i32` where the returned pointer is a
+    /// length-prefixed JSON string containing a serialized `BuildRegistration`.
+    #[serde(default)]
+    pub register_build: Option<String>,
 }
 
 impl Default for PluginExports {
@@ -92,8 +112,95 @@ impl Default for PluginExports {
             get_completions: None,
             get_hover_info: None,
             get_diagnostics: None,
+            register_server: None,
+            register_cli: None,
+            register_data: None,
+            register_build: None,
         }
     }
+}
+
+// ============================================================================
+// Plugin Lifecycle Registration Structs
+// ============================================================================
+
+/// Server registration returned by the `register_server` lifecycle hook.
+///
+/// Plugins that provide HTTP server middleware, startup logic, or shutdown
+/// cleanup should return this struct (serialised as JSON) from their
+/// `register_server` WASM export.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServerRegistration {
+    /// Middleware function names to install on every request.
+    #[serde(default)]
+    pub middleware: Vec<String>,
+    /// Optional startup hook function name called once before the server
+    /// begins accepting connections.
+    #[serde(default)]
+    pub startup: Option<String>,
+    /// Optional shutdown hook function name called once after the server
+    /// stops accepting connections.
+    #[serde(default)]
+    pub shutdown: Option<String>,
+}
+
+/// CLI registration returned by the `register_cli` lifecycle hook.
+///
+/// Plugins that expose custom command-line commands should return this struct
+/// (serialised as JSON) from their `register_cli` WASM export.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CliRegistration {
+    /// Commands provided by this plugin.
+    #[serde(default)]
+    pub commands: Vec<CliCommand>,
+}
+
+/// A single CLI command provided by a plugin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CliCommand {
+    /// The command name as it appears on the CLI (e.g., `"db:migrate"`).
+    pub name: String,
+    /// Human-readable description shown in `--help` output.
+    pub description: String,
+    /// WASM function name that handles this command.
+    pub handler: String,
+}
+
+/// Data registration returned by the `register_data` lifecycle hook.
+///
+/// Plugins that contribute custom data types, validators, or query extensions
+/// should return this struct (serialised as JSON) from their `register_data`
+/// WASM export.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DataRegistration {
+    /// Custom data type names contributed by this plugin.
+    #[serde(default)]
+    pub types: Vec<String>,
+    /// Validator function names registered by this plugin.
+    #[serde(default)]
+    pub validators: Vec<String>,
+    /// Query extension names registered by this plugin (e.g., custom SQL
+    /// dialect extensions or ORM helpers).
+    #[serde(default)]
+    pub query_extensions: Vec<String>,
+}
+
+/// Build registration returned by the `register_build` lifecycle hook.
+///
+/// Plugins that hook into the build pipeline — e.g., to process assets,
+/// run code generators, or perform post-build packaging — should return this
+/// struct (serialised as JSON) from their `register_build` WASM export.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BuildRegistration {
+    /// Pre-build hook function names called before compilation starts.
+    #[serde(default)]
+    pub pre_build: Vec<String>,
+    /// Post-build hook function names called after compilation finishes.
+    #[serde(default)]
+    pub post_build: Vec<String>,
+    /// Asset processor function names that transform or copy static assets.
+    #[serde(default)]
+    pub asset_processors: Vec<String>,
 }
 
 fn default_expand() -> String {
@@ -414,6 +521,10 @@ impl PluginAbi {
         "get_completions", // (ctx_ptr: i32, ctx_len: i32) -> completions_ptr: i32
         "get_hover_info",  // (keyword_ptr: i32, keyword_len: i32) -> info_ptr: i32
         "get_diagnostics", // (content_ptr: i32, content_len: i32) -> diags_ptr: i32
+        "register_server", // () -> json_ptr: i32  (ServerRegistration JSON)
+        "register_cli",    // () -> json_ptr: i32  (CliRegistration JSON)
+        "register_data",   // () -> json_ptr: i32  (DataRegistration JSON)
+        "register_build",  // () -> json_ptr: i32  (BuildRegistration JSON)
     ];
 
     /// Validate that a module exports required functions

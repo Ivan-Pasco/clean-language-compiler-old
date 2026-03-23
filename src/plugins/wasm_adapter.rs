@@ -4,6 +4,7 @@
 //! Provides full Clean Language runtime environment for plugin execution
 
 use anyhow::{anyhow, Result};
+use serde::de::DeserializeOwned;
 use wasmtime::{Caller, Engine, Linker, Memory, Module, Store, TypedFunc};
 
 use crate::ast::{FrameworkBlock, Statement};
@@ -2747,6 +2748,152 @@ impl WasmPluginAdapter {
         }
 
         Ok(data[data_start..data_end].to_vec())
+    }
+
+    /// Call a no-argument lifecycle hook that returns a length-prefixed JSON
+    /// string pointer and deserialise it into `T`.
+    ///
+    /// This is the common pattern shared by all four lifecycle hooks:
+    /// `register_server`, `register_cli`, `register_data`, `register_build`.
+    fn call_lifecycle_hook<T>(&self, export_name: &str) -> Result<T>
+    where
+        T: DeserializeOwned + Default,
+    {
+        let mut store = self.create_store();
+        let linker = self.setup_linker()?;
+
+        let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
+            anyhow!(
+                "Failed to instantiate plugin module for lifecycle hook: {}",
+                e
+            )
+        })?;
+
+        let memory = instance
+            .get_memory(&mut store, "memory")
+            .ok_or_else(|| anyhow!("Plugin does not export memory"))?;
+
+        let hook: TypedFunc<(), i32> =
+            instance
+                .get_typed_func(&mut store, export_name)
+                .map_err(|e| {
+                    anyhow!(
+                        "Plugin does not export lifecycle hook '{}': {}",
+                        export_name,
+                        e
+                    )
+                })?;
+
+        let result_ptr = hook.call(&mut store, ())?;
+
+        if let Some(error) = store.data().last_error.clone() {
+            return Err(anyhow!(
+                "Plugin error in lifecycle hook '{}': {}",
+                export_name,
+                error
+            ));
+        }
+
+        let result_bytes = self.read_result(&store, &memory, result_ptr)?;
+
+        // Empty result → use the Default value so callers never see an error
+        // for hooks that return an empty JSON document or a zero-length string.
+        if result_bytes.is_empty() {
+            return Ok(T::default());
+        }
+
+        let json_str = std::str::from_utf8(&result_bytes).map_err(|e| {
+            anyhow!(
+                "Non-UTF-8 response from lifecycle hook '{}': {}",
+                export_name,
+                e
+            )
+        })?;
+
+        serde_json::from_str(json_str).map_err(|e| {
+            anyhow!(
+                "Failed to parse JSON response from lifecycle hook '{}': {} — raw: {}",
+                export_name,
+                e,
+                &json_str[..json_str.len().min(256)]
+            )
+        })
+    }
+
+    /// Call the `register_server` lifecycle hook and return the parsed
+    /// `ServerRegistration`.  Returns `None` if the plugin does not declare
+    /// this hook in its manifest.
+    pub fn call_register_server(&self) -> Option<super::plugin_abi::ServerRegistration> {
+        let export_name = self.manifest.exports.register_server.as_ref()?;
+        match self.call_lifecycle_hook::<super::plugin_abi::ServerRegistration>(export_name) {
+            Ok(reg) => Some(reg),
+            Err(e) => {
+                tracing::warn!(
+                    plugin = %self.name,
+                    export = %export_name,
+                    error = %e,
+                    "register_server lifecycle hook failed"
+                );
+                None
+            }
+        }
+    }
+
+    /// Call the `register_cli` lifecycle hook and return the parsed
+    /// `CliRegistration`.  Returns `None` if the plugin does not declare this
+    /// hook in its manifest.
+    pub fn call_register_cli(&self) -> Option<super::plugin_abi::CliRegistration> {
+        let export_name = self.manifest.exports.register_cli.as_ref()?;
+        match self.call_lifecycle_hook::<super::plugin_abi::CliRegistration>(export_name) {
+            Ok(reg) => Some(reg),
+            Err(e) => {
+                tracing::warn!(
+                    plugin = %self.name,
+                    export = %export_name,
+                    error = %e,
+                    "register_cli lifecycle hook failed"
+                );
+                None
+            }
+        }
+    }
+
+    /// Call the `register_data` lifecycle hook and return the parsed
+    /// `DataRegistration`.  Returns `None` if the plugin does not declare this
+    /// hook in its manifest.
+    pub fn call_register_data(&self) -> Option<super::plugin_abi::DataRegistration> {
+        let export_name = self.manifest.exports.register_data.as_ref()?;
+        match self.call_lifecycle_hook::<super::plugin_abi::DataRegistration>(export_name) {
+            Ok(reg) => Some(reg),
+            Err(e) => {
+                tracing::warn!(
+                    plugin = %self.name,
+                    export = %export_name,
+                    error = %e,
+                    "register_data lifecycle hook failed"
+                );
+                None
+            }
+        }
+    }
+
+    /// Call the `register_build` lifecycle hook and return the parsed
+    /// `BuildRegistration`.  Returns `None` if the plugin does not declare
+    /// this hook in its manifest.
+    pub fn call_register_build(&self) -> Option<super::plugin_abi::BuildRegistration> {
+        let export_name = self.manifest.exports.register_build.as_ref()?;
+        match self.call_lifecycle_hook::<super::plugin_abi::BuildRegistration>(export_name) {
+            Ok(reg) => Some(reg),
+            Err(e) => {
+                tracing::warn!(
+                    plugin = %self.name,
+                    export = %export_name,
+                    error = %e,
+                    "register_build lifecycle hook failed"
+                );
+                None
+            }
+        }
     }
 }
 

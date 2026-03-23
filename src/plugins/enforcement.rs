@@ -4,9 +4,12 @@
 //! - Restricted functions (raw bridge calls that should use DSL blocks instead)
 //! - Required blocks (blocks that must exist in files under certain folders)
 //! - Block folder rules (blocks that should only appear in specific folders)
+//! - Permission enforcement (plugins may only call bridge functions they declared)
 
 use crate::ast::{Expression, Program, Statement};
+use crate::error::CompilerError;
 use crate::plugins::plugin_abi::PluginEnforcement;
+use crate::plugins::PluginRegistry;
 
 /// Result of running enforcement checks
 pub struct EnforcementResult {
@@ -228,6 +231,76 @@ fn collect_call_names_from_statement(stmt: &Statement, names: &mut Vec<String>) 
         }
         _ => {}
     }
+}
+
+// ============================================================================
+// Permission Enforcement
+// ============================================================================
+
+/// Validate that plugin-expanded code only calls bridge functions the plugin
+/// has declared in its `[bridge]` section.
+///
+/// Bridge functions are identified by names that start with `_` (the conventional
+/// prefix used throughout the Clean Language runtime bridge).
+///
+/// # Arguments
+/// * `registry`             - The plugin registry that owns permission allowlists.
+/// * `plugin_name`          - The name of the plugin whose expanded code is being checked.
+/// * `expanded_statements`  - The AST statements produced by the plugin's expansion.
+///
+/// # Returns
+/// A (possibly empty) list of `CompilerError::Validation` errors.  Callers should
+/// collect these and emit them as compilation diagnostics rather than aborting
+/// immediately, so that all violations are reported in one pass.
+pub fn validate_plugin_permissions(
+    registry: &PluginRegistry,
+    plugin_name: &str,
+    expanded_statements: &[Statement],
+) -> Vec<CompilerError> {
+    // Get the plugin's allowed bridge functions. If no manifest, the plugin has zero permissions.
+    let empty = std::collections::HashSet::new();
+    let allowed = registry
+        .plugin_allowed_functions(plugin_name)
+        .unwrap_or(&empty);
+
+    let mut call_names: Vec<String> = Vec::new();
+    collect_call_names_from_statements(expanded_statements, &mut call_names);
+
+    let mut errors: Vec<CompilerError> = Vec::new();
+
+    // Deduplicate before reporting so that a repeated call only produces one error.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for name in call_names {
+        // Only check names that look like bridge functions (leading underscore).
+        if !name.starts_with('_') {
+            continue;
+        }
+
+        if !allowed.contains(&name) && seen.insert(name.clone()) {
+            // Determine whether another plugin owns this function (cross-plugin call).
+            let owner_hint = match registry.bridge_function_owner(&name) {
+                Some(owner) if owner != plugin_name => format!(
+                    " (function is declared by plugin '{}' — add it as a dependency or request cross-plugin access)",
+                    owner
+                ),
+                _ => String::new(),
+            };
+
+            let message = format!(
+                "Security: Plugin '{}' calls '{}' which is not in its [bridge] functions.{} \
+                 Add it to {}/plugin.toml [bridge] section or remove the call.",
+                plugin_name, name, owner_hint, plugin_name
+            );
+
+            errors.push(CompilerError::PluginError {
+                message,
+                location: None,
+            });
+        }
+    }
+
+    errors
 }
 
 /// Collect function call names from an expression

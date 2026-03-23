@@ -2,7 +2,7 @@
  * Plugin Registry - Manages framework plugin registration and dispatch
  */
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -11,7 +11,10 @@ use super::{
     PluginLspContext,
 };
 use crate::ast::{SourceLocation, Statement};
-use crate::plugins::plugin_abi::BridgeFunction;
+use crate::plugins::plugin_abi::{
+    BridgeFunction, BuildRegistration, CliRegistration, DataRegistration, PluginManifest,
+    ServerRegistration,
+};
 
 /// Error type for plugin operations
 #[derive(Debug, Clone)]
@@ -122,6 +125,23 @@ impl fmt::Display for PluginError {
 
 impl std::error::Error for PluginError {}
 
+/// Aggregated lifecycle registrations collected from all loaded plugins.
+///
+/// Each entry is a `(plugin_name, registration)` pair so that callers can
+/// attribute registrations back to the originating plugin for diagnostics
+/// and ordering.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PluginRegistrations {
+    /// Server lifecycle registrations — middleware, startup, and shutdown hooks.
+    pub server: Vec<(String, ServerRegistration)>,
+    /// CLI lifecycle registrations — custom command-line commands.
+    pub cli: Vec<(String, CliRegistration)>,
+    /// Data lifecycle registrations — custom types, validators, and query extensions.
+    pub data: Vec<(String, DataRegistration)>,
+    /// Build lifecycle registrations — pre/post-build hooks and asset processors.
+    pub build: Vec<(String, BuildRegistration)>,
+}
+
 /// Registry for framework plugins
 ///
 /// Maintains a mapping from block identifiers to plugin handlers.
@@ -150,7 +170,17 @@ pub struct PluginRegistry {
     /// These are functions that plugins expect the runtime to provide (e.g., _db_query)
     bridge_functions: Vec<BridgeFunction>,
     /// Full plugin manifests for enforcement rules and path detection
-    manifests: HashMap<String, crate::plugins::plugin_abi::PluginManifest>,
+    manifests: HashMap<String, PluginManifest>,
+    /// Lifecycle registrations collected from all loaded plugins
+    registrations: PluginRegistrations,
+    /// Plugin name → set of bridge function names that plugin is allowed to call.
+    ///
+    /// Populated from each plugin's `[bridge] functions` declarations.  A plugin
+    /// that declares no bridge functions will have an empty set here, meaning it
+    /// may not call any bridge function.  Plugins that were registered via the
+    /// deprecated mutable API (which lacks manifest information) are absent from
+    /// this map and are therefore exempt from permission checking.
+    plugin_permissions: HashMap<String, HashSet<String>>,
 }
 
 impl Default for PluginRegistry {
@@ -163,16 +193,15 @@ impl Default for PluginRegistry {
 
 impl PluginRegistry {
     /// Create a new empty plugin registry
-    ///
-    /// **Deprecated**: Use `PluginRegistry::builder()` instead.
-    /// This method is kept for backward compatibility.
-    #[deprecated(since = "0.13.1", note = "Use PluginRegistry::builder() instead")]
+    #[deprecated(note = "Use PluginRegistry::builder() instead")]
     pub fn new() -> Self {
         Self {
             handlers: HashMap::new(),
             registered_plugins: Vec::new(),
             bridge_functions: Vec::new(),
             manifests: HashMap::new(),
+            registrations: PluginRegistrations::default(),
+            plugin_permissions: HashMap::new(),
         }
     }
 
@@ -194,7 +223,6 @@ impl PluginRegistry {
     /// Register a plugin with the registry
     ///
     /// **Deprecated**: Use the builder pattern instead.
-    /// This method is kept for backward compatibility only.
     ///
     /// # Arguments
     /// * `plugin` - The plugin to register
@@ -375,8 +403,65 @@ impl PluginRegistry {
     /// Get all loaded plugin manifests
     ///
     /// Returns the full manifests for enforcement rules, path detection, etc.
-    pub fn loaded_manifests(&self) -> &HashMap<String, crate::plugins::plugin_abi::PluginManifest> {
+    pub fn loaded_manifests(&self) -> &HashMap<String, PluginManifest> {
         &self.manifests
+    }
+
+    /// Get all lifecycle registrations collected from loaded plugins.
+    pub fn registrations(&self) -> &PluginRegistrations {
+        &self.registrations
+    }
+
+    /// Return `true` if any plugin registered server lifecycle hooks.
+    pub fn has_server_registrations(&self) -> bool {
+        !self.registrations.server.is_empty()
+    }
+
+    /// Return `true` if any plugin registered CLI commands.
+    pub fn has_cli_registrations(&self) -> bool {
+        !self.registrations.cli.is_empty()
+    }
+
+    /// Return `true` if any plugin registered build lifecycle hooks.
+    pub fn has_build_registrations(&self) -> bool {
+        !self.registrations.build.is_empty()
+    }
+
+    // ========================================================================
+    // Permission Enforcement Methods
+    // ========================================================================
+
+    /// Check if a plugin is allowed to call a specific bridge function.
+    ///
+    /// Returns `true` only when the function appears in the plugin's `[bridge] functions`.
+    /// Returns `false` if the plugin has no manifest or the function is not declared.
+    pub fn plugin_can_call(&self, plugin_name: &str, function_name: &str) -> bool {
+        match self.plugin_permissions.get(plugin_name) {
+            None => false,
+            Some(allowed) => allowed.contains(function_name),
+        }
+    }
+
+    /// Get the set of bridge function names that a plugin is allowed to call.
+    ///
+    /// Returns `None` when the plugin is not registered, or `Some(&HashSet<String>)`
+    /// with the declared bridge function names.
+    pub fn plugin_allowed_functions(&self, plugin_name: &str) -> Option<&HashSet<String>> {
+        self.plugin_permissions.get(plugin_name)
+    }
+
+    /// Look up which plugin declared ownership of a given bridge function.
+    ///
+    /// Scans all manifests and returns the first plugin name whose `[bridge]`
+    /// section lists a function with the given name.  Returns `None` if no
+    /// manifest claims the function.
+    pub fn bridge_function_owner(&self, function_name: &str) -> Option<&str> {
+        for (plugin_name, allowed) in &self.plugin_permissions {
+            if allowed.contains(function_name) {
+                return Some(plugin_name.as_str());
+            }
+        }
+        None
     }
 
     // ========================================================================
@@ -597,7 +682,10 @@ impl fmt::Debug for PluginRegistry {
 pub struct PluginRegistryBuilder {
     plugins: Vec<Arc<dyn FrameworkPlugin>>,
     bridge_functions: Vec<BridgeFunction>,
-    manifests: HashMap<String, crate::plugins::plugin_abi::PluginManifest>,
+    manifests: HashMap<String, PluginManifest>,
+    registrations: PluginRegistrations,
+    /// Accumulated permission allowlists (plugin name → allowed bridge function names)
+    plugin_permissions: HashMap<String, HashSet<String>>,
 }
 
 impl PluginRegistryBuilder {
@@ -607,6 +695,8 @@ impl PluginRegistryBuilder {
             plugins: Vec::new(),
             bridge_functions: Vec::new(),
             manifests: HashMap::new(),
+            registrations: PluginRegistrations::default(),
+            plugin_permissions: HashMap::new(),
         }
     }
 
@@ -665,7 +755,12 @@ impl PluginRegistryBuilder {
         self
     }
 
-    /// Add a full plugin manifest for enforcement and path detection
+    /// Add a full plugin manifest for enforcement and path detection.
+    ///
+    /// In addition to storing the manifest this also builds the permission
+    /// allowlist for the plugin from its `[bridge] functions` declarations.
+    /// Plugins that declare no bridge functions receive an empty set, which
+    /// means they are not permitted to call any bridge function.
     ///
     /// # Arguments
     /// * `name` - Plugin name
@@ -673,12 +768,126 @@ impl PluginRegistryBuilder {
     ///
     /// # Returns
     /// Self for method chaining
-    pub fn add_manifest(
-        mut self,
-        name: String,
-        manifest: crate::plugins::plugin_abi::PluginManifest,
-    ) -> Self {
+    pub fn add_manifest(mut self, name: String, manifest: PluginManifest) -> Self {
+        // Build the permission allowlist from the manifest's bridge declarations.
+        let allowed: HashSet<String> = manifest
+            .bridge
+            .functions
+            .iter()
+            .map(|f| f.name.clone())
+            .collect();
+        self.plugin_permissions.insert(name.clone(), allowed);
         self.manifests.insert(name, manifest);
+        self
+    }
+
+    /// Inspect a plugin manifest and, for every lifecycle export that is
+    /// declared, record a default registration entry.
+    ///
+    /// The entries are placeholders with default field values.  The actual
+    /// values are populated later by `WasmPluginAdapter` when it calls the
+    /// corresponding WASM export.  This two-phase approach keeps the builder
+    /// ordering-independent: callers may add registrations before or after
+    /// the WASM adapter is loaded.
+    ///
+    /// # Arguments
+    /// * `plugin_name` - The plugin name used as the key in each entry
+    /// * `manifest`    - The parsed `plugin.toml` manifest
+    ///
+    /// # Returns
+    /// Self for method chaining
+    pub fn add_registration(mut self, plugin_name: &str, manifest: &PluginManifest) -> Self {
+        if manifest.exports.register_server.is_some() {
+            self.registrations
+                .server
+                .push((plugin_name.to_string(), ServerRegistration::default()));
+        }
+        if manifest.exports.register_cli.is_some() {
+            self.registrations
+                .cli
+                .push((plugin_name.to_string(), CliRegistration::default()));
+        }
+        if manifest.exports.register_data.is_some() {
+            self.registrations
+                .data
+                .push((plugin_name.to_string(), DataRegistration::default()));
+        }
+        if manifest.exports.register_build.is_some() {
+            self.registrations
+                .build
+                .push((plugin_name.to_string(), BuildRegistration::default()));
+        }
+        self
+    }
+
+    /// Replace the `ServerRegistration` for `plugin_name` with `reg`.
+    ///
+    /// If no entry for `plugin_name` exists (which should not normally happen
+    /// because `add_registration` is called first), the entry is appended.
+    pub fn update_server_registration(
+        mut self,
+        plugin_name: &str,
+        reg: ServerRegistration,
+    ) -> Self {
+        if let Some(entry) = self
+            .registrations
+            .server
+            .iter_mut()
+            .find(|(name, _)| name == plugin_name)
+        {
+            entry.1 = reg;
+        } else {
+            self.registrations
+                .server
+                .push((plugin_name.to_string(), reg));
+        }
+        self
+    }
+
+    /// Replace the `CliRegistration` for `plugin_name` with `reg`.
+    pub fn update_cli_registration(mut self, plugin_name: &str, reg: CliRegistration) -> Self {
+        if let Some(entry) = self
+            .registrations
+            .cli
+            .iter_mut()
+            .find(|(name, _)| name == plugin_name)
+        {
+            entry.1 = reg;
+        } else {
+            self.registrations.cli.push((plugin_name.to_string(), reg));
+        }
+        self
+    }
+
+    /// Replace the `DataRegistration` for `plugin_name` with `reg`.
+    pub fn update_data_registration(mut self, plugin_name: &str, reg: DataRegistration) -> Self {
+        if let Some(entry) = self
+            .registrations
+            .data
+            .iter_mut()
+            .find(|(name, _)| name == plugin_name)
+        {
+            entry.1 = reg;
+        } else {
+            self.registrations.data.push((plugin_name.to_string(), reg));
+        }
+        self
+    }
+
+    /// Replace the `BuildRegistration` for `plugin_name` with `reg`.
+    pub fn update_build_registration(mut self, plugin_name: &str, reg: BuildRegistration) -> Self {
+        if let Some(entry) = self
+            .registrations
+            .build
+            .iter_mut()
+            .find(|(name, _)| name == plugin_name)
+        {
+            entry.1 = reg;
+        } else {
+            self.registrations
+                .build
+                .push((plugin_name.to_string(), reg));
+        }
         self
     }
 
@@ -732,6 +941,8 @@ impl PluginRegistryBuilder {
             registered_plugins,
             bridge_functions: self.bridge_functions,
             manifests: self.manifests,
+            registrations: self.registrations,
+            plugin_permissions: self.plugin_permissions,
         })
     }
 }

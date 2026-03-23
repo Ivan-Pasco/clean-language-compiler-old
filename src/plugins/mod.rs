@@ -93,7 +93,10 @@ pub use plugin_abi::{
     BridgeFunction, PluginAbi, PluginBridge, PluginCompletionDef, PluginFunctionDef, PluginKeyword,
     PluginLanguage, PluginManifest, PluginTypeDef, PLUGIN_ABI_VERSION,
 };
-pub use registry::{PluginError, PluginRegistry, PluginRegistryBuilder};
+pub use plugin_abi::{
+    BuildRegistration, CliCommand, CliRegistration, DataRegistration, ServerRegistration,
+};
+pub use registry::{PluginError, PluginRegistrations, PluginRegistry, PluginRegistryBuilder};
 pub use wasm_adapter::WasmPluginAdapter;
 pub use wasm_loader::WasmPluginLoader;
 
