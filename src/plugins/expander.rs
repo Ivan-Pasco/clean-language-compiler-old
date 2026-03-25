@@ -21,6 +21,8 @@ pub struct PluginExpander<'a> {
     pending_start: Option<Function>,
     /// Pending functions to add to the program
     pending_functions: Vec<Function>,
+    /// Pending class definitions from plugin expansion (e.g., ORM models)
+    pending_classes: Vec<crate::ast::Class>,
     /// Pending external functions from plugin expansion
     pending_externals: Vec<ExternalFunction>,
     /// Permission violations collected during expansion (non-fatal; reported as errors)
@@ -36,6 +38,7 @@ impl<'a> PluginExpander<'a> {
             statements_generated: 0,
             pending_start: None,
             pending_functions: Vec::new(),
+            pending_classes: Vec::new(),
             pending_externals: Vec::new(),
             permission_errors: Vec::new(),
         }
@@ -76,6 +79,9 @@ impl<'a> PluginExpander<'a> {
 
         // Merge pending functions into program
         program.functions.extend(self.pending_functions.drain(..));
+
+        // Merge pending classes into program (e.g., ORM models from frame.data)
+        program.classes.extend(self.pending_classes.drain(..));
 
         // Merge pending externals into program (deduplicate by name)
         for ext in self.pending_externals.drain(..) {
@@ -159,6 +165,9 @@ impl<'a> PluginExpander<'a> {
 
                         // Capture additional functions
                         self.pending_functions.extend(expansion.functions);
+
+                        // Capture class definitions (e.g., ORM models from frame.data)
+                        self.pending_classes.extend(expansion.classes);
 
                         // Capture external functions
                         self.pending_externals.extend(expansion.externals);

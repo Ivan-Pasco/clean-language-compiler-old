@@ -2577,6 +2577,7 @@ impl WasmPluginAdapter {
                     statements: program.statements,
                     start_function: program.start_function,
                     functions: program.functions,
+                    classes: program.classes,
                     externals: program.externals,
                 });
             }
@@ -2617,6 +2618,7 @@ impl WasmPluginAdapter {
             statements: Vec::new(),
             start_function: program.start_function,
             functions: program.functions,
+            classes: program.classes,
             externals: program.externals,
         })
     }
