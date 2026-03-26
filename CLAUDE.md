@@ -10,6 +10,14 @@ Development guidance for the Clean Language compiler.
 
 100% compilation and execution success for all test files in `tests/cln/`. No placeholders, no workarounds, no hidden failures. Fix root causes, not symptoms. Never modify tests to pass — fix the compiler instead.
 
+## MCP Server — Use It First
+
+**CRITICAL: Before writing ANY Clean Language code, call `get_quick_reference` from the clean-language MCP server.** This gives you the correct, up-to-date syntax. Do NOT write Clean code from memory — always verify against the MCP tools.
+
+Available MCP tools: `get_quick_reference`, `check`, `compile`, `parse`, `get_specification`, `list_functions`, `list_types`, `list_builtins`, `list_plugins`, `get_architecture`, `explain_error`
+
+The MCP server is configured in `.mcp.json` at the project root.
+
 ## Language Specification
 
 The **single source of truth** for the Clean Language is:
