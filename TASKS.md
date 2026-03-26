@@ -734,7 +734,51 @@ Per CLAUDE.md mandate:
 
 ---
 
-**Last Updated**: February 21, 2026
-**Current Version**: 0.30.19
-**Status**: PRODUCTION READY - All open issues resolved, 100% test execution, zero TODO comments, zero build warnings
-**Remaining**: No open issues
+**Last Updated**: March 26, 2026
+**Current Version**: 0.30.24
+**Status**: PRODUCTION READY with open enhancement tasks
+
+---
+
+## 🟡 OPEN: Dot-Notation Plugin Functions Not Mapped in Codegen
+
+**Priority**: CRITICAL
+**Discovered**: March 26, 2026
+**Status**: OPEN
+**Report IDs**: 3828addc, e06a5dc6
+
+### Problem
+Plugin TOML files define `[bridge]` functions (underscore WASM imports like `_db_query`) and `[language]` functions (dot-notation public API like `db.query`). Codegen only knows bridge names. All dot-notation calls fail at WASM generation with "Function not found in function map".
+
+### Two Sub-Issues
+1. **Codegen function map**: needs resolution from dot-notation to bridge names (e.g., `db.query` → `_db_query`)
+2. **Type-checker namespace registration**: `req.*`, `db.*`, `ui.*` namespaces not recognized (while `http.*`, `json.*` work)
+
+### Files Affected
+- `src/codegen/mod.rs` — add dot-to-bridge resolution
+- `src/semantic/mod.rs` or `src/typechecker/` — register all plugin namespaces
+- `src/plugins/` — build language-to-bridge mapping from plugin TOML
+
+---
+
+## 🟡 OPEN: Single Quotes in html: Blocks Cause Lexer Error
+
+**Priority**: MEDIUM
+**Discovered**: March 26, 2026
+**Status**: OPEN — workaround: use double quotes
+**Report ID**: b092e4ee
+
+### Problem
+The lexer rejects single-quote characters (apostrophe) inside `html:` blocks. `<div class='test'>` fails with "Lexer error: Invalid character". Double-quoted attributes work fine.
+
+### Root Cause
+The lexer applies standard Clean Language tokenization to html: block content. Clean Language uses double quotes for strings, so single quotes are invalid characters. The lexer needs an HTML-aware mode for html: block content.
+
+### Suggested Fix
+When the lexer enters an `html:` block, switch to HTML-aware mode that:
+1. Passes through all standard HTML characters including single quotes
+2. Only processes `{var}` and `{!var}` interpolation markers
+3. Exits HTML mode when indentation returns to the html: block's level
+
+### Files Affected
+- `src/lexer/` — add html: block lexing mode

@@ -2637,7 +2637,7 @@ For sections with repeating items (cards, lists, grids):
 
 3. Iterate and render:
     string items_html = ""
-    iterate (i = 0 to count)
+    iterate i in 0 to count
         string idx = i.toString()
         string title = json.get(items, idx + ".title")
         string desc = json.get(items, idx + ".description")
