@@ -2563,7 +2563,7 @@ functions:
 
 ## Workflow
 1. Call `get_quick_reference` (this tool) to learn base syntax
-2. Call `get_stack_recommendation` with your project type (web-app, api, game, cli)
+2. Call `get_stack_recommendation` with your project type (web-app, api, game, cli) — includes best practices for web apps
 3. Call `list_ecosystem` to see ALL available plugins in the ecosystem
 4. Call `list_plugins` to see installed plugins with full DSL details
 5. Call `get_plugin_examples` to see plugin usage patterns
@@ -2581,6 +2581,140 @@ Call `list_plugins` to see what each plugin provides:
 - types: Custom types (Model, Endpoint)
 - functions: Plugin functions (Data.tx, Http.route)
 - ai.examples: Example files you can read with `get_plugin_examples`
+
+## Web Application Patterns
+
+### HTML Generation (Server-Side Rendering)
+
+NEVER build HTML via string concatenation:
+    // WRONG — anti-pattern
+    string page = "<html><head><title>" + title + "</title></head><body>" + content + "</body></html>"
+
+ALWAYS use html: blocks from frame.ui:
+    // CORRECT — spec-compliant
+    html:
+        <html>
+        <head><title>{title}</title></head>
+        <body>{!content}</body>
+        </html>
+
+Rules:
+- {var} for escaped text interpolation (safe for user content)
+- {!var} for raw HTML insertion (pre-built HTML fragments from other html: blocks)
+- html: block at the end of a function is the implicit return value
+- For intermediate HTML fragments, use helper functions that each return an html: block
+- Double quotes for HTML attributes inside html: blocks (single quotes cause lexer errors)
+
+### Database Queries — Data Only
+
+NEVER generate HTML inside SQL queries:
+    // WRONG — HTML in SQL
+    string sql = "SELECT CONCAT('<div class=''card''><h3>', title, '</h3></div>') as html FROM ..."
+
+ALWAYS query data and render with html: blocks:
+    // CORRECT — data-only SQL
+    string sql = "SELECT CAST(title AS CHAR) as title, CAST(description AS CHAR) as description FROM ..."
+    string result = db.query(sql, params)
+
+    // Render with html: block
+    html:
+        <div class="card">
+            <h3>{title}</h3>
+            <p>{description}</p>
+        </div>
+
+### Iterating Over Database Results
+
+For sections with repeating items (cards, lists, grids):
+
+1. Query data rows (no HTML):
+    string items_sql = "SELECT title, description FROM ... JSON_TABLE(...) ORDER BY ord"
+    string items = db.query(items_sql, params)
+
+2. Query count:
+    string count_sql = "SELECT CAST(COUNT(*) AS CHAR) as cnt FROM ... JSON_TABLE(...)"
+    integer count = json_get(db.query(count_sql, params), "cnt").toInteger()
+
+3. Iterate and render:
+    string items_html = ""
+    iterate (i = 0 to count)
+        string idx = i.toString()
+        string title = json.get(items, idx + ".title")
+        string desc = json.get(items, idx + ".description")
+        items_html = items_html + render_card(title, desc)
+
+4. Insert into page template:
+    html:
+        <div class="grid">
+            {!items_html}
+        </div>
+
+### Reusable HTML Components
+
+Create small functions with html: blocks for repeated UI patterns:
+
+    string render_card(string title, string description)
+        html:
+            <div class="card">
+                <h3 class="card-title">{title}</h3>
+                <p class="card-description">{description}</p>
+            </div>
+
+Use from page templates:
+    items_html = items_html + render_card(title, desc)
+
+### Page File Structure
+
+Each page should be a separate .cln file in app/pages/:
+
+    app/pages/
+        helpers.cln      — shared HTML helpers (build_head, build_nav, component renderers)
+        home.cln         — render_home() function
+        about.cln        — render_about() function
+        ...
+
+Each page function:
+1. Fetches data from database (data-only SQL)
+2. Extracts values with json_get() or json.get()
+3. Builds section HTML via iterate loops + component helpers
+4. Returns full page via html: block at end of function
+
+    string render_home()
+        string lang = get_lang()
+        // ... fetch data, build section HTML fragments ...
+        string head = build_head(lang, title, desc, "/")
+        string nav = build_nav(lang, "home")
+        string footer = build_footer(lang)
+        string scripts = build_page_scripts()
+
+        html:
+            {!head}
+            {!nav}
+            <main>
+                <section class="hero">
+                    <h1>{hero_title}</h1>
+                </section>
+                <section class="section">
+                    <div class="container">
+                        {!features_html}
+                    </div>
+                </section>
+            </main>
+            {!footer}
+            {!scripts}
+
+### HTTP Response Pattern
+
+For JSON API responses:
+    return json(body)                              // 200 JSON
+    return error(code, message)                    // Error JSON
+
+For HTML page responses:
+    html:                                          // html: block is implicit return
+        <html>...</html>
+
+For other content types:
+    return http.respond(200, "application/xml", xml)   // XML, text/plain, etc.
 "#;
 
     JsonRpcResponse::success(
@@ -2751,7 +2885,7 @@ fn tool_get_stack_recommendation(
         }
     };
 
-    let (plugins, structure, do_not_use, description) = match project_type {
+    let (plugins, structure, do_not_use, description, best_practices) = match project_type {
         "web-app" => (
             vec!["frame.httpserver", "frame.data", "frame.ui", "frame.auth"],
             json!({
@@ -2773,6 +2907,18 @@ fn tool_get_stack_recommendation(
                 "Underscore-style function names — always use dot notation (string.length, math.abs, list.push)",
             ],
             "Full-stack web application with server, database, authentication, and client-side UI — all in Clean Language",
+            Some(vec![
+                "ALWAYS use html: blocks for HTML generation — NEVER build HTML via string concatenation",
+                "Use {var} for escaped text interpolation, {!var} for raw HTML insertion in html: blocks",
+                "html: block at end of function is the implicit return value",
+                "SQL queries must return DATA only — NEVER generate HTML inside SQL queries",
+                "For repeating items: query data, query count, iterate with helper functions, insert with {!html_var}",
+                "Create small functions with html: blocks for reusable UI components (render_card, render_nav, etc.)",
+                "Each page should be a separate .cln file in app/pages/ with a render_pagename() function",
+                "Page functions: fetch data → extract values → build section HTML → return full page via html: block",
+                "Double quotes for HTML attributes inside html: blocks (single quotes cause lexer errors)",
+                "For JSON API responses use return json(body), for HTML pages use html: block as implicit return",
+            ]),
         ),
         "api" => (
             vec!["frame.httpserver", "frame.data", "frame.auth"],
@@ -2788,6 +2934,7 @@ fn tool_get_stack_recommendation(
                 "Any JS auth library (Passport.js, Auth0 SDK) — use frame.auth",
             ],
             "REST API backend with database and authentication — all in Clean Language",
+            None::<Vec<&str>>,
         ),
         "game" => (
             vec!["frame.canvas"],
@@ -2804,6 +2951,7 @@ fn tool_get_stack_recommendation(
                 "JavaScript for animation — use frame.canvas onFrame and easing",
             ],
             "Canvas-based game or interactive graphics application — all in Clean Language",
+            None::<Vec<&str>>,
         ),
         "cli" => (
             vec![],
@@ -2815,6 +2963,7 @@ fn tool_get_stack_recommendation(
                 "Node.js for CLI tools — use Clean Language with start: block",
             ],
             "Command-line application compiled to WebAssembly — no plugins needed for basic CLI",
+            None::<Vec<&str>>,
         ),
         _ => {
             return JsonRpcResponse::error(
@@ -2833,25 +2982,28 @@ fn tool_get_stack_recommendation(
         .map(|p| format!("cleen plugin add {}", p))
         .collect();
 
-    JsonRpcResponse::success(
-        id,
-        json!({
-            "success": true,
-            "project_type": project_type,
-            "description": description,
-            "plugins": plugins,
-            "install_commands": install_commands,
-            "structure": structure,
-            "do_not_use": do_not_use,
-            "important": "Clean Language applications should use Clean Language for ALL layers. Do NOT use JavaScript, TypeScript, or other languages when a Clean Language plugin provides the same capability.",
-            "next_steps": [
-                "Install plugins with the commands listed in 'install_commands'",
-                "Call 'list_plugins' to see full DSL syntax for each plugin",
-                "Call 'get_plugin_examples' with each plugin name to see usage patterns",
-                "Write all application code in .cln files — no .js files needed"
-            ]
-        }),
-    )
+    let mut response_value = json!({
+        "success": true,
+        "project_type": project_type,
+        "description": description,
+        "plugins": plugins,
+        "install_commands": install_commands,
+        "structure": structure,
+        "do_not_use": do_not_use,
+        "important": "Clean Language applications should use Clean Language for ALL layers. Do NOT use JavaScript, TypeScript, or other languages when a Clean Language plugin provides the same capability.",
+        "next_steps": [
+            "Install plugins with the commands listed in 'install_commands'",
+            "Call 'list_plugins' to see full DSL syntax for each plugin",
+            "Call 'get_plugin_examples' with each plugin name to see usage patterns",
+            "Write all application code in .cln files — no .js files needed"
+        ]
+    });
+
+    if let Some(practices) = best_practices {
+        response_value["best_practices"] = json!(practices);
+    }
+
+    JsonRpcResponse::success(id, response_value)
 }
 
 // ============================================================================
