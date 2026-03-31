@@ -218,6 +218,19 @@ impl<'a> SpecificationLexer<'a> {
                 // Hash-style comments
                 '#' => self.handle_hash_comment(),
 
+                // Single quotes are valid in framework blocks (e.g. html: attribute values)
+                // Emitted as an Identifier token so the token stream flows through without
+                // error; the parser's extract_block_content_raw() reconstructs raw text from
+                // byte positions in the original source, so the token kind is irrelevant.
+                '\'' => {
+                    self.advance();
+                    Ok(Token::new(
+                        TokenKind::Identifier("'".to_string()),
+                        start_location.clone(),
+                        "'".to_string(),
+                    ))
+                }
+
                 // Invalid character
                 _ => {
                     let invalid_char = self.advance().unwrap();
@@ -439,6 +452,19 @@ impl<'a> SpecificationLexer<'a> {
 
                 // Hash-style comments
                 '#' => self.handle_hash_comment(),
+
+                // Single quotes are valid in framework blocks (e.g. html: attribute values)
+                // Emitted as an Identifier token so the token stream flows through without
+                // error; the parser's extract_block_content_raw() reconstructs raw text from
+                // byte positions in the original source, so the token kind is irrelevant.
+                '\'' => {
+                    self.advance();
+                    Ok(Token::new(
+                        TokenKind::Identifier("'".to_string()),
+                        start_location.clone(),
+                        "'".to_string(),
+                    ))
+                }
 
                 // Invalid character
                 _ => {

@@ -571,13 +571,26 @@ pub fn compile_with_plugins_and_opt_level(
 
     // Stage 2.6: Convert plugin bridge functions to external declarations
     // This ensures bridge functions from plugin.toml are registered in the AST
-    // so they can be properly type-checked and resolved
+    // so they can be properly type-checked and resolved.
+    // Also registers language-level function names (dot-notation API) as aliases
+    // pointing to the same signatures, so that calls like `db.query(...)` are
+    // recognised by the semantic analyser and resolver.
     let bridge_functions = registry.bridge_functions();
+    let lang_to_bridge = registry.language_to_bridge_map();
     if !bridge_functions.is_empty() {
         tracing::debug!(
             bridge_function_count = bridge_functions.len(),
+            lang_alias_count = lang_to_bridge.len(),
             "Converting plugin bridge functions to external declarations"
         );
+
+        // Build a quick lookup: bridge function name → BridgeFunction
+        let bridge_by_name: std::collections::HashMap<&str, &crate::plugins::BridgeFunction> =
+            bridge_functions
+                .iter()
+                .map(|bf| (bf.name.as_str(), bf))
+                .collect();
+
         for bf in bridge_functions {
             // Skip if already declared (from parsed external: block or plugin expansion)
             if ast.externals.iter().any(|e| e.name == bf.name) {
@@ -610,9 +623,48 @@ pub fn compile_with_plugins_and_opt_level(
                 "Added external function from bridge"
             );
         }
+
+        // Register language-name aliases (e.g. "db.query", "req.param") so that
+        // the semantic analyser and resolver recognise them as valid callable names.
+        // Each alias gets the same parameter/return signature as its bridge function.
+        for (lang_name, bridge_name) in &lang_to_bridge {
+            // Skip if already declared
+            if ast.externals.iter().any(|e| e.name == *lang_name) {
+                continue;
+            }
+
+            if let Some(bf) = bridge_by_name.get(bridge_name.as_str()) {
+                let parameters: Vec<crate::ast::Parameter> = bf
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, type_str)| crate::ast::Parameter {
+                        name: format!("arg{}", i),
+                        type_: parse_bridge_type(type_str),
+                        default_value: None,
+                    })
+                    .collect();
+
+                let external_fn = crate::ast::ExternalFunction {
+                    name: lang_name.clone(),
+                    parameters,
+                    return_type: parse_bridge_type(&bf.returns),
+                    module: bf.module.clone(),
+                    location: None,
+                };
+
+                ast.externals.push(external_fn);
+                tracing::trace!(
+                    lang_name = %lang_name,
+                    bridge_name = %bridge_name,
+                    "Added language-name alias external function"
+                );
+            }
+        }
+
         tracing::debug!(
             externals_count = ast.externals.len(),
-            "Stage 2.6 complete: Bridge functions converted to externals"
+            "Stage 2.6 complete: Bridge functions and language aliases converted to externals"
         );
     }
 
@@ -660,13 +712,20 @@ pub fn compile_with_plugins_and_opt_level(
     let bridge_functions = registry.bridge_functions();
     tracing::debug!(
         bridge_function_count = bridge_functions.len(),
+        lang_alias_count = lang_to_bridge.len(),
         "Registering plugin bridge functions in resolver"
     );
 
     let resolution_result = if bridge_functions.is_empty() {
         Resolver::resolve(hir_result.hir)?
-    } else {
+    } else if lang_to_bridge.is_empty() {
         Resolver::resolve_with_bridge_functions(hir_result.hir, bridge_functions)?
+    } else {
+        Resolver::resolve_with_bridge_and_language_aliases(
+            hir_result.hir,
+            bridge_functions,
+            &lang_to_bridge,
+        )?
     };
     let resolved_hir = resolution_result.resolved_hir;
     tracing::debug!(
@@ -699,6 +758,16 @@ pub fn compile_with_plugins_and_opt_level(
             "Passing bridge functions to MIR code generator"
         );
         mir_codegen.set_bridge_functions(bridge_functions.to_vec());
+    }
+
+    // Pass language-to-bridge mapping so the codegen can recognise dot-notation
+    // plugin calls (e.g. `db.query`) and route them to the correct WASM import.
+    if !lang_to_bridge.is_empty() {
+        tracing::debug!(
+            alias_count = lang_to_bridge.len(),
+            "Passing language-to-bridge map to MIR code generator"
+        );
+        mir_codegen.set_language_to_bridge_map(lang_to_bridge);
     }
 
     let codegen_result = mir_codegen
@@ -1189,21 +1258,32 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
         }
     };
 
-    // Get bridge functions from plugin registry for name resolution and code generation
+    // Get bridge functions and language-to-bridge mapping from plugin registry
     let bridge_functions = registry
         .as_ref()
         .map(|r| r.bridge_functions().to_vec())
+        .unwrap_or_default();
+    let lang_to_bridge_multifile = registry
+        .as_ref()
+        .map(|r| r.language_to_bridge_map())
         .unwrap_or_default();
 
     // Stage 4: Resolution (with bridge functions if plugins are loaded)
     tracing::debug!(
         bridge_function_count = bridge_functions.len(),
+        lang_alias_count = lang_to_bridge_multifile.len(),
         "Starting Stage 4: Resolution"
     );
     let resolution_result = if bridge_functions.is_empty() {
         Resolver::resolve(merged_hir)?
-    } else {
+    } else if lang_to_bridge_multifile.is_empty() {
         Resolver::resolve_with_bridge_functions(merged_hir, &bridge_functions)?
+    } else {
+        Resolver::resolve_with_bridge_and_language_aliases(
+            merged_hir,
+            &bridge_functions,
+            &lang_to_bridge_multifile,
+        )?
     };
     let resolved_hir = resolution_result.resolved_hir;
 
@@ -1227,6 +1307,15 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
             "Passing bridge functions to MIR code generator"
         );
         mir_codegen.set_bridge_functions(bridge_functions);
+    }
+
+    // Pass language-to-bridge mapping so dot-notation calls resolve correctly
+    if !lang_to_bridge_multifile.is_empty() {
+        tracing::debug!(
+            alias_count = lang_to_bridge_multifile.len(),
+            "Passing language-to-bridge map to MIR code generator"
+        );
+        mir_codegen.set_language_to_bridge_map(lang_to_bridge_multifile);
     }
 
     let codegen_result = mir_codegen.generate(mir_result.program)?;

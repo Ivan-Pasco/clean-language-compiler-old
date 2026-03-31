@@ -448,6 +448,7 @@ mod tests {
                     name: "Data.tx".to_string(),
                     signature: "Data.tx: block -> Result".to_string(),
                     description: "Execute in transaction".to_string(),
+                    maps_to: None,
                 }],
                 completions: vec![PluginCompletionDef {
                     trigger: "data ".to_string(),

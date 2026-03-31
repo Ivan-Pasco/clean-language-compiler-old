@@ -105,6 +105,20 @@ pub struct MirCodeGenerator<'a> {
     /// External function indices - WASM function indices for external functions
     /// declared via `external:` blocks. Maps function name to WASM function index.
     external_function_indices: HashMap<String, u32>,
+
+    /// Mapping from language API function names to bridge function names.
+    ///
+    /// Built from `[[language.functions]]` entries in plugin.toml manifests via
+    /// `PluginRegistry::language_to_bridge_map()`.  Example entries:
+    ///   `"db.query"` → `"_db_query"`
+    ///   `"req.param"` → `"_req_param"`
+    ///
+    /// Used in two places:
+    /// 1. `collect_used_function_names_from_mir` — recognises language-name calls
+    ///    as uses of the underlying bridge function so the import gets registered.
+    /// 2. `register_plugin_bridge_imports` — inserts a `function_map` alias so
+    ///    the language name resolves to the same WASM index as the bridge import.
+    language_to_bridge_map: HashMap<String, String>,
 }
 
 /// Context for loop code generation
@@ -184,6 +198,7 @@ impl MirCodeGenerator<'_> {
             state_globals: Vec::new(),
             target: crate::CompilationTarget::Server, // Default to Server for backwards compatibility
             external_function_indices: HashMap::new(),
+            language_to_bridge_map: HashMap::new(),
         }
     }
 
@@ -213,6 +228,7 @@ impl MirCodeGenerator<'_> {
             state_globals: Vec::new(),
             target: crate::CompilationTarget::Standalone, // Minimal uses Standalone
             external_function_indices: HashMap::new(),
+            language_to_bridge_map: HashMap::new(),
         }
     }
 
@@ -242,6 +258,7 @@ impl MirCodeGenerator<'_> {
             state_globals: Vec::new(),
             target,
             external_function_indices: HashMap::new(),
+            language_to_bridge_map: HashMap::new(),
         }
     }
 
@@ -256,6 +273,15 @@ impl MirCodeGenerator<'_> {
     /// need to be registered as WASM imports before code generation.
     pub fn set_bridge_functions(&mut self, bridge_functions: Vec<crate::plugins::BridgeFunction>) {
         self.bridge_functions = bridge_functions;
+    }
+
+    /// Set the language-name → bridge-name mapping for dot-notation plugin calls.
+    ///
+    /// Obtained from `PluginRegistry::language_to_bridge_map()`.  Must be called
+    /// before `generate()` when the program uses language-level plugin APIs
+    /// (e.g. `db.query(...)`, `req.param("id")`).
+    pub fn set_language_to_bridge_map(&mut self, map: HashMap<String, String>) {
+        self.language_to_bridge_map = map;
     }
 
     /// Generate WASM from MIR program
@@ -5809,6 +5835,21 @@ impl MirCodeGenerator<'_> {
             .map(|f| f.name.clone())
             .collect();
 
+        // Helper: given a call name, record the bridge function it resolves to (if any).
+        // Checks direct bridge name first, then language-to-bridge mapping.
+        let resolve_to_bridge = |name: &str| -> Option<String> {
+            if bridge_function_names.contains(name) {
+                return Some(name.to_string());
+            }
+            // Language-level name (e.g. "db.query") → bridge name (e.g. "_db_query")
+            if let Some(bridge_name) = self.language_to_bridge_map.get(name) {
+                if bridge_function_names.contains(bridge_name.as_str()) {
+                    return Some(bridge_name.clone());
+                }
+            }
+            None
+        };
+
         // Scan all functions and their instructions for Call operations
         for (_symbol_id, function) in &mir_program.functions {
             for block in function.blocks.values() {
@@ -5816,9 +5857,8 @@ impl MirCodeGenerator<'_> {
                     if let MirOperation::Call { function, .. } = &instruction.operation {
                         match function {
                             MirOperand::NamedFunction { name, .. } => {
-                                // Check if this is a bridge function
-                                if bridge_function_names.contains(name) {
-                                    self.used_bridge_function_names.insert(name.clone());
+                                if let Some(bridge_name) = resolve_to_bridge(name) {
+                                    self.used_bridge_function_names.insert(bridge_name);
                                 }
                             }
                             MirOperand::Function(symbol_id) => {
@@ -5826,8 +5866,8 @@ impl MirCodeGenerator<'_> {
                                 // This is necessary because bridge functions may be called via SymbolId
                                 // (not just NamedFunction) depending on how the semantic analyzer resolves them
                                 if let Some(name) = mir_program.symbol_name_map.get(symbol_id) {
-                                    if bridge_function_names.contains(name) {
-                                        self.used_bridge_function_names.insert(name.clone());
+                                    if let Some(bridge_name) = resolve_to_bridge(name) {
+                                        self.used_bridge_function_names.insert(bridge_name);
                                     }
                                 }
                             }
@@ -5966,12 +6006,28 @@ impl MirCodeGenerator<'_> {
                     "Registering plugin bridge function as direct WASM import"
                 );
 
-                self.wasm_generator.register_import_function(
+                let import_index = self.wasm_generator.register_import_function(
                     module,
                     &func.name,
                     &wasm_params,
                     wasm_return,
                 )?;
+
+                // Register language-name aliases that resolve to this direct import.
+                // e.g. if "req.param" maps to "_req_param", insert "req.param" → same index.
+                for (lang_name, bridge_name) in &self.language_to_bridge_map {
+                    if bridge_name == &func.name {
+                        tracing::debug!(
+                            lang_name = %lang_name,
+                            bridge_name = %bridge_name,
+                            wasm_index = import_index,
+                            "Registering language-name alias for direct bridge import"
+                        );
+                        self.wasm_generator
+                            .function_map
+                            .insert(lang_name.clone(), import_index);
+                    }
+                }
             }
         }
 
@@ -6041,6 +6097,24 @@ impl MirCodeGenerator<'_> {
                 wrapper.wasm_return,
                 &wrapper_instructions,
             )?;
+
+            // Register language-name aliases that map to this bridge function.
+            // e.g. "db.query" → same WASM index as "_db_query"
+            if let Some(&wrapper_index) = self.wasm_generator.function_map.get(&wrapper.name) {
+                for (lang_name, bridge_name) in &self.language_to_bridge_map {
+                    if bridge_name == &wrapper.name {
+                        tracing::debug!(
+                            lang_name = %lang_name,
+                            bridge_name = %bridge_name,
+                            wasm_index = wrapper_index,
+                            "Registering language-name alias for expand_strings bridge wrapper"
+                        );
+                        self.wasm_generator
+                            .function_map
+                            .insert(lang_name.clone(), wrapper_index);
+                    }
+                }
+            }
         }
 
         Ok(())

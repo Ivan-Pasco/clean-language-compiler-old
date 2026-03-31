@@ -450,6 +450,49 @@ impl PluginRegistry {
         self.plugin_permissions.get(plugin_name)
     }
 
+    /// Build a mapping from language function names to bridge function names.
+    ///
+    /// Each entry maps a dot-notation language API name (e.g. `"db.query"`,
+    /// `"req.param"`) to the underscore-prefixed WASM bridge name
+    /// (e.g. `"_db_query"`, `"_req_param"`).
+    ///
+    /// The mapping is derived in priority order:
+    /// 1. Explicit `maps_to` field on the `[[language.functions]]` entry.
+    /// 2. Convention: replace `.` with `_` and prepend `_`
+    ///    (`req.param` → `_req_param`).  Only accepted when the derived name
+    ///    is declared in the same plugin's `[bridge]` section.
+    ///
+    /// Language functions that cannot be resolved to a bridge function are
+    /// silently omitted — they are treated as LSP-only (hover, completions).
+    pub fn language_to_bridge_map(&self) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+
+        for manifest in self.manifests.values() {
+            // Build the set of bridge function names declared by this plugin
+            let bridge_names: HashSet<&str> = manifest
+                .bridge
+                .functions
+                .iter()
+                .map(|f| f.name.as_str())
+                .collect();
+
+            for func in &manifest.language.functions {
+                if let Some(ref bridge_name) = func.maps_to {
+                    // Explicit override always wins
+                    map.insert(func.name.clone(), bridge_name.clone());
+                } else {
+                    // Convention: "req.param" → "_req_param"
+                    let conventional = format!("_{}", func.name.replace('.', "_"));
+                    if bridge_names.contains(conventional.as_str()) {
+                        map.insert(func.name.clone(), conventional);
+                    }
+                }
+            }
+        }
+
+        map
+    }
+
     /// Look up which plugin declared ownership of a given bridge function.
     ///
     /// Scans all manifests and returns the first plugin name whose `[bridge]`
@@ -1072,5 +1115,97 @@ mod tests {
         assert_eq!(db_query.params.len(), 2);
         assert_eq!(db_query.returns, "string");
         assert!(db_query.expand_strings);
+    }
+
+    #[test]
+    fn test_language_to_bridge_map_convention() {
+        use crate::plugins::plugin_abi::{
+            BridgeFunction, PluginBridge, PluginCompatibility, PluginExports, PluginFunctionDef,
+            PluginHandles, PluginInfo, PluginLanguage, PluginManifest,
+        };
+
+        // Build a manifest with bridge functions and matching language functions
+        let manifest = PluginManifest {
+            plugin: PluginInfo {
+                name: "frame.data".to_string(),
+                version: "1.0.0".to_string(),
+                description: "Data plugin".to_string(),
+                author: "Test".to_string(),
+            },
+            compatibility: PluginCompatibility::default(),
+            handles: PluginHandles {
+                blocks: vec!["data".to_string()],
+            },
+            exports: PluginExports::default(),
+            bridge: PluginBridge {
+                functions: vec![
+                    BridgeFunction {
+                        name: "_db_query".to_string(),
+                        params: vec!["string".to_string(), "string".to_string()],
+                        returns: "string".to_string(),
+                        module: "env".to_string(),
+                        description: None,
+                        expand_strings: true,
+                    },
+                    BridgeFunction {
+                        name: "_db_execute".to_string(),
+                        params: vec!["string".to_string(), "string".to_string()],
+                        returns: "integer".to_string(),
+                        module: "env".to_string(),
+                        description: None,
+                        expand_strings: true,
+                    },
+                ],
+            },
+            language: PluginLanguage {
+                blocks: vec!["data".to_string()],
+                keywords: vec![],
+                types: vec![],
+                functions: vec![
+                    // Convention-based: "db.query" -> "_db_query"
+                    PluginFunctionDef {
+                        name: "db.query".to_string(),
+                        signature: "db.query(sql, params) -> string".to_string(),
+                        description: "Execute SELECT query".to_string(),
+                        maps_to: None,
+                    },
+                    // Explicit override: "db.run" -> "_db_execute"
+                    PluginFunctionDef {
+                        name: "db.run".to_string(),
+                        signature: "db.run(sql, params) -> integer".to_string(),
+                        description: "Execute INSERT/UPDATE/DELETE".to_string(),
+                        maps_to: Some("_db_execute".to_string()),
+                    },
+                    // No matching bridge: should not appear in the map
+                    PluginFunctionDef {
+                        name: "db.nonexistent".to_string(),
+                        signature: "db.nonexistent() -> void".to_string(),
+                        description: "No bridge counterpart".to_string(),
+                        maps_to: None,
+                    },
+                ],
+                completions: vec![],
+                owns_paths: vec![],
+            },
+            ai: Default::default(),
+            paths: Default::default(),
+            enforcement: Default::default(),
+        };
+
+        let registry = PluginRegistryBuilder::new()
+            .add_manifest("frame.data".to_string(), manifest)
+            .build()
+            .expect("Failed to build registry");
+
+        let map = registry.language_to_bridge_map();
+
+        // Convention-derived mapping
+        assert_eq!(map.get("db.query"), Some(&"_db_query".to_string()));
+        // Explicit override
+        assert_eq!(map.get("db.run"), Some(&"_db_execute".to_string()));
+        // No matching bridge — must NOT appear
+        assert!(!map.contains_key("db.nonexistent"));
+        // Total entries should be exactly 2
+        assert_eq!(map.len(), 2);
     }
 }

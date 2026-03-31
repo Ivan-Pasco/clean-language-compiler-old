@@ -2807,6 +2807,96 @@ impl NameResolver {
         }
     }
 
+    /// Resolve with both bridge functions and language-name aliases.
+    ///
+    /// Extends `resolve_with_bridge_functions` by also registering dot-notation
+    /// language API names (e.g. `"db.query"`) as builtin functions with the same
+    /// signature as the underlying bridge function they map to.
+    pub fn resolve_with_bridge_and_language_aliases(
+        hir: crate::hir::HirProgram,
+        bridge_functions: &[crate::plugins::BridgeFunction],
+        language_to_bridge: &std::collections::HashMap<String, String>,
+    ) -> Result<ResolutionResult, Vec<CompilerError>> {
+        let mut resolver = Self::new();
+
+        // Register bridge functions first
+        resolver.register_plugin_bridge_functions(bridge_functions);
+
+        // Register language-name aliases so "db.query" etc. resolve correctly
+        if !language_to_bridge.is_empty() {
+            let bridge_by_name: std::collections::HashMap<&str, &crate::plugins::BridgeFunction> =
+                bridge_functions
+                    .iter()
+                    .map(|bf| (bf.name.as_str(), bf))
+                    .collect();
+
+            resolver.register_language_function_aliases(language_to_bridge, &bridge_by_name);
+        }
+
+        match resolver.resolve_program(hir) {
+            Ok(resolved_hir) => Ok(ResolutionResult {
+                resolved_hir,
+                warnings: resolver.warnings,
+            }),
+            Err(_) => Err(resolver.errors),
+        }
+    }
+
+    /// Register language-name aliases (dot-notation API names) as builtins.
+    ///
+    /// For each `(lang_name, bridge_name)` pair in `language_to_bridge`, looks
+    /// up the bridge function's parameter/return types and registers `lang_name`
+    /// as a builtin function with identical types.  This lets the resolver accept
+    /// calls like `db.query(...)` without emitting "unknown function" errors.
+    fn register_language_function_aliases(
+        &mut self,
+        language_to_bridge: &std::collections::HashMap<String, String>,
+        bridge_by_name: &std::collections::HashMap<&str, &crate::plugins::BridgeFunction>,
+    ) {
+        use crate::builtins::registry::BuiltinType;
+
+        let builtin_location = SourceLocation {
+            line: 0,
+            column: 0,
+            file: "<plugin-language>".to_string(),
+            byte_start: None,
+            byte_end: None,
+        };
+
+        for (lang_name, bridge_name) in language_to_bridge {
+            if let Some(bf) = bridge_by_name.get(bridge_name.as_str()) {
+                let parameters: Vec<HirType> = bf
+                    .get_param_types()
+                    .iter()
+                    .map(|bt| Self::builtin_type_to_hir_type(bt))
+                    .collect();
+
+                let return_type = {
+                    let ret = bf.get_return_type();
+                    match ret {
+                        BuiltinType::Void => None,
+                        _ => Some(Self::builtin_type_to_hir_type(&ret)),
+                    }
+                };
+
+                tracing::debug!(
+                    lang_name = %lang_name,
+                    bridge_name = %bridge_name,
+                    params = ?parameters,
+                    returns = ?return_type,
+                    "Registering language-name alias in resolver"
+                );
+
+                self.register_builtin_fn(
+                    lang_name,
+                    parameters,
+                    return_type,
+                    builtin_location.clone(),
+                );
+            }
+        }
+    }
+
     /// Register plugin bridge functions as builtins
     ///
     /// Bridge functions are declared in plugin.toml and provide runtime

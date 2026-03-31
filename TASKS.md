@@ -734,51 +734,36 @@ Per CLAUDE.md mandate:
 
 ---
 
-**Last Updated**: March 26, 2026
+**Last Updated**: March 31, 2026
 **Current Version**: 0.30.24
-**Status**: PRODUCTION READY with open enhancement tasks
+**Status**: PRODUCTION READY - All open issues resolved
 
 ---
 
-## 🟡 OPEN: Dot-Notation Plugin Functions Not Mapped in Codegen
+## ✅ RESOLVED: Dot-Notation Plugin Functions Not Mapped in Codegen
 
 **Priority**: CRITICAL
 **Discovered**: March 26, 2026
-**Status**: OPEN
+**Resolved**: March 31, 2026
+**Status**: ✅ COMPLETE
 **Report IDs**: 3828addc, e06a5dc6
 
-### Problem
-Plugin TOML files define `[bridge]` functions (underscore WASM imports like `_db_query`) and `[language]` functions (dot-notation public API like `db.query`). Codegen only knows bridge names. All dot-notation calls fail at WASM generation with "Function not found in function map".
+### Solution
+Added `maps_to` optional field to `PluginFunctionDef` for explicit language-to-bridge mapping. Added `language_to_bridge_map()` method to `PluginRegistry` with convention-based fallback (`req.param` → `_req_param`). Language function aliases are now registered as external declarations in the semantic analyzer, resolver, and codegen. MIR codegen maps language names to bridge WASM imports via `set_language_to_bridge_map()`.
 
-### Two Sub-Issues
-1. **Codegen function map**: needs resolution from dot-notation to bridge names (e.g., `db.query` → `_db_query`)
-2. **Type-checker namespace registration**: `req.*`, `db.*`, `ui.*` namespaces not recognized (while `http.*`, `json.*` work)
-
-### Files Affected
-- `src/codegen/mod.rs` — add dot-to-bridge resolution
-- `src/semantic/mod.rs` or `src/typechecker/` — register all plugin namespaces
-- `src/plugins/` — build language-to-bridge mapping from plugin TOML
+Files changed: `plugin_abi.rs`, `registry.rs`, `language_registry.rs`, `lib.rs`, `resolver_impl.rs`, `mir_codegen.rs`
 
 ---
 
-## 🟡 OPEN: Single Quotes in html: Blocks Cause Lexer Error
+## ✅ RESOLVED: Single Quotes in html: Blocks Cause Lexer Error
 
 **Priority**: MEDIUM
 **Discovered**: March 26, 2026
-**Status**: OPEN — workaround: use double quotes
+**Resolved**: March 31, 2026
+**Status**: ✅ COMPLETE
 **Report ID**: b092e4ee
 
-### Problem
-The lexer rejects single-quote characters (apostrophe) inside `html:` blocks. `<div class='test'>` fails with "Lexer error: Invalid character". Double-quoted attributes work fine.
+### Solution
+Added single-quote character handling in the lexer's `next_token()` and `next_token_after_indentation()` match arms. Single quotes are emitted as `Identifier("'")` tokens. Since Clean Language uses double quotes for strings, single quotes have no standard meaning and this doesn't affect non-HTML code. The parser's `extract_block_content_raw()` extracts html: block content by byte positions, so the token type is irrelevant.
 
-### Root Cause
-The lexer applies standard Clean Language tokenization to html: block content. Clean Language uses double quotes for strings, so single quotes are invalid characters. The lexer needs an HTML-aware mode for html: block content.
-
-### Suggested Fix
-When the lexer enters an `html:` block, switch to HTML-aware mode that:
-1. Passes through all standard HTML characters including single quotes
-2. Only processes `{var}` and `{!var}` interpolation markers
-3. Exits HTML mode when indentation returns to the html: block's level
-
-### Files Affected
-- `src/lexer/` — add html: block lexing mode
+Files changed: `specification_lexer.rs`

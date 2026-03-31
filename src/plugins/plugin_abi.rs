@@ -439,12 +439,24 @@ pub struct PluginTypeDef {
 /// A function definition for the plugin's DSL
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginFunctionDef {
-    /// The function name (e.g., "Data.tx", "Model.find")
+    /// The function name (e.g., "Data.tx", "db.query", "req.param")
     pub name: String,
     /// Function signature for display (e.g., "Data.tx: block -> Result")
     pub signature: String,
     /// Human-readable description for hover and documentation
     pub description: String,
+    /// Bridge function name this language function maps to (e.g., "_db_query").
+    ///
+    /// When present, the compiler registers `name` as an alias that resolves
+    /// to the `maps_to` bridge function at every compilation stage: semantic
+    /// analysis, name resolution and code generation.
+    ///
+    /// When absent the compiler attempts a convention-based derivation:
+    ///   `req.param` → `_req_param`  (replace '.' with '_', prepend '_')
+    /// If the derived name is not a known bridge function, the language function
+    /// is treated as purely informational (LSP only, not callable).
+    #[serde(default)]
+    pub maps_to: Option<String>,
 }
 
 /// A completion snippet defined by the plugin
