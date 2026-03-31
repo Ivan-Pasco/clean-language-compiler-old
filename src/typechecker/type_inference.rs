@@ -332,6 +332,19 @@ impl<'a> TypeInference<'a> {
             self.type_env.insert(symbol_id, ConcreteType::Namespace);
         }
 
+        // Dynamically register ALL namespace symbols (including plugin-provided ones
+        // like req, db, ui) so they are recognized as valid identifiers
+        for (&symbol_id, symbol_info) in self.symbol_table.all_symbols() {
+            if matches!(
+                symbol_info.kind,
+                crate::resolver::symbol_table::SymbolKind::Namespace { .. }
+            ) {
+                if !self.type_env.contains_key(&symbol_id) {
+                    self.type_env.insert(symbol_id, ConcreteType::Namespace);
+                }
+            }
+        }
+
         // Add math namespace functions to type environment
         // These correspond to the namespace functions registered in symbol_table.rs
 

@@ -2895,6 +2895,47 @@ impl NameResolver {
                 );
             }
         }
+
+        // Register namespace identifiers for plugin dot-notation prefixes
+        // e.g., if we have "req.query", "req.body", register "req" as a Namespace
+        let mut namespace_functions: std::collections::HashMap<String, Vec<SymbolId>> =
+            std::collections::HashMap::new();
+        for lang_name in language_to_bridge.keys() {
+            if let Some(dot_pos) = lang_name.find('.') {
+                let ns_name = &lang_name[..dot_pos];
+                let func_symbol_id = self
+                    .symbol_table
+                    .lookup_symbol(lang_name)
+                    .unwrap_or(SymbolId(0));
+                namespace_functions
+                    .entry(ns_name.to_string())
+                    .or_default()
+                    .push(func_symbol_id);
+            }
+        }
+
+        for (ns_name, functions) in namespace_functions {
+            // Skip if already registered as a builtin namespace
+            if self
+                .symbol_table
+                .lookup_symbol_in_scope(&ns_name, ScopeId(0))
+                .is_some()
+            {
+                continue;
+            }
+
+            let ns_id = self.symbol_table.create_symbol(
+                ns_name.clone(),
+                SymbolKind::Namespace { functions },
+                ScopeId(0),
+                builtin_location.clone(),
+            );
+            self.symbol_table.builtins.insert(ns_id);
+            tracing::debug!(
+                namespace = %ns_name,
+                "Registered plugin namespace in resolver"
+            );
+        }
     }
 
     /// Register plugin bridge functions as builtins

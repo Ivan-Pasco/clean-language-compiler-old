@@ -135,7 +135,7 @@ pub struct GlobalSymbolTable {
     current_module: Option<ModuleId>,
 
     // Built-in symbols (populated during initialization)
-    builtins: HashSet<SymbolId>,
+    pub(crate) builtins: HashSet<SymbolId>,
 }
 
 impl GlobalSymbolTable {
