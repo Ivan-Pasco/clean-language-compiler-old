@@ -86,6 +86,10 @@ impl WasmPluginLoader {
             // The actual values are populated below once the adapter is instantiated.
             builder = builder.add_registration(plugin_name, &manifest);
 
+            // Store the full manifest so language_to_bridge_map() can resolve
+            // dot-notation aliases (e.g. "req.query" → "_req_query").
+            builder = builder.add_manifest(plugin_name.clone(), manifest.clone());
+
             // Load the plugin adapter
             let wasm_path = plugin_dir.join("plugin.wasm");
             let module = self.load_wasm_module(&wasm_path)?;

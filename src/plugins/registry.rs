@@ -476,6 +476,7 @@ impl PluginRegistry {
                 .map(|f| f.name.as_str())
                 .collect();
 
+            // Phase 1: Explicit [language].functions entries (highest priority)
             for func in &manifest.language.functions {
                 if let Some(ref bridge_name) = func.maps_to {
                     // Explicit override always wins
@@ -485,6 +486,24 @@ impl PluginRegistry {
                     let conventional = format!("_{}", func.name.replace('.', "_"));
                     if bridge_names.contains(conventional.as_str()) {
                         map.insert(func.name.clone(), conventional);
+                    }
+                }
+            }
+
+            // Phase 2: Auto-derive dot-notation aliases from ALL bridge functions
+            // whose names follow the "_namespace_method" convention.
+            // e.g. "_http_respond" → "http.respond", "_json_get" → "json.get"
+            // Skip if already mapped in phase 1.
+            for bf in &manifest.bridge.functions {
+                if let Some(stripped) = bf.name.strip_prefix('_') {
+                    if let Some(underscore_pos) = stripped.find('_') {
+                        let namespace = &stripped[..underscore_pos];
+                        let method = &stripped[underscore_pos + 1..];
+                        let dot_name = format!("{}.{}", namespace, method);
+                        // Don't override explicit mappings from phase 1
+                        if !map.contains_key(&dot_name) {
+                            map.insert(dot_name, bf.name.clone());
+                        }
                     }
                 }
             }
@@ -1199,13 +1218,15 @@ mod tests {
 
         let map = registry.language_to_bridge_map();
 
-        // Convention-derived mapping
+        // Convention-derived mapping (phase 1)
         assert_eq!(map.get("db.query"), Some(&"_db_query".to_string()));
-        // Explicit override
+        // Explicit override (phase 1)
         assert_eq!(map.get("db.run"), Some(&"_db_execute".to_string()));
+        // Auto-derived from bridge "_db_execute" (phase 2)
+        assert_eq!(map.get("db.execute"), Some(&"_db_execute".to_string()));
         // No matching bridge — must NOT appear
         assert!(!map.contains_key("db.nonexistent"));
-        // Total entries should be exactly 2
-        assert_eq!(map.len(), 2);
+        // Total: 2 from phase 1 + 1 auto-derived from phase 2
+        assert_eq!(map.len(), 3);
     }
 }
