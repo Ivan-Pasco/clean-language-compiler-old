@@ -55,6 +55,9 @@ pub struct TelemetryConfig {
     /// Optional contact email for fix notifications
     #[serde(default)]
     pub contact_email: Option<String>,
+    /// Developer name (optional, for personalized notifications)
+    #[serde(default)]
+    pub developer_name: Option<String>,
 }
 
 impl Default for TelemetryConfig {
@@ -66,6 +69,7 @@ impl Default for TelemetryConfig {
             prompted: false,
             last_seen_version: None,
             contact_email: None,
+            developer_name: None,
         }
     }
 }
@@ -163,6 +167,7 @@ mod tests {
             prompted: true,
             last_seen_version: Some("0.30.0".to_string()),
             contact_email: Some("test@example.com".to_string()),
+            developer_name: Some("Test Dev".to_string()),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();

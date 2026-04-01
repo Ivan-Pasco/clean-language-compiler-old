@@ -40,65 +40,120 @@ pub fn maybe_prompt_telemetry() -> bool {
 
     // Don't prompt in non-interactive contexts (CI, pipes, MCP)
     if !io::stdin().is_terminal() {
-        return false;
+        // Enable bug reporting silently in non-interactive mode
+        if !config.prompted {
+            config.prompted = true;
+            config.enabled = true;
+            let _ = config.save();
+        }
+        return true;
     }
 
-    // Show the prompt
+    // --- Developer onboarding (first run) ---
     println!();
-    println!("Help improve Clean Language!");
+    println!("  Welcome to Clean Language v{}!", crate::VERSION);
     println!();
-    println!("  When the compiler encounters an error, anonymous reports can be");
-    println!("  sent to help the team fix bugs faster. No source code is ever sent.");
-    println!();
-    println!("  You can change this anytime with: cln config set telemetry on/off");
-    println!();
-    print!("  Enable anonymous error reporting? [y/n] ");
-    let _ = io::stdout().flush();
 
-    let stdin = io::stdin();
-    let response = stdin
+    // Step 1: Name (optional)
+    print!("  Your name (Enter to skip): ");
+    let _ = io::stdout().flush();
+    let name = io::stdin()
         .lock()
         .lines()
         .next()
         .and_then(|l| l.ok())
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .trim()
+        .to_string();
 
-    let enabled = matches!(
-        response.trim().to_lowercase().as_str(),
-        "y" | "yes" | "si" | "s"
-    );
+    if !name.is_empty() {
+        config.developer_name = Some(name.clone());
+    }
 
+    // Step 2: Email (frame as staying connected to the ecosystem)
+    println!();
+    println!("  Your email connects you to Clean Language:");
+    println!("    - New releases and what's in them");
+    println!("    - Bug fixes for issues you report");
+    println!("    - Plugin updates for your stack");
+    println!("    - Security advisories");
+    println!();
+    println!("  Stored locally — never shared with third parties.");
+    println!();
+    print!("  Email (Enter to skip): ");
+    let _ = io::stdout().flush();
+    let email = io::stdin()
+        .lock()
+        .lines()
+        .next()
+        .and_then(|l| l.ok())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    if !email.is_empty() && email.contains('@') {
+        config.contact_email = Some(email);
+    }
+
+    // Bug reporting is always enabled — it's a feature, not an opt-in
     config.prompted = true;
-    config.enabled = enabled;
+    config.enabled = true;
     let _ = config.save();
 
-    if enabled {
-        println!("  Telemetry enabled. Thank you!");
-        println!();
-
-        // Ask for optional email for fix notifications
-        print!("  Get notified when your bugs are fixed? (email or Enter to skip) ");
-        let _ = io::stdout().flush();
-
-        let email_response = io::stdin()
-            .lock()
-            .lines()
-            .next()
-            .and_then(|l| l.ok())
-            .unwrap_or_default();
-
-        let email = email_response.trim().to_string();
-        if !email.is_empty() && email.contains('@') {
-            config.contact_email = Some(email);
-            let _ = config.save();
-            println!("  Email saved. You'll be notified when reported bugs are fixed.");
-        }
+    // Confirmation
+    println!();
+    if let Some(ref dev_name) = config.developer_name {
+        println!("  Welcome, {}!", dev_name);
     } else {
-        println!("  No problem. You can enable it later with: cln config set telemetry on");
+        println!("  Setup complete.");
     }
+    if config.contact_email.is_some() {
+        println!("  You'll be notified when bugs you report are fixed.");
+    }
+    println!("  Update anytime: cln config");
     println!();
 
-    enabled
+    true
+}
+
+/// Prompt for email at bug-report time if not yet configured.
+/// Called when a compilation error is about to be reported.
+/// Returns the email if provided, or None.
+pub fn maybe_prompt_email_on_bug() -> Option<String> {
+    let mut config = TelemetryConfig::load();
+
+    // Already has email — nothing to do
+    if config.contact_email.is_some() {
+        return config.contact_email.clone();
+    }
+
+    // Don't prompt in non-interactive contexts
+    if !io::stdin().is_terminal() {
+        return None;
+    }
+
+    println!();
+    println!("  Get notified when this bug is fixed, plus releases and updates.");
+    print!("  Email (Enter to skip): ");
+    let _ = io::stdout().flush();
+
+    let email = io::stdin()
+        .lock()
+        .lines()
+        .next()
+        .and_then(|l| l.ok())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    if !email.is_empty() && email.contains('@') {
+        config.contact_email = Some(email.clone());
+        let _ = config.save();
+        println!("  Saved. You can remove it anytime: cln config set email clear");
+        Some(email)
+    } else {
+        None
+    }
 }
 
 /// Report a compilation failure via telemetry (if enabled).
@@ -133,10 +188,13 @@ pub fn report_compile_failure(errors: &[crate::error::CompilerError], source_fil
         &config.consent_level.to_string(),
     );
 
-    // Attach stored email if available
+    // Attach email: use stored email, or prompt if first bug report
     if let Some(ref email) = config.contact_email {
         report.user.anonymous = false;
         report.user.contact = Some(email.clone());
+    } else if let Some(email) = maybe_prompt_email_on_bug() {
+        report.user.anonymous = false;
+        report.user.contact = Some(email);
     }
 
     // Track locally
