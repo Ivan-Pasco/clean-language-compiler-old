@@ -2520,6 +2520,28 @@ fn handle_report(
     let result = submit_report(&report);
 
     match result {
+        clean_language_compiler::telemetry::SubmitResult::AlreadyFixed {
+            fixed_in_version,
+            fix_description,
+            message,
+            ..
+        } => {
+            println!("{}", message);
+            println!("Fixed in: v{}", fixed_in_version);
+            if let Some(desc) = fix_description {
+                println!("Fix: {}", desc);
+            }
+            println!("Update with: cleen install latest");
+        }
+        clean_language_compiler::telemetry::SubmitResult::Known {
+            occurrences,
+            current_status,
+            message,
+            ..
+        } => {
+            println!("{}", message);
+            println!("Status: {} ({} reports)", current_status, occurrences);
+        }
         clean_language_compiler::telemetry::SubmitResult::Submitted {
             report_id,
             tracking_url,

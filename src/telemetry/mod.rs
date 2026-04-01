@@ -20,7 +20,10 @@ pub mod submit;
 pub use config::{ConsentLevel, TelemetryConfig};
 pub use queue::PendingQueue;
 pub use report::{ErrorReport, ReportError, ReportStatus, ReportStore, TrackedReport};
-pub use submit::{check_report_statuses, submit_report, SubmitResult};
+pub use submit::{
+    batch_check_and_verify, check_report_statuses, fetch_component_bugs, submit_report,
+    ComponentBug, ReportVerification, StatusUpdate, SubmitResult,
+};
 
 use std::io::{self, BufRead, IsTerminal, Write};
 

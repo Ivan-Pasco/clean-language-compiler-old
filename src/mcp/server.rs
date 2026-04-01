@@ -3192,6 +3192,53 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
     let result = crate::telemetry::submit_report(&report);
 
     match result {
+        crate::telemetry::SubmitResult::AlreadyFixed {
+            report_id,
+            fixed_in_version,
+            fix_description,
+            message,
+        } => {
+            // Update local store to mark as resolved
+            store.update_status(
+                &report_id,
+                crate::telemetry::report::ReportStatus::Resolved,
+                Some(fixed_in_version.clone()),
+                fix_description.clone(),
+                None,
+            );
+            let _ = store.save();
+
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": true,
+                    "already_fixed": true,
+                    "report_id": report_id,
+                    "fixed_in_version": fixed_in_version,
+                    "fix_description": fix_description,
+                    "upgrade_command": "cleen install latest",
+                    "message": message,
+                    "action": "This bug is already fixed. Do NOT write workaround code. Update the compiler with: cleen install latest"
+                }),
+            )
+        }
+        crate::telemetry::SubmitResult::Known {
+            report_id,
+            occurrences,
+            current_status,
+            message,
+        } => JsonRpcResponse::success(
+            id,
+            json!({
+                "success": true,
+                "known_issue": true,
+                "report_id": report_id,
+                "occurrences": occurrences,
+                "current_status": current_status,
+                "message": message,
+                "action": "This is a known issue being worked on. Write spec-correct code and note the limitation. Do NOT write workarounds."
+            }),
+        ),
         crate::telemetry::SubmitResult::Submitted {
             report_id,
             tracking_url,
