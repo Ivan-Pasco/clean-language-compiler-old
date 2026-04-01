@@ -1309,7 +1309,9 @@ fn tool_explain_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRp
             "title": explanation.title,
             "description": explanation.description,
             "example": explanation.example,
-            "fix": explanation.fix
+            "fix": explanation.fix,
+            "spec_guidance": "If your code follows the specification exactly and still produces this error, it may be a compiler bug. Call `report_error` to report it. Do NOT work around the error by using alternative syntax, underscore bridge names, or non-spec patterns.",
+            "workaround": null
         }),
     )
 }
@@ -2185,6 +2187,18 @@ fn tool_list_error_codes(id: serde_json::Value, args: &serde_json::Value) -> Jso
 fn tool_get_quick_reference(id: serde_json::Value) -> JsonRpcResponse {
     let quick_ref = r#"# Clean Language Quick Reference
 
+## Specification Authority
+
+This reference defines how Clean Language code MUST be written.
+- Every pattern shown here is the ONLY correct way to perform that operation
+- Clean Language follows the "one way to do things" principle — for each operation, there is exactly one correct syntax
+- Do NOT use alternative syntax, underscore bridge names, or workarounds
+- Do NOT invent shortcuts, fallbacks, or compatibility patterns
+- If spec-correct code does not compile, it is a COMPILER BUG — not a code problem
+- When spec-correct code fails: call `report_error` to report the bug, then write the code per spec anyway
+- NEVER modify application code to accommodate compiler limitations
+- NEVER use underscore bridge names (_db_query, _http_respond) in application code — always use dot notation (db.query, http.respond)
+
 ## Recommended Application Stack
 Clean Language applications should use Clean Language for ALL layers. Do NOT use JavaScript, TypeScript, or other languages when a Clean Language plugin provides the same capability.
 
@@ -2280,7 +2294,7 @@ start:
 
 ## Control Flow
 ```
-// If/else — no parentheses required around condition
+// If/else — no parentheses required around condition       // ✓ v0.28.0+
 if x > 0
 	print("positive")
 else if x == 0
@@ -2288,25 +2302,25 @@ else if x == 0
 else
 	print("negative")
 
-// Iterate over a range
+// Iterate over a range                                     // ✓ v0.30.0+
 iterate i in 1 to 10
 	print(i.toString())
 
-// Iterate with step
+// Iterate with step                                        // ✓ v0.30.0+
 iterate k in 10 to 1 step -2
 	print(k.toString())
 
-// Iterate over a list
+// Iterate over a list                                      // ✓ v0.30.0+
 iterate item in myList
 	print(item.toString())
 
-// While loop (condition-based)
+// While loop (condition-based)                             // ✓ v0.28.0+
 integer i = 0
 while i < 10
 	print(i.toString())
 	i = i + 1
 
-// Repeat loop (infinite — use break to exit)
+// Repeat loop (infinite — use break to exit)               // ✓ v0.28.0+
 repeat
 	string line = input("Enter text: ")
 	if line == "quit"
@@ -2513,7 +2527,7 @@ class Circle
 		number circumference = 2.0 * 3.14159 * radius
 ```
 
-## JSON Operations
+## JSON Operations                                          // ✓ v0.30.0+
 ```
 string jsonStr = json.dataToText(data)
 any parsed = json.textToData(jsonStr)
@@ -2567,11 +2581,13 @@ functions:
 3. Call `list_ecosystem` to see ALL available plugins in the ecosystem
 4. Call `list_plugins` to see installed plugins with full DSL details
 5. Call `get_plugin_examples` to see plugin usage patterns
-6. Write .cln code following the patterns above
+6. Write .cln code following the patterns above — spec-correct code ONLY
 7. Call `check` to type-check (fast feedback loop)
 8. Call `compile` when ready for WASM output
 9. If errors occur, call `explain_error` with the code
-10. Use `get_specification` for detailed docs on specific features
+10. If the code follows the spec but doesn't compile, call `report_error` immediately — do NOT write workaround code
+11. Use `get_specification` for detailed docs on specific features
+12. Call `check_reported_fixes` at session start to see if previously reported bugs are now fixed
 
 ## Plugin Syntax Discovery
 Plugins (like Frame) add custom blocks, keywords, and types.
@@ -2583,6 +2599,16 @@ Call `list_plugins` to see what each plugin provides:
 - ai.examples: Example files you can read with `get_plugin_examples`
 
 ## Web Application Patterns
+
+### Feature Status (v0.30.27)
+- html: blocks in functions ✓
+- Plugin dot-notation (req.query, http.respond, db.query) ✓
+- iterate i in 0 to count ✓
+- iterate item in list ✓
+- json.get() for JSON field access ✓
+- Response helpers (json(), html(), redirect()) ✓
+- html: block as implicit return ✓
+- {var} and {!var} interpolation in html: blocks ✓
 
 ### HTML Generation (Server-Side Rendering)
 
@@ -2724,7 +2750,7 @@ For other content types:
             "quick_reference": quick_ref,
             "version": crate::VERSION,
             "tools_available": 18,
-            "tip": "Use 'check' for fast iteration, 'compile' when ready for WASM. Use 'report_error' to report compiler bugs, 'check_reported_fixes' to see if your reported bugs have been fixed."
+            "tip": "Use 'check' for fast iteration, 'compile' when ready for WASM. If spec-correct code fails, call 'report_error' immediately — never write workarounds. Call 'check_reported_fixes' at session start to see resolved bugs."
         }),
     )
 }
@@ -2991,11 +3017,13 @@ fn tool_get_stack_recommendation(
         "structure": structure,
         "do_not_use": do_not_use,
         "important": "Clean Language applications should use Clean Language for ALL layers. Do NOT use JavaScript, TypeScript, or other languages when a Clean Language plugin provides the same capability.",
+        "principle": "Write code exactly as the specification defines. If it doesn't compile, the toolchain has a bug — call report_error to report it. Never write workarounds, never use underscore bridge names, never invent alternative syntax.",
         "next_steps": [
             "Install plugins with the commands listed in 'install_commands'",
             "Call 'list_plugins' to see full DSL syntax for each plugin",
             "Call 'get_plugin_examples' with each plugin name to see usage patterns",
-            "Write all application code in .cln files — no .js files needed"
+            "Write all application code in .cln files — no .js files needed",
+            "If spec-correct code doesn't compile, call 'report_error' — do NOT write workarounds"
         ]
     });
 
