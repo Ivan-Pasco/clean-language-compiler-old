@@ -11,7 +11,7 @@ use crate::stdlib::memory::MemoryManager;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use wasm_encoder::{ConstExpr, DataSection, Instruction, ValType};
+use wasm_encoder::{ConstExpr, DataSection};
 
 /// Memory safety configuration constants
 #[allow(dead_code)]
@@ -357,95 +357,6 @@ impl MemoryUtils {
         Err(MemorySafetyError::InvalidPointer { address })
     }
 
-    /// Add string data to the data section with proper memory layout
-    #[allow(dead_code)]
-    pub(crate) fn add_string_data(&mut self, data: &[u8]) -> u32 {
-        let string_content = std::str::from_utf8(data).unwrap_or("");
-
-        // Check if string already exists in pool
-        if let Some(&existing_ptr) = self.string_pool.get(string_content) {
-            // Increment reference count for existing string
-            if let Some(block) = self.memory_blocks.get_mut(&existing_ptr) {
-                block.ref_count += 1;
-            }
-            return existing_ptr as u32;
-        }
-
-        // Allocate new string with proper layout and alignment
-        let string_len = data.len();
-        let header_size = Self::align_size(HEADER_SIZE as usize);
-        let len_size = Self::align_size(4);
-        let content_size = Self::align_size(string_len);
-        let total_size = header_size + len_size + content_size;
-
-        let address = match self.allocate_from_pool(total_size, STRING_TYPE_ID) {
-            Ok(addr) => addr,
-            Err(_) => {
-                // Fallback to direct allocation
-                let addr = self.current_address;
-                self.current_address += Self::align_size(total_size);
-                addr
-            }
-        };
-
-        // Create memory block
-        let allocation_id = self.allocation_counter;
-        self.allocation_counter += 1;
-
-        let block = MemoryBlock {
-            address,
-            size: total_size,
-            is_free: false,
-            type_id: STRING_TYPE_ID,
-            ref_count: 1,
-            next_free: None,
-            allocation_id,
-            canary_start: CANARY_VALUE,
-            canary_end: CANARY_VALUE,
-            is_poisoned: false,
-            stack_trace: Vec::new(),
-        };
-
-        // Update shadow memory
-        self.shadow_memory.insert(
-            address,
-            AllocationStatus::Allocated {
-                size: total_size,
-                type_id: STRING_TYPE_ID,
-                allocation_id,
-            },
-        );
-
-        self.memory_blocks.insert(address, block);
-        self.allocated_objects += 1;
-
-        // Add string to pool
-        self.string_pool.insert(string_content.to_string(), address);
-
-        // Create data segments for the string
-        // Header (size, ref_count, type_id, next_free)
-        let header_data = [
-            (total_size as u32).to_le_bytes(),
-            1u32.to_le_bytes(), // ref_count
-            STRING_TYPE_ID.to_le_bytes(),
-            0u32.to_le_bytes(), // next_free
-        ]
-        .concat();
-        let _ = self.add_data_segment(address as u32, &header_data);
-
-        // String length - ensure alignment
-        let len_offset = address + header_size;
-        let len_data = (string_len as u32).to_le_bytes();
-        let _ = self.add_data_segment(len_offset as u32, &len_data);
-
-        // String content - ensure proper alignment
-        let content_offset = len_offset + len_size;
-        let _ = self.add_data_segment(content_offset as u32, data);
-
-        // Return pointer to the string length field (properly aligned)
-        len_offset as u32
-    }
-
     /// Get the data section
     pub(crate) fn get_data_section(&self) -> &DataSection {
         &self.data_section
@@ -679,20 +590,6 @@ impl MemoryUtils {
         }
     }
 
-    /// Mark an object as a root (never collected)
-    #[allow(dead_code)]
-    pub(crate) fn add_root_object(&mut self, address: usize) {
-        if !self.root_objects.contains(&address) {
-            self.root_objects.push(address);
-        }
-    }
-
-    /// Remove an object from roots
-    #[allow(dead_code)]
-    pub(crate) fn remove_root_object(&mut self, address: usize) {
-        self.root_objects.retain(|&addr| addr != address);
-    }
-
     /// Garbage collection - mark and sweep for circular references
     pub(crate) fn collect_garbage(&mut self) {
         // Mark phase: mark all reachable objects
@@ -737,24 +634,6 @@ impl MemoryUtils {
         // For now, we don't traverse object references
         // In a full implementation, we would examine the object's fields
         // and recursively mark any referenced objects
-    }
-
-    /// Generate memory initialization instructions
-    #[allow(dead_code)]
-    pub(crate) fn generate_init_memory(&self) -> Vec<Instruction> {
-        // Initialize memory manager's heap pointer
-        let instructions = vec![
-            Instruction::I32Const(self.heap_start as i32),
-            Instruction::GlobalSet(0), // Assuming global 0 is the heap pointer
-        ];
-
-        instructions
-    }
-
-    /// Check if the memory utils has any allocated data
-    #[allow(dead_code)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.memory_blocks.is_empty() && self.current_address == self.heap_start
     }
 
     /// Allocates memory for a string with proper ARC and layout
@@ -819,52 +698,6 @@ impl MemoryUtils {
             })?;
 
         Ok(string_ptr)
-    }
-
-    /// Force allocate a string at a specific address for type conversion functions
-    #[allow(dead_code)]
-    pub(crate) fn force_string_at_address(
-        &mut self,
-        s: &str,
-        target_addr: u32,
-    ) -> Result<(), CompilerError> {
-        let bytes = s.as_bytes();
-        let len = bytes.len();
-
-        // Debug: Log what we're allocating
-        // eprintln!("DEBUG: Allocating '{s}' (len={len}) at address {target_addr}");
-
-        // Create data segment for the string length (4 bytes, little-endian) with safety validation
-        let len_bytes = (len as u32).to_le_bytes().to_vec();
-        self.add_data_segment(target_addr, &len_bytes)
-            .map_err(|e| {
-                CompilerError::memory_allocation_error(
-                    &format!("String length allocation failed: {:?}", e),
-                    4,
-                    None,
-                    None,
-                )
-            })?;
-
-        // Create data segment for the string content with safety validation
-        // Align the content address to 8-byte boundary to meet WASM requirements
-        let content_addr = target_addr + 8; // Use 8-byte offset instead of 4 for alignment
-        self.add_data_segment(content_addr, bytes).map_err(|e| {
-            CompilerError::memory_allocation_error(
-                &format!("String content allocation failed: {:?}", e),
-                len,
-                None,
-                None,
-            )
-        })?;
-
-        // Debug: Log the bytes being written
-        // eprintln!("DEBUG: Length bytes: {len_bytes:?}, Content bytes: {bytes:?}");
-
-        // Add to string pool for consistency
-        self.string_pool.insert(s.to_string(), target_addr as usize);
-
-        Ok(())
     }
 
     /// Allocates memory for an array with proper ARC
@@ -1063,59 +896,6 @@ impl MemoryUtils {
             })?;
 
         Ok(ptr)
-    }
-
-    /// Generate memory management functions for WASM
-    #[allow(dead_code)]
-    pub(crate) fn generate_memory_functions(
-        &self,
-    ) -> Vec<(Vec<ValType>, Option<ValType>, Vec<Instruction<'static>>)> {
-        vec![
-            // malloc(size: i32, type_id: i32) -> i32
-            (
-                vec![ValType::I32, ValType::I32],
-                Some(ValType::I32),
-                vec![
-                    Instruction::LocalGet(0), // size
-                    Instruction::LocalGet(1), // type_id
-                    Instruction::Call(0),     // Call internal allocate function
-                ],
-            ),
-            // retain(ptr: i32) -> void
-            (
-                vec![ValType::I32],
-                None,
-                vec![
-                    Instruction::LocalGet(0), // ptr
-                    Instruction::Call(1),     // Call internal retain function
-                ],
-            ),
-            // release(ptr: i32) -> void
-            (
-                vec![ValType::I32],
-                None,
-                vec![
-                    Instruction::LocalGet(0), // ptr
-                    Instruction::Call(2),     // Call internal release function
-                ],
-            ),
-        ]
-    }
-
-    /// Get memory statistics
-    #[allow(dead_code)]
-    pub(crate) fn get_stats(&self) -> (usize, usize, usize) {
-        (
-            self.allocated_objects,
-            self.memory_blocks.len(),
-            self.current_address - self.heap_start,
-        )
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn get_memory_manager_ref(&self) -> Rc<RefCell<MemoryManager>> {
-        // Return the shared memory manager instance for stdlib integration
-        self.memory_manager.clone()
     }
 
     /// Get the current allocation address (first available address for new allocations)

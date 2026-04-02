@@ -48,8 +48,6 @@ fn core_section_name(order: u8) -> &'static str {
 pub struct TokenParser {
     tokens: Vec<Token>,
     cursor: usize,
-    #[allow(dead_code)] // Used for future error reporting enhancements
-    file_path: String,
     errors: Vec<CompilerError>,
     paren_depth: usize, // Track parenthesis depth for multiline expression support
     /// Plugin-defined keywords that don't require colons (e.g., "data" from frame.data)
@@ -59,12 +57,11 @@ pub struct TokenParser {
 }
 
 impl TokenParser {
-    pub fn new(token_stream: TokenStream, file_path: String) -> Self {
+    pub fn new(token_stream: TokenStream, _file_path: String) -> Self {
         Self {
             source_content: token_stream.source_content,
             tokens: token_stream.tokens,
             cursor: 0,
-            file_path,
             errors: Vec::new(),
             paren_depth: 0,
             plugin_keywords: HashSet::new(),
@@ -79,28 +76,17 @@ impl TokenParser {
     /// - `endpoints:` is parsed as a framework block (has colon)
     pub fn with_plugin_keywords(
         token_stream: TokenStream,
-        file_path: String,
+        _file_path: String,
         plugin_keywords: Vec<String>,
     ) -> Self {
         Self {
             source_content: token_stream.source_content,
             tokens: token_stream.tokens,
             cursor: 0,
-            file_path,
             errors: Vec::new(),
             paren_depth: 0,
             plugin_keywords: plugin_keywords.into_iter().collect(),
         }
-    }
-
-    /// Debug: dump all tokens
-    #[allow(dead_code)]
-    fn dump_tokens(&self) {
-        println!("=== TOKEN DUMP ===");
-        for (i, token) in self.tokens.iter().enumerate() {
-            println!("{:3}: {:?}", i, token.kind);
-        }
-        println!("=== END TOKEN DUMP ===");
     }
 
     /// Parse a complete program
@@ -416,7 +402,6 @@ impl TokenParser {
     }
 
     /// Peek at the next token kind without consuming
-    #[allow(dead_code)] // Parser utility method - kept for API completeness
     fn peek_kind(&self) -> Option<&TokenKind> {
         if self.cursor + 1 < self.tokens.len() {
             Some(&self.tokens[self.cursor + 1].kind)
@@ -464,7 +449,6 @@ impl TokenParser {
     }
 
     /// Look ahead at token N positions forward (rustc: look_ahead())
-    #[allow(dead_code)] // Parser utility method - kept for API completeness
     fn look_ahead(&self, n: usize) -> &Token {
         let pos = (self.cursor + n).min(self.tokens.len() - 1);
         &self.tokens[pos]
@@ -1556,12 +1540,6 @@ impl TokenParser {
         })
     }
 
-    #[allow(dead_code)]
-    fn parse_method(&mut self) -> Result<Function, CompilerError> {
-        // Methods are just functions within a class
-        self.parse_function()
-    }
-
     /// Extract raw block content from source text using byte positions.
     ///
     /// Instead of reconstructing text from individual tokens (which destroys HTML/template formatting),
@@ -1998,61 +1976,6 @@ impl TokenParser {
 
         // Parse the expected value expression (right-hand side)
         let expected_value = self.parse_expression()?;
-
-        Ok(TestCase {
-            description,
-            test_expression,
-            expected_value,
-            location: Some(start_location),
-        })
-    }
-
-    /// Parse a named `test "description":` block (used at statement level, not inside tests: block).
-    #[allow(dead_code)]
-    fn parse_test(&mut self) -> Result<TestCase, CompilerError> {
-        trace!(cursor = self.cursor, token = ?self.current_kind(), "Starting test parse");
-
-        let start_location = self.current().location.clone();
-
-        // Expect 'test' keyword
-        self.expect(&TokenKind::Test)?;
-        self.skip_whitespace();
-
-        trace!(cursor = self.cursor, token = ?self.current_kind(), "After test keyword");
-
-        // Expect string literal description
-        let description = if let TokenKind::StringLiteral(desc) = self.current_kind() {
-            let desc_text = desc.clone();
-            self.bump(); // consume string
-            self.skip_whitespace();
-            Some(desc_text)
-        } else {
-            return Err(CompilerError::syntax_error(
-                "Expected string literal after 'test' keyword",
-                None,
-                Some(self.current().location.clone()),
-            ));
-        };
-
-        trace!(description = ?description, "Parsed test description");
-
-        // Parse test body (block of statements)
-        let body = self.parse_block()?;
-
-        trace!(statement_count = body.len(), "Parsed test body");
-
-        // For now, create a test case with the body as the test expression
-        // The last statement should be an assert
-        let test_expression = if body.is_empty() {
-            // Empty test body
-            Expression::Literal(Value::Boolean(true))
-        } else {
-            // Use the last statement as the test expression
-            // In practice, this should be an assert statement
-            Expression::Literal(Value::Boolean(true))
-        };
-
-        let expected_value = Expression::Literal(Value::Boolean(true));
 
         Ok(TestCase {
             description,

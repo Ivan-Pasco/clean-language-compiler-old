@@ -1,6 +1,6 @@
 //! Module for generating WebAssembly instructions.
 
-use crate::ast::{self, BinaryOperator, Expression, SourceLocation, Statement, StringPart, Value};
+use crate::ast::{self, BinaryOperator, Expression, Statement, StringPart, Value};
 use crate::error::CompilerError;
 use crate::types::WasmType;
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
@@ -39,6 +39,7 @@ impl FuncType {
 
 /// Generates WebAssembly instructions for various language constructs
 pub(crate) struct InstructionGenerator {
+    #[allow(dead_code)]
     type_manager: TypeManager,
     variable_map: std::collections::HashMap<String, LocalVarInfo>,
     current_locals: Vec<LocalVarInfo>,
@@ -47,6 +48,7 @@ pub(crate) struct InstructionGenerator {
     function_types: std::collections::HashMap<u32, FuncType>,
 }
 
+#[allow(dead_code)]
 impl InstructionGenerator {
     /// Create a new instruction generator
     pub(crate) fn new(type_manager: TypeManager) -> Self {
@@ -61,20 +63,17 @@ impl InstructionGenerator {
     }
 
     /// Add a function mapping from name to index
-    #[allow(dead_code)]
     pub(crate) fn add_function_mapping(&mut self, name: &str, index: u32) {
         self.function_map.insert(name.to_string(), index);
     }
 
     /// Reset locals for a new function
-    #[allow(dead_code)]
     pub(crate) fn reset_locals(&mut self) {
         self.current_locals.clear();
         self.variable_map.clear();
     }
 
     /// Get the current locals
-    #[allow(dead_code)]
     pub(crate) fn get_current_locals(&self) -> &Vec<LocalVarInfo> {
         &self.current_locals
     }
@@ -91,17 +90,7 @@ impl InstructionGenerator {
         param_types: &[WasmType],
     ) -> Option<u32> {
         let signature = self.create_function_signature(name, param_types);
-        let result = self.function_signatures.get(&signature).copied();
-        // DEBUG: Track function lookups that return high indices
-        if let Some(idx) = result {
-            if idx >= 42 {
-                eprintln!(
-                    "DEBUG: Looking up function '{}' returned index {} (signature: {})",
-                    name, idx, signature
-                );
-            }
-        }
-        result
+        self.function_signatures.get(&signature).copied()
     }
 
     /// Create a function signature string for overload resolution
@@ -115,7 +104,6 @@ impl InstructionGenerator {
     }
 
     /// Determine the type of an expression without generating instructions
-    #[allow(dead_code)]
     pub(crate) fn get_expression_type(&self, expr: &Expression) -> Result<WasmType, CompilerError> {
         match expr {
             Expression::Literal(value) => {
@@ -138,10 +126,8 @@ impl InstructionGenerator {
                         wasm_encoder::ValType::V128 => WasmType::V128,
                         _ => WasmType::I32,
                     };
-                    // eprintln!("DEBUG: Variable '{name}' has type {wasm_type:?}");
                     Ok(wasm_type)
                 } else {
-                    // eprintln!("DEBUG: Variable '{name}' not found in locals, defaulting to I32");
                     // Default to I32 if we can't determine the type
                     Ok(WasmType::I32)
                 }
@@ -174,13 +160,11 @@ impl InstructionGenerator {
     }
 
     /// Find a local variable by name
-    #[allow(dead_code)]
     pub(crate) fn find_local(&self, name: &str) -> Option<&LocalVarInfo> {
         self.variable_map.get(name)
     }
 
     /// Add a parameter to the list of locals
-    #[allow(dead_code)]
     pub(crate) fn add_parameter(&mut self, name: &str, wasm_type: WasmType) {
         let local_info = LocalVarInfo {
             index: self.current_locals.len() as u32,
@@ -191,7 +175,6 @@ impl InstructionGenerator {
     }
 
     /// Add a local variable and return its index
-    #[allow(dead_code)]
     pub(crate) fn add_local(&mut self, wasm_type: WasmType) -> u32 {
         let index = self.current_locals.len() as u32;
         let local_info = LocalVarInfo {
@@ -203,7 +186,6 @@ impl InstructionGenerator {
     }
 
     /// Generate instructions for a binary operation
-    #[allow(dead_code)]
     pub(crate) fn generate_binary_operation(
         &mut self,
         left: &Expression,
@@ -682,7 +664,6 @@ impl InstructionGenerator {
     }
 
     /// Generate instructions for a statement
-    #[allow(dead_code)]
     pub(crate) fn generate_statement(
         &mut self,
         stmt: &Statement,
@@ -1010,7 +991,6 @@ impl InstructionGenerator {
     }
 
     /// Generate instructions for an expression
-    #[allow(dead_code)]
     pub(crate) fn generate_expression(
         &mut self,
         expr: &Expression,
@@ -1071,23 +1051,14 @@ impl InstructionGenerator {
                     arg_types.push(arg_type);
                 }
 
-                // Try signature-based function resolution first
-                // eprintln!("DEBUG: Function call '{func_name}' with arg types: {arg_types:?}");
+                // Try signature-based function resolution first, fall back to name-based resolution
                 let func_index = if let Some(index) =
                     self.get_function_index_by_signature(func_name, &arg_types)
                 {
-                    // eprintln!("DEBUG: Found signature-based match: function[{index}]");
                     Some(index)
                 } else {
-                    // eprintln!("DEBUG: No signature match, trying name-based lookup");
                     // Fall back to name-based resolution for backwards compatibility
-                    if let Some(index) = self.get_function_index(func_name) {
-                        // eprintln!("DEBUG: Found name-based match: function[{index}]");
-                        Some(index)
-                    } else {
-                        // eprintln!("DEBUG: No function found for '{func_name}'");
-                        None
-                    }
+                    self.get_function_index(func_name)
                 };
 
                 if let Some(func_index) = func_index {
@@ -1171,7 +1142,6 @@ impl InstructionGenerator {
     }
 
     /// Generate instructions for a value
-    #[allow(dead_code)]
     pub(crate) fn generate_value(
         &mut self,
         value: &Value,
@@ -1411,7 +1381,6 @@ impl InstructionGenerator {
     }
 
     /// Generate string interpolation instructions
-    #[allow(dead_code)]
     pub(crate) fn generate_string_interpolation(
         &mut self,
         parts: &[StringPart],
@@ -1473,30 +1442,6 @@ impl InstructionGenerator {
         }
     }
 
-    /// Generate error handler instructions
-    #[allow(dead_code)]
-    pub(crate) fn generate_error_handler_blocks(
-        &mut self,
-        try_block: &[Statement],
-        _error_variable: Option<&str>,
-        _catch_block: &[Statement],
-        _location: &Option<SourceLocation>,
-        instructions: &mut Vec<Instruction>,
-    ) -> Result<(), CompilerError> {
-        // For now, implement a simple try-catch mechanism
-        // In a full implementation, this would use WASM's exception handling proposal
-
-        // Generate try block instructions
-        for stmt in try_block {
-            self.generate_statement(stmt, instructions)?;
-        }
-
-        // WASM exception handling proposal not yet stabilized
-        // Executes try block; catch block pending WASM exception support
-
-        Ok(())
-    }
-
     /// Add function type mapping
     pub(crate) fn add_function_type(
         &mut self,
@@ -1525,50 +1470,6 @@ impl InstructionGenerator {
         }
     }
 
-    /// Generate matrix operation instructions
-    #[allow(dead_code)]
-    pub(crate) fn generate_matrix_operation(
-        &mut self,
-        left: &Expression,
-        op: &str,
-        right: &Expression,
-        instructions: &mut Vec<Instruction>,
-    ) -> Result<WasmType, CompilerError> {
-        // First generate the left matrix
-        self.generate_expression(left, instructions)?;
-
-        // Then generate the right matrix
-        self.generate_expression(right, instructions)?;
-
-        // Call the appropriate matrix operation function based on the operator
-        let function_name = match op {
-            "add" => "matrix_add",
-            "subtract" => "matrix_subtract",
-            "multiply" => "matrix_multiply",
-            "transpose" => "matrix_transpose",
-            "inverse" => "matrix_inverse",
-            _ => {
-                return Err(CompilerError::codegen_error(
-                    format!("Unknown matrix operation: {op}"),
-                    Some("Use valid matrix operations".to_string()),
-                    None,
-                ))
-            }
-        };
-
-        // Find the function index for the matrix operation
-        if let Some(function_index) = self.get_function_index(function_name) {
-            instructions.push(Instruction::Call(function_index));
-            Ok(WasmType::I32) // Matrix operations return a pointer to the result matrix
-        } else {
-            Err(CompilerError::codegen_error(
-                format!("Matrix operation function not found: {function_name}"),
-                Some("Ensure the matrix operations are registered".to_string()),
-                None,
-            ))
-        }
-    }
-
     /// Register a function with the instruction generator
     /// The function index is provided by the CodeGenerator to ensure consistency
     pub(crate) fn register_function(
@@ -1582,7 +1483,6 @@ impl InstructionGenerator {
         // Create signature for this specific overload
         let signature = self.create_function_signature(name, params);
 
-        // DEBUG: Track function registrations above index 41
         if function_index >= 42 {
             tracing::trace!(
                 name = %name,
@@ -1665,17 +1565,6 @@ impl InstructionGenerator {
         }
     }
 
-    /// Check if a function returns void (has no return values)
-    #[allow(dead_code)]
-    pub(crate) fn is_void_function(&self, index: u32) -> bool {
-        if let Some(func_type) = self.get_function_type(index) {
-            func_type.results().is_empty()
-        } else {
-            false // If we can't determine, assume it's not void
-        }
-    }
-
-    #[allow(dead_code)]
     pub(crate) fn generate_list_access(
         &mut self,
         list: &Expression,

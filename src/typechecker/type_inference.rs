@@ -1334,7 +1334,6 @@ impl<'a> TypeInference<'a> {
         self.current_function = None;
         self.current_return_type = None;
 
-        // DEBUG: Log final return type stored in TAST for Pairs/Matrix functions
         let return_debug = format!("{:?}", declared_return_type);
         if return_debug.contains("Pairs") || return_debug.contains("Matrix") {
             tracing::trace!(
@@ -2479,15 +2478,10 @@ impl<'a> TypeInference<'a> {
                     &tast_arguments,
                 )?;
 
-                // CRITICAL FIX: Use SymbolId(0) for namespace functions (string.*, math.*, etc.)
+                // Use SymbolId(0) for namespace functions (string.*, math.*, req.*, etc.)
                 // This ensures MIR builder creates NamedFunction operands for proper symbol resolution
-                let is_namespace_function = function.contains('.')
-                    && (function.starts_with("string.")
-                        || function.starts_with("math.")
-                        || function.starts_with("list.")
-                        || function.starts_with("array.")
-                        || function.starts_with("file.")
-                        || function.starts_with("http."));
+                // Any dotted function name is a namespace function (no hardcoded list needed)
+                let is_namespace_function = function.contains('.');
 
                 let resolved_symbol_id = if is_namespace_function {
                     tracing::trace!(

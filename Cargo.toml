@@ -1,6 +1,6 @@
 [package]
 name = "clean-language-compiler"
-version = "0.30.30"
+version = "0.30.31"
 authors = ["Ivan Pasco Lizarraga"]
 edition = "2021"
 homepage = "https://www.cleanlanguage.dev"
@@ -184,19 +184,6 @@ path = "src/bin/performance_benchmark.rs"
 [lib]
 name = "clean_language_compiler"
 path = "src/lib.rs"
-
-# Temporarily commenting out nonexistent workspace members
-#[workspace]
-#members = [
-#    "parser_test",
-#    "parser_fix_test"
-#]
-#resolver = "2"
-
-#[workspace.dependencies]
-#pest = "2.7"
-#pest_derive = "2.7" 
-# HTTP client temporarily disabled
 
 # Feature flags for WebAssembly runtime selection
 [features]

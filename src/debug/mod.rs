@@ -536,11 +536,11 @@ impl DebugUtils {
             writeln!(report, "{}", "─".repeat(40)).unwrap();
         }
 
-        // Add analysis - TEMPORARILY DISABLED
-        // let analysis = crate::error::ErrorUtils::analyze_multiple_errors(errors);
-        // for line in analysis {
-        //     writeln!(report, "{line}").unwrap();
-        // }
+        // Add analysis
+        let analysis = crate::error::ErrorUtils::analyze_multiple_errors(errors);
+        for line in analysis {
+            writeln!(report, "{line}").unwrap();
+        }
 
         // Add fix suggestions
         let suggestions = Self::suggest_error_fixes(source, errors);

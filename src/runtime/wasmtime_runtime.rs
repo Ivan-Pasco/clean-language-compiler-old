@@ -3,8 +3,8 @@ use crate::error::CompilerError;
 
 #[cfg(feature = "wasmtime-runtime")]
 use crate::runtime::runtime_trait::{
-    HostFunctionRegistry, OptimizationLevel, RuntimeConfig, RuntimeFeature, RuntimeValue,
-    ValueType, WebAssemblyRuntime,
+    HostFunctionRegistry, OptimizationLevel, RuntimeConfig, RuntimeFeature, ValueType,
+    WebAssemblyRuntime,
 };
 
 #[cfg(feature = "wasmtime-runtime")]
@@ -221,29 +221,6 @@ fn value_type_to_wasmtime_type(value_type: ValueType) -> ValType {
         ValueType::I64 => ValType::I64,
         ValueType::F32 => ValType::F32,
         ValueType::F64 => ValType::F64,
-    }
-}
-
-#[cfg(feature = "wasmtime-runtime")]
-#[allow(dead_code)]
-fn wasmtime_value_to_runtime_value(value: &Val) -> RuntimeValue {
-    match value {
-        Val::I32(v) => RuntimeValue::I32(*v),
-        Val::I64(v) => RuntimeValue::I64(*v),
-        Val::F32(v) => RuntimeValue::F32(f32::from_bits(*v)),
-        Val::F64(v) => RuntimeValue::F64(f64::from_bits(*v)),
-        _ => RuntimeValue::I32(0), // Default fallback
-    }
-}
-
-#[cfg(feature = "wasmtime-runtime")]
-#[allow(dead_code)]
-fn runtime_value_to_wasmtime_value(value: &RuntimeValue) -> Val {
-    match value {
-        RuntimeValue::I32(v) => Val::I32(*v),
-        RuntimeValue::I64(v) => Val::I64(*v),
-        RuntimeValue::F32(v) => Val::F32(v.to_bits()),
-        RuntimeValue::F64(v) => Val::F64(v.to_bits()),
     }
 }
 

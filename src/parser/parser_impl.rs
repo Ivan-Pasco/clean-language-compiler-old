@@ -667,7 +667,6 @@ impl ErrorRecoveringParser {
 
 /// Represents partial AST nodes created during error recovery
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 enum PartialNode {
     Function(Function),
     Class(Class),
@@ -797,19 +796,6 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
         });
     }
 
-    // println!(
-    //     "DEBUG: Building program with {} functions, {} classes",
-    //     functions.len(),
-    //     classes.len()
-    // );
-    // for (i, class) in classes.iter().enumerate() {
-    //     println!(
-    //         "DEBUG: Class {}: {} with {} methods",
-    //         i,
-    //         class.name,
-    //         class.methods.len()
-    //     );
-    // }
     let program = Program {
         imports,
         plugins: Vec::new(),
@@ -1523,7 +1509,6 @@ fn parse_import_item(pair: Pair<Rule>) -> Result<ImportItem, CompilerError> {
     ))
 }
 
-#[allow(dead_code)]
 impl ErrorRecoveringParser {
     /// Extract function signature from malformed function declaration
     fn extract_function_signature(&self, segment: &str) -> Option<(String, Type, Vec<Parameter>)> {
@@ -1687,15 +1672,6 @@ impl ErrorRecoveringParser {
         }
 
         deduped
-    }
-
-    /// Extract function name from malformed function declaration (legacy method)
-    fn extract_function_name(&self, segment: &str) -> Option<String> {
-        if let Some((name, _, _)) = self.extract_function_signature(segment) {
-            Some(name)
-        } else {
-            None
-        }
     }
 }
 

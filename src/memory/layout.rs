@@ -40,15 +40,12 @@ impl MemoryPermissions {
 /// Memory layout manager
 pub struct MemoryLayoutManager {
     regions: Vec<MemoryRegion>,
-    #[allow(dead_code)]
-    total_size: u32,
 }
 
 impl MemoryLayoutManager {
     pub fn new(layout: &MemoryLayout) -> Self {
         let mut manager = Self {
             regions: Vec::new(),
-            total_size: layout.total_size,
         };
 
         // Define standard regions

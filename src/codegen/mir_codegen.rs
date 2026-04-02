@@ -2659,17 +2659,24 @@ impl MirCodeGenerator<'_> {
                                         namespaces.iter().find_map(|ns| {
                                             let qualified_name =
                                                 format!("{}.{}", ns, function_name);
-                                            debug_mir!(
-                                                "DEBUG LOOKUP FALLBACK: Trying '{}'",
-                                                qualified_name
-                                            );
                                             self.wasm_generator
                                                 .function_map
                                                 .get(&qualified_name)
                                                 .copied()
                                         })
                                     }
-                                };
+                                }
+                                // Bridge function lookup: "req.body" → "_req_body"
+                                .or_else(|| {
+                                    self.language_to_bridge_map.get(&function_name).and_then(
+                                        |bridge_name| {
+                                            self.wasm_generator
+                                                .function_map
+                                                .get(bridge_name)
+                                                .copied()
+                                        },
+                                    )
+                                });
 
                                 if let Some(function_index) = function_index {
                                     tracing::trace!(
@@ -2719,37 +2726,41 @@ impl MirCodeGenerator<'_> {
                             }
                         }
                         MirOperand::NamedFunction { name, symbol_id: _ } => {
-                            // CRITICAL FIX: Handle namespace functions (math.*, string.*) by looking up by name
                             debug_mir!(
                                 "DEBUG NAMED FUNCTION: Looking up function '{}' in function_map",
                                 name
                             );
 
                             // Try direct lookup first
-                            let function_index =
-                                if let Some(&idx) = self.wasm_generator.function_map.get(name) {
-                                    Some(idx)
+                            let function_index = if let Some(&idx) =
+                                self.wasm_generator.function_map.get(name)
+                            {
+                                Some(idx)
+                            } else {
+                                // Try underscore/dot conversion
+                                // "input.integer" -> "input_integer" or vice versa
+                                let alt_name = if name.contains('.') {
+                                    name.replace('.', "_")
+                                } else if name.contains('_') {
+                                    name.replace('_', ".")
                                 } else {
-                                    // CRITICAL FIX: Try underscore/dot conversion
-                                    // "input.integer" -> "input_integer" or vice versa
-                                    let alt_name = if name.contains('.') {
-                                        name.replace('.', "_")
-                                    } else if name.contains('_') {
-                                        name.replace('_', ".")
-                                    } else {
-                                        String::new()
-                                    };
-
-                                    if !alt_name.is_empty() {
-                                        debug_mir!(
-                                        "DEBUG NAMED FUNCTION FALLBACK: Trying alternate name '{}'",
-                                        alt_name
-                                    );
-                                        self.wasm_generator.function_map.get(&alt_name).copied()
-                                    } else {
-                                        None
-                                    }
+                                    String::new()
                                 };
+
+                                if !alt_name.is_empty() {
+                                    self.wasm_generator.function_map.get(&alt_name).copied()
+                                } else {
+                                    None
+                                }
+                            }
+                            // Bridge function lookup: "req.body" → "_req_body" via language_to_bridge_map
+                            .or_else(|| {
+                                self.language_to_bridge_map
+                                    .get(name)
+                                    .and_then(|bridge_name| {
+                                        self.wasm_generator.function_map.get(bridge_name).copied()
+                                    })
+                            });
 
                             if let Some(idx) = function_index {
                                 debug_mir!(
@@ -4545,7 +4556,6 @@ impl MirCodeGenerator<'_> {
         for (i, param) in function.parameters.iter().enumerate() {
             let val_type = self.mir_type_to_wasm_type(&param.param_type)?;
 
-            // DEBUG: Log each iteration for specific functions
             if function.name == "logMessage" || function.name == "buildUrl" {
                 debug_mir!("DEBUG PARAM CONVERSION ITERATION[{}]: function='{}' param='{}' mir_type={:?} val_type={:?} param_types_len_before={}",
                     i, function.name, param.name, param.param_type, val_type, param_types.len());
@@ -4553,7 +4563,6 @@ impl MirCodeGenerator<'_> {
 
             param_types.push(val_type);
 
-            // DEBUG: Log after push
             if function.name == "logMessage" || function.name == "buildUrl" {
                 debug_mir!(
                     "DEBUG AFTER PUSH[{}]: function='{}' param_types_len_after={} param_types={:?}",
@@ -4565,7 +4574,6 @@ impl MirCodeGenerator<'_> {
             }
         }
 
-        // DEBUG: Log signature conversion for specific functions
         if function.name == "logMessage" || function.name == "buildUrl" {
             tracing::debug!(
                 name = %function.name,

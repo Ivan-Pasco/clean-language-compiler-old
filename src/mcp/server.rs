@@ -13,7 +13,7 @@ use lazy_static::lazy_static;
 use serde_json::json;
 use std::sync::Mutex;
 use std::time::SystemTime;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 // ============================================================================
 // Specification Cache
@@ -633,7 +633,6 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
         let bytes_read = reader.read_line(&mut line).await?;
 
         if bytes_read == 0 {
-            // EOF reached
             eprintln!("[MCP] EOF detected, shutting down");
             break;
         }
@@ -643,10 +642,48 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        eprintln!("[MCP] <- {}", trimmed);
+        // Handle Content-Length framed messages (MCP stdio transport spec)
+        let json_body = if trimmed.starts_with("Content-Length:") {
+            let content_length: usize = match trimmed
+                .strip_prefix("Content-Length:")
+                .and_then(|s| s.trim().parse().ok())
+            {
+                Some(len) => len,
+                None => {
+                    eprintln!("[MCP] Invalid Content-Length header: {}", trimmed);
+                    continue;
+                }
+            };
+
+            // Read and discard header lines until we hit an empty line (end of headers)
+            loop {
+                line.clear();
+                let n = reader.read_line(&mut line).await?;
+                if n == 0 || line.trim().is_empty() {
+                    break;
+                }
+                // Skip additional headers (e.g., Content-Type)
+            }
+
+            // Read exactly content_length bytes as the JSON body
+            let mut body = vec![0u8; content_length];
+            reader.read_exact(&mut body).await?;
+            match String::from_utf8(body) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[MCP] Invalid UTF-8 in message body: {}", e);
+                    continue;
+                }
+            }
+        } else {
+            // Bare JSON line (no Content-Length framing)
+            trimmed.to_string()
+        };
+
+        eprintln!("[MCP] <- {}", json_body.trim());
 
         // Parse JSON-RPC request
-        let request: JsonRpcRequest = match serde_json::from_str(trimmed) {
+        let request: JsonRpcRequest = match serde_json::from_str(json_body.trim()) {
             Ok(req) => req,
             Err(e) => {
                 eprintln!("[MCP] Parse error: {}", e);
@@ -668,15 +705,16 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Write a JSON-RPC response to stdout
+/// Write a JSON-RPC response to stdout with Content-Length framing (MCP stdio transport spec)
 async fn write_response(
     stdout: &mut tokio::io::Stdout,
     response: &JsonRpcResponse,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let json = serde_json::to_string(response)?;
     eprintln!("[MCP] -> {}", json);
+    let header = format!("Content-Length: {}\r\n\r\n", json.len());
+    stdout.write_all(header.as_bytes()).await?;
     stdout.write_all(json.as_bytes()).await?;
-    stdout.write_all(b"\n").await?;
     stdout.flush().await?;
     Ok(())
 }

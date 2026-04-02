@@ -1276,8 +1276,6 @@ impl ErrorUtils {
         suggestions
     }
 
-    // TEMPORARILY DISABLED - needs parser Rule type fix
-    /*
     pub fn from_pest_error(
         pest_error: pest::error::Error<crate::parser::Rule>,
         source: &str,
@@ -1290,6 +1288,8 @@ impl ErrorUtils {
                     line,
                     column: col,
                     file: file_path.to_string(),
+                    byte_start: Some(pos),
+                    byte_end: Some(pos),
                 };
                 (Some(location), (pos, pos))
             }
@@ -1299,6 +1299,8 @@ impl ErrorUtils {
                     line,
                     column: col,
                     file: file_path.to_string(),
+                    byte_start: Some(start_pos),
+                    byte_end: Some(end_pos),
                 };
                 (Some(location), (start_pos, end_pos))
             }
@@ -1570,10 +1572,7 @@ impl ErrorUtils {
             format!("Error in: '{message}'")
         }
     }
-    */
 
-    // TEMPORARILY DISABLED - needs parser Rule type fix
-    /*
     pub fn from_pest_error_with_recovery(
         pest_error: pest::error::Error<crate::parser::Rule>,
         source: &str,
@@ -1590,6 +1589,8 @@ impl ErrorUtils {
             line,
             column,
             file: file_path.to_string(),
+            byte_start: Some(error_span.0),
+            byte_end: Some(error_span.1),
         };
 
         let source_snippet =
@@ -1772,63 +1773,6 @@ impl ErrorUtils {
         }
 
         analysis
-    }
-    */
-
-    /// Simplified pest error conversion for parser compatibility
-    pub fn from_pest_error(
-        pest_error: pest::error::Error<crate::parser::Rule>,
-        source: &str,
-        file_path: &str,
-    ) -> CompilerError {
-        // Convert pest error to basic syntax error for now
-        let message = format!("Parse error: {}", pest_error);
-
-        // Try to extract location if possible
-        let location = match pest_error.location {
-            pest::error::InputLocation::Pos(pos) => {
-                let (line, col) = Self::calculate_line_column(source, pos);
-                Some(SourceLocation {
-                    line,
-                    column: col,
-                    file: file_path.to_string(),
-                    byte_start: None,
-                    byte_end: None,
-                })
-            }
-            pest::error::InputLocation::Span((start_pos, _)) => {
-                let (line, col) = Self::calculate_line_column(source, start_pos);
-                Some(SourceLocation {
-                    line,
-                    column: col,
-                    file: file_path.to_string(),
-                    byte_start: None,
-                    byte_end: None,
-                })
-            }
-        };
-
-        CompilerError::syntax_error(message, None, location)
-    }
-
-    /// Calculate line and column from position
-    fn calculate_line_column(source: &str, pos: usize) -> (usize, usize) {
-        let mut line = 1;
-        let mut col = 1;
-
-        for (i, ch) in source.char_indices() {
-            if i >= pos {
-                break;
-            }
-            if ch == '\n' {
-                line += 1;
-                col = 1;
-            } else {
-                col += 1;
-            }
-        }
-
-        (line, col)
     }
 }
 

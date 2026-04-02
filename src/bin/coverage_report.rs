@@ -78,7 +78,6 @@ fn analyze_source_files() -> CoverageReport {
     // Analyze key source files
     let source_files = vec![
         "src/parser/mod.rs",
-        "src/semantic/mod.rs",
         "src/codegen/mod.rs",
         "src/ast/mod.rs",
         "src/stdlib/mod.rs",

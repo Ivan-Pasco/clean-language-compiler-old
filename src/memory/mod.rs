@@ -109,8 +109,6 @@ impl Default for MemoryLayout {
 
 /// Main memory manager
 pub struct MemoryManager {
-    #[allow(dead_code)]
-    layout: MemoryLayout,
     allocator: Allocator,
     string_pool: StringPool,
     gc: GarbageCollector,
@@ -124,7 +122,6 @@ impl MemoryManager {
             string_pool: StringPool::new(layout.string_pool_start),
             gc: GarbageCollector::new(),
             arc_manager: ARCManager::new(),
-            layout,
         }
     }
 

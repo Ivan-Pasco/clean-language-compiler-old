@@ -1929,11 +1929,15 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
             )
         })?;
 
-    // boolean.length() - Returns 1 for true, 1 for false (single character)
+    // boolean.length() - Returns the string length of the boolean representation
+    // true -> 4 ("true"), false -> 5 ("false")
     linker
-        .func_wrap("env", "boolean.length", |_value: i32| -> i32 {
-            // Both "true" and "false" have lengths, but this is just a placeholder
-            1
+        .func_wrap("env", "boolean.length", |value: i32| -> i32 {
+            if value != 0 {
+                4
+            } else {
+                5
+            }
         })
         .map_err(|e| {
             CompilerError::runtime_error(
@@ -2680,9 +2684,6 @@ fn allocate_string_in_memory(caller: &mut Caller<'_, ()>, string_value: &str) ->
     let string_bytes = string_value.as_bytes();
     let string_len = string_bytes.len() as i32;
 
-    // Debug logging disabled for production
-    // eprintln!("DEBUG: allocate_string_in_memory called with string='{}', len={}", string_value, string_len);
-
     // Allocate memory for the string (we'll store length + data)
     let total_size = 4 + string_len; // 4 bytes for length + string data
 
@@ -2694,15 +2695,12 @@ fn allocate_string_in_memory(caller: &mut Caller<'_, ()>, string_value: &str) ->
                 let ptr = NEXT_STRING_ALLOC;
                 NEXT_STRING_ALLOC += total_size + 4; // Add padding
 
-                // eprintln!("DEBUG: Allocating {} bytes at ptr={}", total_size, ptr);
-
                 // Check if we need to grow memory first
                 let current_size = memory.data_size(&*caller) as usize;
                 let needed_size = (ptr + total_size) as usize;
 
                 if needed_size > current_size {
                     let pages_needed = ((needed_size - current_size) + 65535) / 65536;
-                    // eprintln!("DEBUG: Growing memory by {} pages", pages_needed);
                     if memory.grow(&mut *caller, pages_needed as u64).is_err() {
                         tracing::error!(
                             pages_needed = pages_needed,
@@ -2725,7 +2723,6 @@ fn allocate_string_in_memory(caller: &mut Caller<'_, ()>, string_value: &str) ->
                 data[(ptr + 4) as usize..(ptr + 4 + string_len) as usize]
                     .copy_from_slice(string_bytes);
 
-                // eprintln!("DEBUG: Successfully allocated string at ptr={}, content written", ptr);
                 return ptr;
             }
         }

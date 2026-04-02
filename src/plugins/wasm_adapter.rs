@@ -19,8 +19,7 @@ use super::plugin_abi::PluginManifest;
 pub struct WasmPluginAdapter {
     /// Plugin name
     name: String,
-    /// Plugin manifest (kept for future version compatibility checks)
-    #[allow(dead_code)]
+    /// Plugin manifest providing export names and version information
     manifest: PluginManifest,
     /// Compiled WASM module
     module: Module,

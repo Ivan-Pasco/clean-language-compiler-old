@@ -85,12 +85,9 @@ pub mod parser;
 pub mod plugins;
 pub mod resolver;
 pub mod runtime;
-pub mod semantic;
 pub mod stdlib;
 pub mod targets;
 pub mod telemetry;
-// Temporarily disabled due to compilation issues
-// pub mod testing;
 pub mod typechecker;
 pub mod types;
 

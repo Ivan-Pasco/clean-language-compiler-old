@@ -42,7 +42,6 @@ use self::memory::MemoryUtils;
 use binaryen_optimizer::BinaryenOptimizer;
 use instruction_generator::{InstructionGenerator, LocalVarInfo};
 pub use mir_codegen::{MirCodeGenerator, MirCodegenResult};
-use stdlib_generator::StdlibGenerator;
 use type_conversion::TypeConverter;
 use type_manager::TypeManager;
 use wasm_module_builder::WasmModuleBuilder;
@@ -107,12 +106,6 @@ pub struct CodeGenerator {
     loop_continue_labels: Vec<u32>, // Stack of continue target labels
     current_block_depth: u32,       // Current nested block depth
 
-    // Result tracking for get_result function generation (legacy)
-    #[allow(dead_code)]
-    last_result_value: Option<i32>, // Store the final result value
-    #[allow(dead_code)]
-    last_result_type: Option<Type>, // Store the type of the final result
-
     // Variable tracking for automatic getter generation
     start_function_variables: HashMap<String, (Type, i32)>, // variable_name -> (type, constant_value)
 
@@ -124,9 +117,6 @@ pub struct CodeGenerator {
 
     // WASM module builder for assembling final module
     module_builder: WasmModuleBuilder,
-
-    // Standard library generator
-    stdlib_generator: StdlibGenerator,
 
     // Type converter
     type_converter: TypeConverter,
@@ -218,9 +208,6 @@ impl CodeGenerator {
             current_block_depth: 0,
 
             // Result tracking for get_result function generation
-            last_result_value: None,
-            last_result_type: None,
-
             // Variable tracking for automatic getter generation
             start_function_variables: HashMap::new(),
 
@@ -230,7 +217,6 @@ impl CodeGenerator {
             // Track imported function names to avoid exporting them
             imported_functions: HashSet::new(),
             module_builder: WasmModuleBuilder::new(include_runtime_imports),
-            stdlib_generator: StdlibGenerator::new(),
             type_converter: TypeConverter::new(),
             binaryen_optimizer: None, // Will be configured based on optimization level
             plugin_registrations: None,
@@ -569,28 +555,11 @@ impl CodeGenerator {
     }
 
     pub fn generate_function(&mut self, function: &AstFunction) -> Result<(), CompilerError> {
-        // DEBUG: Print function name and index for stack validation debugging
-        if let Some(&_func_index) = self.function_map.get(&function.name) {
-            // println!(
-            //     "DEBUG: Generating function '{}' at index {}",
-            //     function.name, func_index
-            // );
-        }
-
         // WORKAROUND: Infer class context for functions that should be class methods
         // This handles cases where the parser incorrectly reconstructs class methods as standalone functions
         let inferred_class = self.infer_class_context_for_function(&function.name);
         if let Some(class_name) = inferred_class {
-            // println!(
-            //     "DEBUG: CODEGEN Inferred class context '{}' for function '{}'",
-            //     class_name, function.name
-            // );
             self.current_class_context = Some(class_name);
-        } else {
-            // println!(
-            //     "DEBUG: CODEGEN No class context inferred for function '{}'",
-            //     function.name
-            // );
         }
 
         // Reset function state
@@ -1232,13 +1201,6 @@ impl CodeGenerator {
         location: &Option<SourceLocation>,
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), CompilerError> {
-        // println!(
-        //     "DEBUG: generate_variable_decl_statement for '{}' with type {:?}",
-        //     name, type_
-        // );
-        if let Some(_init) = initializer {
-            // println!("DEBUG: Variable '{}' has initializer: {:?}", name, init);
-        }
         let specified_type = WasmType::from(type_);
 
         let (var_type, init_instructions) = if let Some(init_expr) = initializer {
@@ -1248,16 +1210,7 @@ impl CodeGenerator {
 
             let target_type = specified_type;
 
-            // println!(
-            //     "DEBUG: Variable '{}' assignment - init_type: {:?}, target_type: {:?}",
-            //     name, init_type, target_type
-            // );
-
             if !self.types_compatible(&init_type, &target_type) {
-                // println!(
-                //     "DEBUG: Types not compatible! init_type: {:?}, target_type: {:?}",
-                //     init_type, target_type
-                // );
                 return Err(CompilerError::type_error(
                     format!("Initializer type {init_type:?} does not match specified type {target_type:?} for variable '{name}'"),
                     None, location.clone()
@@ -2018,7 +1971,6 @@ impl CodeGenerator {
 
                 // Check if this is a type conversion method only if not a class method
                 if self.is_type_conversion_method(method) {
-                    // println!("DEBUG: Processing type conversion method '{method}' via generate_type_conversion_method");
                     return self.generate_type_conversion_method(object, method, instructions);
                 }
 
@@ -2128,14 +2080,8 @@ impl CodeGenerator {
 
                                 // Select the appropriate math.abs function based on argument type
                                 function_name = match arg_type {
-                                    WasmType::I32 => {
-                                        // println!("DEBUG: Selected math.abs.i32 for I32 argument in MethodCall");
-                                        "math.abs.i32".to_string()
-                                    }
-                                    WasmType::F64 => {
-                                        // println!("DEBUG: Selected math.abs for F64 argument in MethodCall");
-                                        "math.abs".to_string()
-                                    }
+                                    WasmType::I32 => "math.abs.i32".to_string(),
+                                    WasmType::F64 => "math.abs".to_string(),
                                     WasmType::I64 => "math.abs".to_string(), // Use F64 version for I64
                                     WasmType::F32 => "math.abs".to_string(), // Use F64 version for F32
                                     WasmType::V128 | WasmType::Unit => "math.abs".to_string(), // Default to F64 version
@@ -3470,19 +3416,12 @@ impl CodeGenerator {
 
                     // Select the appropriate math.abs function based on argument type
                     full_function_name = match arg_type {
-                        WasmType::I32 => {
-                            // println!("DEBUG: Selected math.abs.i32 for I32 argument");
-                            "math.abs.i32".to_string()
-                        }
-                        WasmType::F64 => {
-                            // println!("DEBUG: Selected math.abs for F64 argument");
-                            "math.abs".to_string()
-                        }
+                        WasmType::I32 => "math.abs.i32".to_string(),
+                        WasmType::F64 => "math.abs".to_string(),
                         WasmType::I64 => "math.abs".to_string(), // Use F64 version for I64
                         WasmType::F32 => "math.abs".to_string(), // Use F64 version for F32
                         WasmType::V128 | WasmType::Unit => "math.abs".to_string(), // Default to F64 version
                     };
-                    // println!("DEBUG: Final function name: {}", full_function_name);
                 }
 
                 let return_type = self.get_function_return_type_by_name(&full_function_name);
@@ -3521,10 +3460,6 @@ impl CodeGenerator {
         type_hint: Option<&Type>,
         instructions: &mut Vec<Instruction>,
     ) -> Result<WasmType, CompilerError> {
-        // println!(
-        //     "DEBUG: generate_expression_with_type_hint called with expr: {:?}",
-        //     expr
-        // );
         match expr {
             Expression::Literal(value) => {
                 match value {
@@ -3595,7 +3530,6 @@ impl CodeGenerator {
         let left_type = self.generate_expression(left, instructions)?;
         let right_type = self.generate_expression(right, instructions)?;
 
-        // DEBUG: Log types for comparison operations
         if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual) {
             debug!(
                 op = ?op,
@@ -4423,7 +4357,6 @@ impl CodeGenerator {
     ) -> Result<WasmType, CompilerError> {
         match value {
             Value::Number(n) => {
-                // println!("DEBUG: generate_value for Number: {n}");
                 instructions.push(Instruction::F64Const(*n));
                 Ok(WasmType::F64)
             }
@@ -4473,143 +4406,9 @@ impl CodeGenerator {
         }
     }
 
-    /// Register ONLY the import functions (file, HTTP, etc.) that must come first in WASM
-    /// CRITICAL: This must be called BEFORE any stdlib functions are registered
-    /// because imports MUST have indices 0, 1, 2... in WASM files
-    fn register_import_functions_only(&mut self) -> Result<(), CompilerError> {
-        // CRITICAL: Register file imports FIRST (they get indices 0-4)
-        let file_functions: Vec<(&str, &[WasmType], Option<WasmType>)> = vec![
-            (
-                "file_read",
-                &[WasmType::I32, WasmType::I32, WasmType::I32],
-                Some(WasmType::I32),
-            ),
-            (
-                "file_write",
-                &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
-                Some(WasmType::I32),
-            ),
-            (
-                "file_append",
-                &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
-                Some(WasmType::I32),
-            ),
-            (
-                "file_exists",
-                &[WasmType::I32, WasmType::I32],
-                Some(WasmType::I32),
-            ),
-            (
-                "file_delete",
-                &[WasmType::I32, WasmType::I32],
-                Some(WasmType::I32),
-            ),
-        ];
-
-        for (name, params, return_type) in &file_functions {
-            let index = self.register_import_function("env", name, params, *return_type)?;
-            self.file_import_indices.insert(name.to_string(), index);
-        }
-
-        Ok(())
-    }
-
-    // Helper to register stdlib functions
-    #[allow(dead_code)]
-    fn register_stdlib_functions(&mut self) -> Result<(), CompilerError> {
-        // CRITICAL: Register imports FIRST (they must have indices 0, 1, 2...)
-        self.register_import_functions_only()?;
-
-        // NOW register stdlib functions (they get indices starting after imports)
-        // Delegate to the extracted stdlib generator
-        self.stdlib_generator.register_stdlib_functions()?;
-
-        // Standard library implementations
-        self.register_matrix_operations()?;
-        self.register_numeric_operations()?;
-        self.register_list_operations()?;
-        self.register_type_conversion_operations()?;
-        self.register_file_operations()?;
-        self.register_basic_array_get_fallback()?;
-        self.pre_allocate_conversion_strings()?;
-
-        // 12. Register string class operations
-        debug!(
-            function_count = self.function_count,
-            "About to register string class operations"
-        );
-        self.register_string_class_operations()?;
-        debug!(
-            function_count = self.function_count,
-            "String class operations registered successfully"
-        );
-
-        // 13. Register method-style and list behavior operations
-        // debug!("DEBUG: About to register method-style operations");
-        self.register_method_style_operations()?;
-        // debug!("DEBUG: Method-style operations registered successfully");
-
-        // 13. Register list class operations
-        // self.register_list_class_operations()?;
-
-        // 14. Register conditional operations (compare.*, conditional.*, logical.*)
-        // CRITICAL FIX: Don't silently ignore errors - these functions MUST be registered!
-        debug!("DEBUG MOD: About to register conditional operations");
-        self.register_conditional_operations()?;
-        debug!("DEBUG MOD: Conditional operations registered successfully");
-
-        // 15. Register HTTP operations
-        debug!("DEBUG: About to register HTTP operations");
-        match self.register_http_operations() {
-            Ok(()) => debug!("DEBUG: HTTP operations registered successfully"),
-            Err(e) => debug!("DEBUG: HTTP operations registration failed: {:?}", e),
-        }
-
-        // 11. Register math operations - TEST THIS ONE
-        // println!("DEBUG: About to register math operations");
-        self.register_math_operations()?;
-        // println!("DEBUG: Math operations registered successfully");
-
-        Ok(())
-    }
-
-    /// Register method-style operation functions using WASM instructions from MethodStyleManager
-    #[allow(dead_code)]
-    fn register_method_style_operations(&mut self) -> Result<(), CompilerError> {
-        use crate::stdlib::list_behavior::ListBehaviorManager;
-        use crate::stdlib::memory::MemoryManager;
-        use crate::stdlib::method_style::MethodStyleManager;
-        use std::cell::RefCell;
-        use std::rc::Rc;
-
-        // Create a MemoryManager and MethodStyleManager instance and register its functions
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(10))));
-        let method_style_manager = MethodStyleManager::new(memory_manager.clone());
-        method_style_manager.register_functions(self)?;
-
-        // Register ListBehaviorManager for list.add, list.size, list.isEmpty, etc.
-        let list_behavior_manager = ListBehaviorManager::new(memory_manager.clone());
-        list_behavior_manager.register_functions(self)?;
-
-        Ok(())
-    }
-
-    /// Register matrix operation functions using WASM instructions from MatrixOperations
-    #[allow(dead_code)]
-    fn register_matrix_operations(&mut self) -> Result<(), CompilerError> {
-        use crate::stdlib::matrix_ops::MatrixOperations;
-
-        // Create a MatrixOperations instance and register its functions
-        let matrix_ops = MatrixOperations::new();
-        matrix_ops.register_functions(self)?;
-
-        Ok(())
-    }
-
     /// Register file operation functions using WASM instructions from FileClass
     /// Only registers specification-compliant functions: file.read, file.write, file.append, file.exists, file.delete
     /// NOTE: File imports are now registered in register_import_functions_only() which is called first
-    #[allow(dead_code)]
     fn register_file_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::file_class::FileClass;
 
@@ -4968,20 +4767,7 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Register numeric operation functions using WASM instructions from NumericOperations
-    #[allow(dead_code)]
-    fn register_numeric_operations(&mut self) -> Result<(), CompilerError> {
-        use crate::stdlib::numeric_ops::NumericOperations;
-
-        // Create a NumericOperations instance and register its functions
-        let numeric_ops = NumericOperations::new();
-        numeric_ops.register_functions(self)?;
-
-        Ok(())
-    }
-
     /// Register list operation functions using WASM instructions from ListManager
-    #[allow(dead_code)]
     fn register_list_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::list_ops::ListManager;
         use crate::stdlib::memory::MemoryManager;
@@ -4996,63 +4782,6 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Register type conversion functions using WASM instructions from TypeConvOperations
-    #[allow(dead_code)]
-    fn register_type_conversion_operations(&mut self) -> Result<(), CompilerError> {
-        use crate::stdlib::type_conv::TypeConvOperations;
-
-        // Create a TypeConvOperations instance and register its functions
-        let type_conv = TypeConvOperations::new(1024);
-        type_conv.register_functions(self)?;
-
-        Ok(())
-    }
-
-    /// Pre-allocate common strings used by type conversion functions
-    #[allow(dead_code)]
-    fn pre_allocate_conversion_strings(&mut self) -> Result<(), CompilerError> {
-        // Allocate strings at specific memory addresses that the conversion functions expect
-        // Use non-overlapping addresses with proper spacing (address + 4 bytes length + content + padding)
-
-        // Start at the current allocation address to ensure we're in the valid memory region
-        // Use the memory_utils current_address which is already aligned and beyond guard pages
-        let base_addr = self.memory_utils.get_current_address() as u32;
-
-        // Boolean strings (use 24-byte spacing to ensure 8-byte alignment and space for content)
-        let _true_ptr = self.allocate_string_at_address("true", base_addr)?; // length + content
-        let _false_ptr = self.allocate_string_at_address("false", base_addr + 24)?; // well-spaced
-
-        // Integer strings
-        let _int_42_ptr = self.allocate_string_at_address("42", base_addr + 48)?;
-        let _generic_int_ptr = self.allocate_string_at_address("[int]", base_addr + 72)?;
-
-        // Float strings
-        let _float_314_ptr = self.allocate_string_at_address("3.14", base_addr + 96)?;
-        let _generic_float_ptr = self.allocate_string_at_address("[float]", base_addr + 120)?;
-
-        // Additional integer strings for int_to_string function
-        let _int_0_ptr = self.allocate_string_at_address("0", base_addr + 144)?;
-        let _int_1_ptr = self.allocate_string_at_address("1", base_addr + 168)?;
-        let _int_2_ptr = self.allocate_string_at_address("2", base_addr + 192)?;
-        let _int_3_ptr = self.allocate_string_at_address("3", base_addr + 216)?;
-        let _int_5_ptr = self.allocate_string_at_address("5", base_addr + 240)?;
-        let _int_7_ptr = self.allocate_string_at_address("7", base_addr + 264)?;
-
-        Ok(())
-    }
-
-    /// Allocate a string at a specific memory address
-    #[allow(dead_code)]
-    fn allocate_string_at_address(
-        &mut self,
-        s: &str,
-        target_addr: u32,
-    ) -> Result<u32, CompilerError> {
-        // Only use the force allocation, skip the regular allocation to avoid conflicts
-        self.memory_utils.force_string_at_address(s, target_addr)?;
-        Ok(target_addr)
-    }
-
     /// Register HTTP operation functions using HttpClass
     fn register_http_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::http_class::HttpClass;
@@ -5065,7 +4794,6 @@ impl CodeGenerator {
     }
 
     /// Register math operation functions using MathClass
-    #[allow(dead_code)]
     fn register_math_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::math_class::MathClass;
         use crate::types::WasmType;
@@ -5289,7 +5017,6 @@ impl CodeGenerator {
     }
 
     /// Register string class operation functions using StringClass
-    #[allow(dead_code)]
     fn register_string_class_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::string_class::StringClass;
 
@@ -5316,7 +5043,6 @@ impl CodeGenerator {
     }
 
     /// Register list class operation functions using ListClass
-    #[allow(dead_code)]
     fn register_list_class_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::list_class::ListClass;
 
@@ -5352,39 +5078,6 @@ impl CodeGenerator {
         use crate::stdlib::list_behavior::ListBehaviorManager;
         let list_behavior_manager = ListBehaviorManager::new(memory_manager.clone());
         list_behavior_manager.register_functions(self)?;
-
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn register_basic_array_get_fallback(&mut self) -> Result<(), CompilerError> {
-        // Only register the fallback if list.get is not already registered
-        if self.function_map.contains_key("list.get") {
-            return Ok(());
-        }
-
-        // Register a basic list.get fallback function
-        // This follows WebAssembly best practices for memory layout
-        // Memory layout: [length:i32][elem0][elem1][elem2]...
-        let instructions = vec![
-            // Calculate element pointer: list_ptr + 4 + (index * element_size)
-            // Using 4-byte header for list length, 4-byte elements for integers/pointers
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Const(4), // Header size (just length as i32)
-            Instruction::I32Add,
-            Instruction::LocalGet(1), // index
-            Instruction::I32Const(4), // Element size (4 bytes for i32)
-            Instruction::I32Mul,
-            Instruction::I32Add, // Calculate element pointer
-        ];
-
-        // Register under canonical name list.get
-        self.register_function(
-            "list.get",
-            &[WasmType::I32, WasmType::I32], // List pointer and index
-            Some(WasmType::I32),             // Return element pointer
-            &instructions,
-        )?;
 
         Ok(())
     }
@@ -5785,9 +5478,6 @@ impl CodeGenerator {
 
         // Update other tracking data
         self.function_names.push(name.to_string());
-        if name == "float_to_string" {
-            // println!("DEBUG: Adding float_to_string to function_map at index {function_index} (potential DUPLICATE)");
-        }
         self.function_map.insert(name.to_string(), function_index);
         self.function_count += 1;
 
@@ -6721,8 +6411,6 @@ impl CodeGenerator {
                                 .get_function_index("env.number.toString")
                                 .or_else(|| self.get_function_index("float_to_string"))
                             {
-                                // println!("DEBUG: Found float_to_string at function index {float_to_string_index}");
-
                                 // Verify the function mapping
                                 instructions.push(Instruction::Call(float_to_string_index));
                                 Ok(WasmType::I32) // String is represented as I32 pointer
@@ -7067,7 +6755,6 @@ impl CodeGenerator {
     }
 
     /// Generate code for a class
-    #[allow(dead_code)]
     fn generate_class(&mut self, class: &Class) -> Result<(), CompilerError> {
         // Generate constructor
         if let Some(constructor) = &class.constructor {
@@ -7132,151 +6819,6 @@ impl CodeGenerator {
         }
 
         Ok(())
-    }
-
-    /// Generate code for a range iteration statement
-    #[allow(dead_code)]
-    fn generate_range_iterate(
-        &mut self,
-        stmt: &Statement,
-    ) -> Result<Vec<Instruction>, CompilerError> {
-        if let Statement::RangeIterate {
-            iterator,
-            start,
-            end,
-            step,
-            body,
-            ..
-        } = stmt
-        {
-            let mut instructions = Vec::new();
-
-            // Get types first to avoid borrow checker issues
-            let start_type = self.get_expression_type(start)?;
-            let end_type = self.get_expression_type(end)?;
-            let step_type = if let Some(step_expr) = step {
-                Some(self.get_expression_type(step_expr)?)
-            } else {
-                None
-            };
-
-            // Generate start expression
-            self.generate_expression(start, &mut instructions)?;
-
-            // Store start value
-            let start_local = self.add_local(start_type);
-            instructions.push(Instruction::LocalSet(start_local));
-
-            // Generate end expression
-            self.generate_expression(end, &mut instructions)?;
-
-            // Store end value
-            let end_local = self.add_local(end_type);
-            instructions.push(Instruction::LocalSet(end_local));
-
-            // Generate step expression if present
-            let step_local = if let Some(step_expr) = step {
-                self.generate_expression(step_expr, &mut instructions)?;
-
-                // Store step value
-                let step_local = self.add_local(step_type.unwrap());
-                instructions.push(Instruction::LocalSet(step_local));
-                Some(step_local)
-            } else {
-                None
-            };
-
-            // Add iterator to symbol table
-            let iterator_local = self.add_local(start_type);
-            // Store iterator in variable map instead of removed symbol_table
-            self.variable_map.insert(
-                iterator.clone(),
-                LocalVarInfo {
-                    index: iterator_local,
-                    type_: WasmType::I32.into(),
-                },
-            );
-
-            // Generate loop
-            let loop_label = self.next_label();
-            let end_label = self.next_label();
-
-            // Initialize iterator
-            instructions.push(Instruction::LocalGet(start_local));
-            instructions.push(Instruction::LocalSet(iterator_local));
-
-            // Loop start
-            instructions.push(Instruction::Loop(BlockType::Empty));
-
-            // Check condition
-            instructions.push(Instruction::LocalGet(iterator_local));
-            instructions.push(Instruction::LocalGet(end_local));
-
-            // Compare based on step direction
-            if let Some(step_local) = step_local {
-                // Get step value
-                instructions.push(Instruction::LocalGet(step_local));
-
-                // If step is negative, use greater than or equal
-                // If step is positive, use less than or equal
-                instructions.push(Instruction::F64Const(0.0));
-                instructions.push(Instruction::F64Lt);
-                instructions.push(Instruction::If(BlockType::Empty));
-
-                // Negative step
-                instructions.push(Instruction::LocalGet(iterator_local));
-                instructions.push(Instruction::LocalGet(end_local));
-                instructions.push(Instruction::F64Ge);
-
-                instructions.push(Instruction::Else);
-
-                // Positive step
-                instructions.push(Instruction::LocalGet(iterator_local));
-                instructions.push(Instruction::LocalGet(end_local));
-                instructions.push(Instruction::F64Le);
-
-                instructions.push(Instruction::End);
-            } else {
-                // Default to positive step
-                instructions.push(Instruction::F64Le);
-            }
-
-            // Break if condition is false
-            instructions.push(Instruction::BrIf(end_label));
-
-            // Generate body
-            for stmt in body {
-                self.generate_statement(stmt, &mut instructions)?;
-            }
-
-            // Update iterator
-            instructions.push(Instruction::LocalGet(iterator_local));
-            if let Some(step_local) = step_local {
-                instructions.push(Instruction::LocalGet(step_local));
-                instructions.push(Instruction::F64Add);
-            } else {
-                instructions.push(Instruction::F64Const(1.0));
-                instructions.push(Instruction::F64Add);
-            }
-            instructions.push(Instruction::LocalSet(iterator_local));
-
-            // Continue loop
-            instructions.push(Instruction::Br(loop_label));
-
-            // End loop
-            instructions.push(Instruction::End);
-
-            // Remove iterator from variable map
-            self.variable_map.remove(iterator);
-
-            Ok(instructions)
-        } else {
-            Err(CompilerError::type_error(
-                "Expected range iteration statement".to_string(),
-                None,
-                None,
-            ))
-        }
     }
 
     // Missing methods that are referenced in the code
@@ -7852,8 +7394,7 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Register file system import functions (legacy - not used by MirCodeGenerator)
-    #[allow(dead_code)]
+    /// Register file system import functions
     fn register_file_imports(&mut self) -> Result<(), CompilerError> {
         // file_write(pathPtr: i32, pathLen: i32, contentPtr: i32, contentLen: i32) -> i32
         let write_type = self.add_function_type(
@@ -8687,8 +8228,7 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Register console input function imports (legacy - not used by MirCodeGenerator)
-    #[allow(dead_code)]
+    /// Register console input function imports
     fn register_console_imports(&mut self) -> Result<(), CompilerError> {
         // input(prompt_ptr: i32) -> string_ptr: i32
         let input_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
@@ -8756,8 +8296,7 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// Register type conversion import functions - CRITICAL for runtime functionality
-    #[allow(dead_code)]
+    /// Register type conversion import functions
     fn register_type_conversion_imports(&mut self) -> Result<(), CompilerError> {
         // CRITICAL: Register memory allocation function FIRST to ensure correct indices
         // mem_alloc(type_id: i32, size: i32) -> i32 (returns pointer)
@@ -8833,10 +8372,6 @@ impl CodeGenerator {
             "float_to_string",
             wasm_encoder::EntityType::Function(float_to_string_type),
         );
-        // println!(
-        //     "Debug: {}",
-        //     self.function_count
-        // );
         self.function_map
             .insert("float_to_string".to_string(), self.function_count);
         self.imported_functions
@@ -8980,7 +8515,6 @@ impl CodeGenerator {
             Some(WasmType::I32),             // returns concatenated string pointer
         )?;
 
-        // println!("DEBUG: Registered method-style imports for type-based method calls");
         Ok(())
     }
 
@@ -9850,131 +9384,6 @@ impl CodeGenerator {
             .export("memory", wasm_encoder::ExportKind::Memory, 0);
 
         self.assemble_module()
-    }
-
-    /// Generate a single getter function for a variable (legacy)
-    #[allow(dead_code)]
-    fn generate_single_getter_function(
-        &mut self,
-        func_name: &str,
-        var_type: &Type,
-        var_value: i32,
-    ) -> Result<(), CompilerError> {
-        // Determine WASM return type based on Clean Language type
-        let (wasm_return_type, return_instruction) = match var_type {
-            Type::Integer => (WasmType::I32, Instruction::I32Const(var_value)),
-            Type::Number => {
-                // For number type, always use F64 (to match integration test expectations)
-                (WasmType::F64, Instruction::F64Const(var_value as f64))
-            }
-            Type::Boolean => (
-                WasmType::I32,
-                Instruction::I32Const(if var_value != 0 { 1 } else { 0 }),
-            ),
-            Type::String => {
-                // For string types, check if this is the special "Hello, World!" marker
-                if var_value == 999999 {
-                    // For testing, create a simple string format that the test expects:
-                    // 1 byte length + string content (no header, compatible with test)
-                    let hello_world = "Hello, World!";
-                    let test_string_ptr = self.allocate_simple_test_string(hello_world)?;
-                    (WasmType::I32, Instruction::I32Const(test_string_ptr as i32))
-                } else {
-                    // Default string case
-                    (WasmType::I32, Instruction::I32Const(var_value))
-                }
-            }
-            _ => (WasmType::I32, Instruction::I32Const(var_value)), // Default to i32
-        };
-
-        // Create function type: () -> return_type
-        let func_type_index = self.add_function_type(&[], Some(wasm_return_type))?;
-        self.function_section.function(func_type_index);
-
-        // Register the function in the function map
-        let func_index = self.function_count;
-        self.function_map.insert(func_name.to_string(), func_index);
-        self.function_names.push(func_name.to_string());
-        self.function_count += 1;
-
-        // Generate function body: just return the constant value
-        let instructions = vec![return_instruction];
-
-        // Create function and add to code section
-        let locals = vec![]; // No local variables needed
-        let mut func = Function::new(locals);
-        // Add all generated instructions
-        for instruction in &instructions {
-            func.instruction(instruction);
-        }
-
-        // Always add END instruction to close the function body
-        func.instruction(&Instruction::End);
-        self.code_section.function(&func);
-
-        Ok(())
-    }
-
-    /// Generate the get_result function for integration testing (legacy)
-    #[allow(dead_code)]
-    fn generate_get_result_function(&mut self) -> Result<(), CompilerError> {
-        // Check if there's a variable named "result" first, otherwise use the last result
-        let (result_value, result_type) =
-            if let Some((var_type, var_value)) = self.start_function_variables.get("result") {
-                (*var_value, var_type.clone())
-            } else {
-                (
-                    self.last_result_value.unwrap_or(42),
-                    self.last_result_type
-                        .as_ref()
-                        .unwrap_or(&Type::Number)
-                        .clone(),
-                )
-            };
-
-        // Determine WASM return type based on Clean Language type and value
-        // For number types, prefer i32 if the value is a whole number to match test expectations
-        let (wasm_return_type, return_instruction) = match result_type {
-            Type::Integer => (WasmType::I32, Instruction::I32Const(result_value)),
-            Type::Number => {
-                // Always use F64 for number types to match individual getter function behavior
-                (WasmType::F64, Instruction::F64Const(result_value as f64))
-            }
-            Type::Boolean => (
-                WasmType::I32,
-                Instruction::I32Const(if result_value != 0 { 1 } else { 0 }),
-            ),
-            _ => (WasmType::I32, Instruction::I32Const(result_value)), // Default to i32
-        };
-
-        // Create function type for get_result: () -> return_type
-        let func_type_index = self.add_function_type(&[], Some(wasm_return_type))?;
-        self.function_section.function(func_type_index);
-
-        // Register the function in the function map
-        let func_index = self.function_count;
-        self.function_map
-            .insert("get_result".to_string(), func_index);
-        self.function_names.push("get_result".to_string());
-        self.function_count += 1;
-
-        // Generate function body: just return the constant value
-        let instructions = vec![return_instruction];
-
-        // Create function and add to code section
-        let locals = vec![]; // No local variables needed
-        let mut func = Function::new(locals);
-        // Add all generated instructions
-        for instruction in &instructions {
-            func.instruction(instruction);
-        }
-
-        // Always add END instruction to close the function body
-        func.instruction(&Instruction::End);
-        self.code_section.function(&func);
-
-        // Note: Function will be exported by the general export loop
-        Ok(())
     }
 
     /// Search for a method in the class hierarchy (current class and all parent classes)

@@ -3,8 +3,8 @@ use crate::error::CompilerError;
 
 #[cfg(feature = "wasmer-runtime")]
 use crate::runtime::runtime_trait::{
-    HostFunctionRegistry, OptimizationLevel, RuntimeConfig, RuntimeFeature, RuntimeValue,
-    ValueType, WebAssemblyRuntime,
+    HostFunctionRegistry, OptimizationLevel, RuntimeConfig, RuntimeFeature, ValueType,
+    WebAssemblyRuntime,
 };
 
 #[cfg(feature = "wasmer-runtime")]
@@ -13,38 +13,6 @@ use wasmer::{Engine, Function, Instance, Module, RuntimeError, Store, Value};
 /// Wasmer implementation of the WebAssembly runtime trait
 #[cfg(feature = "wasmer-runtime")]
 pub struct WasmerRuntime;
-
-#[cfg(feature = "wasmer-runtime")]
-impl WasmerRuntime {
-    /// Create a configured Cranelift compiler based on runtime configuration
-    #[allow(dead_code)]
-    fn create_configured_compiler(config: &RuntimeConfig) -> wasmer::Cranelift {
-        use wasmer::{Cranelift, CraneliftOptLevel};
-
-        // Set optimization level based on config
-        let opt_level = match config.optimization_level {
-            OptimizationLevel::None => CraneliftOptLevel::None,
-            OptimizationLevel::Speed => CraneliftOptLevel::Speed,
-            OptimizationLevel::SpeedAndSize => CraneliftOptLevel::SpeedAndSize,
-        };
-
-        let mut compiler = Cranelift::new();
-        compiler.opt_level(opt_level);
-
-        // In wasmer 4.x, features like bulk_memory, reference_types, SIMD, and threads
-        // are typically enabled by default in Cranelift compiler
-        // These features are controlled by the WebAssembly module itself and the runtime
-
-        compiler
-    }
-
-    /// Create a store with proper configuration
-    #[allow(dead_code)]
-    fn create_configured_store(config: &RuntimeConfig) -> Store {
-        let compiler = Self::create_configured_compiler(config);
-        Store::new(compiler)
-    }
-}
 
 #[cfg(feature = "wasmer-runtime")]
 impl WebAssemblyRuntime for WasmerRuntime {
@@ -216,29 +184,6 @@ fn value_type_to_wasmer_type(value_type: ValueType) -> wasmer::Type {
         ValueType::I64 => wasmer::Type::I64,
         ValueType::F32 => wasmer::Type::F32,
         ValueType::F64 => wasmer::Type::F64,
-    }
-}
-
-#[cfg(feature = "wasmer-runtime")]
-#[allow(dead_code)]
-fn wasmer_value_to_runtime_value(value: &wasmer::Value) -> RuntimeValue {
-    match value {
-        wasmer::Value::I32(v) => RuntimeValue::I32(*v),
-        wasmer::Value::I64(v) => RuntimeValue::I64(*v),
-        wasmer::Value::F32(v) => RuntimeValue::F32(*v),
-        wasmer::Value::F64(v) => RuntimeValue::F64(*v),
-        _ => RuntimeValue::I32(0), // Default fallback
-    }
-}
-
-#[cfg(feature = "wasmer-runtime")]
-#[allow(dead_code)]
-fn runtime_value_to_wasmer_value(value: &RuntimeValue) -> wasmer::Value {
-    match value {
-        RuntimeValue::I32(v) => wasmer::Value::I32(*v),
-        RuntimeValue::I64(v) => wasmer::Value::I64(*v),
-        RuntimeValue::F32(v) => wasmer::Value::F32(*v),
-        RuntimeValue::F64(v) => wasmer::Value::F64(*v),
     }
 }
 

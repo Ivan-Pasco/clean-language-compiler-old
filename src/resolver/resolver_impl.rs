@@ -1192,9 +1192,6 @@ impl NameResolver {
             return Err(());
         }
 
-        // Debug output disabled for performance
-        // eprintln!("DEBUG RESOLVER: Resolving expression at depth {}: {:?}", self.expression_recursion_depth, expression);
-
         // Increment recursion depth
         self.expression_recursion_depth += 1;
 

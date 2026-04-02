@@ -10,8 +10,6 @@ use pest::Parser;
 
 /// Preprocessor that handles functions block parsing by isolating individual functions
 pub struct FunctionPreprocessor {
-    #[allow(dead_code)]
-    source: String,
     /// Class context for when processing class methods
     class_context: Option<ClassContext>,
 }
@@ -25,17 +23,15 @@ pub struct ClassContext {
 }
 
 impl FunctionPreprocessor {
-    pub fn new(source: &str) -> Self {
+    pub fn new(_source: &str) -> Self {
         Self {
-            source: source.to_string(),
             class_context: None,
         }
     }
 
     /// Create a new preprocessor with class context for processing class methods
-    pub fn with_class_context(source: &str, class_context: ClassContext) -> Self {
+    pub fn with_class_context(_source: &str, class_context: ClassContext) -> Self {
         Self {
-            source: source.to_string(),
             class_context: Some(class_context),
         }
     }
@@ -349,13 +345,6 @@ impl FunctionPreprocessor {
         });
 
         Ok(function)
-    }
-
-    /// Get line offset for a function index (for error reporting)
-    #[allow(dead_code)]
-    fn get_function_line_offset(&self, _function_index: usize) -> usize {
-        // For now, return 0. In a full implementation, we'd track line numbers
-        0
     }
 
     /// Normalize function indentation to match functions: block expectations

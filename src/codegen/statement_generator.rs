@@ -503,41 +503,6 @@ impl CodeGenerator {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn generate_for_statement(
-        &mut self,
-        _variable: &str,
-        _iterable: &Expression,
-        _body: &[Statement],
-        _instructions: &mut Vec<Instruction>,
-    ) -> Result<(), CompilerError> {
-        Err(CompilerError::codegen_error(
-            "For loops not yet implemented".to_string(),
-            None,
-            None
-        ))
-    }
-
-    #[allow(dead_code)]
-    fn generate_try_catch_statement(
-        &mut self,
-        try_body: &[Statement],
-        catch_body: &[Statement],
-        instructions: &mut Vec<Instruction>,
-    ) -> Result<(), CompilerError> {
-        // Generate try block statements directly
-        // Note: WASM exception handling proposal not yet stabilized - using pass-through for now
-        for stmt in try_body {
-            self.generate_statement(stmt, instructions)?;
-        }
-        
-        // Catch block would need exception handling mechanism
-        // For now, skip the catch block
-        let _ = catch_body;
-        
-        Ok(())
-    }
-
     fn generate_test_statement(
         &mut self,
         _name: &str,
@@ -563,7 +528,6 @@ impl CodeGenerator {
         ))
     }
 
-    #[allow(dead_code)]
     fn generate_background_statement(
         &mut self,
         statements: &[Statement],

@@ -780,7 +780,6 @@ impl MirBuilder {
         tast_function: TastFunction,
         class_context: Option<&TastClass>,
     ) -> Result<MirFunction, Vec<CompilerError>> {
-        // DEBUG: Show parameter count for functions with default parameters
         debug!(
             function = %tast_function.name,
             param_count = tast_function.parameters.len(),
@@ -877,7 +876,6 @@ impl MirBuilder {
             }
         }
 
-        // DEBUG: Show final MIR parameter count
         trace!(
             function_name = %context.function.name,
             param_count = context.function.parameters.len(),
@@ -943,7 +941,6 @@ impl MirBuilder {
         self.stats.ssa_values_created += context.function.next_value_id;
         self.stats.phi_nodes_inserted += context.pending_phis.len();
 
-        // DEBUG: Check all blocks for proper terminators
         if context.function.name == "test" {
             trace!(
                 function_name = %context.function.name,
@@ -7044,7 +7041,6 @@ impl MirBuilder {
 
     /// Add instruction to current basic block
     fn add_instruction(&mut self, context: &mut FunctionBuildContext, instruction: MirInstruction) {
-        // DEBUG: Track GetElementPtr/Load instructions
         if matches!(instruction.operation, MirOperation::GetElementPtr { .. }) {
             trace!(current_block = ?self.current_block, "Adding GetElementPtr");
         }
