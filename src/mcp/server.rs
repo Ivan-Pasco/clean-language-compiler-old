@@ -869,7 +869,7 @@ fn get_available_tools() -> Vec<Tool> {
         },
         Tool {
             name: "diagnostics".to_string(),
-            description: "Get detailed diagnostics (errors/warnings) for a source file. Same as check but focuses on diagnostic output.".to_string(),
+            description: "Get diagnostics (errors/warnings) for a source file with optional severity filtering. Returns counts and details.".to_string(),
             input_schema: ToolInputSchema {
                 type_: "object".to_string(),
                 properties: json!({
@@ -880,9 +880,13 @@ fn get_available_tools() -> Vec<Tool> {
                     "file_path": {
                         "type": "string",
                         "description": "Path to the source file (used for error reporting)"
+                    },
+                    "severity": {
+                        "type": "string",
+                        "description": "Filter by severity: 'error' or 'warning'. Returns all if omitted."
                     }
                 }),
-                required: vec!["source".to_string(), "file_path".to_string()],
+                required: vec!["source".to_string()],
             },
         },
         Tool {
@@ -1151,6 +1155,87 @@ fn get_available_tools() -> Vec<Tool> {
                 required: vec![],
             },
         },
+        // ====================================================================
+        // New Tools: format, validate, run, list_examples, get_changelog
+        // ====================================================================
+        Tool {
+            name: "format".to_string(),
+            description: "Format Clean Language source code. Normalizes indentation (tabs), whitespace, and block structure.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "source": {
+                        "type": "string",
+                        "description": "The Clean Language source code to format"
+                    }
+                }),
+                required: vec!["source".to_string()],
+            },
+        },
+        Tool {
+            name: "validate".to_string(),
+            description: "Validate a plugin.toml or package.clean.toml file. Checks required fields, structure, and bridge function declarations.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "content": {
+                        "type": "string",
+                        "description": "The TOML file content to validate"
+                    },
+                    "file_type": {
+                        "type": "string",
+                        "description": "File type: 'plugin' (plugin.toml) or 'package' (package.clean.toml). Default: auto-detect."
+                    }
+                }),
+                required: vec!["content".to_string()],
+            },
+        },
+        Tool {
+            name: "run".to_string(),
+            description: "Compile and validate Clean Language source in one step. Returns compilation result with WASM size and any diagnostics. Does not execute (execution requires a runtime).".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "source": {
+                        "type": "string",
+                        "description": "The Clean Language source code to compile and validate"
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the source file (used for error reporting)"
+                    }
+                }),
+                required: vec!["source".to_string()],
+            },
+        },
+        Tool {
+            name: "list_examples".to_string(),
+            description: "List example .cln files from the compiler's examples directory. Returns file names and contents for learning Clean Language patterns.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "name": {
+                        "type": "string",
+                        "description": "Optional: specific example file name to read (e.g., 'hello.cln'). Returns all examples if omitted."
+                    }
+                }),
+                required: vec![],
+            },
+        },
+        Tool {
+            name: "get_changelog".to_string(),
+            description: "Get recent changes to the Clean Language compiler. Returns the last N version changes from git history.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "count": {
+                        "type": "number",
+                        "description": "Number of recent versions to return. Default: 10."
+                    }
+                }),
+                required: vec![],
+            },
+        },
     ]
 }
 
@@ -1193,30 +1278,57 @@ fn handle_tools_call(id: serde_json::Value, params: Option<serde_json::Value>) -
     eprintln!("[MCP] Calling tool: {}", tool_name);
 
     // Dispatch to appropriate tool handler
-    match tool_name {
-        "check" => tool_check(id, arguments),
-        "compile" => tool_compile(id, arguments),
-        "parse" => tool_parse(id, arguments),
-        "diagnostics" => tool_diagnostics(id, arguments),
-        "explain_error" => tool_explain_error(id, arguments),
-        "list_functions" => tool_list_functions(id, arguments),
-        "list_types" => tool_list_types(id, arguments),
-        "list_plugins" => tool_list_plugins(id, arguments),
-        "get_specification" => tool_get_specification(id, arguments),
-        "list_builtins" => tool_list_builtins(id, arguments),
-        "list_error_codes" => tool_list_error_codes(id, arguments),
-        "get_quick_reference" => tool_get_quick_reference(id),
-        "get_plugin_examples" => tool_get_plugin_examples(id, arguments),
-        "list_ecosystem" => tool_list_ecosystem(id, arguments),
-        "get_stack_recommendation" => tool_get_stack_recommendation(id, arguments),
-        "report_error" => tool_report_error(id, arguments),
-        "check_reported_fixes" => tool_check_reported_fixes(id, arguments),
-        "get_architecture" => tool_get_architecture(id, arguments),
-        _ => JsonRpcResponse::error(
-            id,
-            error_codes::METHOD_NOT_FOUND,
-            format!("Unknown tool: {}", tool_name),
-        ),
+    let response = match tool_name {
+        "check" => tool_check(id.clone(), arguments),
+        "compile" => tool_compile(id.clone(), arguments),
+        "parse" => tool_parse(id.clone(), arguments),
+        "diagnostics" => tool_diagnostics(id.clone(), arguments),
+        "explain_error" => tool_explain_error(id.clone(), arguments),
+        "list_functions" => tool_list_functions(id.clone(), arguments),
+        "list_types" => tool_list_types(id.clone(), arguments),
+        "list_plugins" => tool_list_plugins(id.clone(), arguments),
+        "get_specification" => tool_get_specification(id.clone(), arguments),
+        "list_builtins" => tool_list_builtins(id.clone(), arguments),
+        "list_error_codes" => tool_list_error_codes(id.clone(), arguments),
+        "get_quick_reference" => tool_get_quick_reference(id.clone()),
+        "get_plugin_examples" => tool_get_plugin_examples(id.clone(), arguments),
+        "list_ecosystem" => tool_list_ecosystem(id.clone(), arguments),
+        "get_stack_recommendation" => tool_get_stack_recommendation(id.clone(), arguments),
+        "report_error" => tool_report_error(id.clone(), arguments),
+        "check_reported_fixes" => tool_check_reported_fixes(id.clone(), arguments),
+        "get_architecture" => tool_get_architecture(id.clone(), arguments),
+        "format" => tool_format(id.clone(), arguments),
+        "validate" => tool_validate(id.clone(), arguments),
+        "run" => tool_run(id.clone(), arguments),
+        "list_examples" => tool_list_examples(id.clone(), arguments),
+        "get_changelog" => tool_get_changelog(id.clone(), arguments),
+        _ => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::METHOD_NOT_FOUND,
+                format!("Unknown tool: {}", tool_name),
+            )
+        }
+    };
+
+    // Wrap tool result in MCP content format: {content: [{type: "text", text: "..."}]}
+    // Per MCP spec, tools/call results must use this format
+    if let Some(result) = response.result {
+        let text = serde_json::to_string(&result).unwrap_or_default();
+        let is_error = result
+            .get("success")
+            .and_then(|v| v.as_bool())
+            .map(|s| !s)
+            .unwrap_or(false);
+        JsonRpcResponse::success(
+            response.id,
+            json!({
+                "content": [{"type": "text", "text": text}],
+                "isError": is_error
+            }),
+        )
+    } else {
+        response
     }
 }
 
@@ -1365,8 +1477,70 @@ fn tool_parse(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRespons
 
 /// Tool: diagnostics - Get diagnostics for source
 fn tool_diagnostics(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
-    // Same as check but only returns diagnostics
-    tool_check(id, args)
+    let source = match args.get("source").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Missing 'source' parameter".to_string(),
+            )
+        }
+    };
+
+    let file_path = args
+        .get("file_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("input.cln");
+
+    // Type-check and return only diagnostics with severity filtering
+    let severity_filter = args.get("severity").and_then(|v| v.as_str());
+
+    match type_check(source, file_path) {
+        Ok(_result) => JsonRpcResponse::success(
+            id,
+            json!({
+                "success": true,
+                "diagnostics": [],
+                "error_count": 0,
+                "warning_count": 0
+            }),
+        ),
+        Err(errors) => {
+            let all_diagnostics: Vec<serde_json::Value> =
+                errors.iter().map(|e| error_to_json(e)).collect();
+
+            let diagnostics: Vec<serde_json::Value> = if let Some(filter) = severity_filter {
+                all_diagnostics
+                    .into_iter()
+                    .filter(|d| {
+                        d.get("severity")
+                            .and_then(|s| s.as_str())
+                            .map(|s| s.eq_ignore_ascii_case(filter))
+                            .unwrap_or(false)
+                    })
+                    .collect()
+            } else {
+                all_diagnostics
+            };
+
+            let error_count = diagnostics
+                .iter()
+                .filter(|d| d.get("severity").and_then(|s| s.as_str()) == Some("error"))
+                .count();
+            let warning_count = diagnostics.len() - error_count;
+
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": error_count == 0,
+                    "diagnostics": diagnostics,
+                    "error_count": error_count,
+                    "warning_count": warning_count
+                }),
+            )
+        }
+    }
 }
 
 /// Tool: explain_error - Explain an error code
@@ -1619,9 +1793,9 @@ fn tool_list_plugins(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         Err(e) => JsonRpcResponse::success(
             id,
             json!({
-                "success": true,
+                "success": false,
                 "plugins": [],
-                "note": format!("Plugin discovery skipped: {}", e)
+                "error": format!("Plugin discovery failed: {}", e)
             }),
         ),
     }
@@ -1786,17 +1960,63 @@ fn tool_list_ecosystem(id: serde_json::Value, args: &serde_json::Value) -> JsonR
     let installed = discovery.discover_all().unwrap_or_default();
     let installed_names: Vec<String> = installed.keys().cloned().collect();
 
+    // Mark catalog entries as installed/not
+    let catalog_names: Vec<String> = plugins
+        .iter()
+        .filter_map(|p| {
+            p.get("name")
+                .and_then(|n| n.as_str())
+                .map(|s| s.to_string())
+        })
+        .collect();
+
     for plugin in plugins.iter_mut() {
         let name = plugin["name"].as_str().unwrap_or("");
         plugin["installed"] = json!(installed_names.iter().any(|n| n == name));
     }
+
+    // Auto-discover plugins installed but not in the hardcoded catalog
+    for (name, manifest) in &installed {
+        if !catalog_names.iter().any(|n| n == name) {
+            let should_include = if let Some(cat) = category_filter {
+                cat.eq_ignore_ascii_case("all")
+            } else {
+                true
+            };
+            if should_include {
+                let bridge_count = manifest.bridge.functions.len();
+                let blocks: Vec<&str> =
+                    manifest.handles.blocks.iter().map(|s| s.as_str()).collect();
+                plugins.push(json!({
+                    "name": name,
+                    "version": manifest.plugin.version,
+                    "category": "discovered",
+                    "description": manifest.plugin.description,
+                    "blocks": blocks,
+                    "key_features": [],
+                    "bridge_function_count": bridge_count,
+                    "install": format!("cleen plugin add {}", name),
+                    "status": "installed",
+                    "installed": true,
+                    "auto_detect_paths": [],
+                    "replaces": "",
+                    "permissions": manifest.bridge.functions.iter()
+                        .map(|f| f.name.as_str())
+                        .collect::<Vec<_>>(),
+                    "source": "auto-discovered"
+                }));
+            }
+        }
+    }
+
+    let total = plugins.len();
 
     JsonRpcResponse::success(
         id,
         json!({
             "success": true,
             "ecosystem": plugins,
-            "total": catalog.len(),
+            "total": total,
             "installed_count": installed_names.len(),
             "note": "Use 'list_plugins' with project_dir to see installed plugins with full DSL details. Use 'get_plugin_examples' to read example code."
         }),
@@ -2831,7 +3051,7 @@ For other content types:
             "success": true,
             "quick_reference": quick_ref,
             "version": crate::VERSION,
-            "tools_available": 18,
+            "tools_available": get_available_tools().len(),
             "tip": "Use 'check' for fast iteration, 'compile' when ready for WASM. If spec-correct code fails, call 'report_error' immediately — never write workarounds. Call 'check_reported_fixes' at session start to see resolved bugs."
         }),
     )
@@ -3489,6 +3709,406 @@ fn generate_report_id() -> String {
     let d: u16 = (rng.gen::<u16>() & 0x3FFF) | 0x8000;
     let e: u64 = rng.gen::<u64>() & 0xFFFF_FFFF_FFFF;
     format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}", a, b, c, d, e)
+}
+
+// ============================================================================
+// New Tools: format, validate, run, list_examples, get_changelog
+// ============================================================================
+
+/// Tool: format - Format Clean Language source code
+fn tool_format(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    let source = match args.get("source").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Missing 'source' parameter".to_string(),
+            )
+        }
+    };
+
+    // Format Clean Language source:
+    // - Normalize line endings to \n
+    // - Convert spaces-based indentation to tabs
+    // - Trim trailing whitespace from each line
+    // - Ensure single newline at end of file
+    // - Remove consecutive blank lines (max 1)
+    let mut formatted_lines: Vec<String> = Vec::new();
+    let mut prev_blank = false;
+
+    for line in source.lines() {
+        let trimmed_right = line.trim_end();
+
+        if trimmed_right.is_empty() {
+            if !prev_blank {
+                formatted_lines.push(String::new());
+            }
+            prev_blank = true;
+            continue;
+        }
+        prev_blank = false;
+
+        // Count leading whitespace and convert to tabs
+        let content = trimmed_right.trim_start();
+        let leading = &trimmed_right[..trimmed_right.len() - content.len()];
+
+        // Convert spaces to tabs (4 spaces = 1 tab, 2 spaces = 1 tab for partial)
+        let tab_count = if leading.contains('\t') {
+            leading.matches('\t').count()
+        } else {
+            // Count spaces and convert: 4 spaces = 1 tab level, round up partial
+            let spaces = leading.len();
+            if spaces > 0 {
+                (spaces + 3) / 4 // Round up to nearest tab
+            } else {
+                0
+            }
+        };
+
+        let formatted = format!("{}{}", "\t".repeat(tab_count), content);
+        formatted_lines.push(formatted);
+    }
+
+    // Remove trailing blank lines
+    while formatted_lines
+        .last()
+        .map(|l| l.is_empty())
+        .unwrap_or(false)
+    {
+        formatted_lines.pop();
+    }
+
+    let formatted = formatted_lines.join("\n") + "\n";
+    let changed = formatted != source;
+
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": true,
+            "formatted": formatted,
+            "changed": changed,
+            "line_count": formatted_lines.len()
+        }),
+    )
+}
+
+/// Tool: validate - Validate plugin.toml or package.clean.toml
+fn tool_validate(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    let content = match args.get("content").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Missing 'content' parameter".to_string(),
+            )
+        }
+    };
+
+    let file_type = args.get("file_type").and_then(|v| v.as_str()).unwrap_or("");
+
+    // Try to parse as TOML
+    let parsed: toml::Value = match content.parse() {
+        Ok(v) => v,
+        Err(e) => {
+            return JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": false,
+                    "valid": false,
+                    "errors": [format!("TOML parse error: {}", e)]
+                }),
+            )
+        }
+    };
+
+    let mut errors: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Auto-detect file type
+    let detected_type = if file_type == "plugin" || parsed.get("plugin").is_some() {
+        "plugin"
+    } else if file_type == "package" || parsed.get("package").is_some() {
+        "package"
+    } else {
+        errors.push("Cannot detect file type: no [plugin] or [package] section found".to_string());
+        "unknown"
+    };
+
+    match detected_type {
+        "plugin" => {
+            // Validate plugin.toml
+            if let Some(plugin) = parsed.get("plugin") {
+                if plugin.get("name").is_none() {
+                    errors.push("[plugin] missing required field: name".to_string());
+                }
+                if plugin.get("version").is_none() {
+                    errors.push("[plugin] missing required field: version".to_string());
+                }
+            } else {
+                errors.push("Missing [plugin] section".to_string());
+            }
+
+            // Check bridge section
+            if let Some(bridge) = parsed.get("bridge") {
+                if let Some(functions) = bridge.get("functions") {
+                    if let Some(table) = functions.as_table() {
+                        for (name, func) in table {
+                            if func.get("params").is_none() {
+                                warnings.push(format!(
+                                    "bridge.functions.{}: missing 'params' field",
+                                    name
+                                ));
+                            }
+                            if func.get("returns").is_none() {
+                                warnings.push(format!(
+                                    "bridge.functions.{}: missing 'returns' field",
+                                    name
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Check ai section
+            if parsed.get("ai").is_none() {
+                warnings.push(
+                    "No [ai] section — AI assistants won't have context for this plugin"
+                        .to_string(),
+                );
+            }
+        }
+        "package" => {
+            // Validate package.clean.toml
+            if let Some(package) = parsed.get("package") {
+                if package.get("name").is_none() {
+                    errors.push("[package] missing required field: name".to_string());
+                }
+                if package.get("version").is_none() {
+                    errors.push("[package] missing required field: version".to_string());
+                }
+            } else {
+                errors.push("Missing [package] section".to_string());
+            }
+        }
+        _ => {}
+    }
+
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": errors.is_empty(),
+            "valid": errors.is_empty(),
+            "file_type": detected_type,
+            "errors": errors,
+            "warnings": warnings
+        }),
+    )
+}
+
+/// Tool: run - Compile and validate in one step
+fn tool_run(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    let source = match args.get("source").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Missing 'source' parameter".to_string(),
+            )
+        }
+    };
+
+    let file_path = args
+        .get("file_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("input.cln");
+
+    let start = SystemTime::now();
+
+    // Step 1: Type-check
+    let type_check_result = type_check(source, file_path);
+    let type_check_ok = type_check_result.is_ok();
+    let type_errors: Vec<serde_json::Value> = match &type_check_result {
+        Ok(_) => vec![],
+        Err(errors) => errors.iter().map(|e| error_to_json(e)).collect(),
+    };
+
+    // Step 2: Compile (even if type-check fails, to get all diagnostics)
+    let compile_result = compile_with_opt_level(source, file_path, 2);
+
+    let duration = start.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
+
+    match compile_result {
+        Ok(wasm) => {
+            let has_start = source.contains("start:");
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": true,
+                    "compiled": true,
+                    "wasm_size_bytes": wasm.len(),
+                    "type_check_passed": type_check_ok,
+                    "has_entry_point": has_start,
+                    "ready_to_execute": has_start && type_check_ok,
+                    "duration_ms": duration,
+                    "diagnostics": type_errors,
+                    "note": if has_start {
+                        "Compilation successful. Use a Clean Language runtime (clean-server or wasmtime_runner) to execute."
+                    } else {
+                        "Compilation successful but no start: block found. This file is a library module."
+                    }
+                }),
+            )
+        }
+        Err(errors) => {
+            let compile_errors: Vec<serde_json::Value> =
+                errors.iter().map(|e| error_to_json(e)).collect();
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": false,
+                    "compiled": false,
+                    "type_check_passed": type_check_ok,
+                    "duration_ms": duration,
+                    "diagnostics": compile_errors
+                }),
+            )
+        }
+    }
+}
+
+/// Tool: list_examples - List and read example .cln files
+fn tool_list_examples(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    let name_filter = args.get("name").and_then(|v| v.as_str());
+
+    // Find examples directory relative to working directory or binary
+    let examples_dirs = vec![
+        std::path::PathBuf::from("examples"),
+        std::path::PathBuf::from("../examples"),
+    ];
+
+    // Also try relative to binary location
+    let binary_examples = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.join("../../examples")));
+
+    let mut search_dirs = examples_dirs;
+    if let Some(dir) = binary_examples {
+        search_dirs.push(dir);
+    }
+
+    let examples_dir = search_dirs.iter().find(|d| d.exists() && d.is_dir());
+
+    let examples_dir = match examples_dir {
+        Some(dir) => dir,
+        None => {
+            return JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": true,
+                    "examples": [],
+                    "note": "Examples directory not found. Run from the compiler project root."
+                }),
+            )
+        }
+    };
+
+    let mut examples: Vec<serde_json::Value> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(examples_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("cln") {
+                let file_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                if let Some(filter) = name_filter {
+                    if !file_name.contains(filter) {
+                        continue;
+                    }
+                }
+
+                let content = std::fs::read_to_string(&path).unwrap_or_default();
+                examples.push(json!({
+                    "name": file_name,
+                    "path": path.display().to_string(),
+                    "content": content,
+                    "size_bytes": content.len()
+                }));
+            }
+        }
+    }
+
+    examples.sort_by(|a, b| {
+        a.get("name")
+            .and_then(|v| v.as_str())
+            .cmp(&b.get("name").and_then(|v| v.as_str()))
+    });
+
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": true,
+            "examples": examples,
+            "count": examples.len()
+        }),
+    )
+}
+
+/// Tool: get_changelog - Get recent compiler changes from git history
+fn tool_get_changelog(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+
+    // Try to get git log
+    let output = std::process::Command::new("git")
+        .args([
+            "log",
+            "--oneline",
+            "--no-decorate",
+            &format!("-{}", count.min(50)),
+        ])
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let log = String::from_utf8_lossy(&out.stdout);
+            let entries: Vec<serde_json::Value> = log
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|line| {
+                    let (hash, message) = line.split_at(line.find(' ').unwrap_or(line.len()));
+                    json!({
+                        "hash": hash.trim(),
+                        "message": message.trim()
+                    })
+                })
+                .collect();
+
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": true,
+                    "current_version": crate::VERSION,
+                    "entries": entries,
+                    "count": entries.len()
+                }),
+            )
+        }
+        _ => JsonRpcResponse::success(
+            id,
+            json!({
+                "success": false,
+                "error": "Git history not available. Not running from a git repository.",
+                "current_version": crate::VERSION
+            }),
+        ),
+    }
 }
 
 /// Convert a CompilerError to JSON for MCP responses
