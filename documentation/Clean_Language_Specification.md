@@ -3797,6 +3797,40 @@ Attributes are passed to the plugin and can affect code generation.
 | **UI** | `component:`, `view:` | UI components |
 | **Config** | `config:`, `settings:` | Configuration DSLs |
 
+### Handler Parameter Type (v0.30.39+)
+
+Bridge functions in plugin.toml can declare a `"handler"` parameter type for callback dispatch. This allows developers to pass function names instead of numeric indices:
+
+```toml
+# plugin.toml
+[[bridge.functions]]
+name = "_ui_onEvent"
+params = ["string", "string", "handler"]
+returns = "integer"
+expand_strings = true
+```
+
+In Clean Language source code, the developer passes a function name:
+
+```clean
+start:
+    integer s = ui.onEvent(".btn", "click", loadUsers)
+
+functions:
+    loadUsers()
+        print("Loading users...")
+```
+
+The compiler:
+1. Verifies `loadUsers` exists in the `functions:` block
+2. Assigns a unique handler index (auto-incrementing, starting from 0)
+3. Passes the index as i32 to the bridge function
+4. Exports the function as `handle_event_N` in the WASM module
+
+The same function referenced in multiple handler parameters gets the same index. At the WASM level, `handler` compiles to `i32` — the runtime dispatches callbacks via `handle_event_{index}` exports.
+
+Supported bridge parameter types: `"string"`, `"integer"`, `"number"`, `"boolean"`, `"void"`, `"handler"`.
+
 ### IDE Support
 
 Plugins provide IDE integration through the Language Server:

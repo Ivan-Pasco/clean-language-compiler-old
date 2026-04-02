@@ -19,7 +19,8 @@ pub enum BuiltinType {
     Matrix(Box<BuiltinType>),
     Pairs(Box<BuiltinType>, Box<BuiltinType>),
     Namespace,
-    Any, // For generic functions
+    Any,     // For generic functions
+    Handler, // Function reference passed as callback index to bridge functions
 }
 
 impl BuiltinType {
@@ -40,6 +41,7 @@ impl BuiltinType {
             }
             BuiltinType::Namespace => crate::hir::HirType::Void, // Namespace is a special case
             BuiltinType::Any => crate::hir::HirType::Any,        // Dynamic type for JSON values
+            BuiltinType::Handler => crate::hir::HirType::Integer, // Handler is an i32 index at WASM level
         }
     }
 
@@ -60,6 +62,7 @@ impl BuiltinType {
             ),
             BuiltinType::Namespace => ConcreteType::Namespace,
             BuiltinType::Any => ConcreteType::Any, // Dynamic type with runtime type tag
+            BuiltinType::Handler => ConcreteType::Integer, // Handler is an i32 index at WASM level
         }
     }
 }

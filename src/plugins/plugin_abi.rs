@@ -213,7 +213,7 @@ fn default_expand() -> String {
 pub struct BridgeFunction {
     /// Function name (e.g., "_db_query")
     pub name: String,
-    /// Parameter types as strings: "string", "integer", "number", "boolean", "void"
+    /// Parameter types as strings: "string", "integer", "number", "boolean", "void", "handler"
     pub params: Vec<String>,
     /// Return type as string
     pub returns: String,
@@ -486,6 +486,7 @@ impl BridgeFunction {
             "number" | "float" | "f64" => BuiltinType::Number,
             "boolean" | "bool" => BuiltinType::Boolean,
             "void" | "" => BuiltinType::Void,
+            "handler" | "callback" => BuiltinType::Handler,
             _ => BuiltinType::Any, // Default to Any for unknown types
         }
     }

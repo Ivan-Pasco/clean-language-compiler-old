@@ -119,6 +119,24 @@ pub struct MirCodeGenerator<'a> {
     /// 2. `register_plugin_bridge_imports` — inserts a `function_map` alias so
     ///    the language name resolves to the same WASM index as the bridge import.
     language_to_bridge_map: HashMap<String, String>,
+
+    /// Handler index tracking for plugin callback dispatch.
+    ///
+    /// When a bridge function parameter is declared as `"handler"` in plugin.toml,
+    /// the compiler accepts a function name (e.g., `loadUsers`) instead of a numeric index.
+    /// Each unique handler function is assigned an auto-incrementing index, and the
+    /// function is exported as `handle_event_N` so the runtime can dispatch callbacks.
+    ///
+    /// Maps function name → handler index (0, 1, 2, ...)
+    handler_indices: HashMap<String, u32>,
+
+    /// Next handler index to assign (auto-incrementing counter)
+    next_handler_index: u32,
+
+    /// Bridge function parameter type info for handler resolution.
+    /// Maps bridge function name → list of parameter BuiltinTypes.
+    /// Used during Call codegen to detect which arguments are handler parameters.
+    bridge_param_types: HashMap<String, Vec<crate::builtins::registry::BuiltinType>>,
 }
 
 /// Context for loop code generation
@@ -199,6 +217,9 @@ impl MirCodeGenerator<'_> {
             target: crate::CompilationTarget::Server, // Default to Server for backwards compatibility
             external_function_indices: HashMap::new(),
             language_to_bridge_map: HashMap::new(),
+            handler_indices: HashMap::new(),
+            next_handler_index: 0,
+            bridge_param_types: HashMap::new(),
         }
     }
 
@@ -229,6 +250,9 @@ impl MirCodeGenerator<'_> {
             target: crate::CompilationTarget::Standalone, // Minimal uses Standalone
             external_function_indices: HashMap::new(),
             language_to_bridge_map: HashMap::new(),
+            handler_indices: HashMap::new(),
+            next_handler_index: 0,
+            bridge_param_types: HashMap::new(),
         }
     }
 
@@ -259,6 +283,9 @@ impl MirCodeGenerator<'_> {
             target,
             external_function_indices: HashMap::new(),
             language_to_bridge_map: HashMap::new(),
+            handler_indices: HashMap::new(),
+            next_handler_index: 0,
+            bridge_param_types: HashMap::new(),
         }
     }
 
@@ -272,6 +299,11 @@ impl MirCodeGenerator<'_> {
     /// Bridge functions are declared in plugin.toml [bridge] sections and
     /// need to be registered as WASM imports before code generation.
     pub fn set_bridge_functions(&mut self, bridge_functions: Vec<crate::plugins::BridgeFunction>) {
+        // Build param type map for handler resolution during Call codegen
+        for func in &bridge_functions {
+            self.bridge_param_types
+                .insert(func.name.clone(), func.get_param_types());
+        }
         self.bridge_functions = bridge_functions;
     }
 
@@ -2488,8 +2520,25 @@ impl MirCodeGenerator<'_> {
                         // Check if we have function signature to enable automatic type conversion
                         let param_types = function_signature.as_ref().map(|sig| &sig.parameters);
 
+                        // Check if this is a bridge function call with handler parameters
+                        let bridge_handler_params = self.get_bridge_handler_params(function_name.as_deref());
+
                         for (i, arg) in arguments.iter().enumerate() {
                             debug_mir!(" CALL ARGS:   Arg[{}]: {:?}", i, arg);
+
+                            // Handler parameter: resolve function reference to handler index
+                            if bridge_handler_params.as_ref().is_some_and(|params| {
+                                i < params.len() && matches!(params[i], crate::builtins::registry::BuiltinType::Handler)
+                            }) {
+                                let handler_index = self.resolve_handler_argument(arg)?;
+                                debug_mir!(
+                                    " CALL ARGS:   Arg[{}] is handler, resolved to index {}",
+                                    i, handler_index
+                                );
+                                self.current_instructions.push(Instruction::I32Const(handler_index as i32));
+                                continue;
+                            }
+
                             self.load_operand(arg)?;
 
                             // Automatic type conversion: if parameter expects f64 but we have i32, convert
@@ -3626,6 +3675,96 @@ impl MirCodeGenerator<'_> {
         }
 
         Ok(())
+    }
+
+    /// Look up bridge function parameter types for handler detection.
+    ///
+    /// Given a function name (language-level or bridge-level), returns the
+    /// parameter types from the plugin.toml declaration if it's a bridge function.
+    /// Returns None if the function is not a bridge function.
+    fn get_bridge_handler_params(
+        &self,
+        function_name: Option<&str>,
+    ) -> Option<Vec<crate::builtins::registry::BuiltinType>> {
+        let name = function_name?;
+
+        // Direct bridge function name lookup (e.g., "_ui_onEvent")
+        if let Some(params) = self.bridge_param_types.get(name) {
+            return Some(params.clone());
+        }
+
+        // Language name → bridge name lookup (e.g., "ui.onEvent" → "_ui_onEvent")
+        if let Some(bridge_name) = self.language_to_bridge_map.get(name) {
+            if let Some(params) = self.bridge_param_types.get(bridge_name) {
+                return Some(params.clone());
+            }
+        }
+
+        // Try underscore/dot conversion (e.g., "ui_onEvent" → "_ui_onEvent")
+        let alt_name = if name.contains('.') {
+            format!("_{}", name.replace('.', "_"))
+        } else if name.contains('_') && !name.starts_with('_') {
+            format!("_{}", name)
+        } else {
+            return None;
+        };
+        self.bridge_param_types.get(&alt_name).cloned()
+    }
+
+    /// Resolve a handler argument (function reference) to a handler index.
+    ///
+    /// Assigns a unique auto-incrementing index to each handler function.
+    /// The same function referenced multiple times gets the same index.
+    /// Returns the handler index to be passed as i32 to the bridge function.
+    fn resolve_handler_argument(&mut self, arg: &MirOperand) -> Result<u32, CompilerError> {
+        // Extract the function name from the operand
+        let handler_name = match arg {
+            MirOperand::Function(symbol_id) => {
+                self.get_function_name_by_symbol(*symbol_id)
+                    .ok_or_else(|| CompilerError::codegen_error(
+                        format!(
+                            "Handler function SymbolId({}) not found — did you define it in the functions: block?",
+                            symbol_id.0
+                        ),
+                        None,
+                        None,
+                    ))?
+            }
+            MirOperand::NamedFunction { name, .. } => name.clone(),
+            MirOperand::Constant(MirConstant::Integer(n)) => {
+                // Already a literal integer — pass through as-is (backwards compatibility)
+                return Ok(*n as u32);
+            }
+            other => {
+                return Err(CompilerError::codegen_error(
+                    format!(
+                        "Expected function name for handler parameter, got {:?}. Pass a function name like 'myHandler' instead of a value.",
+                        other
+                    ),
+                    None,
+                    None,
+                ));
+            }
+        };
+
+        // Check if this handler was already assigned an index
+        if let Some(&index) = self.handler_indices.get(&handler_name) {
+            return Ok(index);
+        }
+
+        // Assign new handler index
+        let index = self.next_handler_index;
+        self.next_handler_index += 1;
+        self.handler_indices.insert(handler_name.clone(), index);
+
+        tracing::debug!(
+            handler = %handler_name,
+            index = index,
+            "Assigned handler index (will export as handle_event_{})",
+            index
+        );
+
+        Ok(index)
     }
 
     /// Load MIR operand onto WASM stack
@@ -5812,6 +5951,32 @@ impl MirCodeGenerator<'_> {
             }
         }
 
+        // Export handler functions as handle_event_N for runtime callback dispatch.
+        // Each handler function referenced via a `handler` plugin parameter gets
+        // an additional export with the name `handle_event_{index}`.
+        for (handler_name, &handler_index) in &self.handler_indices {
+            if let Some(&func_index) = self.wasm_generator.function_map.get(handler_name) {
+                let export_name = format!("handle_event_{}", handler_index);
+                tracing::debug!(
+                    handler = %handler_name,
+                    handler_index = handler_index,
+                    wasm_func_index = func_index,
+                    export_name = %export_name,
+                    "Exporting handler function for runtime callback dispatch"
+                );
+                self.wasm_generator.export_section.export(
+                    &export_name,
+                    wasm_encoder::ExportKind::Func,
+                    func_index,
+                );
+            } else {
+                tracing::warn!(
+                    handler = %handler_name,
+                    "Handler function not found in function map — skipping export"
+                );
+            }
+        }
+
         // 5. Add export section - clone it
         let export_section = self.wasm_generator.export_section.clone();
         module.section(&export_section);
@@ -6363,6 +6528,7 @@ impl MirCodeGenerator<'_> {
             BuiltinType::Pairs(_, _) => WasmType::I32, // Pairs pointer
             BuiltinType::Namespace => WasmType::I32, // Namespace as i32
             BuiltinType::Any => WasmType::I32,  // Any as i32 pointer
+            BuiltinType::Handler => WasmType::I32, // Handler is a function index (i32)
         }
     }
 
