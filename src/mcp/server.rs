@@ -747,7 +747,7 @@ fn handle_notification(method: &str) {
 async fn handle_request(request: JsonRpcRequest) -> JsonRpcResponse {
     let id = request.id.unwrap_or(json!(null));
     match request.method.as_str() {
-        "initialize" => handle_initialize(id),
+        "initialize" => handle_initialize(id, request.params.as_ref()),
         "tools/list" => handle_tools_list(id),
         "tools/call" => handle_tools_call(id, request.params),
         _ => JsonRpcResponse::error(
@@ -759,11 +759,34 @@ async fn handle_request(request: JsonRpcRequest) -> JsonRpcResponse {
 }
 
 /// Handle the 'initialize' method
-fn handle_initialize(id: serde_json::Value) -> JsonRpcResponse {
+fn handle_initialize(id: serde_json::Value, params: Option<&serde_json::Value>) -> JsonRpcResponse {
+    // Supported protocol versions (newest first)
+    const SUPPORTED_VERSIONS: &[&str] = &["2025-03-26", "2024-11-05"];
+
+    // Pick the best version: use the client's requested version if we support it,
+    // otherwise fall back to our latest supported version
+    let client_version = params
+        .and_then(|p| p.get("protocolVersion"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let protocol_version = if SUPPORTED_VERSIONS.contains(&client_version) {
+        client_version
+    } else {
+        SUPPORTED_VERSIONS[0]
+    };
+
+    eprintln!(
+        "[MCP] Client requested protocol {}, responding with {}",
+        client_version, protocol_version
+    );
+
     let result = json!({
-        "protocolVersion": "2024-11-05",
+        "protocolVersion": protocol_version,
         "capabilities": {
-            "tools": {}
+            "tools": {
+                "listChanged": false
+            }
         },
         "serverInfo": {
             "name": "cln",
