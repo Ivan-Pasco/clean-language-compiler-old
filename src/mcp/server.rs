@@ -761,7 +761,7 @@ async fn handle_request(request: JsonRpcRequest) -> JsonRpcResponse {
 /// Handle the 'initialize' method
 fn handle_initialize(id: serde_json::Value, params: Option<&serde_json::Value>) -> JsonRpcResponse {
     // Supported protocol versions (newest first)
-    const SUPPORTED_VERSIONS: &[&str] = &["2025-03-26", "2024-11-05"];
+    const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-03-26", "2024-11-05"];
 
     // Pick the best version: use the client's requested version if we support it,
     // otherwise fall back to our latest supported version
