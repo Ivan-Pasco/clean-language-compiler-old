@@ -722,7 +722,8 @@ async fn write_response(
     let json = serde_json::to_string(response)?;
     eprintln!("[MCP] -> {}", json);
     // Write header + body as a single buffer to avoid partial flush delays
-    let message = format!("Content-Length: {}\r\n\r\n{}", json.len(), json);
+    // Content-Length counts only the JSON body; trailing \n is a transport separator
+    let message = format!("Content-Length: {}\r\n\r\n{}\n", json.len(), json);
     stdout.write_all(message.as_bytes()).await?;
     stdout.flush().await?;
     Ok(())
