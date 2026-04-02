@@ -697,7 +697,16 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        // Handle the request
+        // Check if this is a notification (no id field) — per JSON-RPC 2.0, no response
+        let is_notification = request.id.is_none();
+
+        if is_notification {
+            eprintln!("[MCP] Notification: {}", request.method);
+            handle_notification(&request.method);
+            continue;
+        }
+
+        // Handle the request (has id, expects a response)
         let response = handle_request(request).await;
         write_response(&mut stdout, &response).await?;
     }
@@ -719,19 +728,30 @@ async fn write_response(
     Ok(())
 }
 
+/// Handle a JSON-RPC notification (no id, no response expected)
+fn handle_notification(method: &str) {
+    match method {
+        "notifications/initialized" | "initialized" => {
+            eprintln!("[MCP] Client initialized");
+        }
+        "notifications/cancelled" => {
+            eprintln!("[MCP] Request cancelled");
+        }
+        _ => {
+            eprintln!("[MCP] Unknown notification: {}", method);
+        }
+    }
+}
+
 /// Handle a JSON-RPC request and return the appropriate response
 async fn handle_request(request: JsonRpcRequest) -> JsonRpcResponse {
+    let id = request.id.unwrap_or(json!(null));
     match request.method.as_str() {
-        "initialize" => handle_initialize(request.id),
-        "initialized" => {
-            // Notification - no response needed
-            eprintln!("[MCP] Client initialized");
-            return JsonRpcResponse::success(request.id, json!(null));
-        }
-        "tools/list" => handle_tools_list(request.id),
-        "tools/call" => handle_tools_call(request.id, request.params),
+        "initialize" => handle_initialize(id),
+        "tools/list" => handle_tools_list(id),
+        "tools/call" => handle_tools_call(id, request.params),
         _ => JsonRpcResponse::error(
-            request.id,
+            id,
             error_codes::METHOD_NOT_FOUND,
             format!("Method not found: {}", request.method),
         ),

@@ -6,11 +6,13 @@
 
 use serde::{Deserialize, Serialize};
 
-/// JSON-RPC 2.0 request message
+/// JSON-RPC 2.0 request or notification message
+/// Per JSON-RPC 2.0 spec, notifications omit the `id` field.
 #[derive(Debug, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
-    pub id: serde_json::Value,
+    #[serde(default)]
+    pub id: Option<serde_json::Value>,
     pub method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<serde_json::Value>,
