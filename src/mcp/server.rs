@@ -721,9 +721,9 @@ async fn write_response(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let json = serde_json::to_string(response)?;
     eprintln!("[MCP] -> {}", json);
-    let header = format!("Content-Length: {}\r\n\r\n", json.len());
-    stdout.write_all(header.as_bytes()).await?;
-    stdout.write_all(json.as_bytes()).await?;
+    // Write header + body as a single buffer to avoid partial flush delays
+    let message = format!("Content-Length: {}\r\n\r\n{}", json.len(), json);
+    stdout.write_all(message.as_bytes()).await?;
     stdout.flush().await?;
     Ok(())
 }
