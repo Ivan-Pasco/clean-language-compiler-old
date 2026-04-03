@@ -90,6 +90,9 @@ impl WasmPluginLoader {
             // dot-notation aliases (e.g. "req.query" → "_req_query").
             builder = builder.add_manifest(plugin_name.clone(), manifest.clone());
 
+            // Check for root-level plugin.wasm that differs from the active version
+            self.check_plugin_version_mismatch(plugin_name, &plugin_dir);
+
             // Load the plugin adapter
             let wasm_path = plugin_dir.join("plugin.wasm");
             let module = self.load_wasm_module(&wasm_path)?;
@@ -238,6 +241,47 @@ impl WasmPluginLoader {
         Ok(module)
     }
 
+    /// Warn if the root-level plugin.wasm differs from the active versioned copy.
+    /// This catches cases where `cleen frame install` updated the root file but the
+    /// versioned directory still has a stale binary.
+    fn check_plugin_version_mismatch(&self, plugin_name: &str, version_dir: &Path) {
+        let plugin_base = self.plugins_dir.join(plugin_name);
+        let root_wasm = plugin_base.join("plugin.wasm");
+        let versioned_wasm = version_dir.join("plugin.wasm");
+
+        if !root_wasm.exists() || !versioned_wasm.exists() {
+            return;
+        }
+
+        let root_meta = match std::fs::metadata(&root_wasm) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        let versioned_meta = match std::fs::metadata(&versioned_wasm) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+
+        if root_meta.len() != versioned_meta.len() {
+            let version = version_dir
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            eprintln!(
+                "warning: plugin '{}' root plugin.wasm ({} bytes) differs from active version {} ({} bytes)",
+                plugin_name,
+                root_meta.len(),
+                version,
+                versioned_meta.len()
+            );
+            eprintln!(
+                "hint: run `cleen plugin use {} <version>` or reinstall the plugin",
+                plugin_name
+            );
+        }
+    }
+
     /// List all installed plugins
     pub fn list_installed_plugins(&self) -> Result<Vec<(String, String)>> {
         let mut plugins = Vec::new();
@@ -320,5 +364,48 @@ mod tests {
         let loader = WasmPluginLoader::with_plugins_dir(temp_dir.path().to_path_buf()).unwrap();
         let plugins = loader.list_installed_plugins().unwrap();
         assert!(plugins.is_empty());
+    }
+
+    #[test]
+    fn test_version_mismatch_warning_no_panic() {
+        // Should not panic when root wasm doesn't exist
+        let temp_dir = TempDir::new().unwrap();
+        let loader = WasmPluginLoader::with_plugins_dir(temp_dir.path().to_path_buf()).unwrap();
+        let version_dir = temp_dir.path().join("test.plugin").join("1.0.0");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        loader.check_plugin_version_mismatch("test.plugin", &version_dir);
+    }
+
+    #[test]
+    fn test_version_mismatch_detects_size_difference() {
+        let temp_dir = TempDir::new().unwrap();
+        let loader = WasmPluginLoader::with_plugins_dir(temp_dir.path().to_path_buf()).unwrap();
+
+        let plugin_dir = temp_dir.path().join("test.plugin");
+        let version_dir = plugin_dir.join("1.0.0");
+        std::fs::create_dir_all(&version_dir).unwrap();
+
+        // Root wasm: 100 bytes, versioned wasm: 50 bytes
+        std::fs::write(plugin_dir.join("plugin.wasm"), vec![0u8; 100]).unwrap();
+        std::fs::write(version_dir.join("plugin.wasm"), vec![0u8; 50]).unwrap();
+
+        // This should print a warning (no panic, no error)
+        loader.check_plugin_version_mismatch("test.plugin", &version_dir);
+    }
+
+    #[test]
+    fn test_version_mismatch_no_warning_when_same_size() {
+        let temp_dir = TempDir::new().unwrap();
+        let loader = WasmPluginLoader::with_plugins_dir(temp_dir.path().to_path_buf()).unwrap();
+
+        let plugin_dir = temp_dir.path().join("test.plugin");
+        let version_dir = plugin_dir.join("1.0.0");
+        std::fs::create_dir_all(&version_dir).unwrap();
+
+        // Same size — no warning expected
+        std::fs::write(plugin_dir.join("plugin.wasm"), vec![0u8; 100]).unwrap();
+        std::fs::write(version_dir.join("plugin.wasm"), vec![0u8; 100]).unwrap();
+
+        loader.check_plugin_version_mismatch("test.plugin", &version_dir);
     }
 }
