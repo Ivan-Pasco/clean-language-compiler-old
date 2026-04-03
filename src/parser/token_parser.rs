@@ -89,6 +89,35 @@ impl TokenParser {
         }
     }
 
+    /// Try to extract a variable name from the current token.
+    /// Accepts identifiers and contextual keywords that can be used as variable
+    /// names (e.g., `rules`, `computed`, `state`, `guard`, `watch`, `reset`,
+    /// `screen`, `source`, `build`, `spec`, `intent`).
+    fn try_extract_var_name(&self) -> Option<String> {
+        match self.current_kind() {
+            TokenKind::Identifier(name) => Some(name.clone()),
+            TokenKind::Rules
+            | TokenKind::Computed
+            | TokenKind::State
+            | TokenKind::Guard
+            | TokenKind::Watch
+            | TokenKind::Reset
+            | TokenKind::Screen
+            | TokenKind::Source
+            | TokenKind::Build
+            | TokenKind::Spec
+            | TokenKind::Intent
+            | TokenKind::Description
+            | TokenKind::Input
+            | TokenKind::Unit
+            | TokenKind::Step
+            | TokenKind::Test
+            | TokenKind::Error
+            | TokenKind::Default => Some(self.current().text.clone()),
+            _ => None,
+        }
+    }
+
     /// Parse a complete program
     pub fn parse_program(&mut self) -> Result<Program, CompilerError> {
         self.skip_whitespace();
@@ -2580,8 +2609,8 @@ impl TokenParser {
                         self.skip_whitespace();
 
                         // Next token should be the variable name
-                        if let TokenKind::Identifier(var_name) = self.current_kind() {
-                            let var_name = var_name.clone();
+                        // Allow contextual keywords (like `rules`, `state`) as variable names
+                        if let Some(var_name) = self.try_extract_var_name() {
                             let var_location = self.current().location.clone();
                             self.bump(); // consume variable name
                             self.skip_whitespace();
@@ -2618,8 +2647,8 @@ impl TokenParser {
                         self.skip_whitespace();
 
                         // Next token should be the variable name
-                        if let TokenKind::Identifier(var_name) = self.current_kind() {
-                            let var_name = var_name.clone();
+                        // Allow contextual keywords (like `rules`, `state`) as variable names
+                        if let Some(var_name) = self.try_extract_var_name() {
                             let var_location = self.current().location.clone();
                             self.bump(); // consume variable name
                             self.skip_whitespace();
@@ -2927,6 +2956,42 @@ impl TokenParser {
                         Some(self.current().location.clone()),
                         None,
                     ));
+                }
+            }
+            // Contextual keywords used as variable names in statements
+            // (e.g., `rules = rules + ","` or `rules.trim()`)
+            TokenKind::Rules
+            | TokenKind::Computed
+            | TokenKind::State
+            | TokenKind::Guard
+            | TokenKind::Watch
+            | TokenKind::Reset
+            | TokenKind::Screen
+            | TokenKind::Source
+            | TokenKind::Build => {
+                let first_name = self.current().text.clone();
+                let first_location = self.current().location.clone();
+                self.bump(); // consume keyword token
+                self.skip_whitespace();
+
+                if self.check(&TokenKind::Assign) {
+                    // Simple assignment: keyword = EXPR
+                    self.bump(); // consume =
+                    self.skip_whitespace();
+                    let value = self.parse_expression()?;
+                    return Ok(Statement::Assignment {
+                        target: first_name,
+                        value,
+                        location: Some(first_location),
+                    });
+                } else {
+                    // Expression statement (e.g., rules.something())
+                    self.cursor -= 1;
+                    let expr = self.parse_expression()?;
+                    return Ok(Statement::Expression {
+                        expr,
+                        location: Some(first_location),
+                    });
                 }
             }
             _ => {
@@ -3938,7 +4003,19 @@ impl TokenParser {
             | TokenKind::Unit
             | TokenKind::Input
             | TokenKind::Step
-            | TokenKind::Description => {
+            | TokenKind::Description
+            | TokenKind::Rules
+            | TokenKind::Computed
+            | TokenKind::State
+            | TokenKind::Guard
+            | TokenKind::Watch
+            | TokenKind::Reset
+            | TokenKind::Screen
+            | TokenKind::Source
+            | TokenKind::Build
+            | TokenKind::Spec
+            | TokenKind::Intent
+            | TokenKind::Default => {
                 let token = self.bump();
                 // Use the actual token text to preserve the exact identifier (e.g., "Test", not "test")
                 let name = token.text.clone();
@@ -4161,7 +4238,19 @@ impl TokenParser {
             | TokenKind::And
             | TokenKind::Or
             | TokenKind::Not
-            | TokenKind::Start => Ok(self.bump()),
+            | TokenKind::Start
+            | TokenKind::Rules
+            | TokenKind::Computed
+            | TokenKind::State
+            | TokenKind::Guard
+            | TokenKind::Watch
+            | TokenKind::Reset
+            | TokenKind::Screen
+            | TokenKind::Source
+            | TokenKind::Build
+            | TokenKind::Spec
+            | TokenKind::Intent
+            | TokenKind::Default => Ok(self.bump()),
             _ => {
                 let token = self.current();
                 Err(CompilerError::parse_error(

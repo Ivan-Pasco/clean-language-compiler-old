@@ -714,10 +714,6 @@ impl WasmPluginAdapter {
             "env",
             "string_from_char_code",
             |mut caller: Caller<'_, PluginState>, char_code: i32| -> i32 {
-                eprintln!(
-                    "[Plugin Debug] string.fromCharCode called: char_code={}",
-                    char_code
-                );
                 // Create a single-character string from the char code
                 let ch = if char_code >= 0 && char_code <= 127 {
                     char::from_u32(char_code as u32).unwrap_or('\0')
@@ -725,7 +721,6 @@ impl WasmPluginAdapter {
                     '\0'
                 };
                 let result = ch.to_string();
-                eprintln!("[Plugin Debug] string.fromCharCode result: '{}'", result);
 
                 // Allocate and write result
                 let result_bytes = result.as_bytes();
@@ -2369,23 +2364,33 @@ impl WasmPluginAdapter {
         // to return the same pointer the plugin uses for its string literals
         let block_name_ptr = self.find_or_write_string(&mut store, &memory, block_name)?;
 
-        // Format attributes as a simple string (name=value pairs)
-        let attributes_str = block
+        // Extract inline key="value" pairs from the first line of content
+        let (extra_attrs, actual_body) = extract_inline_attrs(&block.content);
+
+        // Format attributes as JSON object for plugin consumption
+        // Plugins expect: {"tag":"site-header","client":"off"}
+        let mut pairs: Vec<String> = block
             .attributes
             .iter()
             .map(|attr| {
                 if let Some(ref val) = attr.value {
-                    format!("{}={}", attr.name, val)
+                    let escaped = val.replace('\\', "\\\\").replace('"', "\\\"");
+                    format!("\"{}\":\"{}\"", attr.name, escaped)
                 } else {
-                    attr.name.clone()
+                    format!("\"{}\":true", attr.name)
                 }
             })
-            .collect::<Vec<_>>()
-            .join(" ");
+            .collect();
+        pairs.extend(extra_attrs);
+        let attributes_str = if pairs.is_empty() {
+            String::new()
+        } else {
+            format!("{{{}}}", pairs.join(","))
+        };
         let attributes_ptr = self.find_or_write_string(&mut store, &memory, &attributes_str)?;
 
-        // Use the raw content string as the body (it's already in Clean syntax)
-        let body_ptr = self.find_or_write_string(&mut store, &memory, &block.content)?;
+        // Use the remaining body content (after extracting inline attributes)
+        let body_ptr = self.find_or_write_string(&mut store, &memory, &actual_body)?;
 
         // Call the expand function with signature: (i32, i32, i32) -> i32
         // Three string pointers, returns a string pointer
@@ -2511,28 +2516,32 @@ impl WasmPluginAdapter {
         let block_name = block.name.trim_end_matches(':');
         let block_name_ptr = self.find_or_write_string(&mut store, &memory, block_name)?;
 
-        // Format attributes
-        let attributes_str = block
+        // Extract inline key="value" pairs from the first line of content
+        // e.g., content = 'tag="site-header"\n\thtml:\n...' → attrs: {"tag":"site-header"}, body: '\thtml:\n...'
+        let (extra_attrs, actual_body) = extract_inline_attrs(&block.content);
+
+        // Format attributes as JSON object for plugin consumption
+        // Plugins expect: {"tag":"site-header","client":"off"}
+        let mut pairs: Vec<String> = block
             .attributes
             .iter()
             .map(|attr| {
                 if let Some(ref val) = attr.value {
-                    format!("{}={}", attr.name, val)
+                    let escaped = val.replace('\\', "\\\\").replace('"', "\\\"");
+                    format!("\"{}\":\"{}\"", attr.name, escaped)
                 } else {
-                    attr.name.clone()
+                    format!("\"{}\":true", attr.name)
                 }
             })
-            .collect::<Vec<_>>()
-            .join(" ");
+            .collect();
+        pairs.extend(extra_attrs);
+        let attributes_str = if pairs.is_empty() {
+            String::new()
+        } else {
+            format!("{{{}}}", pairs.join(","))
+        };
         let attributes_ptr = self.find_or_write_string(&mut store, &memory, &attributes_str)?;
-
-        // Body
-        eprintln!(
-            "[Plugin Debug] Body content ({} chars): {}",
-            block.content.len(),
-            &block.content[..block.content.len().min(200)]
-        );
-        let body_ptr = self.find_or_write_string(&mut store, &memory, &block.content)?;
+        let body_ptr = self.find_or_write_string(&mut store, &memory, &actual_body)?;
 
         // Call expand function - use the function name from the manifest's exports section
         let expand_fn_name = &self.manifest.exports.expand;
@@ -2564,14 +2573,8 @@ impl WasmPluginAdapter {
         }
 
         // Try parsing as a full program - this preserves the start function
-        eprintln!(
-            "[Plugin Debug] Raw plugin output ({} chars):\n{}",
-            generated_code.len(),
-            &generated_code[..generated_code.len().min(500)]
-        );
         match crate::parser::CleanParser::parse_program(generated_code) {
             Ok(program) => {
-                eprintln!("[Plugin Debug] Direct parse succeeded");
                 return Ok(PluginExpansion {
                     statements: program.statements,
                     start_function: program.start_function,
@@ -2580,9 +2583,7 @@ impl WasmPluginAdapter {
                     externals: program.externals,
                 });
             }
-            Err(e) => {
-                eprintln!("[Plugin Debug] Direct parse FAILED: {}", e);
-            }
+            Err(_e) => {}
         }
 
         // If full program parsing fails, try wrapping and parsing
@@ -2691,20 +2692,10 @@ impl WasmPluginAdapter {
         let required_pages = ((ptr + total_size) / 65536) + 1;
         let current_pages = memory.size(&mut *store) as usize;
 
-        eprintln!(
-            "[Plugin Debug] write_clean_string: len={}, ptr={}, total_size={}, pages: {}->{}",
-            len, ptr, total_size, current_pages, required_pages
-        );
-
         if required_pages > current_pages {
             memory
                 .grow(&mut *store, (required_pages - current_pages) as u64)
                 .map_err(|e| anyhow!("Failed to grow memory: {}", e))?;
-            eprintln!(
-                "[Plugin Debug] Memory grown to {} pages ({} bytes)",
-                memory.size(&mut *store),
-                memory.data_size(&mut *store)
-            );
         }
 
         // Write length at offset 0 (4 bytes, little-endian)
@@ -3009,6 +3000,59 @@ fn read_clean_string(caller: &mut Caller<'_, PluginState>, ptr: i32) -> Option<S
     std::str::from_utf8(&data[data_start..data_end])
         .ok()
         .map(|s| s.to_string())
+}
+
+/// Extract inline `key="value"` pairs from the first line of block content.
+///
+/// For content like `tag="site-header"\n\thtml:\n\t\t<h1>...`, this extracts:
+/// - attrs: `["\"tag\":\"site-header\""]` (JSON key-value pairs)
+/// - body: `\thtml:\n\t\t<h1>...` (remaining content after the attribute line)
+///
+/// If the first line has no `key="value"` pattern, returns empty attrs and full content.
+fn extract_inline_attrs(content: &str) -> (Vec<String>, String) {
+    // Split at first newline
+    let (first_line, rest) = match content.find('\n') {
+        Some(pos) => (&content[..pos], &content[pos + 1..]),
+        None => (content, ""),
+    };
+
+    let trimmed = first_line.trim();
+
+    // Check if the first line contains key="value" patterns (not indented block content)
+    if trimmed.is_empty() || trimmed.starts_with('\t') || trimmed.starts_with('<') {
+        return (Vec::new(), content.to_string());
+    }
+
+    // Parse key="value" pairs from the first line
+    let mut pairs = Vec::new();
+    let mut remaining = trimmed;
+
+    while !remaining.is_empty() {
+        // Find key=
+        if let Some(eq_pos) = remaining.find('=') {
+            let key = remaining[..eq_pos].trim();
+            let after_eq = &remaining[eq_pos + 1..];
+
+            if after_eq.starts_with('"') {
+                // Find closing quote
+                if let Some(close_pos) = after_eq[1..].find('"') {
+                    let value = &after_eq[1..close_pos + 1];
+                    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+                    pairs.push(format!("\"{}\":\"{}\"", key, escaped));
+                    remaining = after_eq[close_pos + 2..].trim_start();
+                    continue;
+                }
+            }
+        }
+        // If we can't parse, treat the whole line as non-attribute content
+        return (Vec::new(), content.to_string());
+    }
+
+    if pairs.is_empty() {
+        (Vec::new(), content.to_string())
+    } else {
+        (pairs, rest.to_string())
+    }
 }
 
 #[cfg(test)]
