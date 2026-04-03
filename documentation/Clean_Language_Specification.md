@@ -181,8 +181,20 @@ onError    or          print        reset        return
 screen     source      spec         start        state       step         test        tests
 this       to          true         watch        is          returns
 description while      input        unit         private     constant
-functions
+functions  rules       build        break        continue    require
 ```
+
+#### Contextual Keywords
+
+The following keywords are **contextual** — they are reserved when used as block headers (followed by `:`) but may be used as variable names, function parameters, and in expressions:
+
+```
+rules      computed    state       guard       watch       reset
+screen     source      build       spec        intent      default
+test       error       input       unit        step        description
+```
+
+This allows code like `string rules = ""` while still recognizing `rules:` as a block header.
 
 ### Literals
 
@@ -1874,13 +1886,14 @@ class Circle is Shape
 
 Clean Language uses implicit context for accessing class fields:
 
-- ✅ `color = colorParam` (field assignment)
-- ✅ `return color` (field access)  
+- ✅ `color = colorParam` (field assignment — implicit `this`)
+- ✅ `return color` (field access — implicit `this`)
 - ✅ `radius = radiusParam` (works in child classes too)
-- ❌ No `this.color` or `self.color` needed
+- ✅ `this.render()` (explicit self-method call)
+- ✅ `this.name` (explicit field access — equivalent to just `name`)
 - ❌ Parameter names cannot match field names (compiler enforced)
 
-This makes code cleaner while maintaining type safety through name conflict prevention.
+Fields can be accessed directly by name (implicit `this`) or with explicit `this.field`. The `this` keyword is available inside all class methods and refers to the current instance. Explicit `this` is useful for self-method calls and clarity in complex expressions.
 
 ### Object Creation and Usage
 
