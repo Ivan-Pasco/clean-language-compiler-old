@@ -263,14 +263,11 @@ impl MemoryUtils {
             name: "main_heap".to_string(),
         });
 
-        // CRITICAL: Initialize the global heap pointer at address 0
-        // This is used by list.allocate and other allocation functions
-        // The heap pointer stores the next available address for allocation
-        // Initial value = heap_start (1024) where allocations begin
-        let heap_ptr_bytes = (self.heap_start as u32).to_le_bytes();
-        let offset_expr = ConstExpr::i32_const(0);
-        self.data_section
-            .active(0, &offset_expr, heap_ptr_bytes.to_vec());
+        // Note: The MIR codegen uses the __heap_ptr WASM global for heap management.
+        // We no longer write a heap pointer to address 0 because the string pool
+        // uses address 0 for the empty string constant ([4-byte length=0]).
+        // Writing heap_start (1024) at address 0 would corrupt the empty string's
+        // length prefix, causing all empty string comparisons to fail.
     }
 
     /// Add a data segment with bounds validation

@@ -3657,10 +3657,35 @@ impl<'a> TypeInference<'a> {
 
             // String methods
             (ConcreteType::String, "length") => Ok(ConcreteType::Integer),
+            (ConcreteType::String, "size") => Ok(ConcreteType::Integer),
             (ConcreteType::String, "toString") => Ok(ConcreteType::String),
             (ConcreteType::String, "toUpperCase") => Ok(ConcreteType::String),
             (ConcreteType::String, "toLowerCase") => Ok(ConcreteType::String),
             (ConcreteType::String, "trim") => Ok(ConcreteType::String),
+            (ConcreteType::String, "trimStart") => Ok(ConcreteType::String),
+            (ConcreteType::String, "trimEnd") => Ok(ConcreteType::String),
+            (ConcreteType::String, "substring") => Ok(ConcreteType::String),
+            (ConcreteType::String, "replace") => Ok(ConcreteType::String),
+            (ConcreteType::String, "replaceAll") => Ok(ConcreteType::String),
+            (ConcreteType::String, "charAt") => Ok(ConcreteType::String),
+            (ConcreteType::String, "concat") => Ok(ConcreteType::String),
+            (ConcreteType::String, "padStart") => Ok(ConcreteType::String),
+            (ConcreteType::String, "padEnd") => Ok(ConcreteType::String),
+            (ConcreteType::String, "indexOf") => Ok(ConcreteType::Integer),
+            (ConcreteType::String, "lastIndexOf") => Ok(ConcreteType::Integer),
+            (ConcreteType::String, "charCodeAt") => Ok(ConcreteType::Integer),
+            (ConcreteType::String, "toInteger") => Ok(ConcreteType::Integer),
+            (ConcreteType::String, "toNumber") => Ok(ConcreteType::Number),
+            (ConcreteType::String, "toBoolean") => Ok(ConcreteType::Boolean),
+            (ConcreteType::String, "contains")
+            | (ConcreteType::String, "startsWith")
+            | (ConcreteType::String, "endsWith")
+            | (ConcreteType::String, "isEmpty")
+            | (ConcreteType::String, "isBlank")
+            | (ConcreteType::String, "isNotEmpty") => Ok(ConcreteType::Boolean),
+            (ConcreteType::String, "split") => {
+                Ok(ConcreteType::Array(Box::new(ConcreteType::String)))
+            }
 
             // Array methods
             (ConcreteType::Array(_), "length") => Ok(ConcreteType::Integer),

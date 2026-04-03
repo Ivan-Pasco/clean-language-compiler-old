@@ -4021,6 +4021,10 @@ impl TokenParser {
                 let name = token.text.clone();
                 Ok(Expression::Variable(name))
             }
+            TokenKind::This => {
+                self.bump();
+                Ok(Expression::Variable("this".to_string()))
+            }
             TokenKind::LeftParen => {
                 self.bump();
                 self.paren_depth += 1; // Track that we're inside parentheses

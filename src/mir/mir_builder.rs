@@ -1254,7 +1254,55 @@ impl MirBuilder {
 
                             converted_id
                         } else {
-                            init_value_id
+                            // CRITICAL FIX: If the initializer ValueId is already in use as a
+                            // parameter or another local variable, we must allocate a fresh
+                            // ValueId for this new variable and emit a Copy instruction.
+                            //
+                            // Without this fix, `string remaining = content` would map `remaining`
+                            // and `content` to the same ValueId → same WASM local. Then mutations
+                            // to `remaining` would corrupt `content`, and `remaining = content`
+                            // later becomes a no-op (same ValueId, self-copy is skipped).
+                            let init_already_allocated =
+                                context.function.locals.contains_key(&init_value_id)
+                                    || context
+                                        .function
+                                        .parameters
+                                        .iter()
+                                        .any(|p| p.value_id == init_value_id);
+
+                            if init_already_allocated {
+                                // Allocate a fresh ValueId for the new variable
+                                let copy_id = ValueId(context.function.next_value_id);
+                                context.function.next_value_id += 1;
+
+                                // Determine the type for the new local
+                                let copy_type = actual_mir_type
+                                    .clone()
+                                    .unwrap_or_else(|| self.convert_concrete_type(var_type));
+
+                                // Register the new local
+                                let local = MirLocal {
+                                    name: Some(name.clone()),
+                                    local_type: copy_type,
+                                    is_mutable: true,
+                                    location: location.clone(),
+                                };
+                                context.function.locals.insert(copy_id, local);
+
+                                // Emit Copy instruction so the new local gets the value
+                                let copy_instruction = MirInstruction {
+                                    dest: Some(copy_id),
+                                    operation: MirOperation::Copy {
+                                        source: MirOperand::Value(init_value_id),
+                                    },
+                                    location: location.clone(),
+                                };
+                                self.add_instruction(context, copy_instruction);
+
+                                copy_id
+                            } else {
+                                init_value_id
+                            }
                         }
                     }
                 } else {
@@ -6826,6 +6874,11 @@ impl MirBuilder {
             MirType::Ptr(inner) => {
                 match **inner {
                     MirType::I8 => ConcreteType::String,
+                    // Ptr(U8) is used for string pointers returned from host functions
+                    // (e.g., substring, trim, toString conversions). These are strings,
+                    // not null values. This is critical for correct method chaining:
+                    // e.g., line.substring(...).trim() — the receiver of .trim() is Ptr(U8).
+                    MirType::U8 => ConcreteType::String,
                     MirType::Void => ConcreteType::Null,
                     _ => ConcreteType::Null, // Fallback for other pointer types
                 }
