@@ -1215,6 +1215,22 @@ impl NameResolver {
             }),
 
             HirExpression::Variable { name, location } => {
+                // Special case: `this` inside a class method resolves to the current instance
+                if name == "this" {
+                    if let Some(current_class_id) = self.current_class {
+                        return Ok(ResolvedHirExpression::This {
+                            class_symbol_id: current_class_id,
+                            location: location.clone(),
+                        });
+                    }
+                    // `this` outside a class context is an error
+                    self.error(
+                        "'this' can only be used inside a class method",
+                        location.clone(),
+                    );
+                    return Err(());
+                }
+
                 // IMPORTANT: Check for local variables/parameters FIRST before class fields
                 // This follows standard variable shadowing rules:
                 // - A local parameter shadows a field with the same name

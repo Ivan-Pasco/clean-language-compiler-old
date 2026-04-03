@@ -2318,6 +2318,28 @@ impl WasmPluginAdapter {
         Ok(linker)
     }
 
+    /// Parse plugin-generated Clean Language source code using the production parser pipeline.
+    ///
+    /// Plugin output must be parsed with the same `SpecificationLexer` + `SpecificationParser`
+    /// pipeline used by the main compiler. The legacy `ErrorRecoveringParser` (used by
+    /// `CleanParser::parse_program`) uses a different pest grammar that does not correctly
+    /// handle all valid Clean Language constructs (e.g., class declarations with multiple
+    /// `functions:` blocks containing whitespace-only lines).
+    fn parse_plugin_code(&self, source: &str) -> Result<crate::ast::Program> {
+        use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
+        use crate::parser::SpecificationParser;
+
+        let source_code = SourceCode::new(source.to_string(), "<plugin-output>".to_string());
+        let mut lexer = SpecificationLexer::new(&source_code);
+        let tokens = lexer
+            .tokenize()
+            .map_err(|e| anyhow!("Failed to tokenize plugin output: {}", e))?;
+        let mut parser = SpecificationParser::new(tokens, "<plugin-output>".to_string());
+        parser
+            .parse_program()
+            .map_err(|e| anyhow!("Failed to parse plugin output: {}", e))
+    }
+
     /// Call the expand function in the WASM module
     ///
     /// Plugin ABI: expand(block_name: string, attributes: string, body: string) -> string
@@ -2425,28 +2447,35 @@ impl WasmPluginAdapter {
             return Ok(Vec::new());
         }
 
-        // Plugin output is typically a "start:" block like:
-        //   start:
-        //       _http_listen(3000)
+        // Plugin output may be:
+        //   (a) A complete program with a start: block  →  extract start_function.body
+        //   (b) A complete program with class/function declarations  →  not suitable here;
+        //       callers that need classes should use call_expand_full instead
+        //   (c) A bare start: block (without a surrounding program)
         //
-        // We need to extract the statements from this format.
-        // First, try parsing as a full program (in case plugin returns complete code)
-        if let Ok(program) = crate::parser::CleanParser::parse_program(generated_code) {
-            if let Some(start_fn) = program.start_function {
-                return Ok(start_fn.body);
+        // Use the production parser (SpecificationLexer + SpecificationParser) so that
+        // all valid Clean Language constructs are accepted.
+        match self.parse_plugin_code(generated_code) {
+            Ok(program) => {
+                if let Some(start_fn) = program.start_function {
+                    return Ok(start_fn.body);
+                }
+                // Plugin returned classes/functions but no start block —
+                // there are no imperative statements to return.
+                return Ok(Vec::new());
             }
-            return Ok(Vec::new());
+            Err(_) => {}
         }
 
-        // If full program parsing fails, try extracting statements from start: block
-        // Strip the start prefix and parse individual statements
+        // Fallback: the plugin may have returned only the body of a start block
+        // (without the "start:" header). Wrap it and try again.
         let code_without_start = if generated_code.trim().starts_with("start:") {
             generated_code
                 .lines()
                 .skip(1) // Skip "start:" line
-                .filter(|line| !line.trim().is_empty()) // Skip empty lines
+                .filter(|line| !line.trim().is_empty()) // Skip whitespace-only lines
                 .map(|line| {
-                    // Remove one level of indentation (tab or spaces)
+                    // Remove one level of indentation (tab or 4 spaces)
                     if line.starts_with('\t') {
                         &line[1..]
                     } else if line.starts_with("    ") {
@@ -2461,13 +2490,11 @@ impl WasmPluginAdapter {
             generated_code.trim().to_string()
         };
 
-        // Wrap the statements in a minimal program structure to parse
-        // Use start: block syntax which is valid Clean Language
         let wrapper = format!(
             "start:\n\t{}",
             code_without_start.trim().replace('\n', "\n\t")
         );
-        let program = crate::parser::CleanParser::parse_program(&wrapper).map_err(|e| {
+        let program = self.parse_plugin_code(&wrapper).map_err(|e| {
             anyhow!(
                 "Failed to parse plugin output '{}' (wrapped: '{}'): {}",
                 generated_code.chars().take(100).collect::<String>(),
@@ -2572,9 +2599,27 @@ impl WasmPluginAdapter {
             return Ok(PluginExpansion::default());
         }
 
-        // Try parsing as a full program - this preserves the start function
-        match crate::parser::CleanParser::parse_program(generated_code) {
+        tracing::debug!(
+            plugin = %self.name,
+            block = %block.name,
+            output_len = generated_code.len(),
+            "Plugin generated code"
+        );
+
+        // Try parsing as a full program using the production parser pipeline.
+        // This preserves start functions, classes, and top-level functions.
+        // Using SpecificationLexer + SpecificationParser (not the legacy pest-based
+        // ErrorRecoveringParser) so all valid Clean Language constructs are accepted.
+        match self.parse_plugin_code(generated_code) {
             Ok(program) => {
+                tracing::debug!(
+                    plugin = %self.name,
+                    classes = program.classes.len(),
+                    functions = program.functions.len(),
+                    statements = program.statements.len(),
+                    has_start = program.start_function.is_some(),
+                    "Plugin output parsed successfully"
+                );
                 return Ok(PluginExpansion {
                     statements: program.statements,
                     start_function: program.start_function,
@@ -2583,10 +2628,17 @@ impl WasmPluginAdapter {
                     externals: program.externals,
                 });
             }
-            Err(_e) => {}
+            Err(ref _e) => {
+                tracing::debug!(
+                    plugin = %self.name,
+                    error = %_e,
+                    "Direct parse failed, trying start: wrapper fallback"
+                );
+            }
         }
 
-        // If full program parsing fails, try wrapping and parsing
+        // Fallback: the plugin may have returned only the body of a start: block.
+        // Wrap it in a start: header and try again.
         let code_without_start = if generated_code.trim().starts_with("start:") {
             generated_code
                 .lines()
@@ -2611,7 +2663,8 @@ impl WasmPluginAdapter {
             "start:\n\t{}",
             code_without_start.trim().replace('\n', "\n\t")
         );
-        let program = crate::parser::CleanParser::parse_program(&wrapper)
+        let program = self
+            .parse_plugin_code(&wrapper)
             .map_err(|e| anyhow!("Failed to parse plugin output: {}", e))?;
 
         Ok(PluginExpansion {

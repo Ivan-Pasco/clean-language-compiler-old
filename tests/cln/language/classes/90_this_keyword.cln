@@ -1,0 +1,24 @@
+// Spec Section: 10.4 - Implicit Context / this keyword
+// Tests: explicit `this` keyword for field access and method calls within class methods
+
+start:
+	MyComponent comp = MyComponent()
+	printl(comp.render())
+
+class MyComponent
+	string name
+	string tag
+
+	constructor()
+		name = "test"
+		tag = "my-tag"
+
+	functions:
+		string getName()
+			return this.name
+
+		string render()
+			string result = "<" + this.tag + ">"
+			result = result + this.getName()
+			result = result + "</" + this.tag + ">"
+			return result
