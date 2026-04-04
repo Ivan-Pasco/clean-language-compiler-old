@@ -33,6 +33,10 @@ pub struct WasmPluginAdapter {
     version_cache: &'static str,
     /// Cached description string
     description_cache: &'static str,
+    /// Cached Linker — set up once, reused across all expand calls.
+    /// The Linker is bound to the Engine (not the Store), so it can be
+    /// shared across multiple Store/Instance pairs.
+    cached_linker: Option<Linker<PluginState>>,
 }
 
 impl WasmPluginAdapter {
@@ -57,7 +61,7 @@ impl WasmPluginAdapter {
             .map(|s| Box::leak(s.clone().into_boxed_str()) as &'static str)
             .collect();
 
-        Ok(Self {
+        let mut adapter = Self {
             name,
             manifest,
             module,
@@ -66,13 +70,28 @@ impl WasmPluginAdapter {
             name_cache,
             version_cache,
             description_cache,
-        })
+            cached_linker: None,
+        };
+
+        // Pre-build the linker once — this sets up ~50+ host function stubs
+        // and is expensive to do per-block call.
+        let linker = adapter.setup_linker()?;
+        adapter.cached_linker = Some(linker);
+
+        Ok(adapter)
     }
 
     /// Create a new store with host functions
     fn create_store(&self) -> Store<PluginState> {
         let state = PluginState::new();
         Store::new(&self.engine, state)
+    }
+
+    /// Get a reference to the cached linker, or create one if not yet cached.
+    fn get_linker(&self) -> Result<&Linker<PluginState>> {
+        self.cached_linker
+            .as_ref()
+            .ok_or_else(|| anyhow!("Linker not initialized"))
     }
 
     /// Set up the linker with host functions
@@ -2350,7 +2369,7 @@ impl WasmPluginAdapter {
     /// existing string pointers from the plugin's data section.
     fn call_expand(&self, block: &FrameworkBlock) -> Result<Vec<Statement>> {
         let mut store = self.create_store();
-        let linker = self.setup_linker()?;
+        let linker = self.get_linker()?;
 
         let instance = linker
             .instantiate(&mut store, &self.module)
@@ -2514,7 +2533,7 @@ impl WasmPluginAdapter {
     /// This version preserves the start function if the plugin generates one
     fn call_expand_full(&self, block: &FrameworkBlock) -> Result<PluginExpansion> {
         let mut store = self.create_store();
-        let linker = self.setup_linker()?;
+        let linker = self.get_linker()?;
 
         let instance = linker
             .instantiate(&mut store, &self.module)
@@ -2805,7 +2824,7 @@ impl WasmPluginAdapter {
         T: DeserializeOwned + Default,
     {
         let mut store = self.create_store();
-        let linker = self.setup_linker()?;
+        let linker = self.get_linker()?;
 
         let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
             anyhow!(
