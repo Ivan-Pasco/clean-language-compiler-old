@@ -75,13 +75,6 @@ pub struct MirCodeGenerator<'a> {
     /// Used for selective imports - only import functions that are called
     used_bridge_function_names: HashSet<String>,
 
-    /// Set of ALL function names called anywhere in the MIR program.
-    /// Used for dead-import elimination: only register stdlib/host imports
-    /// for functions that are actually referenced in the source code.
-    /// Populated by `collect_all_used_function_names_from_mir()` before
-    /// any import registration begins.
-    used_all_function_names: HashSet<String>,
-
     /// CRITICAL FIX: Pending wrapper functions to be registered AFTER ALL imports are done
     /// These are for expand_strings bridge functions that need wrapper functions
     /// to convert Clean Language strings (ptr) to raw format (ptr+4, len)
@@ -216,7 +209,6 @@ impl MirCodeGenerator<'_> {
             temp_local_types: HashMap::new(),
             bridge_functions: Vec::new(),
             used_bridge_function_names: HashSet::new(),
-            used_all_function_names: HashSet::new(),
             pending_bridge_wrappers: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
@@ -250,7 +242,6 @@ impl MirCodeGenerator<'_> {
             temp_local_types: HashMap::new(),
             bridge_functions: Vec::new(),
             used_bridge_function_names: HashSet::new(),
-            used_all_function_names: HashSet::new(),
             pending_bridge_wrappers: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
@@ -284,7 +275,6 @@ impl MirCodeGenerator<'_> {
             temp_local_types: HashMap::new(),
             bridge_functions: Vec::new(),
             used_bridge_function_names: HashSet::new(),
-            used_all_function_names: HashSet::new(),
             pending_bridge_wrappers: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
@@ -350,210 +340,70 @@ impl MirCodeGenerator<'_> {
 
         // CRITICAL FIX: Set up the underlying WASM generator with runtime imports
         if self.wasm_generator.include_runtime_imports {
-            // DEAD-IMPORT ELIMINATION: Collect all function names called in the MIR
-            // BEFORE registering any imports. This allows us to skip entire import
-            // categories when the source code doesn't reference them, dramatically
-            // reducing the number of WASM imports and preventing plugin instantiation
-            // failures from missing host function stubs.
-            self.collect_all_used_function_names_from_mir(&mir_program);
-            debug_mir!(
-                "DEBUG MIR: Dead-import elimination: {} unique function names found in MIR",
-                self.used_all_function_names.len()
-            );
-
-            // ALWAYS: print/printl — almost every program uses these
             self.wasm_generator
                 .register_print_imports()
                 .map_err(|e| vec![e])?;
 
-            // GATED: Console input imports (input, input_integer, input_float, etc.)
-            if self.needs_import_category(
-                &[
-                    "input",
-                    "input.string",
-                    "input.integer",
-                    "input.number",
-                    "input.yesNo",
-                    "input.range",
-                    "inputInteger",
-                    "inputNumber",
-                    "inputYesNo",
-                    "inputRange",
-                ],
-                Some("input"),
-            ) {
-                debug_mir!("DEBUG MIR: Registering console input imports");
-                self.wasm_generator
-                    .register_console_imports()
-                    .map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: Console input imports registered");
-            } else {
-                debug_mir!("DEBUG MIR: Skipping console input imports (not used)");
-            }
+            debug_mir!("DEBUG MIR: Registering console input imports");
+            self.wasm_generator
+                .register_console_imports()
+                .map_err(|e| vec![e])?;
 
-            // ALWAYS: Type conversion imports (mem_alloc, int_to_string, etc.)
-            // These are infrastructure used implicitly by many codegen paths
             debug_mir!("DEBUG MIR: Registering type conversion imports (int_to_string, etc.)");
             self.wasm_generator
                 .register_type_conversion_imports()
                 .map_err(|e| vec![e])?;
-            debug_mir!("DEBUG MIR: Type conversion imports registered");
 
-            // GATED: HTTP imports (http_get, http_post, server imports, etc.)
-            let needs_http = self.needs_import_category(
-                &[
-                    "http.get",
-                    "http.post",
-                    "http.put",
-                    "http.patch",
-                    "http.delete",
-                    "http.head",
-                    "http.options",
-                    "http_get",
-                    "http_post",
-                    "http_put",
-                    "http_patch",
-                    "http_delete",
-                    "http_head",
-                    "http_options",
-                    "http_get_with_headers",
-                    "http_post_with_headers",
-                    "http_post_json",
-                    "http_put_json",
-                    "http_patch_json",
-                    "http_post_form",
-                    "http_set_user_agent",
-                    // Server-side HTTP functions
-                    "_http_route",
-                    "_http_listen",
-                    "_http_route_protected",
-                    "_req_param",
-                    "_req_body",
-                    "_req_header",
-                    "_req_method",
-                    "_req_path",
-                    "_session_create",
-                    "_session_get",
-                    "_session_destroy",
-                    "_session_set_cookie",
-                    "_auth_get_session",
-                    "_auth_require_auth",
-                    "_auth_require_role",
-                    "_auth_can",
-                    "_auth_has_any_role",
-                    "_res_set_header",
-                    "_res_set_status",
-                    "_res_redirect",
-                ],
-                Some("http"),
+            // HTTP imports: skip functions handled by plugin expand_strings wrappers
+            let skip_http_functions: HashSet<String> = self
+                .bridge_functions
+                .iter()
+                .filter(|f| f.expand_strings && f.params.iter().any(|p| p == "string"))
+                .map(|f| f.name.clone())
+                .collect();
+            let include_server_imports = self.target.include_server_imports();
+            debug_mir!(
+                "DEBUG MIR: Registering HTTP imports (skipping {} for plugin expand_strings, server_imports={})",
+                skip_http_functions.len(),
+                include_server_imports
             );
-            if needs_http {
-                let skip_http_functions: HashSet<String> = self
-                    .bridge_functions
-                    .iter()
-                    .filter(|f| f.expand_strings && f.params.iter().any(|p| p == "string"))
-                    .map(|f| f.name.clone())
-                    .collect();
-                let include_server_imports = self.target.include_server_imports();
-                debug_mir!(
-                    "DEBUG MIR: Registering HTTP imports (skipping {} for plugin expand_strings, server_imports={})",
-                    skip_http_functions.len(),
-                    include_server_imports
-                );
-                self.wasm_generator
-                    .register_http_imports(&skip_http_functions, include_server_imports)
-                    .map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: HTTP imports registered");
-            } else {
-                debug_mir!("DEBUG MIR: Skipping HTTP imports (not used)");
-            }
+            self.wasm_generator
+                .register_http_imports(&skip_http_functions, include_server_imports)
+                .map_err(|e| vec![e])?;
 
-            // GATED: File imports (file_read, file_write, file_exists, etc.)
-            let needs_file = self.needs_import_category(
-                &[
-                    "file.read",
-                    "file.write",
-                    "file.exists",
-                    "file.delete",
-                    "file.append",
-                    "file.lines",
-                    "file_read",
-                    "file_write",
-                    "file_exists",
-                    "file_delete",
-                    "file_append",
-                ],
-                Some("file"),
-            );
-            if needs_file {
-                debug_mir!("DEBUG MIR: Registering file imports");
-                self.wasm_generator
-                    .register_file_imports()
-                    .map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: File imports registered");
-            } else {
-                debug_mir!("DEBUG MIR: Skipping file imports (not used)");
-            }
+            debug_mir!("DEBUG MIR: Registering file imports");
+            self.wasm_generator
+                .register_file_imports()
+                .map_err(|e| vec![e])?;
 
-            // GATED: string.split import
-            if self.needs_import_category(&["string.split", "string_split"], None) {
-                debug_mir!("DEBUG MIR: Registering string.split import");
-                self.wasm_generator
-                    .register_string_split_import()
-                    .map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: string.split import registered");
-            } else {
-                debug_mir!("DEBUG MIR: Skipping string.split import (not used)");
-            }
+            debug_mir!("DEBUG MIR: Registering string.split import");
+            self.wasm_generator
+                .register_string_split_import()
+                .map_err(|e| vec![e])?;
 
-            // ALWAYS: string_compare — needed for string equality (==, !=)
-            // which is very common and may not appear as an explicit call in MIR
             debug_mir!("DEBUG MIR: Registering string_compare import");
             self.wasm_generator
                 .register_string_compare_import()
                 .map_err(|e| vec![e])?;
-            debug_mir!("DEBUG MIR: String compare import registered");
 
-            // GATED: string_replace import
-            if self.needs_import_category(
-                &[
-                    "string.replace",
-                    "string_replace",
-                    "string.replaceAll",
-                    "string_replaceAll",
-                ],
-                None,
-            ) {
-                debug_mir!("DEBUG MIR: Registering string_replace import");
-                self.wasm_generator
-                    .register_string_replace_import()
-                    .map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: String replace import registered");
-            } else {
-                debug_mir!("DEBUG MIR: Skipping string_replace import (not used)");
-            }
+            debug_mir!("DEBUG MIR: Registering string_replace import");
+            self.wasm_generator
+                .register_string_replace_import()
+                .map_err(|e| vec![e])?;
 
-            // CRITICAL: Register plugin bridge functions as WASM imports BEFORE any internal functions
-            // These are declared in plugin.toml [bridge] sections
-            // MUST be registered here because WASM requires all imports before internal functions
             // OPTIMIZATION: Only import bridge functions that are actually used in the code
             if !self.bridge_functions.is_empty() {
-                // First, collect which bridge functions are actually used in the MIR
                 debug_mir!("DEBUG MIR: Collecting used bridge function names from MIR");
                 self.collect_used_function_names_from_mir(&mir_program);
-
                 debug_mir!(
                     "DEBUG MIR: Registering {} used bridge function imports (out of {} total)",
                     self.used_bridge_function_names.len(),
                     self.bridge_functions.len()
                 );
                 self.register_plugin_bridge_imports().map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: Plugin bridge function imports registered");
             }
 
-            // CRITICAL: Register external functions declared via `external:` blocks
-            // These are WASM imports declared directly in Clean source code
-            // MUST be registered after plugin bridge imports but before internal functions
+            // Register external functions declared via `external:` blocks
             if !mir_program.externals.is_empty() {
                 debug_mir!(
                     "DEBUG MIR: Registering {} external function imports",
@@ -561,11 +411,9 @@ impl MirCodeGenerator<'_> {
                 );
                 self.register_external_function_imports(&mir_program.externals)
                     .map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: External function imports registered");
             }
 
-            // GATED: Pre-register list.push_f64 as an import BEFORE any local functions.
-            if self.needs_import_category(&["list.push_f64", "list_push_f64", "list.add_f64"], None)
+            // Pre-register list.push_f64 as an import BEFORE any local functions
             {
                 use crate::types::WasmType;
                 self.wasm_generator
@@ -576,170 +424,64 @@ impl MirCodeGenerator<'_> {
                         Some(WasmType::I32),
                     )
                     .map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: Pre-registered list.push_f64 import");
-            } else {
-                debug_mir!("DEBUG MIR: Skipping list.push_f64 import (not used)");
             }
 
-            // GATED: Math operations (abs, max, min, sqrt, pow, etc.) — registers imports
-            if self.needs_import_category(
-                &[
-                    "math.pow",
-                    "math.sin",
-                    "math.cos",
-                    "math.tan",
-                    "math.sqrt",
-                    "math.abs",
-                    "math.floor",
-                    "math.ceil",
-                    "math.round",
-                    "math.max",
-                    "math.min",
-                    "math.sign",
-                    "math.trunc",
-                    "math.asin",
-                    "math.acos",
-                    "math.atan",
-                    "math.atan2",
-                    "math.sinh",
-                    "math.cosh",
-                    "math.tanh",
-                    "math.ln",
-                    "math.log",
-                    "math.log10",
-                    "math.log2",
-                    "math.exp",
-                    "math.exp2",
-                    "math.pi",
-                    "math.e",
-                    "math.tau",
-                    "Math.pow",
-                    "Math.sqrt",
-                    "Math.abs",
-                    "Math.floor",
-                    "Math.ceil",
-                    "Math.round",
-                    "Math.max",
-                    "Math.min",
-                    "Math.random",
-                ],
-                Some("math"),
-            ) {
-                debug_mir!("DEBUG MIR: Registering math operation imports");
-                self.wasm_generator
-                    .register_math_operations()
-                    .map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: Math operation imports registered");
-            } else {
-                debug_mir!("DEBUG MIR: Skipping math operations (not used)");
-            }
+            debug_mir!("DEBUG MIR: Registering math operation imports");
+            self.wasm_generator
+                .register_math_operations()
+                .map_err(|e| vec![e])?;
 
-            // ALWAYS: String class operations — internal functions, no imports
             debug_mir!("DEBUG MIR: Registering string class operations");
             self.wasm_generator
                 .register_string_class_operations()
                 .map_err(|e| vec![e])?;
-            debug_mir!("DEBUG MIR: String class operations registered");
 
-            // ALWAYS: List class operations — internal functions, no imports
             debug_mir!("DEBUG MIR: Registering list class operations");
             self.wasm_generator
                 .register_list_class_operations()
                 .map_err(|e| vec![e])?;
-            debug_mir!("DEBUG MIR: List class operations registered");
 
-            // ALWAYS: Conditional operations — needed for any if/comparison
             debug_mir!("DEBUG MIR: Registering conditional operations");
             self.wasm_generator
                 .register_conditional_operations()
                 .map_err(|e| vec![e])?;
-            debug_mir!("DEBUG MIR: Conditional operations registered");
 
-            // GATED: HTTP operations (high-level wrappers) — depends on HTTP imports
-            if needs_http {
-                debug_mir!("DEBUG MIR: Registering HTTP operations");
-                self.wasm_generator
-                    .register_http_operations()
-                    .map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: HTTP operations registered");
-            } else {
-                debug_mir!("DEBUG MIR: Skipping HTTP operations (not used)");
-            }
+            debug_mir!("DEBUG MIR: Registering HTTP operations");
+            self.wasm_generator
+                .register_http_operations()
+                .map_err(|e| vec![e])?;
 
-            // GATED: File operations (high-level wrappers) — depends on file imports
-            if needs_file {
-                debug_mir!("DEBUG MIR: Registering file operations");
-                self.wasm_generator
-                    .register_file_operations()
-                    .map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: File operations registered");
-            } else {
-                debug_mir!("DEBUG MIR: Skipping file operations (not used)");
-            }
+            debug_mir!("DEBUG MIR: Registering file operations");
+            self.wasm_generator
+                .register_file_operations()
+                .map_err(|e| vec![e])?;
 
-            // GATED: Validator operations
-            if self.needs_import_category(
-                &[
-                    "validator.create",
-                    "validator.ok",
-                    "validator.isOk",
-                    "validator.errors",
-                    "validator.addError",
-                ],
-                Some("validator"),
-            ) {
-                debug_mir!("DEBUG MIR: Registering validator operations");
-                self.wasm_generator
-                    .register_validator_operations()
-                    .map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: Validator operations registered");
-            } else {
-                debug_mir!("DEBUG MIR: Skipping validator operations (not used)");
-            }
+            debug_mir!("DEBUG MIR: Registering validator operations");
+            self.wasm_generator
+                .register_validator_operations()
+                .map_err(|e| vec![e])?;
 
-            // ALWAYS NATIVE: Memory operations (malloc, memcpy, string ops) — no imports
-            debug_mir!("DEBUG MIR: Registering native memory operations (includes string ops)");
+            debug_mir!("DEBUG MIR: Registering native memory operations");
             self.wasm_generator
                 .register_memory_operations()
                 .map_err(|e| vec![e])?;
-            debug_mir!("DEBUG MIR: Native memory operations registered");
 
-            // ALWAYS NATIVE: String trim functions — no imports
             debug_mir!("DEBUG MIR: Registering native string trim functions");
             self.wasm_generator
                 .register_string_trim_imports()
                 .map_err(|e| vec![e])?;
-            debug_mir!("DEBUG MIR: Native string trim functions registered");
 
-            // ALWAYS NATIVE: List operations — no imports
             debug_mir!("DEBUG MIR: Registering native list operations");
             self.wasm_generator
                 .register_list_operations()
                 .map_err(|e| vec![e])?;
-            debug_mir!("DEBUG MIR: Native list operations registered");
 
-            // GATED: JSON operations
-            if self.needs_import_category(
-                &[
-                    "json.textToData",
-                    "json.tryTextToData",
-                    "json.dataToText",
-                    "json.prettyDataToText",
-                ],
-                Some("json"),
-            ) {
-                debug_mir!("DEBUG MIR: Registering JSON operations");
-                self.wasm_generator
-                    .register_json_operations()
-                    .map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: JSON operations registered");
-            } else {
-                debug_mir!("DEBUG MIR: Skipping JSON operations (not used)");
-            }
+            debug_mir!("DEBUG MIR: Registering JSON operations");
+            self.wasm_generator
+                .register_json_operations()
+                .map_err(|e| vec![e])?;
 
-            // CRITICAL FIX: Register pending plugin bridge wrapper functions AFTER all imports
-            // These are internal WASM functions that wrap raw imports with expand_strings=true
-            // They MUST be registered after ALL imports to avoid function index collisions
+            // Register pending plugin bridge wrapper functions AFTER all imports
             if !self.pending_bridge_wrappers.is_empty() {
                 debug_mir!(
                     "DEBUG MIR: Registering {} pending bridge wrapper functions",
@@ -747,17 +489,11 @@ impl MirCodeGenerator<'_> {
                 );
                 self.register_pending_bridge_wrappers()
                     .map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: Bridge wrapper functions registered");
             }
 
-            // GATED: HTTP server wrapper functions — only if HTTP imports were registered
-            if needs_http {
-                debug_mir!("DEBUG MIR: Registering HTTP server wrapper functions");
-                self.register_http_server_wrappers().map_err(|e| vec![e])?;
-                debug_mir!("DEBUG MIR: HTTP server wrapper functions registered");
-            } else {
-                debug_mir!("DEBUG MIR: Skipping HTTP server wrappers (not used)");
-            }
+            // HTTP server wrapper functions for string expansion
+            debug_mir!("DEBUG MIR: Registering HTTP server wrapper functions");
+            self.register_http_server_wrappers().map_err(|e| vec![e])?;
         }
 
         // Set up memory section
@@ -6199,63 +5935,6 @@ impl MirCodeGenerator<'_> {
         module.section(data_section);
 
         Ok(module.finish())
-    }
-
-    /// Collect ALL function names called in the MIR program for dead-import elimination.
-    ///
-    /// Scans every Call instruction in every function to build a complete set of
-    /// referenced function names. This set is used to gate stdlib/host import
-    /// registration — only imports for functions actually called get emitted.
-    ///
-    /// Must be called BEFORE any import registration in `generate()`.
-    fn collect_all_used_function_names_from_mir(&mut self, mir_program: &MirProgram) {
-        use crate::mir::mir_types::{MirOperand, MirOperation};
-
-        for (_symbol_id, function) in &mir_program.functions {
-            for block in function.blocks.values() {
-                for instruction in &block.instructions {
-                    if let MirOperation::Call { function, .. } = &instruction.operation {
-                        match function {
-                            MirOperand::NamedFunction { name, .. } => {
-                                self.used_all_function_names.insert(name.clone());
-                            }
-                            MirOperand::Function(symbol_id) => {
-                                if let Some(name) = mir_program.symbol_name_map.get(symbol_id) {
-                                    self.used_all_function_names.insert(name.clone());
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
-
-        tracing::debug!(
-            used_function_count = self.used_all_function_names.len(),
-            "Collected all used function names from MIR for dead-import elimination"
-        );
-    }
-
-    /// Check if any function name from a category is used in the MIR program.
-    ///
-    /// Returns true if at least one of the `trigger_names` appears in
-    /// `used_all_function_names`, OR if any used name starts with `prefix`
-    /// (when prefix is Some).
-    fn needs_import_category(&self, trigger_names: &[&str], prefix: Option<&str>) -> bool {
-        for name in trigger_names {
-            if self.used_all_function_names.contains(*name) {
-                return true;
-            }
-        }
-        if let Some(pfx) = prefix {
-            for name in &self.used_all_function_names {
-                if name.starts_with(pfx) {
-                    return true;
-                }
-            }
-        }
-        false
     }
 
     /// Register plugin bridge functions as WASM imports
