@@ -767,3 +767,51 @@ Files changed: `plugin_abi.rs`, `registry.rs`, `language_registry.rs`, `lib.rs`,
 Added single-quote character handling in the lexer's `next_token()` and `next_token_after_indentation()` match arms. Single quotes are emitted as `Identifier("'")` tokens. Since Clean Language uses double quotes for strings, single quotes have no standard meaning and this doesn't affect non-HTML code. The parser's `extract_block_content_raw()` extracts html: block content by byte positions, so the token type is irrelevant.
 
 Files changed: `specification_lexer.rs`
+
+---
+
+## 🔴 CRITICAL: Multiple `break` in while loop inside function produces `unreachable` trap
+
+**Priority**: CRITICAL - Blocks all plugin compilation
+**Discovered**: April 5, 2026
+**Status**: OPEN
+
+### Problem
+When a function contains a `while` loop with two or more `if ... break` sequences, the second `break` compiles to WASM `unreachable` instead of a proper `br` to the loop exit. This causes a trap at runtime.
+
+### Minimal Reproduction
+```clean
+functions:
+    string my_fn(string code)
+        string result = code
+        integer pos = 0
+        while pos < result.length()
+            integer a = result.indexOf("xyz", pos)
+            if a == -1
+                break
+            integer b = result.indexOf(")", a + 3)
+            if b == -1
+                break       // ← traps here with unreachable
+            pos = b + 1
+        return result
+```
+
+Works correctly:
+- Single `if ... break` in while loop (any context)
+- Multiple `if ... break` in while loop in `start:` block
+- Multiple `if ... break` with simple integer conditions (no indexOf 2-arg)
+
+Fails:
+- Two `if ... break` where at least one uses 2-arg `indexOf(needle, startPos)` inside a function
+
+### Root Cause Hypothesis
+The `break` codegen calculates `br` depth relative to the current WASM block nesting. When there are multiple `if` blocks in sequence, each `if` adds a block to the nesting stack. The second `break` may compute an incorrect depth because the first `if` block's depth is not properly accounted for after its scope closes.
+
+### Impact
+- All frame.server `endpoints:` block expansion traps (uses this pattern extensively)
+- Any Clean Language function using multiple indexOf-with-break patterns
+- Blocks website compilation and all Frame web applications
+
+### Files to Investigate
+- `src/codegen/mir_codegen.rs` — `loop_context_stack`, `current_block_depth`, break/Jump codegen
+- `src/mir/mir_builder.rs` — how `break` inside `if` inside `while` is lowered to MIR (Jump to exit block)
