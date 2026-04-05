@@ -1080,7 +1080,6 @@ impl MirCodeGenerator<'_> {
         if let Some(true_blk) = function.blocks.get(&true_block) {
             if let MirTerminator::Jump { target } = &true_blk.terminator {
                 if *target == false_block {
-                    // True branch jumps to false_block, so false_block is continuation
                     return true;
                 }
 
@@ -1094,27 +1093,40 @@ impl MirCodeGenerator<'_> {
                 }
             }
 
-            // Check #3: True branch has nested control flow (Branch) and one of its exit paths
-            // jumps to false_block. This handles cases like:
-            //   if outer_condition
-            //       if inner_condition
-            //           return x
-            //   return y  // This is continuation, not else!
-            //
-            // In this case, true_block has a Branch terminator (the nested if), and the nested if's
-            // continuation block jumps to false_block.
-            if let MirTerminator::Branch {
-                true_block: inner_true,
-                false_block: inner_false,
-                ..
-            } = &true_blk.terminator
-            {
-                // Check if either branch of the nested if jumps to our false_block
-                if self.block_eventually_jumps_to(function, *inner_true, false_block)
-                    || self.block_eventually_jumps_to(function, *inner_false, false_block)
-                {
-                    return true;
+            // Check #3: True branch eventually reaches false_block through any path.
+            if self.block_eventually_jumps_to(function, true_block, false_block) {
+                return true;
+            }
+        }
+
+        // Check #4: false_block has multiple predecessors — it's a merge point.
+        // Count how many blocks in the function jump or branch to false_block.
+        // If more than one block targets it, it's a continuation (merge), not an else.
+        {
+            let mut predecessor_count = 0;
+            for (_, block) in &function.blocks {
+                match &block.terminator {
+                    MirTerminator::Jump { target } => {
+                        if *target == false_block {
+                            predecessor_count += 1;
+                        }
+                    }
+                    MirTerminator::Branch {
+                        true_block: tb,
+                        false_block: fb,
+                        ..
+                    } => {
+                        if *tb == false_block || *fb == false_block {
+                            predecessor_count += 1;
+                        }
+                    }
+                    _ => {}
                 }
+            }
+            // The Branch that we're currently checking contributes 1 predecessor.
+            // If there's more than 1 total, false_block is a merge point.
+            if predecessor_count > 1 {
+                return true;
             }
         }
 
@@ -1891,13 +1903,18 @@ impl MirCodeGenerator<'_> {
                     // Pop loop context
                     self.loop_context_stack.pop();
 
-                    // Generate continuation (false_block) - this is where we exit to
+                    // Generate loop continuation (false_block) - this is the code after the loop.
+                    // CRITICAL: Use generate_branch_block (NOT generate_structured_blocks) to
+                    // avoid consuming blocks that belong to outer control structures. If this
+                    // loop is inside an if's true_block, generate_structured_blocks would follow
+                    // Jump chains into the if's continuation, preventing it from being generated
+                    // at the correct nesting level after the if's End instruction.
                     debug_mir!(
                         "DEBUG LOOP: Generating continuation block {:?} for loop in function '{}'",
                         false_block,
                         function.name
                     );
-                    self.generate_structured_blocks(function, *false_block, generated)?;
+                    self.generate_branch_block(function, *false_block, generated)?;
                 } else {
                     // Regular if/else (not a loop)
                     // Check if false_block is a continuation (no else clause in source)
