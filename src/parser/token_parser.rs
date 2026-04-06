@@ -54,6 +54,9 @@ pub struct TokenParser {
     plugin_keywords: HashSet<String>,
     /// Original source text for raw content extraction in framework blocks
     source_content: String,
+    /// When true, skip section ordering enforcement (used for plugin output parsing
+    /// where sections like external:, functions:, start: may appear in any order)
+    lenient_section_order: bool,
 }
 
 impl TokenParser {
@@ -65,6 +68,7 @@ impl TokenParser {
             errors: Vec::new(),
             paren_depth: 0,
             plugin_keywords: HashSet::new(),
+            lenient_section_order: false,
         }
     }
 
@@ -86,7 +90,14 @@ impl TokenParser {
             errors: Vec::new(),
             paren_depth: 0,
             plugin_keywords: plugin_keywords.into_iter().collect(),
+            lenient_section_order: false,
         }
+    }
+
+    /// Enable lenient section ordering (for plugin output parsing).
+    /// When enabled, sections like external:, functions:, start: can appear in any order.
+    pub fn set_lenient_section_order(&mut self, lenient: bool) {
+        self.lenient_section_order = lenient;
     }
 
     /// Try to extract a variable name from the current token.
@@ -154,12 +165,14 @@ impl TokenParser {
             }
 
             // Enforce section ordering for the 5 core sections
-            if let Some(current_order) = core_section_order(self.current_kind()) {
-                if current_order < last_core_section {
-                    let current_name = core_section_name(current_order);
-                    let last_name = core_section_name(last_core_section);
-                    let token = self.current();
-                    self.errors.push(CompilerError::parse_error(
+            // (skipped in lenient mode, used for plugin output parsing)
+            if !self.lenient_section_order {
+                if let Some(current_order) = core_section_order(self.current_kind()) {
+                    if current_order < last_core_section {
+                        let current_name = core_section_name(current_order);
+                        let last_name = core_section_name(last_core_section);
+                        let token = self.current();
+                        self.errors.push(CompilerError::parse_error(
                         format!(
                             "'{}' section is out of order — it must appear before '{}'",
                             current_name, last_name
@@ -170,9 +183,10 @@ impl TokenParser {
                                 .to_string(),
                         ),
                     ));
+                    }
+                    last_core_section = last_core_section.max(current_order);
                 }
-                last_core_section = last_core_section.max(current_order);
-            }
+            } // end if !self.lenient_section_order
 
             // Parse top-level declarations
             match self.current_kind() {

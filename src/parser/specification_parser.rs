@@ -12,6 +12,8 @@ pub struct SpecificationParser {
     file_path: String,
     /// Plugin-defined keywords that don't require colons (e.g., "data" from frame.data)
     plugin_keywords: Vec<String>,
+    /// When true, skip section ordering enforcement (for plugin output)
+    lenient_section_order: bool,
 }
 
 impl SpecificationParser {
@@ -20,6 +22,7 @@ impl SpecificationParser {
             token_stream,
             file_path,
             plugin_keywords: Vec::new(),
+            lenient_section_order: false,
         }
     }
 
@@ -38,7 +41,13 @@ impl SpecificationParser {
             token_stream,
             file_path,
             plugin_keywords,
+            lenient_section_order: false,
         }
+    }
+
+    /// Enable lenient section ordering for plugin output parsing
+    pub fn set_lenient_section_order(&mut self, lenient: bool) {
+        self.lenient_section_order = lenient;
     }
 
     /// Parse a program using the token-driven parser
@@ -58,6 +67,10 @@ impl SpecificationParser {
                 std::mem::take(&mut self.plugin_keywords),
             )
         };
+
+        if self.lenient_section_order {
+            parser.set_lenient_section_order(true);
+        }
 
         parser.parse_program()
     }

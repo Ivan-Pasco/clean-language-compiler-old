@@ -2354,6 +2354,8 @@ impl WasmPluginAdapter {
             .tokenize()
             .map_err(|e| anyhow!("Failed to tokenize plugin output: {}", e))?;
         let mut parser = SpecificationParser::new(tokens, "<plugin-output>".to_string());
+        // Plugin output may have sections in any order (e.g., external: before functions: before start:)
+        parser.set_lenient_section_order(true);
         parser
             .parse_program()
             .map_err(|e| anyhow!("Failed to parse plugin output: {}", e))
