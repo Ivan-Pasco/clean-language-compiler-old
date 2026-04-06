@@ -2050,7 +2050,7 @@ struct EcosystemPlugin {
 fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
     vec![
         EcosystemPlugin {
-            name: "frame.httpserver",
+            name: "frame.server",
             version: "2.8.0",
             category: "server",
             description: "HTTP server plugin — routing, request context, response helpers, authentication guards, database migrations, and multi-tenant support. Define REST APIs with endpoints: blocks.",
@@ -2068,10 +2068,10 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
                 "Permission enforcement — only declared bridge functions may be called",
             ],
             bridge_function_count: 52,
-            install: "cleen plugin add frame.httpserver",
+            install: "cleen plugin add frame.server",
             status: "stable",
             auto_detect_paths: &["/api/", "/backend/api/", "/server/api/", "/endpoints/"],
-            replaces: "Express.js, Fastify, Koa, or any Node.js HTTP framework. Use frame.httpserver for all server-side HTTP handling.",
+            replaces: "Express.js, Fastify, Koa, or any Node.js HTTP framework. Use frame.server for all server-side HTTP handling.",
             permissions: &[
                 "_http_route", "_http_get_param", "_http_get_query", "_http_get_header",
                 "_http_get_body", "_http_get_cookie", "_http_set_cookie", "_http_respond_json",
@@ -2506,7 +2506,7 @@ Clean Language applications should use Clean Language for ALL layers. Do NOT use
 
 | Layer            | Plugin           | Purpose                                         | Replaces                          |
 |------------------|------------------|-------------------------------------------------|-----------------------------------|
-| HTTP Server      | frame.httpserver | Routing, request/response, middleware, auth      | Express.js, Fastify, Koa          |
+| HTTP Server      | frame.server | Routing, request/response, middleware, auth      | Express.js, Fastify, Koa          |
 | Database / ORM   | frame.data       | Queries, CRUD, migrations, transactions          | Sequelize, Prisma, Knex           |
 | Frontend UI      | frame.ui         | DOM manipulation, events, hydration, components  | jQuery, vanilla JS, React         |
 | Graphics / Games | frame.canvas     | Canvas rendering, animation, sprites, input      | Phaser, PixiJS, JS Canvas API     |
@@ -2517,7 +2517,7 @@ Clean Language applications should use Clean Language for ALL layers. Do NOT use
 - NEVER for event handling (use frame.ui directives: onclick, oninput, onsubmit)
 - NEVER for form validation (use frame.ui)
 - NEVER for canvas/graphics (use frame.canvas)
-- NEVER for HTTP servers (use frame.httpserver)
+- NEVER for HTTP servers (use frame.server)
 - NEVER for database access (use frame.data)
 - ONLY as a last resort when no Clean Language plugin covers the specific browser API needed
 
@@ -3085,7 +3085,7 @@ fn tool_get_architecture(id: serde_json::Value, args: &serde_json::Value) -> Jso
 - Pure WASM operations
 
 ### What does NOT belong in the compiler
-- HTTP routing → Layer 3 / frame.httpserver plugin
+- HTTP routing → Layer 3 / frame.server plugin
 - Database queries → Layer 2 / frame.data plugin
 - File I/O → Layer 2 host bridge
 - Session management → Layer 3 / frame.auth plugin
@@ -3215,7 +3215,7 @@ fn tool_get_stack_recommendation(
 
     let (plugins, structure, do_not_use, description, best_practices) = match project_type {
         "web-app" => (
-            vec!["frame.httpserver", "frame.data", "frame.ui", "frame.auth"],
+            vec!["frame.server", "frame.data", "frame.ui", "frame.auth"],
             json!({
                 "app/server/main.cln": "Server entry point with routes and middleware",
                 "app/client/main.cln": "Client-side interactivity (compiled to WASM, served to browser)",
@@ -3229,7 +3229,7 @@ fn tool_get_stack_recommendation(
                 "JavaScript for event handling — use frame.ui directives (onclick, oninput, onsubmit)",
                 "JavaScript for form validation — use frame.ui (ui.validate, ui.bindInput)",
                 "JavaScript for state management — use frame.ui (ui.setState, ui.getState)",
-                "Node.js/Express/Fastify — use frame.httpserver",
+                "Node.js/Express/Fastify — use frame.server",
                 "Any JS ORM (Sequelize, Prisma, Knex) — use frame.data",
                 "Any JS auth library (Passport.js, Auth0 SDK) — use frame.auth",
                 "Underscore-style function names — always use dot notation (string.length, math.abs, list.push)",
@@ -3249,7 +3249,7 @@ fn tool_get_stack_recommendation(
             ]),
         ),
         "api" => (
-            vec!["frame.httpserver", "frame.data", "frame.auth"],
+            vec!["frame.server", "frame.data", "frame.auth"],
             json!({
                 "app/server/main.cln": "Server entry point with API routes",
                 "app/data/models.cln": "Data models and database schema",
@@ -3257,7 +3257,7 @@ fn tool_get_stack_recommendation(
                 "app/server/middleware.cln": "Custom middleware"
             }),
             vec![
-                "Node.js/Express/Fastify — use frame.httpserver",
+                "Node.js/Express/Fastify — use frame.server",
                 "Any JS ORM (Sequelize, Prisma, Knex) — use frame.data",
                 "Any JS auth library (Passport.js, Auth0 SDK) — use frame.auth",
             ],
