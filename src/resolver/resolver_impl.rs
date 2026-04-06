@@ -3023,7 +3023,7 @@ impl NameResolver {
             ),
             BuiltinType::Namespace => HirType::Integer, // Namespace is internal, use Integer as placeholder
             BuiltinType::Any => HirType::Any,           // Any type for dynamic/JSON values
-            BuiltinType::Handler => HirType::Integer, // Handler is an i32 function index at WASM level
+            BuiltinType::Handler => HirType::Integer,   // Handler is an i32 index at WASM level
         }
     }
 }

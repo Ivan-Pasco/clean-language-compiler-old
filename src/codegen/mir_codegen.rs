@@ -2545,7 +2545,11 @@ impl MirCodeGenerator<'_> {
                                     " CALL ARGS:   Arg[{}] is handler, resolved to index {}",
                                     i, handler_index
                                 );
-                                self.current_instructions.push(Instruction::I32Const(handler_index as i32));
+                                // u32::MAX sentinel means resolve_handler_argument already
+                                // pushed the value onto the stack (Value operand case)
+                                if handler_index != u32::MAX {
+                                    self.current_instructions.push(Instruction::I32Const(handler_index as i32));
+                                }
                                 continue;
                             }
 
@@ -3742,8 +3746,28 @@ impl MirCodeGenerator<'_> {
             }
             MirOperand::NamedFunction { name, .. } => name.clone(),
             MirOperand::Constant(MirConstant::Integer(n)) => {
-                // Already a literal integer — pass through as-is (backwards compatibility)
+                // Already a literal integer — pass through as-is
                 return Ok(*n as u32);
+            }
+            MirOperand::Value(value_id) => {
+                // The MIR builder wraps literal integer arguments in ValueId locals.
+                // Plugin-generated code like `_http_route("GET", "/", 0)` produces
+                // Value(ValueId) instead of Constant(Integer). Load the integer value
+                // from the local and let the runtime use it as a handler index.
+                if let Some(&local_index) = self.value_to_local.get(value_id) {
+                    self.current_instructions
+                        .push(Instruction::LocalGet(local_index));
+                    // Return sentinel to tell caller value is already on stack
+                    return Ok(u32::MAX);
+                }
+                return Err(CompilerError::codegen_error(
+                    format!(
+                        "Handler argument Value({:?}) not found in locals",
+                        value_id
+                    ),
+                    None,
+                    None,
+                ));
             }
             other => {
                 return Err(CompilerError::codegen_error(
