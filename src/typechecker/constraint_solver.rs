@@ -370,6 +370,11 @@ impl<'a> ConstraintSolver<'a> {
             // At runtime, values are boxed with type tags for proper handling
             (ConcreteType::Any, _) | (_, ConcreteType::Any) => Ok(()),
 
+            // Function references unify with Integer (handler/callback parameters)
+            // In WASM, function references become integer indices in the function table
+            (ConcreteType::Function { .. }, ConcreteType::Integer)
+            | (ConcreteType::Integer, ConcreteType::Function { .. }) => Ok(()),
+
             // Types cannot be unified
             _ => Err(CompilerError::type_error(
                 &format!("Cannot unify types: {} and {}", left, right),
