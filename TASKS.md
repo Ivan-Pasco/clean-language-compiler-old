@@ -127,6 +127,31 @@ All test cases now generate correct WASM code.
 
 ---
 
+## ✅ RESOLVED: String Comparison Inverted in MIR Codegen (req.body() appearing empty)
+
+**Priority**: CRITICAL - Breaks all POST endpoints and string equality checks in compiled WASM
+**Discovered**: April 8, 2026
+**Resolved**: April 8, 2026
+**Status**: ✅ COMPLETE
+
+### Issue
+`req.body()` and `req.query()` appeared to return empty strings in compiled WASM despite the server correctly writing data to memory. The root cause was identical to the January 2026 bug above, but in the **MIR codegen** (`mir_codegen.rs`) instead of the old codegen (`instruction_generator.rs`).
+
+The MIR codegen uses the host function `string_compare` (returns 0 for equal, like C's `strcmp`), while the old codegen used `string.compare` (returns 1 for equal). The MIR code had the `i32.eqz` on `Ne` instead of `Eq`, making `==` behave like `!=` and vice versa.
+
+### Root Cause
+In `src/codegen/mir_codegen.rs` line 4550-4553, after calling `string_compare` (which returns **0** for equal, non-zero for not-equal), the code applied `I32Eqz` for `NotEqual` instead of `Equal`:
+- `string_compare` returns 0 for equal → WASM `if(0)` = false → equality check failed
+- Adding `I32Eqz` for `Ne` made inequality also wrong
+
+### Solution Applied
+Swapped the `i32.eqz` to apply for `Eq` (converting 0→1 for WASM `if` true branch) instead of `Ne` (which already returns non-zero for true).
+
+### Files Modified
+- `src/codegen/mir_codegen.rs` - Fixed string comparison operator handling in MIR codegen
+
+---
+
 ## ✅ RESOLVED: Invalid WASM Code Generation - If Statement Stack Imbalance
 
 **Priority**: CRITICAL - Blocks plugin system and complex code compilation

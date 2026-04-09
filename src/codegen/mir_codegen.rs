@@ -4545,12 +4545,16 @@ impl MirCodeGenerator<'_> {
             // Get the string_compare function index
             if let Some(compare_idx) = self.wasm_generator.get_function_index("string_compare") {
                 // Call string_compare(left, right) - operands are already on stack
+                // string_compare returns 0 for equal, non-zero for not-equal
                 self.current_instructions
                     .push(Instruction::Call(compare_idx));
-                // For NotEqual, invert the result
-                if matches!(op, MirBinaryOp::Ne) {
+                // For Equal: string_compare returns 0 when equal, but WASM `if` needs
+                // non-zero for true, so we invert with i32.eqz (0 → 1, non-zero → 0)
+                if matches!(op, MirBinaryOp::Eq) {
                     self.current_instructions.push(Instruction::I32Eqz);
                 }
+                // For NotEqual: string_compare already returns non-zero when not equal,
+                // which is exactly what WASM `if` expects — no inversion needed
                 return Ok(());
             }
             // Fall through to pointer comparison if string_compare not available
