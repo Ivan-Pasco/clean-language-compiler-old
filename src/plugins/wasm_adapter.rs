@@ -2432,24 +2432,66 @@ impl WasmPluginAdapter {
         };
         let attributes_ptr = self.find_or_write_string(&mut store, &memory, &attributes_str)?;
 
-        // Use the remaining body content (after extracting inline attributes)
-        let body_ptr = self.find_or_write_string(&mut store, &memory, &actual_body)?;
+        // Pre-strip common indentation from block body before passing to plugin.
+        let stripped_body = strip_common_indent(&actual_body);
+        let body_ptr = self.find_or_write_string(&mut store, &memory, &stripped_body)?;
 
-        // Call the expand function with signature: (i32, i32, i32) -> i32
-        // Three string pointers, returns a string pointer
-        // Use the function name from the manifest's exports section
-        let expand_fn_name = &self.manifest.exports.expand;
-        let expand: TypedFunc<(i32, i32, i32), i32> = instance
-            .get_typed_func(&mut store, expand_fn_name)
-            .map_err(|e| {
-                anyhow!(
-                    "Plugin does not export '{}' function: {}",
-                    expand_fn_name,
-                    e
-                )
-            })?;
+        // Workaround for WASM codegen bug: the plugin's strip_block_indent function
+        // returns empty string due to a local variable scoping issue in compiled WASM.
+        // For html: blocks, bypass expand_block and call html_block_to_code directly,
+        // which is proven to work correctly. We then wrap the result in the same
+        // template that expand_html_block uses.
+        let result_ptr = if block_name == "html" {
+            if let Ok(html_fn) =
+                instance.get_typed_func::<i32, i32>(&mut store, "html_block_to_code")
+            {
+                let code_ptr = html_fn.call(&mut store, body_ptr)?;
+                let code_bytes = self.read_result(&store, &memory, code_ptr)?;
+                let code_str = std::str::from_utf8(&code_bytes).unwrap_or("");
 
-        let result_ptr = expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?;
+                // Check for var="name" attribute to determine mode
+                let var_name = if attributes_str.contains("\"var\"") {
+                    // Extract var value from JSON: {"var":"name"}
+                    attributes_str
+                        .split("\"var\":\"")
+                        .nth(1)
+                        .and_then(|s| s.split('"').next())
+                        .unwrap_or("")
+                } else {
+                    ""
+                };
+
+                let generated = if var_name.is_empty() {
+                    // Default mode: declare __html, build it, return it
+                    format!("string __html = \"\"\n{}return __html\n", code_str)
+                } else {
+                    // Named variable mode: declare var, build into it, no return
+                    let remapped = code_str.replace("__html", var_name);
+                    format!("string {} = \"\"\n{}", var_name, remapped)
+                };
+
+                self.write_clean_string(&mut store, &memory, &generated)?
+            } else {
+                // Fallback: call expand_block normally
+                let expand_fn_name = &self.manifest.exports.expand;
+                let expand: TypedFunc<(i32, i32, i32), i32> =
+                    instance.get_typed_func(&mut store, expand_fn_name)?;
+                expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?
+            }
+        } else {
+            // For all other block types, call expand_block normally
+            let expand_fn_name = &self.manifest.exports.expand;
+            let expand: TypedFunc<(i32, i32, i32), i32> = instance
+                .get_typed_func(&mut store, expand_fn_name)
+                .map_err(|e| {
+                    anyhow!(
+                        "Plugin does not export '{}' function: {}",
+                        expand_fn_name,
+                        e
+                    )
+                })?;
+            expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?
+        };
 
         // Check for errors
         if let Some(error) = store.data().last_error.clone() {
@@ -2462,6 +2504,12 @@ impl WasmPluginAdapter {
         // The plugin returns Clean Language source code, which we parse
         let generated_code = std::str::from_utf8(&result_bytes)
             .map_err(|e| anyhow!("Invalid UTF-8 in plugin response: {}", e))?;
+
+        // Log expansion result at trace level for debugging
+        tracing::trace!(
+            generated_code_len = generated_code.len(),
+            "Plugin expansion result"
+        );
 
         // Handle empty result
         if generated_code.trim().is_empty() {
@@ -2589,21 +2637,57 @@ impl WasmPluginAdapter {
             format!("{{{}}}", pairs.join(","))
         };
         let attributes_ptr = self.find_or_write_string(&mut store, &memory, &attributes_str)?;
-        let body_ptr = self.find_or_write_string(&mut store, &memory, &actual_body)?;
+        // Pre-strip common indentation from block body
+        let stripped_body = strip_common_indent(&actual_body);
+        let body_ptr = self.find_or_write_string(&mut store, &memory, &stripped_body)?;
 
-        // Call expand function - use the function name from the manifest's exports section
-        let expand_fn_name = &self.manifest.exports.expand;
-        let expand: TypedFunc<(i32, i32, i32), i32> = instance
-            .get_typed_func(&mut store, expand_fn_name)
-            .map_err(|e| {
-                anyhow!(
-                    "Plugin does not export '{}' function: {}",
-                    expand_fn_name,
-                    e
-                )
-            })?;
+        // Same html: block workaround as in call_expand — bypass expand_block
+        // and call html_block_to_code directly to avoid the broken strip_block_indent
+        let result_ptr = if block_name == "html" {
+            if let Ok(html_fn) =
+                instance.get_typed_func::<i32, i32>(&mut store, "html_block_to_code")
+            {
+                let code_ptr = html_fn.call(&mut store, body_ptr)?;
+                let code_bytes = self.read_result(&store, &memory, code_ptr)?;
+                let code_str = std::str::from_utf8(&code_bytes).unwrap_or("");
 
-        let result_ptr = expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?;
+                let var_name = if attributes_str.contains("\"var\"") {
+                    attributes_str
+                        .split("\"var\":\"")
+                        .nth(1)
+                        .and_then(|s| s.split('"').next())
+                        .unwrap_or("")
+                } else {
+                    ""
+                };
+
+                let generated = if var_name.is_empty() {
+                    format!("string __html = \"\"\n{}return __html\n", code_str)
+                } else {
+                    let remapped = code_str.replace("__html", var_name);
+                    format!("string {} = \"\"\n{}", var_name, remapped)
+                };
+
+                self.write_clean_string(&mut store, &memory, &generated)?
+            } else {
+                let expand_fn_name = &self.manifest.exports.expand;
+                let expand: TypedFunc<(i32, i32, i32), i32> =
+                    instance.get_typed_func(&mut store, expand_fn_name)?;
+                expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?
+            }
+        } else {
+            let expand_fn_name = &self.manifest.exports.expand;
+            let expand: TypedFunc<(i32, i32, i32), i32> = instance
+                .get_typed_func(&mut store, expand_fn_name)
+                .map_err(|e| {
+                    anyhow!(
+                        "Plugin does not export '{}' function: {}",
+                        expand_fn_name,
+                        e
+                    )
+                })?;
+            expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?
+        };
 
         // Check for errors
         if let Some(error) = store.data().last_error.clone() {
@@ -2713,10 +2797,10 @@ impl WasmPluginAdapter {
 
         // Scan the plugin's data section for a matching string
         // Clean strings are stored as [4-byte length][data]
-        // Data section typically starts around 4096 and extends to ~8192
+        // Data section starts around 1024 and can extend to 32KB+ for large plugins
         let data = memory.data(&*store);
-        let scan_start = 4096usize;
-        let scan_end = std::cmp::min(8192usize, data.len().saturating_sub(4 + len));
+        let scan_start = 1024usize;
+        let scan_end = std::cmp::min(32768usize, data.len().saturating_sub(4 + len));
 
         for ptr in scan_start..scan_end {
             // Check if this looks like a string with our length
@@ -3127,6 +3211,46 @@ fn extract_inline_attrs(content: &str) -> (Vec<String>, String) {
     } else {
         (pairs, rest.to_string())
     }
+}
+
+/// Strip common leading indentation from block body content.
+///
+/// This replicates the logic that plugins perform in `strip_block_indent`,
+/// working around a WASM codegen bug where the plugin's implementation
+/// returns empty string due to local variable scoping issues in compiled WASM.
+///
+/// The function:
+/// 1. Finds the minimum tab indentation across all non-empty lines
+/// 2. Strips that many leading tabs from each line
+/// 3. Joins non-empty lines with spaces (matching plugin behavior)
+fn strip_common_indent(content: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Find minimum indent (number of leading tabs) across non-empty lines
+    let min_indent = lines
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.chars().take_while(|c| *c == '\t').count())
+        .min()
+        .unwrap_or(0);
+
+    // Rebuild with indent stripped, joining non-empty lines with spaces
+    lines
+        .iter()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                None
+            } else if line.len() > min_indent {
+                Some(line.chars().skip(min_indent).collect::<String>())
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
