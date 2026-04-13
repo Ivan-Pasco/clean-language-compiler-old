@@ -1,0 +1,6 @@
+// CI Tier 1 | t1_print_integer
+// Grammar: print statement, integer literal, toString()
+// Purpose: Verify that an integer literal can be printed
+
+start:
+	print(42.toString())

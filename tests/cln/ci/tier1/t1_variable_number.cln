@@ -1,0 +1,7 @@
+// CI Tier 1 | t1_variable_number
+// Grammar: variable declaration (number type), assignment, print
+// Purpose: Verify number variable declaration and use
+
+start:
+	number n = 2.5
+	print(n.toString())

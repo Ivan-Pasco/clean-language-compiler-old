@@ -1,0 +1,2 @@
+# COMPILE_FAIL: async/later syntax not supported by parser (E001: Expected LeftParen, found Identifier)
+hello async

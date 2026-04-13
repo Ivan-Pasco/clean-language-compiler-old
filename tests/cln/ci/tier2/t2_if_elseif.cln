@@ -1,0 +1,12 @@
+// CI Tier 2 | t2_if_elseif
+// Grammar: if / else if / else chain
+// Purpose: Verify multi-branch conditional selects the correct branch
+
+start:
+	integer n = 0
+	if n > 0
+		print("positive")
+	else if n < 0
+		print("negative")
+	else
+		print("zero")

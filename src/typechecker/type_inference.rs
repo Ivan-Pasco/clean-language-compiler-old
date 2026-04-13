@@ -1143,7 +1143,7 @@ impl<'a> TypeInference<'a> {
             watch_blocks: tast_watch_blocks,
             type_env: self.type_env.clone(),
             location: program.location.clone(),
-            // CRITICAL FIX: Pass symbol table through to MIR for dynamic SymbolId resolution
+            // NOTE: Pass symbol table through to MIR for dynamic SymbolId resolution
             symbol_table: std::sync::Arc::new(program.symbol_table.clone()),
             externals: tast_externals,
         };
@@ -1330,6 +1330,35 @@ impl<'a> TypeInference<'a> {
             self.current_return_type = Some(inferred_return_type.clone());
             inferred_return_type.clone()
         };
+
+        // Gap 1: Return path analysis (FUNC004)
+        // Warn when a non-void function may not return a value on all paths.
+        // We only warn — never hard-error — to preserve backwards compatibility.
+        let is_void_return = matches!(
+            declared_return_type,
+            ConcreteType::Null | ConcreteType::Undefined | ConcreteType::Never
+        );
+        if !is_void_return && function.return_type.is_some() {
+            let body_definitely_returns = Self::block_definitely_returns(&tast_body);
+            if !body_definitely_returns {
+                let warning = CompilerError::Validation {
+                    context: Box::new(
+                        crate::error::ErrorContext::new(
+                            format!(
+                                "Function '{}' may not return a value on all paths",
+                                function.name
+                            ),
+                            Some("Ensure every code path ends with a return statement".to_string()),
+                            crate::error::ErrorType::Validation,
+                            Some(function.location.clone()),
+                        )
+                        .with_severity(crate::error::ErrorSeverity::Warning)
+                        .with_error_code("FUNC004"),
+                    ),
+                };
+                self.warnings.push(warning);
+            }
+        }
 
         self.current_function = None;
         self.current_return_type = None;
@@ -1596,16 +1625,23 @@ impl<'a> TypeInference<'a> {
 
                 let guard_condition = self.infer_expression(&resolved_guard.condition)?;
 
-                // Guard condition must be boolean
+                // Guard condition must be boolean (STATE001 warning)
                 if guard_condition.expr_type != ConcreteType::Boolean {
-                    return Err(CompilerError::type_error(
-                        format!(
-                            "Guard condition for state variable '{}' must be boolean, found {}",
-                            decl.name, guard_condition.expr_type
+                    self.warnings.push(CompilerError::Validation {
+                        context: Box::new(
+                            crate::error::ErrorContext::new(
+                                format!(
+                                    "Guard condition for state variable '{}' should be boolean, found {}",
+                                    decl.name, guard_condition.expr_type
+                                ),
+                                Some("Guard conditions must evaluate to true or false".to_string()),
+                                crate::error::ErrorType::Validation,
+                                Some(resolved_guard.location.clone()),
+                            )
+                            .with_severity(crate::error::ErrorSeverity::Warning)
+                            .with_error_code("STATE001"),
                         ),
-                        Some("Guard conditions must evaluate to true or false".to_string()),
-                        Some(resolved_guard.location.clone()),
-                    ));
+                    });
                 }
 
                 Some(TastGuardClause {
@@ -1666,19 +1702,26 @@ impl<'a> TypeInference<'a> {
         for rule_expr in &state_block.rules {
             let rule = self.infer_expression(rule_expr)?;
 
-            // Each rule must be a boolean expression
+            // Each rule must be a boolean expression (STATE002 warning)
             if rule.expr_type != ConcreteType::Boolean {
-                return Err(CompilerError::type_error(
-                    format!(
-                        "State rule must be a boolean expression, found {}",
-                        rule.expr_type
+                self.warnings.push(CompilerError::Validation {
+                    context: Box::new(
+                        crate::error::ErrorContext::new(
+                            format!(
+                                "State rule should be a boolean expression, found {}",
+                                rule.expr_type
+                            ),
+                            Some(
+                                "State rules are invariants that must evaluate to true or false"
+                                    .to_string(),
+                            ),
+                            crate::error::ErrorType::Validation,
+                            Some(rule.location.clone()),
+                        )
+                        .with_severity(crate::error::ErrorSeverity::Warning)
+                        .with_error_code("STATE002"),
                     ),
-                    Some(
-                        "State rules are invariants that must evaluate to true or false"
-                            .to_string(),
-                    ),
-                    Some(rule.location.clone()),
-                ));
+                });
             }
 
             tast_rules.push(rule);
@@ -1822,7 +1865,12 @@ impl<'a> TypeInference<'a> {
                         } else if then_returns {
                             block_return_type = then_block.return_type.clone();
                         } else if else_returns {
-                            block_return_type = else_block.as_ref().unwrap().return_type.clone();
+                            // Safe: else_returns is only true when else_block is Some
+                            block_return_type = else_block
+                                .as_ref()
+                                .expect("else_block must exist when else_returns is true")
+                                .return_type
+                                .clone();
                         }
                     }
                 }
@@ -1860,21 +1908,28 @@ impl<'a> TypeInference<'a> {
         // return upward.
         if let Some(expected_ty) = expected {
             let actual = &tast_block.return_type;
-            // Undefined means the block has no return statement at all — that is
-            // a user error for computed blocks, but we emit a softer warning
-            // rather than a hard error so that the rest of the pipeline proceeds.
+            // Undefined means the block has no return statement at all — warn
+            // rather than hard-error so the rest of the pipeline proceeds.
+            // STATE003: Computed state return type mismatch.
             if *actual != ConcreteType::Undefined && !actual.is_assignable_to(expected_ty) {
-                return Err(CompilerError::type_error(
-                    format!(
-                        "Computed state '{}' declares type {} but body returns {}",
-                        context_name, expected_ty, actual
+                self.warnings.push(CompilerError::Validation {
+                    context: Box::new(
+                        crate::error::ErrorContext::new(
+                            format!(
+                                "Computed state '{}' declares type {} but body returns {}",
+                                context_name, expected_ty, actual
+                            ),
+                            Some(format!(
+                                "Change the return expression to match the declared type {}",
+                                expected_ty
+                            )),
+                            crate::error::ErrorType::Validation,
+                            Some(block.location.clone()),
+                        )
+                        .with_severity(crate::error::ErrorSeverity::Warning)
+                        .with_error_code("STATE003"),
                     ),
-                    Some(format!(
-                        "Change the return expression to match the declared type {}",
-                        expected_ty
-                    )),
-                    Some(block.location.clone()),
-                ));
+                });
             }
         }
 
@@ -2532,68 +2587,115 @@ impl<'a> TypeInference<'a> {
                     ConcreteType::Any => match &tast_index.expr_type {
                         ConcreteType::String | ConcreteType::Integer => ConcreteType::Any,
                         other => {
-                            self.errors.push(CompilerError::type_error(
-                                    &format!(
-                                        "Any type index must be string (for object access) or integer (for array access), found {:?}",
-                                        other
+                            // IDX004: wrong index type on Any — emit warning, not error
+                            self.warnings.push(
+                                CompilerError::Validation {
+                                    context: Box::new(
+                                        crate::error::ErrorContext::new(
+                                            format!(
+                                                "Index type {:?} is unusual for Any: expected string (object access) or integer (array access)",
+                                                other
+                                            ),
+                                            Some("Use data[\"field\"] for object access or data[0] for array access".to_string()),
+                                            crate::error::ErrorType::Validation,
+                                            Some(location.clone()),
+                                        )
+                                        .with_severity(crate::error::ErrorSeverity::Warning)
+                                        .with_error_code("IDX004"),
                                     ),
-                                    Some("Use data[\"field\"] for object access or data[0] for array access".to_string()),
-                                    Some(location.clone()),
-                                ));
+                                }
+                            );
                             ConcreteType::Any
                         }
                     },
-                    // Array requires integer index
+                    // Array requires integer index (IDX001)
                     ConcreteType::Array(element_type) => {
                         if !matches!(tast_index.expr_type, ConcreteType::Integer) {
-                            self.errors.push(CompilerError::type_error(
-                                &format!(
-                                    "Array index must be integer, found {:?}",
-                                    tast_index.expr_type
+                            self.warnings.push(CompilerError::Validation {
+                                context: Box::new(
+                                    crate::error::ErrorContext::new(
+                                        format!(
+                                            "Array index should be integer, found {}",
+                                            tast_index.expr_type
+                                        ),
+                                        Some(
+                                            "Use an integer expression to index into an array"
+                                                .to_string(),
+                                        ),
+                                        crate::error::ErrorType::Validation,
+                                        Some(location.clone()),
+                                    )
+                                    .with_severity(crate::error::ErrorSeverity::Warning)
+                                    .with_error_code("IDX001"),
                                 ),
-                                None,
-                                Some(location.clone()),
-                            ));
+                            });
                         }
                         (**element_type).clone()
                     }
-                    // Matrix indexing: matrix<T>[i] returns Array<T>
+                    // Matrix indexing: matrix<T>[i] returns Array<T> (IDX002)
                     ConcreteType::Matrix(element_type) => {
                         if !matches!(tast_index.expr_type, ConcreteType::Integer) {
-                            self.errors.push(CompilerError::type_error(
-                                &format!(
-                                    "Matrix index must be integer, found {:?}",
-                                    tast_index.expr_type
+                            self.warnings.push(CompilerError::Validation {
+                                context: Box::new(
+                                    crate::error::ErrorContext::new(
+                                        format!(
+                                            "Matrix index should be integer, found {}",
+                                            tast_index.expr_type
+                                        ),
+                                        Some(
+                                            "Use an integer expression to index into a matrix"
+                                                .to_string(),
+                                        ),
+                                        crate::error::ErrorType::Validation,
+                                        Some(location.clone()),
+                                    )
+                                    .with_severity(crate::error::ErrorSeverity::Warning)
+                                    .with_error_code("IDX002"),
                                 ),
-                                None,
-                                Some(location.clone()),
-                            ));
+                            });
                         }
                         ConcreteType::Array(Box::new((**element_type).clone()))
                     }
-                    // Pairs type supports string key access
+                    // Pairs type supports string key access (IDX003)
                     ConcreteType::Pairs(_, value_type) => {
                         if !matches!(tast_index.expr_type, ConcreteType::String) {
-                            self.errors.push(CompilerError::type_error(
-                                &format!(
-                                    "Pairs key must be string, found {:?}",
-                                    tast_index.expr_type
+                            self.warnings.push(CompilerError::Validation {
+                                context: Box::new(
+                                    crate::error::ErrorContext::new(
+                                        format!(
+                                            "Pairs key should be string, found {}",
+                                            tast_index.expr_type
+                                        ),
+                                        Some("Use pairs[\"key\"] for pairs access".to_string()),
+                                        crate::error::ErrorType::Validation,
+                                        Some(location.clone()),
+                                    )
+                                    .with_severity(crate::error::ErrorSeverity::Warning)
+                                    .with_error_code("IDX003"),
                                 ),
-                                Some("Use pairs[\"key\"] for pairs access".to_string()),
-                                Some(location.clone()),
-                            ));
+                            });
                         }
                         (**value_type).clone()
                     }
                     other_type => {
-                        self.errors.push(CompilerError::type_error(
-                            &format!("Cannot index into type: {:?}", other_type),
-                            Some(
-                                "Bracket access is only supported on Array, Pairs, or Any types"
-                                    .to_string(),
-                            ),
-                            Some(location.clone()),
-                        ));
+                        // IDX004: indexing into a non-indexable type — warn only
+                        self.warnings.push(
+                            CompilerError::Validation {
+                                context: Box::new(
+                                    crate::error::ErrorContext::new(
+                                        format!("Cannot index into type: {}", other_type),
+                                        Some(
+                                            "Bracket access is only supported on list, matrix, pairs, or any types"
+                                                .to_string(),
+                                        ),
+                                        crate::error::ErrorType::Validation,
+                                        Some(location.clone()),
+                                    )
+                                    .with_severity(crate::error::ErrorSeverity::Warning)
+                                    .with_error_code("IDX004"),
+                                ),
+                            }
+                        );
                         ConcreteType::Unknown
                     }
                 };
@@ -2632,7 +2734,7 @@ impl<'a> TypeInference<'a> {
                     &tast_arguments,
                 )?;
 
-                // CRITICAL FIX: Resolve method symbol from receiver's class type or primitive type
+                // NOTE: Resolve method symbol from receiver's class type or primitive type
                 // The resolver sets method_symbol_id = None because it doesn't have type info
                 // Now we have the receiver's type, so we can look up the method
                 let resolved_method_symbol = method_symbol_id
@@ -2745,7 +2847,7 @@ impl<'a> TypeInference<'a> {
                     &tast_arguments,
                 )?;
 
-                // CRITICAL FIX: Use SymbolId(0) for built-in namespace methods
+                // NOTE: Use SymbolId(0) for built-in namespace methods
                 // (string.*, math.*, list.*, etc.) so MIR builder creates NamedFunction operands
                 // For user-defined static methods, keep the actual method_symbol_id
                 let is_builtin_namespace = [
@@ -2803,7 +2905,7 @@ impl<'a> TypeInference<'a> {
             } => {
                 let tast_object = self.infer_expression(object)?;
 
-                // CRITICAL FIX: Resolve the field type AND symbol ID based on the object's actual type
+                // NOTE: Resolve the field type AND symbol ID based on the object's actual type
                 // This enables inherited field access - we look up the field in the object's class hierarchy
                 let (field_type, resolved_field_symbol_id) =
                     self.infer_field_type_and_symbol(&tast_object.expr_type, field)?;
@@ -3572,9 +3674,9 @@ impl<'a> TypeInference<'a> {
             }
         } else {
             // FALLBACK: Check if this might be a static method call that wasn't resolved properly
-            // CRITICAL FIX: Handle SymbolId(0) for stdlib namespace functions
+            // NOTE: Handle SymbolId(0) for stdlib namespace functions
             // SymbolId(0) is a placeholder used for stdlib functions like string.length, math.max
-            // These are registered in CodeGenerator, not in the symbol table
+            // These are registered in MirCodeGenerator, not in the symbol table
             if function_symbol_id == SymbolId(0) {
                 // Use function_name parameter directly (e.g., "string.length")
                 if let Some(dot_pos) = function_name.find('.') {
@@ -3865,7 +3967,7 @@ impl<'a> TypeInference<'a> {
                 Ok(ConcreteType::String)
             }
 
-            // list static methods - CRITICAL FIX: Add return types for list namespace functions
+            // list static methods - NOTE: Add return types for list namespace functions
             // These were returning Unknown, causing MIR to treat them as void
             // Generic functions return types based on first argument (the list)
             ("list", "add") | ("list", "push") => {
@@ -4182,7 +4284,7 @@ impl<'a> TypeInference<'a> {
                 Ok((ConcreteType::Integer, SymbolId(0)))
             }
 
-            // CRITICAL FIX: For class types, look up the field in the class definition
+            // NOTE: For class types, look up the field in the class definition
             ConcreteType::Class {
                 symbol_id,
                 type_args: _,
@@ -4315,7 +4417,7 @@ impl<'a> TypeInference<'a> {
             // String fields
             ConcreteType::String if field_name == "length" => Ok(ConcreteType::Integer),
 
-            // CRITICAL FIX: For class types, look up the field in the class definition
+            // NOTE: For class types, look up the field in the class definition
             ConcreteType::Class {
                 symbol_id,
                 type_args: _,
@@ -4577,6 +4679,49 @@ impl<'a> TypeInference<'a> {
         ConcreteType::Generic {
             name: type_var_id.0.to_string(),
             bounds: Vec::new(),
+        }
+    }
+
+    /// Gap 1 helper: Determine whether a TAST block unconditionally terminates
+    /// with a `return` statement on every reachable path.
+    ///
+    /// The analysis is intentionally conservative (may produce false-positive
+    /// warnings) rather than false-negatives that would mask bugs:
+    ///   - A block definitively returns if its last statement is `Return`.
+    ///   - A block definitively returns if its last statement is an `If` that
+    ///     has an `else` branch and both branches definitively return.
+    ///   - All other cases are considered *not* definitively returning.
+    ///
+    /// This keeps the implementation simple and avoids rejecting valid code.
+    fn block_definitely_returns(block: &TastBlock) -> bool {
+        match block.statements.last() {
+            None => false,
+            Some(TastStatement::Return { .. }) => true,
+            Some(TastStatement::If {
+                then_block,
+                else_block,
+                ..
+            }) => {
+                // Both branches must unconditionally return; if there is no else
+                // branch the function may fall through after the if.
+                if let Some(else_b) = else_block {
+                    Self::block_definitely_returns(then_block)
+                        && Self::block_definitely_returns(else_b)
+                } else {
+                    false
+                }
+            }
+            Some(TastStatement::Try {
+                body, catch_clause, ..
+            }) => {
+                // Conservatively: both try body and catch clause must return.
+                let catch_returns = catch_clause
+                    .as_ref()
+                    .map(|c| Self::block_definitely_returns(&c.body))
+                    .unwrap_or(false);
+                Self::block_definitely_returns(body) && catch_returns
+            }
+            _ => false,
         }
     }
 }

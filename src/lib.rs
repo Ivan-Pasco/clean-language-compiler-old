@@ -67,28 +67,49 @@
 #![allow(unknown_lints)]
 #![allow(deprecated)]
 
+/// Abstract Syntax Tree definitions — output of Stage 2 (parsing)
 pub mod ast;
+/// Built-in function registry — intrinsic functions available without imports
 pub mod builtins;
+/// WebAssembly code generation — Stage 7 (MIR to WASM bytecode)
 pub mod codegen;
+/// Compilation orchestration — multi-file compilation and build coordination
 pub mod compilation;
+/// Debug utilities — AST/MIR/WASM inspection tools
 pub mod debug;
+/// Error types and reporting — compiler diagnostics with spec error codes
 pub mod error;
+/// High-level Intermediate Representation — Stage 3 (AST to HIR)
 pub mod hir;
-
+/// Lexical analysis — Stage 1 (source to tokens)
 pub mod lexer;
+/// Model Context Protocol server — IDE tooling integration
 pub mod mcp;
+/// Memory management utilities — WASM memory layout helpers
 pub mod memory;
+/// Medium-level Intermediate Representation — Stage 6 (TAST to MIR with optimizations)
 pub mod mir;
+/// Module system — multi-file resolution and dependency management
 pub mod module;
+/// Package management — dependency resolution and package.clean.toml handling
 pub mod package;
+/// Parser — Stage 2 (tokens to AST via recursive descent)
 pub mod parser;
+/// Plugin system — framework plugin loading, expansion, and enforcement
 pub mod plugins;
+/// Name and module resolution — Stage 4 (symbol binding and scope resolution)
 pub mod resolver;
+/// Runtime utilities — async scheduling and I/O helpers
 pub mod runtime;
+/// Standard library — built-in function implementations for the old codegen path
 pub mod stdlib;
+/// Compilation targets — server, client, and platform-specific codegen
 pub mod targets;
+/// Telemetry — compilation metrics and performance tracking
 pub mod telemetry;
+/// Type checker — Stage 5 (type inference, constraint solving, TAST generation)
 pub mod typechecker;
+/// WASM type definitions — value types and type conversion utilities
 pub mod types;
 
 use crate::error::CompilerError;

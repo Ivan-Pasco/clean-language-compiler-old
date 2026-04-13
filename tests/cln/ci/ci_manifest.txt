@@ -1,0 +1,71 @@
+# CI Test Manifest — Generated 2026-04-12
+# Format: tier|file|compile|execute|status
+# Execute status reflects runtime with full host bridge (clean-server stack required)
+# The wasmtime_runner alone cannot execute these files (missing host bridge imports)
+# Compile status was verified with: cargo run --bin cln -- compile <file> --output <out>
+#
+# Tier 1 — Fundamentals (must always pass; blocks all higher tiers if failing)
+tier1|t1_empty_start.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_print_string.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_print_integer.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_print_number.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_print_boolean.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_variable_integer.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_variable_string.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_variable_number.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_variable_boolean.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_arithmetic.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_string_concat.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_comparison_int.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_comparison_string.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_logical_ops.cln|PASS|PENDING_RUNTIME|active
+tier1|t1_reassignment.cln|PASS|PENDING_RUNTIME|active
+#
+# Tier 2 — Core Features (must pass)
+# Note: section ordering rule — start: must appear before functions: and class
+tier2|t2_if_else.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_if_elseif.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_while_loop.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_iterate_range.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_iterate_step.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_break_continue.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_function_void.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_function_return.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_function_params.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_function_string_return.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_multiple_functions.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_recursive_function.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_nested_if.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_nested_loops.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_string_interpolation.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_number_to_string.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_integer_to_string.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_modulo.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_unary_minus.cln|PASS|PENDING_RUNTIME|active
+tier2|t2_mixed_arithmetic.cln|PASS|PENDING_RUNTIME|active
+#
+# Tier 3 — Advanced Features (must pass)
+tier3|t3_class_basic.cln|PASS|PENDING_RUNTIME|active
+tier3|t3_class_methods.cln|PASS|PENDING_RUNTIME|active
+tier3|t3_class_inheritance.cln|PASS|PENDING_RUNTIME|active
+tier3|t3_list_basic.cln|PASS|PENDING_RUNTIME|active
+tier3|t3_onError.cln|PASS|PENDING_RUNTIME|active
+tier3|t3_constant.cln|PASS|PENDING_RUNTIME|active
+tier3|t3_multiline_expr.cln|PASS|PENDING_RUNTIME|active
+tier3|t3_string_methods.cln|PASS|PENDING_RUNTIME|active
+tier3|t3_math_functions.cln|PASS|PENDING_RUNTIME|active
+tier3|t3_nested_function_calls.cln|PASS|PENDING_RUNTIME|active
+#
+# Tier 4 — Known Incomplete (tracked, not blocking CI)
+# t4_async_basic: COMPILE_FAIL — parser error: async function + later keyword not supported
+#   error[E001]: Expected LeftParen, found Identifier("fetchGreeting")
+# t4_import_module: COMPILE_FAIL — module resolution not implemented
+#   error: Module 'MathUtils' not found
+# t4_generic_list: COMPILE_PASS — iterate over list compiles; execution requires runtime
+# t4_matrix_basic: COMPILE_PASS — matrix 2D access compiles; execution requires runtime
+# t4_pairs_basic: COMPILE_PASS — pairs type compiles; execution requires runtime
+tier4|t4_async_basic.cln|FAIL|N/A|known_incomplete
+tier4|t4_import_module.cln|FAIL|N/A|known_incomplete
+tier4|t4_generic_list.cln|PASS|PENDING_RUNTIME|known_incomplete
+tier4|t4_matrix_basic.cln|PASS|PENDING_RUNTIME|known_incomplete
+tier4|t4_pairs_basic.cln|PASS|PENDING_RUNTIME|known_incomplete

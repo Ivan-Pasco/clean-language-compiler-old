@@ -55,7 +55,7 @@ impl CodeGenerator {
             wasm_function.instruction(&instruction);
         }
 
-        // CRITICAL FIX: Add 'end' instruction to properly terminate function
+        // NOTE: Add 'end' instruction to properly terminate function
         wasm_function.instruction(&Instruction::End);
 
         // Add function to code section
@@ -87,7 +87,7 @@ impl CodeGenerator {
         // Store function definition for default parameter handling
         self.function_definitions.insert(function.name.clone(), function.clone());
 
-        // **CRITICAL FIX FOR RECURSIVE FUNCTIONS**: Register function in function map BEFORE generating body
+        // **NOTE FOR RECURSIVE FUNCTIONS**: Register function in function map BEFORE generating body
         // This allows recursive calls to find the function during body generation
         let function_index = self.imported_functions.len() as u32 + self.function_names.len() as u32;
         // Function generated with correct index accounting for imports
@@ -118,7 +118,7 @@ impl CodeGenerator {
             wasm_function.instruction(&instruction);
         }
 
-        // CRITICAL FIX: Add 'end' instruction to properly terminate function
+        // NOTE: Add 'end' instruction to properly terminate function
         wasm_function.instruction(&Instruction::End);
 
         // Add function to code section
@@ -601,7 +601,7 @@ impl CodeGenerator {
             tracing::trace!("DEBUG _start: Will call start() function at index {}", start_index);
             tracing::trace!("DEBUG _start: Total imports = {}, Total functions = {}",
                 self.imported_functions.len(), self.function_names.len());
-            // CRITICAL FIX: Declare the _start function in the function section FIRST
+            // NOTE: Declare the _start function in the function section FIRST
             // The _start function has no parameters and no return value
             let type_index = self.type_manager.add_function_type(&[], None)?;
             self.function_section.function(type_index);
@@ -623,7 +623,7 @@ impl CodeGenerator {
                 wasm_function.instruction(&instruction);
             }
 
-            // CRITICAL FIX: Add 'end' instruction to properly terminate start function
+            // NOTE: Add 'end' instruction to properly terminate start function
             wasm_function.instruction(&Instruction::End);
 
             // Add to code section

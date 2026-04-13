@@ -1,0 +1,8 @@
+// CI Tier 2 | t2_string_interpolation
+// Grammar: string interpolation with {expr} syntax
+// Purpose: Verify expressions embedded in string literals are evaluated
+
+start:
+	integer n = 7
+	string msg = "value is {n}"
+	print(msg)

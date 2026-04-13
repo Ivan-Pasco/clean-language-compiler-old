@@ -1,0 +1,17 @@
+// CI Tier 3 | t3_class_basic
+// Grammar: class declaration, field declarations, constructor, object instantiation
+// Purpose: Verify a basic class can be declared, instantiated, and fields accessed
+// Note: start: must appear before class definitions per compiler section ordering rules
+
+start:
+	Point p = Point(3, 4)
+	printl(p.x.toString())
+	printl(p.y.toString())
+
+class Point
+	integer x
+	integer y
+
+	constructor(integer px, integer py)
+		x = px
+		y = py

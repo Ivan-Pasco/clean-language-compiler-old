@@ -118,9 +118,9 @@ impl IterativeNameResolver {
         slot
     }
 
-    /// Get result from slot (must exist)
+    /// Get result from slot (must exist — callers ensure slot is populated before calling)
     fn get_result(&self, slot: usize) -> &ResolverResult {
-        self.results[slot].as_ref().unwrap()
+        self.results[slot].as_ref().expect("resolver slot must be populated before access")
     }
 
     /// Set result in slot
@@ -304,7 +304,7 @@ impl IterativeNameResolver {
                         })
                         .collect();
 
-                    // CRITICAL FIX: Look up function symbol instead of using placeholder SymbolId(0)
+                    // NOTE: Look up function symbol instead of using placeholder SymbolId(0)
                     let function_symbol_id = match self.symbol_table.lookup_symbol(&function) {
                         Some(symbol_id) => symbol_id,
                         None => {
@@ -610,7 +610,7 @@ impl IterativeNameResolver {
             }
 
             HirExpression::Variable { name, location } => {
-                // CRITICAL FIX: Look up variable symbol and fail if not found
+                // NOTE: Look up variable symbol and fail if not found
                 let symbol_id = match self.symbol_table.lookup_symbol(&name) {
                     Some(symbol_id) => symbol_id,
                     None => {

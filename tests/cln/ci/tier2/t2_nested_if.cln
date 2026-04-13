@@ -1,0 +1,13 @@
+// CI Tier 2 | t2_nested_if
+// Grammar: nested if/else blocks
+// Purpose: Verify deeply nested conditionals evaluate correctly
+
+start:
+	integer x = 8
+	if x > 0
+		if x > 5
+			print("large positive")
+		else
+			print("small positive")
+	else
+		print("not positive")

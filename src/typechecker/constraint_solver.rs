@@ -349,6 +349,29 @@ impl<'a> ConstraintSolver<'a> {
             (ConcreteType::Integer, ConcreteType::Number)
             | (ConcreteType::Number, ConcreteType::Integer) => Ok(()),
 
+            // Sized numeric types unify with their unsized counterparts
+            // number:64 is just number with explicit precision — they are compatible
+            (ConcreteType::NumberSized { .. }, ConcreteType::Number)
+            | (ConcreteType::Number, ConcreteType::NumberSized { .. }) => Ok(()),
+
+            // Two NumberSized unify (wider precision wins at runtime)
+            (ConcreteType::NumberSized { .. }, ConcreteType::NumberSized { .. }) => Ok(()),
+
+            // IntegerSized unifies with Integer
+            (ConcreteType::IntegerSized { .. }, ConcreteType::Integer)
+            | (ConcreteType::Integer, ConcreteType::IntegerSized { .. }) => Ok(()),
+
+            // Two IntegerSized unify
+            (ConcreteType::IntegerSized { .. }, ConcreteType::IntegerSized { .. }) => Ok(()),
+
+            // Integer/IntegerSized can unify with Number/NumberSized (widening)
+            (ConcreteType::Integer, ConcreteType::NumberSized { .. })
+            | (ConcreteType::NumberSized { .. }, ConcreteType::Integer) => Ok(()),
+            (ConcreteType::IntegerSized { .. }, ConcreteType::Number)
+            | (ConcreteType::Number, ConcreteType::IntegerSized { .. }) => Ok(()),
+            (ConcreteType::IntegerSized { .. }, ConcreteType::NumberSized { .. })
+            | (ConcreteType::NumberSized { .. }, ConcreteType::IntegerSized { .. }) => Ok(()),
+
             // Null and Undefined can unify with each other (for function return types)
             (ConcreteType::Null, ConcreteType::Undefined)
             | (ConcreteType::Undefined, ConcreteType::Null) => Ok(()),

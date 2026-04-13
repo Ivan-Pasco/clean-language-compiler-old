@@ -1,0 +1,7 @@
+// CI Tier 1 | t1_variable_boolean
+// Grammar: variable declaration (boolean type), assignment, print
+// Purpose: Verify boolean variable declaration and use
+
+start:
+	boolean flag = true
+	print(flag.toString())

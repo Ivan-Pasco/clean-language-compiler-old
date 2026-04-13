@@ -4,10 +4,7 @@
 use super::*;
 // Import ast module for tests if needed for constructing test cases
 
-use crate::ast::{
-    BinaryOperator, Expression, Function as AstFunction, FunctionModifier, FunctionSyntax,
-    SourceLocation, Statement, Type, Value, Visibility,
-};
+use crate::ast::{BinaryOperator, Expression, SourceLocation, Value};
 
 // StringPool has been removed as it was unused
 // use wasmtime::{Engine, Module, Store, Instance, Val};
@@ -186,123 +183,6 @@ fn test_memory_operations() {
     // assert_eq!(retrieved_string_result.unwrap(), hello_str);
 
     // Array and matrix allocation tested via integration tests
-}
-
-#[test]
-fn test_iterate_statement() {
-    let mut codegen = CodeGenerator::new_for_testing().unwrap();
-
-    // Create an array literal with values 1, 2, 3, 4, 5
-    let array_values = vec![
-        Value::Integer(1),
-        Value::Integer(2),
-        Value::Integer(3),
-        Value::Integer(4),
-        Value::Integer(5),
-    ];
-    let array_expr = Expression::Literal(Value::List(array_values));
-
-    // Create an iterate statement over the array
-    let iterate_stmt = Statement::Iterate {
-        iterator: "item".to_string(),
-        collection: array_expr,
-        body: vec![
-            // Body statements (e.g., print item)
-            Statement::Print {
-                expression: Expression::Variable("item".to_string()),
-                newline: true,
-                location: None,
-            },
-        ],
-        location: None,
-    };
-
-    // Create a function with the iterate statement
-    let _function = AstFunction {
-        name: "test_iterate".to_string(),
-        description: None,
-        type_parameters: vec![],
-        type_constraints: vec![],
-        parameters: vec![],
-        return_type: Type::Void,
-        body: vec![iterate_stmt],
-        location: None,
-        syntax: FunctionSyntax::Simple,
-        visibility: Visibility::Public,
-        modifier: FunctionModifier::None,
-    };
-
-    // Generate code
-    let mut instructions = Vec::new();
-    codegen
-        .generate_statement(
-            &Statement::Iterate {
-                iterator: "item".to_string(),
-                collection: Expression::Literal(Value::List(vec![
-                    Value::Integer(1),
-                    Value::Integer(2),
-                    Value::Integer(3),
-                ])),
-                body: vec![],
-                location: None,
-            },
-            &mut instructions,
-        )
-        .unwrap();
-
-    // Verify the generated instructions
-    assert!(!instructions.is_empty());
-    // Check for loop instructions
-    assert!(instructions
-        .iter()
-        .any(|i| matches!(i, Instruction::Loop(_))));
-    // Check for block instructions
-    assert!(instructions
-        .iter()
-        .any(|i| matches!(i, Instruction::Block(_))));
-}
-
-#[test]
-fn test_from_to_statement() {
-    let mut codegen = CodeGenerator::new_for_testing().unwrap();
-
-    // Create a range iterate statement (from 1 to 10)
-    let range_iterate_stmt = Statement::RangeIterate {
-        iterator: "counter".to_string(),
-        start: Expression::Literal(Value::Integer(1)),
-        end: Expression::Literal(Value::Integer(10)),
-        step: Some(Expression::Literal(Value::Integer(1))),
-        body: vec![
-            // Body statements (e.g., print counter)
-            Statement::Print {
-                expression: Expression::Variable("counter".to_string()),
-                newline: true,
-                location: None,
-            },
-        ],
-        location: None,
-    };
-
-    // Generate code
-    let mut instructions = Vec::new();
-    codegen
-        .generate_statement(&range_iterate_stmt, &mut instructions)
-        .unwrap();
-
-    // Verify the generated instructions
-    assert!(!instructions.is_empty());
-    // Check for loop instructions
-    assert!(instructions
-        .iter()
-        .any(|i| matches!(i, Instruction::Loop(_))));
-    // Check for block instructions
-    assert!(instructions
-        .iter()
-        .any(|i| matches!(i, Instruction::Block(_))));
-    // Check for the step value
-    assert!(instructions
-        .iter()
-        .any(|i| matches!(i, Instruction::I32Const(1))));
 }
 
 #[test]

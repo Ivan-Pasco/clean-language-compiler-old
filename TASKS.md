@@ -799,7 +799,15 @@ Files changed: `specification_lexer.rs`
 
 **Priority**: CRITICAL - Blocks all plugin compilation
 **Discovered**: April 5, 2026
-**Status**: OPEN
+**Status**: ✅ RESOLVED (2026-04-12) — verified via clean-server runtime
+
+### Verification (2026-04-12)
+Built clean-server v1.9.1 natively and executed all three test cases:
+- `multiple_break_in_function.cln` — output: `5` (correct, no trap)
+- `multiple_break_indexof.cln` — output: `test(abc)xyz(def)` (correct, no trap with 2-arg indexOf)
+- `multiple_break_simple.cln` — compiles, WASM validates
+
+The exact reproduction case from the bug report (multiple `if ... break` with `indexOf(needle, startPos)` inside a function) now executes correctly. The codegen cleanup (marker rename, dead code deletion, workaround fixes) in the same session likely resolved the underlying br-depth calculation issue.
 
 ### Problem
 When a function contains a `while` loop with two or more `if ... break` sequences, the second `break` compiles to WASM `unreachable` instead of a proper `br` to the loop exit. This causes a trap at runtime.

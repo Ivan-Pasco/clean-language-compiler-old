@@ -1,0 +1,11 @@
+// CI Tier 3 | t3_math_functions
+// Grammar: math.* namespace function calls (math.abs, math.floor, math.sqrt)
+// Purpose: Verify math built-in functions return correct values
+
+start:
+	number a = math.abs(-4.0)
+	printl(a.toString())
+	number b = math.floor(3.9)
+	printl(b.toString())
+	number c = math.sqrt(9.0)
+	printl(c.toString())

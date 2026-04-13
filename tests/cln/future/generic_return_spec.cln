@@ -1,23 +1,6 @@
 // Spec Section: 5.3 - Generic Functions with `any`
 // Tests: Generic function return types using any
 
-functions:
-	any wrap(any value)
-		return value
-
-	any processAndReturn(any input)
-		// Process and return same type
-		return input
-
-	any selectValue(boolean condition, any trueVal, any falseVal)
-		if condition
-			return trueVal
-		else
-			return falseVal
-
-	any getElement(list<any> items, integer index)
-		return items.get(index)
-
 start:
 	// Test 1: Generic return with integer
 	any result1 = wrap(42)
@@ -53,3 +36,20 @@ start:
 	print("Element 2: " + elem2.toString())
 
 	print("Generic return type tests completed")
+
+functions:
+	any wrap(any value)
+		return value
+
+	any processAndReturn(any input)
+		// Process and return same type
+		return input
+
+	any selectValue(boolean condition, any trueVal, any falseVal)
+		if condition
+			return trueVal
+		else
+			return falseVal
+
+	any getElement(list<any> items, integer index)
+		return items.get(index)

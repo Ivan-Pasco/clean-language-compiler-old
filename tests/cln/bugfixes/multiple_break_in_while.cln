@@ -1,0 +1,21 @@
+// Bugfix test: multiple break in while loop inside function
+// TASKS.md: CRITICAL - Multiple break produces unreachable trap
+// Grammar: while_statement, break_statement, if_statement, function_declaration
+
+start:
+	string r = process("hello")
+	print(r)
+
+functions:
+	string process(string code)
+		string result = code
+		integer pos = 0
+		while pos < 10
+			integer a = pos * 2
+			if a > 5
+				break
+			integer b = a + 1
+			if b > 7
+				break
+			pos = pos + 1
+		return result

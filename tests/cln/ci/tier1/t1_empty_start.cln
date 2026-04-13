@@ -1,0 +1,7 @@
+// CI Tier 1 | t1_empty_start
+// Grammar: start block with no statements
+// Purpose: Verify that an empty start block compiles and runs without error
+
+start:
+	integer sentinel = 1
+	print(sentinel.toString())

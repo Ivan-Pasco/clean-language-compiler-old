@@ -1,0 +1,7 @@
+// CI Tier 1 | t1_variable_string
+// Grammar: variable declaration (string type), assignment, print
+// Purpose: Verify string variable declaration and use
+
+start:
+	string s = "clean"
+	print(s)

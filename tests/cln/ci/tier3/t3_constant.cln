@@ -1,0 +1,7 @@
+// CI Tier 3 | t3_constant
+// Grammar: constant declaration (integer type with fixed value)
+// Purpose: Verify a compile-time constant can be declared and used
+
+start:
+	integer MAX = 100
+	print(MAX.toString())

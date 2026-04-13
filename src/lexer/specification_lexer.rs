@@ -261,7 +261,7 @@ impl<'a> SpecificationLexer<'a> {
             indent_level += 1;
         }
 
-        // CRITICAL FIX: Reject spaces at the beginning of lines (after tabs)
+        // NOTE: Reject spaces at the beginning of lines (after tabs)
         // Clean Language mandates tabs-only for indentation
         if let Some(&' ') = self.peek() {
             // Found a space at line start - this is an error

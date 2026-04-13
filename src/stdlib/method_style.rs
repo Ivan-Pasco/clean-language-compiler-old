@@ -36,7 +36,7 @@ impl MethodStyleManager {
         let types = ["integer", "number", "string", "boolean", "value"];
 
         for type_name in &types {
-            // CRITICAL FIX: Skip string.length - it has a dedicated native implementation
+            // NOTE: Skip string.length - it has a dedicated native implementation
             // The polymorphic version expects boxed values with type IDs at offset 8,
             // but raw string literals have [length|data] format with no type ID
             // Registering a polymorphic string.length overwrites the correct native function

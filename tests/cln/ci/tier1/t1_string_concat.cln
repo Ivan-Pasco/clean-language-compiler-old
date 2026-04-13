@@ -1,0 +1,8 @@
+// CI Tier 1 | t1_string_concat
+// Grammar: string concatenation with + operator
+// Purpose: Verify string concatenation with the + operator
+
+start:
+	string a = "foo"
+	string b = "bar"
+	print(a + b)

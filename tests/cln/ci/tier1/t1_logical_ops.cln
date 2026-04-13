@@ -1,0 +1,10 @@
+// CI Tier 1 | t1_logical_ops
+// Grammar: logical operators (and, or, not) on boolean expressions
+// Purpose: Verify boolean logical operators
+
+start:
+	boolean t = true
+	boolean f = false
+	printl((t and f).toString())
+	printl((t or f).toString())
+	printl((not t).toString())

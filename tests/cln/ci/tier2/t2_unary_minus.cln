@@ -1,0 +1,9 @@
+// CI Tier 2 | t2_unary_minus
+// Grammar: unary negation operator on integer literals and variables
+// Purpose: Verify negative number literals and unary minus expressions
+
+start:
+	integer neg = -5
+	printl(neg.toString())
+	integer pos = 3
+	printl((-pos).toString())

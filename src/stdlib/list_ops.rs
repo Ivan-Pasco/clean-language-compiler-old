@@ -21,7 +21,7 @@ impl ListManager {
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         tracing::debug!("DEBUG LIST_OPS: Starting list function registration");
 
-        // CRITICAL FIX: Register list.push as import functions with proper type signatures
+        // NOTE: Register list.push as import functions with proper type signatures
         // list.push for i32 elements (integers, booleans, pointers)
         tracing::debug!("DEBUG LIST_OPS: Registering list.push...");
         let idx1 = codegen.register_import_function(
@@ -32,7 +32,7 @@ impl ListManager {
         )?;
         tracing::debug!("DEBUG LIST_OPS: list.push registered at index {}", idx1);
 
-        // CRITICAL FIX: list.push_f64 for f64 elements (floats, numbers)
+        // NOTE: list.push_f64 for f64 elements (floats, numbers)
         // This is needed for float array literals like [1.1, 2.2, 3.3]
         tracing::debug!("DEBUG LIST_OPS: Registering list.push_f64...");
         let idx2 = codegen.register_import_function(
@@ -205,7 +205,7 @@ impl ListManager {
     }
 
     pub fn generate_list_allocate(&self) -> Vec<Instruction> {
-        // CRITICAL FIX: Implement bump allocator for dynamic heap allocation
+        // NOTE: Implement bump allocator for dynamic heap allocation
         // Memory layout:
         //   [0-3]: Global heap pointer (initially 1024)
         //   [1024+]: Heap space for allocations

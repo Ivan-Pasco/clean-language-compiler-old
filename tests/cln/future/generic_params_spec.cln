@@ -3,23 +3,6 @@
 // NOTE: Full any type polymorphism with mixed types requires runtime boxing (future work)
 // This test covers same-type generic function usage
 
-functions:
-	any identityInt(any value)
-		return value
-
-	any identityStr(any value)
-		return value
-
-	any getFirstInt(list<any> items)
-		return items.get(0)
-
-	any getLastInt(list<any> items)
-		integer lastIndex = items.length() - 1
-		return items.get(lastIndex)
-
-	void printAnyInt(any value)
-		print("Value: " + value.toString())
-
 start:
 	// Test 1: Identity function with integer
 	integer intResult = identityInt(42)
@@ -44,3 +27,20 @@ start:
 	printAnyInt(300)
 
 	print("Generic function parameters tests completed")
+
+functions:
+	any identityInt(any value)
+		return value
+
+	any identityStr(any value)
+		return value
+
+	any getFirstInt(list<any> items)
+		return items.get(0)
+
+	any getLastInt(list<any> items)
+		integer lastIndex = items.length() - 1
+		return items.get(lastIndex)
+
+	void printAnyInt(any value)
+		print("Value: " + value.toString())

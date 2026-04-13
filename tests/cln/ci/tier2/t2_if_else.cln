@@ -1,0 +1,10 @@
+// CI Tier 2 | t2_if_else
+// Grammar: if/else conditional, boolean condition
+// Purpose: Verify if/else branching selects the correct path
+
+start:
+	integer x = 7
+	if x > 5
+		print("big")
+	else
+		print("small")

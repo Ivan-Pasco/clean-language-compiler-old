@@ -1,0 +1,10 @@
+// CI Tier 2 | t2_function_return
+// Grammar: function returning integer, return statement
+// Purpose: Verify a function can return an integer value
+
+start:
+	print(double(5).toString())
+
+functions:
+	integer double(integer n)
+		return n * 2

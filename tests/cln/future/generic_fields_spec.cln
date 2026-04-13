@@ -1,31 +1,6 @@
 // Spec Section: 9.2 - Generic Classes with `any`
 // Tests: Classes with generic fields using any type
 
-class Container
-	any value
-
-	constructor(any val)
-		value = val
-
-	functions:
-		any get()
-			return value
-
-		void set(any newValue)
-			value = newValue
-
-class Wrapper
-	any data
-	string label
-
-	constructor(any d, string l)
-		data = d
-		label = l
-
-	functions:
-		string describe()
-			return label + ": " + data.toString()
-
 start:
 	// Test 1: Container with integer
 	Container intContainer = Container(42)
@@ -64,3 +39,28 @@ start:
 	print("After change: " + flexible.get())
 
 	print("Generic fields tests completed")
+
+class Container
+	any value
+
+	constructor(any val)
+		value = val
+
+	functions:
+		any get()
+			return value
+
+		void set(any newValue)
+			value = newValue
+
+class Wrapper
+	any data
+	string label
+
+	constructor(any d, string l)
+		data = d
+		label = l
+
+	functions:
+		string describe()
+			return label + ": " + data.toString()

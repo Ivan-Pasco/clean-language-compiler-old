@@ -1,0 +1,11 @@
+// CI Tier 3 | t3_multiline_expr
+// Grammar: expressions spanning multiple statements accumulated into a variable
+// Purpose: Verify multi-step expression building using intermediate variables
+
+start:
+	integer a = 2
+	integer b = 3
+	integer c = 4
+	integer partial = a + b
+	integer result = partial + c
+	print(result.toString())

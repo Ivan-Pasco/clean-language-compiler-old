@@ -1,0 +1,10 @@
+// CI Tier 1 | t1_comparison_string
+// Grammar: equality/inequality operators on string values
+// Purpose: Verify string equality and inequality comparisons
+
+start:
+	string a = "hello"
+	string b = "hello"
+	string c = "world"
+	printl((a == b).toString())
+	printl((a != c).toString())

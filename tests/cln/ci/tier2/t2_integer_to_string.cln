@@ -1,0 +1,8 @@
+// CI Tier 2 | t2_integer_to_string
+// Grammar: .toString() method on integer type
+// Purpose: Verify integer-to-string type conversion
+
+start:
+	integer n = 99
+	string s = n.toString()
+	print(s)

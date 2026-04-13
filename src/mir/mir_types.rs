@@ -39,7 +39,7 @@ pub struct MirProgram {
     /// Debug information if enabled
     pub debug_info: Option<MirDebugInfo>,
 
-    /// CRITICAL FIX: Mapping from SymbolId to function name for ALL functions
+    /// NOTE: Mapping from SymbolId to function name for ALL functions
     /// This includes both builtin functions (print, math.*, etc.) and user-defined functions
     /// Used by code generator to resolve function calls
     pub symbol_name_map: HashMap<SymbolId, String>,
@@ -759,17 +759,17 @@ impl MirType {
                 return_type: Box::new(Self::from_concrete_type(return_type)),
             },
             ConcreteType::Class { .. } => {
-                // CRITICAL FIX: Classes as i32 pointer in WASM (heap-allocated objects)
+                // NOTE: Classes as i32 pointer in WASM (heap-allocated objects)
                 // Cannot use Ptr(Void) because codegen treats that as void return type
                 MirType::I32
             }
             ConcreteType::Pairs(_, _) => {
-                // CRITICAL FIX: Pairs as i32 pointer in WASM (heap-allocated map structure)
+                // NOTE: Pairs as i32 pointer in WASM (heap-allocated map structure)
                 // Similar to Class - cannot use Ptr(Void) as it becomes void return type
                 MirType::I32
             }
             ConcreteType::Matrix(_) => {
-                // CRITICAL FIX: Matrix as i32 pointer in WASM (heap-allocated 2D array)
+                // NOTE: Matrix as i32 pointer in WASM (heap-allocated 2D array)
                 // Similar to Class and Pairs - i32 pointer representation
                 MirType::I32
             }
@@ -779,11 +779,11 @@ impl MirType {
                 if name == "0" {
                     MirType::Void
                 } else {
-                    MirType::Ptr(Box::new(MirType::Void)) // Fallback for other generics
+                    MirType::Any // Unresolved generics → Any (boxed at runtime)
                 }
             }
             ConcreteType::Any => MirType::Any, // Boxed any type with runtime type tag
-            _ => MirType::Ptr(Box::new(MirType::Void)), // Fallback for complex types
+            _ => MirType::Any, // Fallback for complex types → Any (avoids Ptr(Void) ambiguity)
         }
     }
 }

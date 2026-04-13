@@ -281,7 +281,7 @@ impl OptimizationPass for ConstantFoldingPass {
         let mut stats = PassStats::default();
         self.constant_values.clear();
 
-        // CRITICAL FIX: First, find all values that have multiple definitions
+        // NOTE: First, find all values that have multiple definitions
         // (e.g., loop variables). These cannot be safely constant-folded because
         // their value changes at runtime.
         self.find_multi_def_values(function);
@@ -573,7 +573,7 @@ impl OptimizationPass for DeadCodeEliminationPass {
                         if let Some(dest_id) = instruction.dest {
                             self.mark_live(dest_id, function);
                         }
-                        // CRITICAL FIX: Mark all operands (function and arguments) as live
+                        // NOTE: Mark all operands (function and arguments) as live
                         self.mark_operands_live(&instruction.operation, function);
                     }
                     _ => {}

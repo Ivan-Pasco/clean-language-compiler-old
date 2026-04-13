@@ -94,6 +94,23 @@ impl HirBuilder {
             }
         }
 
+        // Process imports from program.imports (top-level import declarations)
+        // The parser stores `import Module` statements in program.imports, not in statements.
+        for import_item in &program.imports {
+            let (module_name, symbol_items) = if let Some(dot_pos) = import_item.name.find('.') {
+                let module = &import_item.name[..dot_pos];
+                let symbol = &import_item.name[dot_pos + 1..];
+                (module.to_string(), Some(vec![symbol.to_string()]))
+            } else {
+                (import_item.name.clone(), None)
+            };
+            imports.push(crate::hir::HirImport {
+                module_name,
+                items: symbol_items,
+                location: SourceLocation::default(),
+            });
+        }
+
         // Process standalone functions from program.functions
         for func in &program.functions {
             let hir_func = self.build_function(func)?;
@@ -263,7 +280,7 @@ impl HirBuilder {
 
         let mut body = self.build_block(&ctor.body)?;
 
-        // CRITICAL FIX: Auto-storing fields feature
+        // NOTE: Auto-storing fields feature
         // When constructor body is empty and parameter names match field names,
         // automatically generate field assignments: field = parameter
         if body.statements.is_empty() {
@@ -696,7 +713,7 @@ impl HirBuilder {
     fn build_expression(&mut self, expr: &Expression) -> Result<HirExpression, CompilerError> {
         match expr {
             Expression::Literal(value) => {
-                // CRITICAL FIX: Array literals must be converted to HirExpression::Array
+                // NOTE: Array literals must be converted to HirExpression::Array
                 // not HirExpression::Literal, otherwise they get converted to Null in type inference
                 match value {
                     Value::List(elements) => {
@@ -762,7 +779,7 @@ impl HirBuilder {
                     .map(|arg| self.build_expression(arg))
                     .collect::<Result<Vec<_>, _>>()?;
 
-                // CRITICAL FIX: Detect base() calls for parent constructor invocation
+                // NOTE: Detect base() calls for parent constructor invocation
                 // base() is a special function call that invokes the parent class constructor
                 if name == "base" {
                     eprintln!(
@@ -917,7 +934,7 @@ impl HirBuilder {
                 })
             }
 
-            // CRITICAL FIX: Handle base() calls from AST
+            // NOTE: Handle base() calls from AST
             // The parser creates Expression::BaseCall, so we must handle it here
             Expression::BaseCall {
                 arguments,

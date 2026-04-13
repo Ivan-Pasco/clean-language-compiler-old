@@ -1,0 +1,3 @@
+functions:
+	integer square(integer n)
+		return n * n

@@ -1,0 +1,13 @@
+// CI Tier 3 | t3_nested_function_calls
+// Grammar: function call as argument to another function call
+// Purpose: Verify function call expressions can be used as arguments
+
+start:
+	print(triple(add(2, 3)).toString())
+
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+	integer triple(integer n)
+		return n * 3

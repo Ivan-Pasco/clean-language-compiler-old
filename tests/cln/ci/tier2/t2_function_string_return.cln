@@ -1,0 +1,10 @@
+// CI Tier 2 | t2_function_string_return
+// Grammar: function returning string, string concatenation in return
+// Purpose: Verify a function can build and return a string
+
+start:
+	print(greet("world"))
+
+functions:
+	string greet(string name)
+		return "hello " + name

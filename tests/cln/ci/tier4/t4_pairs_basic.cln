@@ -1,0 +1,10 @@
+// CI Tier 4 | t4_pairs_basic
+// Grammar: pairs<K,V> type, key-value insertion and lookup
+// Status: KNOWN INCOMPLETE — pairs type operations not fully implemented
+// Purpose: Verify pairs type declaration and usage syntax
+
+start:
+	pairs<string, integer> scores = {}
+	scores["alice"] = 95
+	scores["bob"] = 87
+	print(scores["alice"].toString())

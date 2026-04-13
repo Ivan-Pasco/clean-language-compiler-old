@@ -1,0 +1,10 @@
+// CI Tier 2 | t2_function_void
+// Grammar: void function declaration in functions: block, function call
+// Purpose: Verify a void function can be declared and called
+
+start:
+	sayHi()
+
+functions:
+	void sayHi()
+		print("hi")

@@ -1,0 +1,24 @@
+// CI Tier 3 | t3_class_methods
+// Grammar: class methods in functions: block, method call via dot notation
+// Purpose: Verify class methods can be called on an instance
+// Note: start: must appear before class definitions per compiler section ordering rules
+
+start:
+	Counter c = Counter()
+	c.increment()
+	c.increment()
+	c.increment()
+	print(c.value().toString())
+
+class Counter
+	integer count
+
+	constructor()
+		count = 0
+
+	functions:
+		void increment()
+			count = count + 1
+
+		integer value()
+			return count

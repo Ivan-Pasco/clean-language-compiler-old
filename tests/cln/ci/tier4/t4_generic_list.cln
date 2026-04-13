@@ -1,0 +1,10 @@
+// CI Tier 4 | t4_generic_list
+// Grammar: list<integer> generic type parameter, .add(), iterate over list
+// Status: KNOWN INCOMPLETE — iterate over list items not fully supported
+// Purpose: Verify generic list iteration syntax
+
+start:
+	list<integer> nums = [1, 2, 3]
+	nums.add(4)
+	iterate item in nums
+		print(item.toString())

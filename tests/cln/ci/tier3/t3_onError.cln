@@ -1,0 +1,15 @@
+// CI Tier 3 | t3_onError
+// Grammar: onError expression fallback, error() built-in
+// Purpose: Verify onError catches a triggered error and returns the fallback value
+
+start:
+	integer r1 = safeDiv(10, 2) onError -1
+	printl(r1.toString())
+	integer r2 = safeDiv(10, 0) onError -1
+	printl(r2.toString())
+
+functions:
+	integer safeDiv(integer a, integer b)
+		if b == 0
+			error("division by zero")
+		return a / b

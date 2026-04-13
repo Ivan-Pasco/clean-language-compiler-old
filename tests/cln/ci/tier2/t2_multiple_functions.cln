@@ -1,0 +1,13 @@
+// CI Tier 2 | t2_multiple_functions
+// Grammar: multiple function declarations, cross-function calls
+// Purpose: Verify multiple functions can be declared and call each other
+
+start:
+	print(sumOfSquares(3, 4).toString())
+
+functions:
+	integer square(integer n)
+		return n * n
+
+	integer sumOfSquares(integer a, integer b)
+		return square(a) + square(b)

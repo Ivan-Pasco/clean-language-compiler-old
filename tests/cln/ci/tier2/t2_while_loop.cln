@@ -1,0 +1,9 @@
+// CI Tier 2 | t2_while_loop
+// Grammar: while loop, counter increment
+// Purpose: Verify while loop executes body exactly N times
+
+start:
+	integer i = 0
+	while i < 5
+		print(i.toString())
+		i = i + 1

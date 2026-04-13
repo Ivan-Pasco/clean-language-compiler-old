@@ -1,0 +1,7 @@
+// CI Tier 2 | t2_iterate_range
+// Grammar: iterate i in N to M range statement
+// Purpose: Verify iterate range loop prints each value in [0,4]
+
+start:
+	iterate i in 0 to 5
+		print(i.toString())

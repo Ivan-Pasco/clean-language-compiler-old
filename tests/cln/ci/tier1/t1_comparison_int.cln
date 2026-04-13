@@ -1,0 +1,13 @@
+// CI Tier 1 | t1_comparison_int
+// Grammar: comparison operators (==, !=, <, >, <=, >=) on integers
+// Purpose: Verify all six integer comparison operators
+
+start:
+	integer x = 5
+	integer y = 10
+	printl((x == y).toString())
+	printl((x != y).toString())
+	printl((x < y).toString())
+	printl((x > y).toString())
+	printl((x <= y).toString())
+	printl((x >= y).toString())

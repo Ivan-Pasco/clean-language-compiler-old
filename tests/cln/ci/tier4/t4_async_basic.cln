@@ -1,0 +1,12 @@
+// CI Tier 4 | t4_async_basic
+// Grammar: async function declaration, later keyword
+// Status: KNOWN INCOMPLETE — async/later not fully implemented in runtime
+// Purpose: Verify async function syntax is accepted by parser
+
+start:
+	string result = later fetchGreeting()
+	print(result)
+
+functions:
+	async string fetchGreeting()
+		return "hello async"

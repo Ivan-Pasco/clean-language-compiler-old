@@ -203,7 +203,7 @@ impl NameResolver {
                     class.location.clone(),
                 );
 
-                // CRITICAL FIX: Register constructor symbol in first pass
+                // NOTE: Register constructor symbol in first pass
                 // This allows global functions to reference constructors before classes are fully resolved
                 let constructor_params = if let Some(constructor) = &class.constructor {
                     constructor
@@ -284,6 +284,23 @@ impl NameResolver {
             }
         }
 
+        // Register imported modules as Namespace symbols in the global scope.
+        // This must happen in the first pass so that `Module.function()` call
+        // sites can be resolved regardless of where they appear in the source.
+        for import in &hir.imports {
+            if !self
+                .symbol_table
+                .has_symbol_in_current_scope(&import.module_name)
+            {
+                let _ns_id = self.symbol_table.create_symbol(
+                    import.module_name.clone(),
+                    SymbolKind::Namespace { functions: vec![] },
+                    self.symbol_table.current_scope_id(),
+                    import.location.clone(),
+                );
+            }
+        }
+
         // Register external functions (WASM imports)
         // External functions are treated like builtins - they have no body in Clean code
         for external in &hir.externals {
@@ -291,7 +308,7 @@ impl NameResolver {
                 .symbol_table
                 .has_symbol_in_current_scope(&external.name)
             {
-                // CRITICAL FIX: Allow external functions that match existing builtin functions
+                // NOTE: Allow external functions that match existing builtin functions
                 // This is necessary because plugin bridge functions may declare functions that
                 // are already registered as builtins (e.g., _http_route from frame.httpserver)
                 // We skip registration in this case since the builtin already provides the signature
@@ -532,7 +549,7 @@ impl NameResolver {
             // Use explicit constructor
             Some(self.resolve_constructor(constructor, class_symbol_id, constructor_symbol_id)?)
         } else {
-            // CRITICAL FIX: Generate default constructor with empty body
+            // NOTE: Generate default constructor with empty body
             Some(ResolvedHirConstructor {
                 symbol_id: constructor_symbol_id,
                 parameters: vec![],
@@ -735,17 +752,29 @@ impl NameResolver {
         let mut resolved_imports = Vec::new();
 
         for import in imports {
-            // For now, create a placeholder module
+            // Create a placeholder module entry
             let module_id = self.symbol_table.create_module(
                 import.module_name.clone(),
                 format!("{}.cln", import.module_name),
             );
 
+            // Register the module name as a Namespace symbol in the current scope.
+            // This allows `ModuleName.function(args)` syntax to resolve correctly:
+            // the resolver recognises the receiver as a Namespace and emits a qualified call.
+            let _namespace_symbol_id = self.symbol_table.create_symbol(
+                import.module_name.clone(),
+                SymbolKind::Namespace { functions: vec![] },
+                self.symbol_table.current_scope_id(),
+                import.location.clone(),
+            );
+
             let resolved_items = if let Some(items) = &import.items {
                 let mut resolved_items = Vec::new();
                 for item in items {
-                    // For now, create placeholder symbols for imported items
-                    // In a full implementation, these would be resolved from the actual module
+                    // Register each explicitly-imported item as a Function symbol.
+                    // The full resolution of parameter/return types happens during
+                    // the actual module compilation; here we create placeholders that
+                    // are sufficient for the resolver to proceed without errors.
                     let symbol_id = self.symbol_table.create_symbol(
                         item.clone(),
                         SymbolKind::Function {
@@ -1489,12 +1518,12 @@ impl NameResolver {
                                 });
                             } else if let SymbolKind::Namespace { .. } = &class_symbol.kind {
                                 // This is a namespace function call (e.g., logical.and, conditional.integer, string.length)
-                                // CRITICAL FIX: Use dot notation to match stdlib function registration
+                                // NOTE: Use dot notation to match stdlib function registration
                                 let qualified_name = format!("{}.{}", class_name, method);
 
                                 // Try to look up the qualified function name in the symbol table
                                 // CRITICAL: Stdlib functions (string.length, math.max, etc.) are NOT in the symbol table
-                                // They're registered directly in CodeGenerator, so we use a placeholder SymbolId
+                                // They're registered directly in MirCodeGenerator, so we use a placeholder SymbolId
                                 let function_symbol_id = self
                                     .symbol_table
                                     .lookup_symbol(&qualified_name)
@@ -1522,7 +1551,7 @@ impl NameResolver {
                     }
                 }
 
-                // CRITICAL FIX: Check if receiver is a FieldAccess that represents a namespace path
+                // NOTE: Check if receiver is a FieldAccess that represents a namespace path
                 // This handles three-level calls like compare.integer.greaterThan()
                 if let HirExpression::FieldAccess {
                     object,
@@ -1598,7 +1627,7 @@ impl NameResolver {
                 field,
                 location,
             } => {
-                // CRITICAL FIX: Check if object is a Variable that refers to a namespace
+                // NOTE: Check if object is a Variable that refers to a namespace
                 // This handles cases like compare.integer where "compare" is a namespace, not a variable
                 if let HirExpression::Variable { name: obj_name, .. } = object.as_ref() {
                     if let Some(obj_symbol_id) = self.symbol_table.lookup_symbol(obj_name) {
@@ -1756,7 +1785,7 @@ impl NameResolver {
                 arguments,
                 location,
             } => {
-                // CRITICAL FIX: Handle field access chains like test.flag.toString()
+                // NOTE: Handle field access chains like test.flag.toString()
                 // The namespace "test.flag" needs to be converted to a field access expression
                 // BUT only if the first part is a variable, not a namespace
                 if namespace.contains('.') {
@@ -1811,7 +1840,7 @@ impl NameResolver {
                     // If base_name not found, continue with normal namespace processing below
                 }
 
-                // CRITICAL FIX: Check if the "namespace" is actually a field (method call on field)
+                // NOTE: Check if the "namespace" is actually a field (method call on field)
                 // This handles cases like x.toString() where 'x' is a field, not a namespace
                 if let Some(current_class_id) = self.current_class {
                     if let Some(class_symbol) = self.symbol_table.get_symbol(current_class_id) {
@@ -1904,7 +1933,7 @@ impl NameResolver {
                     }
                 }
 
-                // CRITICAL FIX: Check if the "namespace" is actually a variable (method call) or a static class method
+                // NOTE: Check if the "namespace" is actually a variable (method call) or a static class method
                 // This handles cases like value.toString() where 'value' is a variable, not a namespace
                 // However, do NOT convert if it's a known namespace or a class (static method call)
                 if let Some(symbol_id) = self.symbol_table.lookup_symbol(namespace) {
@@ -1989,13 +2018,13 @@ impl NameResolver {
                 }
 
                 // Original namespace call logic for true namespaces (like math.sin)
-                // CRITICAL FIX: Use dot notation to match stdlib function registration
+                // NOTE: Use dot notation to match stdlib function registration
                 // stdlib registers as "string.length", not "string_length"
                 let qualified_name = format!("{}.{}", namespace, function);
 
                 // Try to look up the qualified function name in the symbol table
                 // CRITICAL: Stdlib functions (string.length, math.max, etc.) are NOT in the symbol table
-                // They're registered directly in CodeGenerator, so we use a placeholder SymbolId
+                // They're registered directly in MirCodeGenerator, so we use a placeholder SymbolId
                 let function_symbol_id = self
                     .symbol_table
                     .lookup_symbol(&qualified_name)

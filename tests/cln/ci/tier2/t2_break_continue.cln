@@ -1,0 +1,13 @@
+// CI Tier 2 | t2_break_continue
+// Grammar: break statement, continue statement inside loops
+// Purpose: Verify break exits loop and continue skips current iteration
+
+start:
+	integer i = 0
+	while i < 10
+		i = i + 1
+		if i == 3
+			continue
+		if i == 6
+			break
+		print(i.toString())

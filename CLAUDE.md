@@ -21,9 +21,16 @@ The MCP server is configured in `.mcp.json` at the project root.
 ## Language Specification
 
 The **single source of truth** for the Clean Language is:
-- **[Language Specification](./documentation/Clean_Language_Specification.md)** — syntax, types, semantics
+- **[Language Specification](./documentation/Clean_Language_Specification.md)** — prose specification
+- **[`spec/grammar.ebnf`](../spec/grammar.ebnf)** — formal EBNF grammar (authoritative for syntax)
+- **[`spec/semantic-rules.md`](../spec/semantic-rules.md)** — numbered semantic rules
+- **[`spec/type-system.md`](../spec/type-system.md)** — type hierarchy and compatibility
+- **[`spec/stdlib-reference.md`](../spec/stdlib-reference.md)** — built-in function signatures
+- **[`spec/plugins/`](../spec/plugins/)** — plugin grammar extensions (EBNF)
 
-If something is not in the spec, propose a spec change before implementing it. When something is added, update the spec.
+When resolving syntax ambiguity, `spec/grammar.ebnf` takes precedence. If something is not in the spec, propose a spec change before implementing it. When something is added, update both the prose spec and the formal EBNF.
+
+See also: **[KNOWLEDGE.md](./KNOWLEDGE.md)** — known fragile areas in compiler code.
 
 ## Platform Architecture
 
@@ -33,7 +40,7 @@ The compiler generates WASM imports — it does NOT implement runtime functions.
 - **[Host Bridge](../platform-architecture/HOST_BRIDGE.md)** — Layer 2 portable functions
 - **[Memory Model](../platform-architecture/MEMORY_MODEL.md)** — WASM memory layout
 - **[Server Extensions](../platform-architecture/SERVER_EXTENSIONS.md)** — Layer 3 HTTP functions
-- **[Architecture Boundaries](../system-documents/ARCHITECTURE_BOUNDARIES.md)** — component responsibilities
+- **[Architecture Boundaries](../management/ARCHITECTURE_BOUNDARIES.md)** — component responsibilities
 
 **Rule of thumb:** If a function needs I/O, network, or database, it belongs in a plugin declaration, NOT in the compiler registry.
 
@@ -124,6 +131,6 @@ When plugins change in the ecosystem, update `src/mcp/server.rs` → `get_ecosys
 
 ## Cross-Component Work Policy
 
-Do NOT directly edit code in other components. Instead, create a prompt in `../system-documents/cross-component-prompts/` with: Component, Issue Type, Priority, Description, Context, Suggested Fix, Files Affected.
+Do NOT directly edit code in other components. Instead, create a prompt in `../management/cross-component-prompts/` with: Component, Issue Type, Priority, Description, Context, Suggested Fix, Files Affected.
 
 You CAN read other components to understand interfaces. You MUST NOT modify their code.

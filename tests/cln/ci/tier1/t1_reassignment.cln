@@ -1,0 +1,9 @@
+// CI Tier 1 | t1_reassignment
+// Grammar: variable reassignment, mutable state
+// Purpose: Verify that variables can be reassigned after declaration
+
+start:
+	integer x = 1
+	printl(x.toString())
+	x = 2
+	printl(x.toString())

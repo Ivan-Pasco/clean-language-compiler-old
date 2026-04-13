@@ -1,0 +1,6 @@
+// CI Tier 1 | t1_print_number
+// Grammar: print statement, number (float) literal, toString()
+// Purpose: Verify that a floating-point number literal can be printed
+
+start:
+	print(3.14.toString())

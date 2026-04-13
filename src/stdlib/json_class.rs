@@ -622,7 +622,7 @@ impl JsonClass {
                 memory_index: 0,
             }),
             Instruction::LocalSet(7), // Store raw value in current_value_ptr
-            // CRITICAL FIX: Check for compact boolean encoding and box if needed
+            // NOTE: Check for compact boolean encoding and box if needed
             // Compact encoding: 0=null, 1=false, 2=true
             // Check if value == 1 (compact false)
             Instruction::LocalGet(7),
@@ -787,7 +787,7 @@ impl JsonClass {
                 memory_index: 0,
             }),
             Instruction::LocalSet(3), // Store raw value
-            // CRITICAL FIX: Check for compact boolean encoding and box if needed
+            // NOTE: Check for compact boolean encoding and box if needed
             // Compact encoding: 0=null, 1=false, 2=true
             // Check if value == 1 (compact false)
             Instruction::LocalGet(3),
@@ -1877,7 +1877,7 @@ impl JsonClass {
             Instruction::LocalGet(1),
             Instruction::LocalGet(2),
             Instruction::Call(parse_object_index),
-            // CRITICAL FIX: Box the object result with AnyTypeTag::Object (6)
+            // NOTE: Box the object result with AnyTypeTag::Object (6)
             // Save raw object pointer to local 5
             Instruction::LocalSet(5),
             // Allocate 12 bytes for boxed any
@@ -1929,7 +1929,7 @@ impl JsonClass {
             Instruction::LocalGet(1),
             Instruction::LocalGet(2),
             Instruction::Call(parse_array_index),
-            // CRITICAL FIX: Box the array result with AnyTypeTag::List (5)
+            // NOTE: Box the array result with AnyTypeTag::List (5)
             // Save raw array pointer to local 5
             Instruction::LocalSet(5),
             // Allocate 12 bytes for boxed any
@@ -2887,7 +2887,7 @@ impl JsonClass {
             Instruction::Br(0),
             Instruction::End,
             Instruction::End,
-            // CRITICAL FIX: Skip comma separator between key-value pairs
+            // NOTE: Skip comma separator between key-value pairs
             // After parsing a value, we might be at ',' before the next key
             // Check if current char is ',' and skip it
             Instruction::LocalGet(0),
@@ -3566,7 +3566,7 @@ impl JsonClass {
             Instruction::I32Const(1),
             Instruction::I32Add,
             Instruction::LocalSet(3),
-            // CRITICAL FIX: Box the string as an any type value
+            // NOTE: Box the string as an any type value
             // Allocate 12 bytes for boxed structure: [tag=4][str_ptr][padding]
             Instruction::I32Const(12),
             Instruction::Call(malloc_index),
@@ -3778,7 +3778,7 @@ impl JsonClass {
             Instruction::I32Add,
             Instruction::LocalSet(10),
             Instruction::End,
-            // CRITICAL FIX: Check for '}' or ']' - handle depth correctly
+            // NOTE: Check for '}' or ']' - handle depth correctly
             Instruction::LocalGet(4),
             Instruction::I32Const(125), // '}'
             Instruction::I32Eq,
@@ -4550,7 +4550,7 @@ impl JsonClass {
             Instruction::I32Const(1),
             Instruction::I32Add,
             Instruction::LocalSet(3),
-            // CRITICAL FIX: Box the string as an any type value
+            // NOTE: Box the string as an any type value
             // Allocate 12 bytes for boxed structure: [tag=4][str_ptr][padding]
             Instruction::I32Const(12),
             Instruction::Call(malloc_index),

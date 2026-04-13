@@ -1,0 +1,10 @@
+// CI Tier 2 | t2_function_params
+// Grammar: function with multiple parameters of different types
+// Purpose: Verify functions receive and use parameters correctly
+
+start:
+	print(label("x", 42))
+
+functions:
+	string label(string name, integer value)
+		return name + "=" + value.toString()

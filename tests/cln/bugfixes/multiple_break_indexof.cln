@@ -1,0 +1,20 @@
+// Bugfix test: multiple break with indexOf (exact reproduction from TASKS.md)
+// TASKS.md: CRITICAL - Multiple break produces unreachable trap
+
+start:
+	string r = my_fn("test(abc)xyz(def)")
+	print(r)
+
+functions:
+	string my_fn(string code)
+		string result = code
+		integer pos = 0
+		while pos < result.length()
+			integer a = result.indexOf("xyz", pos)
+			if a == -1
+				break
+			integer b = result.indexOf(")", a + 3)
+			if b == -1
+				break
+			pos = b + 1
+		return result

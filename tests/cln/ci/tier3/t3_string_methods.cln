@@ -1,0 +1,9 @@
+// CI Tier 3 | t3_string_methods
+// Grammar: string method calls (.length(), .toUpperCase(), .contains())
+// Purpose: Verify core string built-in methods work correctly
+
+start:
+	string s = "hello"
+	printl(s.length().toString())
+	printl(s.toUpperCase())
+	printl(s.contains("ell").toString())

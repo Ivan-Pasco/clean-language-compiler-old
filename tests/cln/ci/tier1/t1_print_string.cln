@@ -1,0 +1,6 @@
+// CI Tier 1 | t1_print_string
+// Grammar: print statement, string literal
+// Purpose: Verify that a string literal can be printed
+
+start:
+	print("hello")

@@ -1,0 +1,8 @@
+// CI Tier 2 | t2_modulo
+// Grammar: modulo operator % on integers
+// Purpose: Verify the modulo operator returns the correct remainder
+
+start:
+	integer a = 10
+	integer b = 3
+	print((a % b).toString())

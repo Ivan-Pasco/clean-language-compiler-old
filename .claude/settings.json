@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__clean-language__check_reported_fixes"
+    ]
+  }
+}

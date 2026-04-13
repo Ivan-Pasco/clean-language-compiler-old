@@ -1,0 +1,10 @@
+// CI Tier 3 | t3_list_basic
+// Grammar: list<T> type declaration, list literal, index access, .length()
+// Purpose: Verify list creation, element access by index, and length
+
+start:
+	list<integer> nums = [10, 20, 30]
+	printl(nums[0].toString())
+	printl(nums[1].toString())
+	printl(nums[2].toString())
+	printl(nums.length().toString())

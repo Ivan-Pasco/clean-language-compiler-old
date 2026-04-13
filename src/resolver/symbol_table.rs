@@ -579,7 +579,7 @@ impl GlobalSymbolTable {
     }
 
     /// Add built-in namespace functions (e.g., math.sin for math.sin calls)
-    /// CRITICAL FIX: Use dot notation to match WASM function names
+    /// NOTE: Use dot notation to match WASM function names
     fn add_builtin_namespace_functions(&mut self, global_scope: ScopeId) {
         let namespace_functions = vec![
             // Math namespace functions - using dot notation to match WASM

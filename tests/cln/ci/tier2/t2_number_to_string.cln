@@ -1,0 +1,8 @@
+// CI Tier 2 | t2_number_to_string
+// Grammar: .toString() method on number type
+// Purpose: Verify number-to-string type conversion
+
+start:
+	number pi = 3.14
+	string s = pi.toString()
+	print(s)

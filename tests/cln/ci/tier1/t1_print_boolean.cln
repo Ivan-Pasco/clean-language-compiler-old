@@ -1,0 +1,7 @@
+// CI Tier 1 | t1_print_boolean
+// Grammar: print statement, boolean literals, toString()
+// Purpose: Verify that boolean literals true and false can be printed
+
+start:
+	printl(true.toString())
+	printl(false.toString())

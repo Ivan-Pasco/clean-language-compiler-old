@@ -625,6 +625,167 @@ macro_rules! compilation_error {
     };
 }
 
+/// Gap 5: Map a `CompilerError` to its canonical spec error code string.
+///
+/// This is a pure mapping layer over the existing error hierarchy. It does not
+/// refactor the error system — it simply provides a lookup function that
+/// translates the internal error code (e.g. "E002") or error type into the
+/// spec-defined code (e.g. "SEM001").
+///
+/// Error code ranges defined by the spec:
+///
+/// | Prefix  | Range       | Meaning                        |
+/// |---------|-------------|-------------------------------|
+/// | SEM     | 001–009     | Semantic / type system         |
+/// | FUNC    | 001–005     | Function-level rules           |
+/// | CLASS   | 001–005     | Class-level rules              |
+/// | STATE   | 001–003     | State block rules              |
+/// | IDX     | 001–004     | Index / bracket access         |
+/// | SCOPE   | 001–003     | Scope / shadowing              |
+/// | IMPORT  | 001–003     | Import / module rules          |
+/// | PLUGIN  | 001–003     | Plugin system rules            |
+/// | COM     | 001–006     | Code generation                |
+/// | RUN     | 001–005     | Runtime / execution            |
+/// | SYN     | 001–006     | Syntax / parsing               |
+/// | SYS     | 001–004     | System / infrastructure        |
+/// | USR     | 001–004     | User-facing CLI / config       |
+pub fn spec_error_code(error: &super::CompilerError) -> Option<&'static str> {
+    use super::{CompilerError, ErrorType};
+
+    // First check if the error already carries an explicit spec-style code
+    // (e.g. FUNC004, IDX001) set via `with_error_code`.
+    let raw_code: Option<&str> = match error {
+        CompilerError::Syntax { context } => context.error_code.as_deref(),
+        CompilerError::Type { context } => context.error_code.as_deref(),
+        CompilerError::Memory { context } => context.error_code.as_deref(),
+        CompilerError::Codegen { context } => context.error_code.as_deref(),
+        CompilerError::IO { context } => context.error_code.as_deref(),
+        CompilerError::Runtime { context } => context.error_code.as_deref(),
+        CompilerError::Validation { context } => context.error_code.as_deref(),
+        CompilerError::Module { context } => context.error_code.as_deref(),
+        CompilerError::Testing { context } => context.error_code.as_deref(),
+        CompilerError::LexError(_) => None,
+        CompilerError::PluginError { .. } => None,
+    };
+
+    // If the code already uses a known spec prefix, return it directly.
+    if let Some(code) = raw_code {
+        let is_spec_code = matches!(
+            code.get(..3),
+            Some(
+                "SEM"
+                    | "FUN"
+                    | "CLA"
+                    | "STA"
+                    | "IDX"
+                    | "SCO"
+                    | "IMP"
+                    | "PLU"
+                    | "COM"
+                    | "RUN"
+                    | "SYN"
+                    | "SYS"
+                    | "USR"
+            )
+        );
+        if is_spec_code {
+            // Return the static string corresponding to known codes.
+            return match code {
+                // Semantic
+                "SEM001" => Some("SEM001"),
+                "SEM002" => Some("SEM002"),
+                "SEM003" => Some("SEM003"),
+                "SEM004" => Some("SEM004"),
+                "SEM005" => Some("SEM005"),
+                "SEM006" => Some("SEM006"),
+                "SEM007" => Some("SEM007"),
+                "SEM008" => Some("SEM008"),
+                "SEM009" => Some("SEM009"),
+                // Function
+                "FUNC001" => Some("FUNC001"),
+                "FUNC002" => Some("FUNC002"),
+                "FUNC003" => Some("FUNC003"),
+                "FUNC004" => Some("FUNC004"),
+                "FUNC005" => Some("FUNC005"),
+                // Class
+                "CLASS001" => Some("CLASS001"),
+                "CLASS002" => Some("CLASS002"),
+                "CLASS003" => Some("CLASS003"),
+                "CLASS004" => Some("CLASS004"),
+                "CLASS005" => Some("CLASS005"),
+                // State
+                "STATE001" => Some("STATE001"),
+                "STATE002" => Some("STATE002"),
+                "STATE003" => Some("STATE003"),
+                // Index
+                "IDX001" => Some("IDX001"),
+                "IDX002" => Some("IDX002"),
+                "IDX003" => Some("IDX003"),
+                "IDX004" => Some("IDX004"),
+                // Scope
+                "SCOPE001" => Some("SCOPE001"),
+                "SCOPE002" => Some("SCOPE002"),
+                "SCOPE003" => Some("SCOPE003"),
+                // Import
+                "IMPORT001" => Some("IMPORT001"),
+                "IMPORT002" => Some("IMPORT002"),
+                "IMPORT003" => Some("IMPORT003"),
+                // Plugin
+                "PLUGIN001" => Some("PLUGIN001"),
+                "PLUGIN002" => Some("PLUGIN002"),
+                "PLUGIN003" => Some("PLUGIN003"),
+                // Compilation
+                "COM001" => Some("COM001"),
+                "COM002" => Some("COM002"),
+                "COM003" => Some("COM003"),
+                "COM004" => Some("COM004"),
+                "COM005" => Some("COM005"),
+                "COM006" => Some("COM006"),
+                // Runtime
+                "RUN001" => Some("RUN001"),
+                "RUN002" => Some("RUN002"),
+                "RUN003" => Some("RUN003"),
+                "RUN004" => Some("RUN004"),
+                "RUN005" => Some("RUN005"),
+                // Syntax
+                "SYN001" => Some("SYN001"),
+                "SYN002" => Some("SYN002"),
+                "SYN003" => Some("SYN003"),
+                "SYN004" => Some("SYN004"),
+                "SYN005" => Some("SYN005"),
+                "SYN006" => Some("SYN006"),
+                _ => None,
+            };
+        }
+    }
+
+    // Fall back: derive spec code from the error's ErrorType / variant.
+    match error {
+        CompilerError::Syntax { context } => match context.error_type {
+            ErrorType::Syntax => Some("SYN001"),
+            _ => None,
+        },
+        CompilerError::Type { context } => match context.error_type {
+            ErrorType::Type => Some("SEM001"),
+            ErrorType::Semantic => Some("SEM001"),
+            _ => None,
+        },
+        CompilerError::Memory { .. } => Some("COM003"),
+        CompilerError::Codegen { .. } => Some("COM001"),
+        CompilerError::IO { .. } => Some("SYS001"),
+        CompilerError::Runtime { .. } => Some("RUN001"),
+        CompilerError::Validation { context } => match context.error_type {
+            ErrorType::Validation => Some("SEM007"),
+            ErrorType::Semantic => Some("SEM007"),
+            _ => None,
+        },
+        CompilerError::Module { .. } => Some("IMPORT001"),
+        CompilerError::Testing { .. } => None,
+        CompilerError::LexError(_) => Some("SYN001"),
+        CompilerError::PluginError { .. } => Some("PLUGIN001"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

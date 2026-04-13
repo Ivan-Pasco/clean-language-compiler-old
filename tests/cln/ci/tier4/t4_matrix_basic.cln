@@ -1,0 +1,9 @@
+// CI Tier 4 | t4_matrix_basic
+// Grammar: matrix<T> type, 2D list literal, row/column access
+// Status: KNOWN INCOMPLETE — matrix element access may not be fully supported
+// Purpose: Verify matrix type declaration and access syntax
+
+start:
+	matrix<integer> grid = [[1, 2], [3, 4]]
+	printl(grid[0][0].toString())
+	printl(grid[1][1].toString())

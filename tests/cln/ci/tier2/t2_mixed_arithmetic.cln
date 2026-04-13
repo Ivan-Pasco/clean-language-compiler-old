@@ -1,0 +1,9 @@
+// CI Tier 2 | t2_mixed_arithmetic
+// Grammar: integer and number types in arithmetic, toNumber() conversion
+// Purpose: Verify arithmetic between integer and number types
+
+start:
+	integer i = 4
+	number n = 1.5
+	number result = i.toNumber() + n
+	print(result.toString())

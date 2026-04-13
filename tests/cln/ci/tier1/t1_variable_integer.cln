@@ -1,0 +1,7 @@
+// CI Tier 1 | t1_variable_integer
+// Grammar: variable declaration (integer type), assignment, print
+// Purpose: Verify integer variable declaration and use
+
+start:
+	integer x = 10
+	print(x.toString())

@@ -1,0 +1,725 @@
+//! MIR to WebAssembly Code Generation
+//!
+//! This module implements code generation from MIR (Medium-level Intermediate Representation)
+//! to WebAssembly bytecode. It provides a cleaner, more optimized path from typed code
+//! to WASM compared to the direct AST-to-WASM generation.
+//!
+//! The implementation is split into focused submodules:
+//!
+//! * [`blocks`]       — function-level and basic-block emission
+//! * [`control_flow`] — CFG analysis helpers (loop detection, continuation detection)
+//! * [`instructions`] — per-instruction and per-terminator WASM emission
+//! * [`operands`]     — operand loading, constant loading, string expansion
+//! * [`utilities`]    — type helpers, module setup, bridge registration
+
+use crate::codegen::CodeGenerator;
+use crate::error::CompilerError;
+use crate::mir::mir_types::{
+    AnyTypeTag, BasicBlockId, MirBasicBlock, MirBinaryOp, MirConstant, MirFunction, MirInstruction,
+    MirOperand, MirOperation, MirProgram, MirTerminator, MirType, MirUnaryOp, ValueId,
+};
+use crate::resolver::SymbolId;
+use std::collections::{HashMap, HashSet};
+use wasm_encoder::{BlockType, Instruction, ValType};
+
+// Submodules
+mod blocks;
+mod control_flow;
+mod instructions;
+mod operands;
+mod utilities;
+
+// ---------------------------------------------------------------------------
+// Debug macro (must be in mod.rs so `use super::*` imports it in submodules)
+// ---------------------------------------------------------------------------
+
+/// Conditional debug macro for MIR code generation — maps to `tracing::trace!`.
+macro_rules! debug_mir {
+    ($($arg:tt)*) => {
+        tracing::trace!($($arg)*)
+    };
+}
+
+// Make the macro accessible to all submodules via `use super::*`
+pub(super) use debug_mir;
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/// Result of MIR code generation.
+#[derive(Debug)]
+pub struct MirCodegenResult {
+    /// Generated WASM bytecode.
+    pub wasm_bytes: Vec<u8>,
+
+    /// Generation statistics.
+    pub stats: MirCodegenStats,
+
+    /// Warnings produced during generation.
+    pub warnings: Vec<CompilerError>,
+}
+
+/// Statistics about MIR code generation.
+#[derive(Debug, Default)]
+pub struct MirCodegenStats {
+    /// Number of functions generated.
+    pub functions_generated: usize,
+
+    /// Number of basic blocks generated.
+    pub blocks_generated: usize,
+
+    /// Number of instructions generated.
+    pub instructions_generated: usize,
+
+    /// Generation time in microseconds.
+    pub generation_time_us: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Internal types (shared across submodules via `use super::*`)
+// ---------------------------------------------------------------------------
+
+/// Context for loop code generation.
+#[derive(Clone)]
+pub(super) struct LoopCodegenContext {
+    /// MIR block ID of the loop's exit block (where `break` jumps to).
+    pub(super) exit_block_id: BasicBlockId,
+    /// WASM block depth when the outer `Block` instruction was pushed.
+    /// Used to calculate the relative `br` depth for `break`.
+    pub(super) block_depth: u32,
+}
+
+/// Info for a pending bridge wrapper function.
+///
+/// Wrapper functions must be registered AFTER all imports are done to avoid
+/// function-index collisions between WASM imports and internal functions.
+#[derive(Clone)]
+pub(super) struct PendingBridgeWrapper {
+    pub(super) name: String,
+    pub(super) params: Vec<crate::types::WasmType>,
+    pub(super) wasm_return: Option<crate::types::WasmType>,
+    pub(super) raw_func_index: u32,
+    pub(super) param_types: Vec<crate::builtins::registry::BuiltinType>,
+}
+
+/// Per-function generation statistics (internal).
+#[derive(Debug, Default)]
+pub(super) struct FunctionStats {
+    pub(super) blocks_generated: usize,
+    pub(super) instructions_generated: usize,
+}
+
+// ---------------------------------------------------------------------------
+// MirCodeGenerator struct
+// ---------------------------------------------------------------------------
+
+/// MIR to WASM code generator.
+pub struct MirCodeGenerator<'a> {
+    /// The underlying WASM code generator.
+    pub(super) wasm_generator: CodeGenerator,
+
+    /// Mapping from MIR `ValueId` to WASM local indices.
+    pub(super) value_to_local: HashMap<ValueId, u32>,
+
+    /// Mapping from MIR `BasicBlockId` to WASM block label counters.
+    pub(super) block_labels: HashMap<BasicBlockId, u32>,
+
+    /// Current WASM local index counter.
+    pub(super) next_local_index: u32,
+
+    /// Current WASM block label counter.
+    pub(super) next_block_label: u32,
+
+    /// Stack of WASM instructions for the current function.
+    pub(super) current_instructions: Vec<Instruction<'a>>,
+
+    /// The function currently being generated.
+    pub(super) current_function: Option<MirFunction>,
+
+    /// String pool from the MIR program for string constant handling.
+    pub(super) string_pool: Option<Vec<String>>,
+
+    /// Mapping from `ValueId` to string pool index (for string constants loaded as locals).
+    pub(super) value_to_string_index: HashMap<ValueId, usize>,
+
+    /// Mapping from `SymbolId` to function name for proper function resolution.
+    pub(super) function_symbol_map: HashMap<SymbolId, String>,
+
+    /// Direct mapping from `SymbolId` to WASM function index.
+    ///
+    /// Avoids name collisions for constructors/methods with the same names.
+    pub(super) symbol_to_function_index: HashMap<SymbolId, u32>,
+
+    /// Function signature map for parameter/return type handling.
+    pub(super) function_signatures: HashMap<SymbolId, MirFunction>,
+
+    /// Name-based return type registry for stdlib/builtin functions.
+    ///
+    /// Used when `SymbolId`-based signature lookup fails (e.g., for stdlib functions
+    /// that don't have fixed `SymbolId`s).
+    pub(super) function_return_types: HashMap<String, MirType>,
+
+    /// Type tracking for values (needed to expand string pointers).
+    pub(super) value_to_type: HashMap<ValueId, MirType>,
+
+    /// Types of temporary locals created during code generation.
+    ///
+    /// Maps local index → WASM type for temporaries (e.g., string expansion temps).
+    pub(super) temp_local_types: HashMap<u32, ValType>,
+
+    /// Plugin bridge functions to register as WASM imports.
+    pub(super) bridge_functions: Vec<crate::plugins::BridgeFunction>,
+
+    /// Set of bridge function names actually used in the code.
+    ///
+    /// Used for selective imports — only import functions that are called.
+    pub(super) used_bridge_function_names: HashSet<String>,
+
+    /// Pending wrapper functions to be registered AFTER ALL imports are done.
+    pub(super) pending_bridge_wrappers: Vec<PendingBridgeWrapper>,
+
+    /// Stack of loop contexts for proper break/continue code generation.
+    pub(super) loop_context_stack: Vec<LoopCodegenContext>,
+
+    /// Current block nesting depth (for calculating `br` depths).
+    pub(super) current_block_depth: u32,
+
+    /// Mapping from state variable `SymbolId` to WASM global index.
+    ///
+    /// Global index 0 is reserved for the heap pointer; state variables start at index 1.
+    pub(super) state_global_indices: HashMap<SymbolId, u32>,
+
+    /// State variable globals for the global section (populated before `finalize_module`).
+    pub(super) state_globals: Vec<(SymbolId, String, MirType, Option<MirConstant>)>,
+
+    /// Compilation target — determines which imports to include.
+    pub(super) target: crate::CompilationTarget,
+
+    /// WASM function indices for `external:` block functions.
+    pub(super) external_function_indices: HashMap<String, u32>,
+
+    /// Mapping from language API function names to bridge function names.
+    ///
+    /// Example: `"db.query"` → `"_db_query"`.
+    pub(super) language_to_bridge_map: HashMap<String, String>,
+
+    /// Handler index tracking for plugin callback dispatch.
+    ///
+    /// Maps function name → handler index (0, 1, 2, …).
+    pub(super) handler_indices: HashMap<String, u32>,
+
+    /// Next handler index to assign (auto-incrementing counter).
+    pub(super) next_handler_index: u32,
+
+    /// Bridge function parameter type info for handler resolution.
+    ///
+    /// Maps bridge function name → list of `BuiltinType` parameter types.
+    pub(super) bridge_param_types: HashMap<String, Vec<crate::builtins::registry::BuiltinType>>,
+}
+
+// ---------------------------------------------------------------------------
+// Constructors and public configuration methods
+// ---------------------------------------------------------------------------
+
+impl MirCodeGenerator<'_> {
+    /// Create a new MIR code generator with default (Server) target.
+    pub fn new() -> Self {
+        Self {
+            wasm_generator: CodeGenerator::new(),
+            value_to_local: HashMap::new(),
+            block_labels: HashMap::new(),
+            next_local_index: 0,
+            next_block_label: 0,
+            current_instructions: Vec::new(),
+            current_function: None,
+            string_pool: None,
+            value_to_string_index: HashMap::new(),
+            function_symbol_map: HashMap::new(),
+            symbol_to_function_index: HashMap::new(),
+            function_signatures: HashMap::new(),
+            function_return_types: HashMap::new(),
+            value_to_type: HashMap::new(),
+            temp_local_types: HashMap::new(),
+            bridge_functions: Vec::new(),
+            used_bridge_function_names: HashSet::new(),
+            pending_bridge_wrappers: Vec::new(),
+            loop_context_stack: Vec::new(),
+            current_block_depth: 0,
+            state_global_indices: HashMap::new(),
+            state_globals: Vec::new(),
+            target: crate::CompilationTarget::Server,
+            external_function_indices: HashMap::new(),
+            language_to_bridge_map: HashMap::new(),
+            handler_indices: HashMap::new(),
+            next_handler_index: 0,
+            bridge_param_types: HashMap::new(),
+        }
+    }
+
+    /// Create a new MIR code generator for testing (without runtime imports).
+    pub fn new_minimal() -> Self {
+        Self {
+            wasm_generator: CodeGenerator::new_minimal(),
+            value_to_local: HashMap::new(),
+            block_labels: HashMap::new(),
+            next_local_index: 0,
+            next_block_label: 0,
+            current_instructions: Vec::new(),
+            current_function: None,
+            string_pool: None,
+            value_to_string_index: HashMap::new(),
+            function_symbol_map: HashMap::new(),
+            symbol_to_function_index: HashMap::new(),
+            function_signatures: HashMap::new(),
+            function_return_types: HashMap::new(),
+            value_to_type: HashMap::new(),
+            temp_local_types: HashMap::new(),
+            bridge_functions: Vec::new(),
+            used_bridge_function_names: HashSet::new(),
+            pending_bridge_wrappers: Vec::new(),
+            loop_context_stack: Vec::new(),
+            current_block_depth: 0,
+            state_global_indices: HashMap::new(),
+            state_globals: Vec::new(),
+            target: crate::CompilationTarget::Standalone,
+            external_function_indices: HashMap::new(),
+            language_to_bridge_map: HashMap::new(),
+            handler_indices: HashMap::new(),
+            next_handler_index: 0,
+            bridge_param_types: HashMap::new(),
+        }
+    }
+
+    /// Create a new MIR code generator with a specific compilation target.
+    pub fn with_target(target: crate::CompilationTarget) -> Self {
+        Self {
+            wasm_generator: CodeGenerator::new(),
+            value_to_local: HashMap::new(),
+            block_labels: HashMap::new(),
+            next_local_index: 0,
+            next_block_label: 0,
+            current_instructions: Vec::new(),
+            current_function: None,
+            string_pool: None,
+            value_to_string_index: HashMap::new(),
+            function_symbol_map: HashMap::new(),
+            symbol_to_function_index: HashMap::new(),
+            function_signatures: HashMap::new(),
+            function_return_types: HashMap::new(),
+            value_to_type: HashMap::new(),
+            temp_local_types: HashMap::new(),
+            bridge_functions: Vec::new(),
+            used_bridge_function_names: HashSet::new(),
+            pending_bridge_wrappers: Vec::new(),
+            loop_context_stack: Vec::new(),
+            current_block_depth: 0,
+            state_global_indices: HashMap::new(),
+            state_globals: Vec::new(),
+            target,
+            external_function_indices: HashMap::new(),
+            language_to_bridge_map: HashMap::new(),
+            handler_indices: HashMap::new(),
+            next_handler_index: 0,
+            bridge_param_types: HashMap::new(),
+        }
+    }
+
+    /// Set the compilation target.
+    pub fn set_target(&mut self, target: crate::CompilationTarget) {
+        self.target = target;
+    }
+
+    /// Set plugin bridge functions to be registered as WASM imports.
+    ///
+    /// Bridge functions are declared in `plugin.toml` `[bridge]` sections and are
+    /// registered as WASM imports before code generation begins.
+    pub fn set_bridge_functions(&mut self, bridge_functions: Vec<crate::plugins::BridgeFunction>) {
+        for func in &bridge_functions {
+            self.bridge_param_types
+                .insert(func.name.clone(), func.get_param_types());
+        }
+        self.bridge_functions = bridge_functions;
+    }
+
+    /// Set the language-name → bridge-name mapping for dot-notation plugin calls.
+    ///
+    /// Obtained from `PluginRegistry::language_to_bridge_map()`. Must be called
+    /// before `generate()` when the program uses language-level plugin APIs
+    /// (e.g. `db.query(...)`, `req.param("id")`).
+    pub fn set_language_to_bridge_map(&mut self, map: HashMap<String, String>) {
+        self.language_to_bridge_map = map;
+    }
+
+    // -----------------------------------------------------------------------
+    // Main generation entry point
+    // -----------------------------------------------------------------------
+
+    /// Generate WASM from a MIR program.
+    pub fn generate(
+        &mut self,
+        mir_program: MirProgram,
+    ) -> Result<MirCodegenResult, Vec<CompilerError>> {
+        tracing::debug!(
+            functions = mir_program.functions.len(),
+            "MirCodeGenerator::generate called"
+        );
+        for (symbol_id, function) in &mir_program.functions {
+            tracing::debug!(
+                symbol_id = symbol_id.0,
+                name = %function.name,
+                blocks = function.blocks.len(),
+                "Function basic blocks"
+            );
+        }
+
+        let start_time = std::time::Instant::now();
+        let mut stats = MirCodegenStats::default();
+        let warnings = Vec::new();
+
+        // Set up WASM generator with runtime imports
+        if self.wasm_generator.include_runtime_imports {
+            self.wasm_generator
+                .register_print_imports()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering console input imports");
+            self.wasm_generator
+                .register_console_imports()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering type conversion imports (int_to_string, etc.)");
+            self.wasm_generator
+                .register_type_conversion_imports()
+                .map_err(|e| vec![e])?;
+
+            // HTTP imports: skip functions handled by plugin expand_strings wrappers
+            let skip_http_functions: HashSet<String> = self
+                .bridge_functions
+                .iter()
+                .filter(|f| f.expand_strings && f.params.iter().any(|p| p == "string"))
+                .map(|f| f.name.clone())
+                .collect();
+            let include_server_imports = self.target.include_server_imports();
+            debug_mir!(
+                "DEBUG MIR: Registering HTTP imports (skipping {} for plugin expand_strings, server_imports={})",
+                skip_http_functions.len(),
+                include_server_imports
+            );
+            self.wasm_generator
+                .register_http_imports(&skip_http_functions, include_server_imports)
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering file imports");
+            self.wasm_generator
+                .register_file_imports()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering string.split import");
+            self.wasm_generator
+                .register_string_split_import()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering string_compare import");
+            self.wasm_generator
+                .register_string_compare_import()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering string_replace import");
+            self.wasm_generator
+                .register_string_replace_import()
+                .map_err(|e| vec![e])?;
+
+            // OPTIMIZATION: Only import bridge functions that are actually used in the code
+            if !self.bridge_functions.is_empty() {
+                debug_mir!("DEBUG MIR: Collecting used bridge function names from MIR");
+                self.collect_used_function_names_from_mir(&mir_program);
+                debug_mir!(
+                    "DEBUG MIR: Registering {} used bridge function imports (out of {} total)",
+                    self.used_bridge_function_names.len(),
+                    self.bridge_functions.len()
+                );
+                self.register_plugin_bridge_imports().map_err(|e| vec![e])?;
+            }
+
+            // Register external functions declared via `external:` blocks
+            if !mir_program.externals.is_empty() {
+                debug_mir!(
+                    "DEBUG MIR: Registering {} external function imports",
+                    mir_program.externals.len()
+                );
+                self.register_external_function_imports(&mir_program.externals)
+                    .map_err(|e| vec![e])?;
+            }
+
+            // Pre-register list.push_f64 as an import BEFORE any local functions
+            {
+                use crate::types::WasmType;
+                self.wasm_generator
+                    .register_import_function(
+                        "env",
+                        "list.push_f64",
+                        &[WasmType::I32, WasmType::F64],
+                        Some(WasmType::I32),
+                    )
+                    .map_err(|e| vec![e])?;
+            }
+
+            debug_mir!("DEBUG MIR: Registering math operation imports");
+            self.wasm_generator
+                .register_math_operations()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering string class operations");
+            self.wasm_generator
+                .register_string_class_operations()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering list class operations");
+            self.wasm_generator
+                .register_list_class_operations()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering conditional operations");
+            self.wasm_generator
+                .register_conditional_operations()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering HTTP operations");
+            self.wasm_generator
+                .register_http_operations()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering file operations");
+            self.wasm_generator
+                .register_file_operations()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering validator operations");
+            self.wasm_generator
+                .register_validator_operations()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering native memory operations");
+            self.wasm_generator
+                .register_memory_operations()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering native string trim functions");
+            self.wasm_generator
+                .register_string_trim_imports()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering native list operations");
+            self.wasm_generator
+                .register_list_operations()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering JSON operations");
+            self.wasm_generator
+                .register_json_operations()
+                .map_err(|e| vec![e])?;
+
+            // Register pending plugin bridge wrapper functions AFTER all imports
+            if !self.pending_bridge_wrappers.is_empty() {
+                debug_mir!(
+                    "DEBUG MIR: Registering {} pending bridge wrapper functions",
+                    self.pending_bridge_wrappers.len()
+                );
+                self.register_pending_bridge_wrappers()
+                    .map_err(|e| vec![e])?;
+            }
+
+            // HTTP server wrapper functions for string expansion
+            debug_mir!("DEBUG MIR: Registering HTTP server wrapper functions");
+            self.register_http_server_wrappers().map_err(|e| vec![e])?;
+        }
+
+        // Set up memory section
+        self.setup_memory_section().map_err(|e| vec![e])?;
+
+        // Transfer string pool to WASM module BEFORE function generation
+        self.setup_string_pool(&mir_program.string_pool)
+            .map_err(|e| vec![e])?;
+
+        // Process state variables from MirProgram.globals
+        let mut sorted_globals: Vec<_> = mir_program.globals.into_iter().collect();
+        sorted_globals.sort_by_key(|(symbol_id, _)| symbol_id.0);
+
+        let mut next_global_index: u32 = 1;
+        for (symbol_id, global) in sorted_globals {
+            self.state_global_indices
+                .insert(symbol_id, next_global_index);
+            self.state_globals.push((
+                symbol_id,
+                global.name.clone(),
+                global.global_type.clone(),
+                global.initializer.clone(),
+            ));
+            debug_mir!(
+                name = %global.name,
+                symbol_id = ?symbol_id,
+                global_index = next_global_index,
+                global_type = ?global.global_type,
+                initializer = ?global.initializer,
+                "Registered state variable as WASM global"
+            );
+            next_global_index += 1;
+        }
+        debug_mir!(
+            total_state_globals = self.state_globals.len(),
+            "State variable globals registered"
+        );
+
+        // Build function symbol mapping for proper function resolution
+        for (symbol_id, function) in &mir_program.functions {
+            self.function_symbol_map
+                .insert(*symbol_id, function.name.clone());
+            self.function_signatures
+                .insert(*symbol_id, function.clone());
+            tracing::debug!(
+                symbol_id = symbol_id.0,
+                name = %function.name,
+                "Mapped SymbolId to function name"
+            );
+        }
+
+        // Register builtin function signatures
+        self.register_builtin_function_signatures();
+
+        // Pre-register ALL functions in function_map BEFORE generating code.
+        // This ensures function B is in the map when function A calls it, even
+        // if B hasn't been generated yet.
+        debug_mir!("Starting function pre-registration");
+        debug_mir!(
+            function_count = self.wasm_generator.function_count,
+            mir_functions = mir_program.functions.len(),
+            "Pre-registration state"
+        );
+
+        // Initialise function_symbol_map from MirProgram's symbol_name_map
+        debug_mir!(
+            symbol_map_entries = mir_program.symbol_name_map.len(),
+            "Initializing function_symbol_map from MirProgram"
+        );
+        for (symbol_id, name) in &mir_program.symbol_name_map {
+            self.function_symbol_map.insert(*symbol_id, name.clone());
+            debug_mir!(symbol_id = symbol_id.0, name = %name, "Symbol init");
+
+            // Populate symbol_to_function_index for builtin functions
+            if let Some(&wasm_index) = self.wasm_generator.function_map.get(name) {
+                self.symbol_to_function_index.insert(*symbol_id, wasm_index);
+                debug_mir!(
+                    symbol_id = symbol_id.0,
+                    name = %name,
+                    wasm_index = wasm_index,
+                    "Builtin function mapped"
+                );
+            }
+        }
+
+        // Collect and sort functions by SymbolId for deterministic ordering
+        let mut sorted_functions: Vec<_> = mir_program.functions.into_iter().collect();
+        sorted_functions.sort_by_key(|(symbol_id, _)| symbol_id.0);
+
+        for (i, (symbol_id, function)) in sorted_functions.iter().enumerate() {
+            let function_index = self.wasm_generator.function_count + i as u32;
+            debug_mir!(
+                function_name = %function.name,
+                function_index = function_index,
+                i = i,
+                function_count = self.wasm_generator.function_count,
+                "Pre-registering function"
+            );
+            self.wasm_generator
+                .function_map
+                .insert(function.name.clone(), function_index);
+
+            self.function_symbol_map
+                .insert(*symbol_id, function.name.clone());
+
+            self.symbol_to_function_index
+                .insert(*symbol_id, function_index);
+
+            debug_mir!(
+                symbol_id = symbol_id.0,
+                function_name = %function.name,
+                wasm_index = function_index,
+                "Symbol map entry inserted"
+            );
+        }
+        debug_mir!(
+            functions_registered = sorted_functions.len(),
+            "All functions pre-registered in function_map"
+        );
+        debug_mir!(
+            total_entries = self.function_symbol_map.len(),
+            "Function symbol map complete"
+        );
+
+        // Generate all functions in sorted order
+        for (_symbol_id, function) in sorted_functions {
+            let func_name = function.name.clone();
+            let func_index = self.wasm_generator.function_count + stats.functions_generated as u32;
+            debug_mir!(
+                function_name = %func_name,
+                func_index = func_index,
+                "Generating function"
+            );
+            match self.generate_function(function) {
+                Ok(function_stats) => {
+                    debug_mir!(
+                        function_name = %func_name,
+                        func_index = func_index,
+                        "Successfully generated function"
+                    );
+                    stats.functions_generated += 1;
+                    stats.blocks_generated += function_stats.blocks_generated;
+                    stats.instructions_generated += function_stats.instructions_generated;
+                }
+                Err(error) => {
+                    tracing::error!(
+                        function_name = %func_name,
+                        error = ?error,
+                        "ERROR generating function"
+                    );
+                    // Function generation failures are hard errors:
+                    // phantom function indices in pre-registered map → "function index out of range"
+                    return Err(vec![error]);
+                }
+            }
+        }
+
+        // Update function_count after all generation (must happen AFTER, because
+        // pre-registered indices were based on the count before generation started)
+        self.wasm_generator.function_count += stats.functions_generated as u32;
+        tracing::debug!(
+            functions_generated = stats.functions_generated,
+            new_function_count = self.wasm_generator.function_count,
+            "Updated function_count after generation"
+        );
+
+        // Handle entry point if it exists
+        if let Some(entry_symbol_id) = mir_program.entry_point {
+            self.generate_start_function_export(entry_symbol_id)
+                .map_err(|e| vec![e])?;
+        }
+
+        // Finalise WASM module
+        let wasm_bytes = self.finalize_module().map_err(|e| vec![e])?;
+
+        stats.generation_time_us = start_time.elapsed().as_micros() as u64;
+
+        Ok(MirCodegenResult {
+            wasm_bytes,
+            stats,
+            warnings,
+        })
+    }
+}
+
+impl<'a> Default for MirCodeGenerator<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
+}

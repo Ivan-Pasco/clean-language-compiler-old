@@ -1,0 +1,29 @@
+// CI Tier 3 | t3_class_inheritance
+// Grammar: class is parent-class, base() constructor call, method override
+// Purpose: Verify inheritance chain and base() constructor delegation
+// Note: start: must appear before class definitions per compiler section ordering rules
+
+start:
+	Circle ci = Circle("red", 5)
+	print(ci.describe())
+
+class Shape
+	string color
+
+	constructor(string c)
+		color = c
+
+	functions:
+		string describe()
+			return "shape color=" + color
+
+class Circle is Shape
+	integer radius
+
+	constructor(string c, integer r)
+		base(c)
+		radius = r
+
+	functions:
+		string describe()
+			return "circle r=" + radius.toString() + " color=" + color
