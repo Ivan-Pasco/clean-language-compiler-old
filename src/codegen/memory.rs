@@ -16,7 +16,7 @@ use wasm_encoder::{ConstExpr, DataSection};
 /// Memory safety configuration constants
 #[allow(dead_code)]
 const GUARD_PAGE_SIZE: usize = 512; // 512 bytes guard pages (reduced for single-page WASM)
-const MAX_MEMORY_SIZE: usize = 262144; // 256KB limit (4 WASM pages) — matches native_stdlib::HEAP_START
+const MAX_MEMORY_SIZE: usize = 1048576; // 1MB limit (16 WASM pages) — matches native_stdlib::HEAP_START
 const MEMORY_ALIGNMENT: usize = 8; // 8-byte alignment
 #[allow(dead_code)]
 const POISON_PATTERN: u8 = 0xDE; // Pattern for poisoned memory
@@ -252,13 +252,13 @@ impl MemoryUtils {
         memory_utils
     }
 
-    /// Setup initial memory regions with simplified layout for single WASM page
+    /// Setup initial memory regions for data section validation
     fn setup_memory_regions(&mut self) {
-        // Single main heap region covering most of the WASM page
-        // Start after some static data area (0-1024), end before 64KB page limit
+        // Data section region: from heap_start (1024) up to MAX_MEMORY_SIZE (1MB)
+        // This covers all compile-time data (string literals, constants)
         self.memory_regions.push(MemoryRegion {
             start: self.heap_start, // 1024
-            end: MAX_MEMORY_SIZE,   // 65536
+            end: MAX_MEMORY_SIZE,   // 1MB (1048576)
             permissions: MemoryPermissions::ReadWrite,
             name: "main_heap".to_string(),
         });

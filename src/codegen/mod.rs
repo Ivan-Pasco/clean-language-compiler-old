@@ -283,8 +283,8 @@ impl CodeGenerator {
     /// Configure the memory section with standard settings
     fn setup_memory_section(&mut self) {
         self.memory_section.memory(wasm_encoder::MemoryType {
-            minimum: 16,       // 16 pages = 1MB initial memory
-            maximum: Some(64), // Limit to 64 pages (4MB) for safety
+            minimum: 32,        // 32 pages = 2MB initial memory (1MB data section + 1MB heap)
+            maximum: Some(256), // Limit to 256 pages (16MB) for larger applications
             memory64: false,
             shared: false,
         });

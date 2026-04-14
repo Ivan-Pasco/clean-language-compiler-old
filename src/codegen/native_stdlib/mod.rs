@@ -22,10 +22,10 @@ use wasm_encoder::{Instruction, MemArg, ValType};
 
 /// Memory layout constants
 /// HEAP_START must be after all static data sections to avoid memory overlap.
-/// Set to 256KB (4 WASM pages) to allow generous compile-time data sections for
+/// Set to 1MB (16 WASM pages) to allow generous compile-time data sections for
 /// programs with many string literals (SQL queries, HTML templates, etc.).
 /// Must match MAX_MEMORY_SIZE in src/codegen/memory.rs.
-pub const HEAP_START: u32 = 262144;
+pub const HEAP_START: u32 = 1048576;
 pub const ALIGNMENT: u32 = 8;
 
 /// String memory layout:

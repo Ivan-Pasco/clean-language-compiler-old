@@ -573,12 +573,12 @@ impl MirCodeGenerator<'_> {
 
     /// Set up the WASM memory section (16 pages minimum, 64 pages maximum).
     pub(super) fn setup_memory_section(&mut self) -> Result<(), CompilerError> {
-        debug_mir!("DEBUG MIR: Setting up memory section with 16 pages (1MB) minimum");
+        debug_mir!("DEBUG MIR: Setting up memory section with 32 pages (2MB) minimum");
         self.wasm_generator
             .memory_section
             .memory(wasm_encoder::MemoryType {
-                minimum: 16,
-                maximum: Some(64),
+                minimum: 32,
+                maximum: Some(256),
                 memory64: false,
                 shared: false,
             });
