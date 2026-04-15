@@ -220,8 +220,8 @@ export async function loadCleanModule(wasmPath = './{wasm_filename}') {{
   const response = await fetch(wasmPath);
   const wasmBytes = await response.arrayBuffer();
 
-  // Create memory (1 page = 64KB, allow growth to 256 pages = 16MB)
-  const memory = new WebAssembly.Memory({{ initial: 1, maximum: 256 }});
+  // Create memory (1 page = 64KB, allow growth to 1024 pages = 64MB)
+  const memory = new WebAssembly.Memory({{ initial: 1, maximum: 1024 }});
 
   // Create bridge
   const bridge = new CleanBridge(memory);

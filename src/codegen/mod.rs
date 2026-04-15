@@ -58,6 +58,7 @@ pub const PAGE_SIZE: u32 = 65536;
 pub const HEADER_SIZE: u32 = 16; // 16-byte header for memory blocks
 pub const MIN_ALLOCATION: u32 = 16;
 pub const HEAP_START: usize = 1024; // Start heap at 1KB, leaving room for static data
+pub const DEFAULT_MAX_MEMORY_PAGES: u64 = 1024; // 64MB max - generous for SSR, no cost until used
 
 /// Code generator for Clean Language
 pub struct CodeGenerator {
@@ -283,8 +284,8 @@ impl CodeGenerator {
     /// Configure the memory section with standard settings
     fn setup_memory_section(&mut self) {
         self.memory_section.memory(wasm_encoder::MemoryType {
-            minimum: 32,        // 32 pages = 2MB initial memory (1MB data section + 1MB heap)
-            maximum: Some(256), // Limit to 256 pages (16MB) for larger applications
+            minimum: 32, // 32 pages = 2MB initial memory (1MB data section + 1MB heap)
+            maximum: Some(DEFAULT_MAX_MEMORY_PAGES), // 64MB max - physical memory only committed on grow
             memory64: false,
             shared: false,
         });

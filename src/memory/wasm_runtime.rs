@@ -128,8 +128,8 @@ pub struct WasmMemoryConfig {
 impl Default for WasmMemoryConfig {
     fn default() -> Self {
         Self {
-            initial_pages: 16,    // 1MB initial
-            max_pages: Some(256), // 16MB max
+            initial_pages: 16,     // 1MB initial
+            max_pages: Some(1024), // 64MB max - physical memory only committed on grow
             enable_gc: true,
             gc_threshold: 1024 * 1024, // 1MB
         }

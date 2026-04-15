@@ -571,14 +571,14 @@ impl MirCodeGenerator<'_> {
         );
     }
 
-    /// Set up the WASM memory section (16 pages minimum, 64 pages maximum).
+    /// Set up the WASM memory section (32 pages minimum, 1024 pages maximum).
     pub(super) fn setup_memory_section(&mut self) -> Result<(), CompilerError> {
         debug_mir!("DEBUG MIR: Setting up memory section with 32 pages (2MB) minimum");
         self.wasm_generator
             .memory_section
             .memory(wasm_encoder::MemoryType {
                 minimum: 32,
-                maximum: Some(256),
+                maximum: Some(crate::codegen::DEFAULT_MAX_MEMORY_PAGES),
                 memory64: false,
                 shared: false,
             });
