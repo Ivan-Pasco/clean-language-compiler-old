@@ -848,3 +848,49 @@ The `break` codegen calculates `br` depth relative to the current WASM block nes
 ### Files to Investigate
 - `src/codegen/mir_codegen.rs` — `loop_context_stack`, `current_block_depth`, break/Jump codegen
 - `src/mir/mir_builder.rs` — how `break` inside `if` inside `while` is lowered to MIR (Jump to exit block)
+
+---
+
+## 🔴 CRITICAL: Codegen Bug — Local Variable Index Mismatch (0.30.7/0.31.0)
+
+**Priority**: CRITICAL
+**Discovered**: April 15, 2026
+**Status**: WORKAROUND (use 0.30.48 to compile plugins)
+
+### Description
+In compiler version 0.30.7 (mislabeled as 0.31.0), `substring()` results used in multi-part string concatenation chains produce null bytes instead of the actual string content. The root cause is a **local variable index mismatch**: a variable (`attr_name`) is stored in one local index (60) during assignment but referenced from a different local index (61) during use.
+
+### Reproduction
+Compile the frame.ui plugin source (`clean-framework/plugins/frame.ui/src/main.cln`) with compiler 0.30.7 and call `extract_block_attributes("div class='container'")`. Output: `='container'` instead of `class='container'`. The attribute name is replaced by 1024 bytes of null padding.
+
+### WAT Evidence
+In `extract_block_attributes` (func 324): `remaining.substring(0, eq_pos)` result → `local.set 60`. But the concat chain uses `local.get 61` (never set, defaults to 0). Reading from ptr 0 yields data section content with length 1024.
+
+### Files to Investigate
+- `src/codegen/mir_codegen.rs` — local variable allocation for variables used across `if/else` branches within `while` loops
+- Check if `local_map` or scope tracking loses track of variable indices when the same variable is assigned in nested branches
+
+---
+
+## 🔴 CRITICAL: Codegen Bug — Complex Function Returns Empty (0.30.49+)
+
+**Priority**: CRITICAL
+**Discovered**: April 15, 2026
+**Status**: WORKAROUND (use 0.30.48 to compile plugins)
+
+### Description
+In compiler versions 0.30.49 through 0.30.51, complex functions (89+ local variables, nested while/if/else with recursive calls and multiple substring/indexOf operations) return empty string when compiled and executed in the plugin context. The function's while loop executes (confirmed by mem_scope_push traces) but `string.concat` host import is never called, suggesting all code paths take branches that don't concatenate.
+
+### Reproduction
+Compile `html_block_to_code` from frame.ui plugin with compiler 0.30.51. Call it with `"<div class='container'><h1>Hello</h1></div>"`. Returns empty string. Same function works correctly as a standalone program compiled with the same compiler version.
+
+### Key Observations
+- Old plugin (0.30.7): 77 locals, 311 WAT lines for `html_block_to_code`. Processes content but with attribute corruption.
+- New plugin (0.30.51): 89 locals, 335 WAT lines for same function. Loop runs but never concatenates.
+- Individual helper functions (`find_matching_close`, `indexOf`, `substring`) work correctly when called directly from the adapter.
+- The bug only manifests in large modules (~380 functions, ~90KB WASM).
+
+### Files to Investigate
+- `src/codegen/mir_codegen.rs` — local variable allocation efficiency (89 vs 77 locals for same source)
+- Check if extra temporaries cause local index conflicts in deeply nested control flow
+- Compare WAT output between 0.30.48 (works) and 0.30.49 (broken) for the same source function

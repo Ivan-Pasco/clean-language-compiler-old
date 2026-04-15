@@ -2436,11 +2436,10 @@ impl WasmPluginAdapter {
         let stripped_body = strip_common_indent(&actual_body);
         let body_ptr = self.find_or_write_string(&mut store, &memory, &stripped_body)?;
 
-        // Workaround for WASM codegen bug: the plugin's strip_block_indent function
-        // returns empty string due to a local variable scoping issue in compiled WASM.
-        // For html: blocks, bypass expand_block and call html_block_to_code directly,
-        // which is proven to work correctly. We then wrap the result in the same
-        // template that expand_html_block uses.
+        // For html: blocks, bypass expand_block and call html_block_to_code directly.
+        // The plugin's strip_block_indent returns empty due to a WASM codegen bug,
+        // so we pre-strip indentation in Rust (strip_common_indent) and pass the
+        // cleaned body directly to html_block_to_code.
         let result_ptr = if block_name == "html" {
             if let Ok(html_fn) =
                 instance.get_typed_func::<i32, i32>(&mut store, "html_block_to_code")
@@ -2451,7 +2450,6 @@ impl WasmPluginAdapter {
 
                 // Check for var="name" attribute to determine mode
                 let var_name = if attributes_str.contains("\"var\"") {
-                    // Extract var value from JSON: {"var":"name"}
                     attributes_str
                         .split("\"var\":\"")
                         .nth(1)
@@ -2462,10 +2460,8 @@ impl WasmPluginAdapter {
                 };
 
                 let generated = if var_name.is_empty() {
-                    // Default mode: declare __html, build it, return it
                     format!("string __html = \"\"\n{}return __html\n", code_str)
                 } else {
-                    // Named variable mode: declare var, build into it, no return
                     let remapped = code_str.replace("__html", var_name);
                     format!("string {} = \"\"\n{}", var_name, remapped)
                 };
@@ -2641,8 +2637,8 @@ impl WasmPluginAdapter {
         let stripped_body = strip_common_indent(&actual_body);
         let body_ptr = self.find_or_write_string(&mut store, &memory, &stripped_body)?;
 
-        // Same html: block workaround as in call_expand — bypass expand_block
-        // and call html_block_to_code directly to avoid the broken strip_block_indent
+        // Same html: block handling as call_expand — bypass expand_block,
+        // call html_block_to_code directly with pre-stripped body.
         let result_ptr = if block_name == "html" {
             if let Ok(html_fn) =
                 instance.get_typed_func::<i32, i32>(&mut store, "html_block_to_code")
