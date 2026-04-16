@@ -1723,9 +1723,39 @@ impl MirCodeGenerator<'_> {
                 return Ok(*n as u32);
             }
             MirOperand::Value(value_id) => {
-                // The MIR builder wraps literal integer arguments in ValueId locals.
+                // The MIR builder emits function references as Value(ValueId) with a
+                // local named "funcref_<function_name>". Detect this pattern and
+                // resolve the function name to a handler index, matching the
+                // Function operand branch below.
+                let local_name = self
+                    .current_function
+                    .as_ref()
+                    .and_then(|f| f.locals.get(value_id))
+                    .and_then(|l| l.name.as_ref())
+                    .cloned();
+
+                if let Some(name) = local_name {
+                    if let Some(func_name) = name.strip_prefix("funcref_") {
+                        // Function reference — assign a handler index like Function branch
+                        let handler_name = func_name.to_string();
+                        if let Some(&index) = self.handler_indices.get(&handler_name) {
+                            return Ok(index);
+                        }
+                        let index = self.next_handler_index;
+                        self.next_handler_index += 1;
+                        self.handler_indices.insert(handler_name.clone(), index);
+                        tracing::debug!(
+                            handler = %handler_name,
+                            index = index,
+                            "Assigned handler index from funcref Value (will export as handle_event_{})",
+                            index
+                        );
+                        return Ok(index);
+                    }
+                }
+
                 // Plugin-generated code like `_http_route("GET", "/", 0)` produces
-                // Value(ValueId) instead of Constant(Integer). Load the integer value
+                // Value(ValueId) wrapping literal integers. Load the integer value
                 // from the local and let the runtime use it as a handler index.
                 if let Some(&local_index) = self.value_to_local.get(value_id) {
                     self.current_instructions
