@@ -956,6 +956,67 @@ impl MirCodeGenerator<'_> {
     // Bridge / import registration
     // -------------------------------------------------------------------------
 
+    /// Walk the MIR call graph and collect every called function name.
+    ///
+    /// This is a general-purpose reachability scan used to drive the
+    /// Import Minimality Rule (see platform-architecture/EXECUTION_LAYERS.md).
+    /// Returns the set of names that appear as call targets anywhere in the
+    /// MIR program, expanded with common import-name aliases so that
+    /// language-level names (`http.get`) match WASM import field names
+    /// (`http_get`).
+    pub(super) fn collect_all_called_names_from_mir(mir_program: &MirProgram) -> HashSet<String> {
+        use crate::mir::mir_types::{MirOperand, MirOperation};
+
+        let mut names: HashSet<String> = HashSet::new();
+
+        for function in mir_program.functions.values() {
+            for block in function.blocks.values() {
+                for instruction in &block.instructions {
+                    if let MirOperation::Call { function, .. } = &instruction.operation {
+                        match function {
+                            MirOperand::NamedFunction { name, .. } => {
+                                names.insert(name.clone());
+                            }
+                            MirOperand::Function(symbol_id) => {
+                                if let Some(name) = mir_program.symbol_name_map.get(symbol_id) {
+                                    names.insert(name.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        // Expand language-level names to the WASM import field names used by
+        // host bridges. A call to `http.get` in the program maps to the
+        // import `http_get` on the WASM module.
+        let expansions: Vec<String> = names
+            .iter()
+            .flat_map(|n| {
+                let mut out = Vec::new();
+                if n.contains('.') {
+                    // "http.get" → "http_get"
+                    out.push(n.replace('.', "_"));
+                }
+                if n.contains('_') && !n.starts_with('_') {
+                    // "http_get" → "http.get"
+                    out.push(n.replacen('_', ".", 1));
+                }
+                out
+            })
+            .collect();
+        names.extend(expansions);
+
+        tracing::debug!(
+            total_called_names = names.len(),
+            "Collected reachable call names from MIR"
+        );
+
+        names
+    }
+
     /// Scan the MIR program and record which bridge functions are actually called.
     ///
     /// Used for selective imports — only functions referenced in the code will be

@@ -112,6 +112,18 @@ pub struct CodeGenerator {
     // Configuration for runtime imports
     include_runtime_imports: bool,
 
+    // Reachability-based tree-shaking for Layer 2/3 external-I/O imports.
+    //
+    // None = no filtering (legacy behaviour; emit every registered import).
+    // Some(set) = filter mode: imports whose field name is "reachability-gated"
+    // (see `is_reachability_gated_import`) are only emitted if the set contains
+    // the field name. Internal runtime imports (print, math, memory, string
+    // ops, type conversion, list ops, JSON) always emit regardless.
+    //
+    // The MIR codegen populates this from the call-graph before any
+    // register_*_imports() / register_*_operations() call.
+    reachable_imports: Option<HashSet<String>>,
+
     // Track imported function names to avoid exporting them
     imported_functions: HashSet<String>,
 
@@ -213,6 +225,9 @@ impl CodeGenerator {
 
             // Configuration for runtime imports
             include_runtime_imports,
+
+            // Tree-shaking disabled by default; MirCodegen opts in.
+            reachable_imports: None,
 
             // Track imported function names to avoid exporting them
             imported_functions: HashSet::new(),
@@ -492,6 +507,26 @@ impl CodeGenerator {
             return Ok(existing_index);
         }
 
+        // Reachability-gated tree-shaking (Import Minimality Rule,
+        // platform-architecture/EXECUTION_LAYERS.md).
+        //
+        // Skip Layer 2/3 external-I/O imports that are not reachable from any
+        // MIR call. Internal runtime imports (print, math, memory, string ops,
+        // type conversion, list ops, JSON) are never filtered here because
+        // they are invoked from synthesized codegen without a 1:1 MIR call
+        // name.
+        if let Some(reachable) = &self.reachable_imports {
+            if is_reachability_gated_import(field) && !reachable.contains(field) {
+                tracing::debug!(
+                    function = field,
+                    "Skipping unused reachability-gated import (tree-shake)"
+                );
+                // Return a sentinel index. Nothing calls an unreachable
+                // import, so this value is never consumed.
+                return Ok(u32::MAX);
+            }
+        }
+
         let type_index = self.add_function_type(params, return_type)?;
         self.import_section
             .import(module, field, EntityType::Function(type_index));
@@ -553,7 +588,47 @@ impl CodeGenerator {
                 error.into_compiler_error()
             })
     }
+    /// Enable reachability-based filtering of Layer 2/3 external-I/O imports.
+    ///
+    /// After this is set, `register_import_function` will skip any gated
+    /// import (see `is_reachability_gated_import`) whose field name is not
+    /// present in `reachable`.
+    pub fn set_reachable_imports(&mut self, reachable: HashSet<String>) {
+        self.reachable_imports = Some(reachable);
+    }
 } // impl CodeGenerator (constructors and basic setup)
+
+/// Returns true if the WASM import `field` name is a Layer 3 server-only
+/// function whose emission should be gated on reachability.
+///
+/// Only Layer 3 server imports are gated here: HTTP server routing, request
+/// context, response, session, and auth. A client-only Clean program (e.g.
+/// `plugins: frame.ui`) does not reference any of these, and the host it
+/// runs on (e.g. a browser) cannot provide them — so emitting them would
+/// force every host to stub ~30 server functions that will never be called.
+///
+/// Layer 2 categories (http client, file I/O, crypto, database) are NOT
+/// gated here because Clean's stdlib classes (`HttpClass`, `FileClass`,
+/// `JsonClass`, etc.) generate WASM wrapper functions that reference these
+/// imports at registration time regardless of user-program usage. Filtering
+/// them would require refactoring the stdlib class registration to be lazy.
+///
+/// Internal imports (print, math, memory, string ops, type conversion,
+/// list ops, JSON) are never filtered — they are invoked from synthesized
+/// codegen paths without a 1:1 MIR call name.
+///
+/// Spec: platform-architecture/EXECUTION_LAYERS.md — Import Minimality Rule.
+pub(crate) fn is_reachability_gated_import(field: &str) -> bool {
+    // HTTP server / request / response (Layer 3)
+    if field.starts_with("_http_") || field.starts_with("_req_") || field.starts_with("_res_") {
+        return true;
+    }
+    // Session / auth (Layer 3)
+    if field.starts_with("_session_") || field.starts_with("_auth_") {
+        return true;
+    }
+    false
+}
 
 /// Generate WebAssembly from MIR with minimal runtime (for testing)
 pub fn generate_wasm_from_mir_minimal(

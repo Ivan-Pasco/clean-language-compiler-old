@@ -16,6 +16,34 @@ use tracing::{debug, trace};
 use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 
 impl super::CodeGenerator {
+    /// Emit a WASM import subject to the Import Minimality Rule
+    /// (see platform-architecture/EXECUTION_LAYERS.md).
+    ///
+    /// Returns `true` if the import was emitted and the caller should
+    /// record its function index (via `self.function_count`) and then
+    /// increment `self.function_count`. Returns `false` if the import
+    /// was filtered out as a reachability-gated unused Layer 2/3 function,
+    /// in which case the caller MUST NOT touch `function_count` or any
+    /// index map for that import.
+    pub(crate) fn emit_import(
+        &mut self,
+        module: &str,
+        field: &str,
+        entity: wasm_encoder::EntityType,
+    ) -> bool {
+        if let Some(reachable) = &self.reachable_imports {
+            if super::is_reachability_gated_import(field) && !reachable.contains(field) {
+                tracing::debug!(
+                    function = field,
+                    "Skipping unused reachability-gated import (tree-shake)"
+                );
+                return false;
+            }
+        }
+        self.import_section.import(module, field, entity);
+        true
+    }
+
     /// Finalize and return the WebAssembly binary
     pub fn finish(&self) -> Vec<u8> {
         // This method is kept for compatibility, but the new approach
@@ -1127,72 +1155,77 @@ impl super::CodeGenerator {
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "file_write",
             wasm_encoder::EntityType::Function(write_type),
-        );
-        let write_index = self.function_count;
-        self.file_import_indices
-            .insert("file_write".to_string(), write_index);
-        self.function_map
-            .insert("file.write".to_string(), write_index);
-        self.function_count += 1;
+        ) {
+            let write_index = self.function_count;
+            self.file_import_indices
+                .insert("file_write".to_string(), write_index);
+            self.function_map
+                .insert("file.write".to_string(), write_index);
+            self.function_count += 1;
+        }
 
         // file_read(pathPtr: i32, pathLen: i32, resultPtr: i32) -> i32 (returns length or -1 for error)
         let read_type = self.add_function_type(
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "file_read",
             wasm_encoder::EntityType::Function(read_type),
-        );
-        self.file_import_indices
-            .insert("file_read".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.file_import_indices
+                .insert("file_read".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // file_exists(pathPtr: i32, pathLen: i32) -> i32 (returns 1 if exists, 0 if not)
         let exists_type =
             self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "file_exists",
             wasm_encoder::EntityType::Function(exists_type),
-        );
-        let exists_index = self.function_count;
-        self.file_import_indices
-            .insert("file_exists".to_string(), exists_index);
-        self.function_map
-            .insert("file.exists".to_string(), exists_index);
-        self.function_count += 1;
+        ) {
+            let exists_index = self.function_count;
+            self.file_import_indices
+                .insert("file_exists".to_string(), exists_index);
+            self.function_map
+                .insert("file.exists".to_string(), exists_index);
+            self.function_count += 1;
+        }
 
         // file_delete(pathPtr: i32, pathLen: i32) -> i32 (returns 0 for success, -1 for error)
         let delete_type =
             self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "file_delete",
             wasm_encoder::EntityType::Function(delete_type),
-        );
-        self.file_import_indices
-            .insert("file_delete".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.file_import_indices
+                .insert("file_delete".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // file_append(pathPtr: i32, pathLen: i32, contentPtr: i32, contentLen: i32) -> i32
         let append_type = self.add_function_type(
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "file_append",
             wasm_encoder::EntityType::Function(append_type),
-        );
-        self.file_import_indices
-            .insert("file_append".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.file_import_indices
+                .insert("file_append".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         Ok(())
     }
@@ -1215,94 +1248,101 @@ impl super::CodeGenerator {
         // http_get(urlPtr: i32, urlLen: i32) -> i32 (returns string pointer)
         let get_type =
             self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_get",
             wasm_encoder::EntityType::Function(get_type),
-        );
-        let get_index = self.function_count;
-        self.http_import_indices
-            .insert("http_get".to_string(), get_index);
-        self.function_map.insert("http.get".to_string(), get_index);
-        self.function_count += 1;
+        ) {
+            let get_index = self.function_count;
+            self.http_import_indices
+                .insert("http_get".to_string(), get_index);
+            self.function_map.insert("http.get".to_string(), get_index);
+            self.function_count += 1;
+        }
 
         // http_post(urlPtr: i32, urlLen: i32, bodyPtr: i32, bodyLen: i32) -> i32 (returns string pointer)
         let post_type = self.add_function_type(
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_post",
             wasm_encoder::EntityType::Function(post_type),
-        );
-        self.http_import_indices
-            .insert("http_post".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_post".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_put(urlPtr: i32, urlLen: i32, bodyPtr: i32, bodyLen: i32) -> i32 (returns string pointer)
         let put_type = self.add_function_type(
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_put",
             wasm_encoder::EntityType::Function(put_type),
-        );
-        self.http_import_indices
-            .insert("http_put".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_put".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_patch(urlPtr: i32, urlLen: i32, bodyPtr: i32, bodyLen: i32) -> i32 (returns string pointer)
         let patch_type = self.add_function_type(
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_patch",
             wasm_encoder::EntityType::Function(patch_type),
-        );
-        self.http_import_indices
-            .insert("http_patch".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_patch".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_delete(urlPtr: i32, urlLen: i32) -> i32 (returns string pointer)
         let delete_type =
             self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_delete",
             wasm_encoder::EntityType::Function(delete_type),
-        );
-        self.http_import_indices
-            .insert("http_delete".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_delete".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_head(urlPtr: i32, urlLen: i32) -> i32 (returns headers string pointer)
         let head_type =
             self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_head",
             wasm_encoder::EntityType::Function(head_type),
-        );
-        self.http_import_indices
-            .insert("http_head".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_head".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_options(urlPtr: i32, urlLen: i32) -> i32 (returns options string pointer)
         let options_type =
             self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_options",
             wasm_encoder::EntityType::Function(options_type),
-        );
-        self.http_import_indices
-            .insert("http_options".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_options".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // Advanced HTTP methods with headers
 
@@ -1311,14 +1351,15 @@ impl super::CodeGenerator {
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_get_with_headers",
             wasm_encoder::EntityType::Function(get_headers_type),
-        );
-        self.http_import_indices
-            .insert("http_get_with_headers".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_get_with_headers".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_post_with_headers(urlPtr: i32, urlLen: i32, bodyPtr: i32, bodyLen: i32, headersPtr: i32, headersLen: i32) -> i32
         let post_headers_type = self.add_function_type(
@@ -1332,14 +1373,15 @@ impl super::CodeGenerator {
             ],
             Some(WasmType::I32),
         )?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_post_with_headers",
             wasm_encoder::EntityType::Function(post_headers_type),
-        );
-        self.http_import_indices
-            .insert("http_post_with_headers".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_post_with_headers".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // JSON methods
 
@@ -1348,42 +1390,45 @@ impl super::CodeGenerator {
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_post_json",
             wasm_encoder::EntityType::Function(post_json_type),
-        );
-        self.http_import_indices
-            .insert("http_post_json".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_post_json".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_put_json(urlPtr: i32, urlLen: i32, jsonPtr: i32, jsonLen: i32) -> i32
         let put_json_type = self.add_function_type(
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_put_json",
             wasm_encoder::EntityType::Function(put_json_type),
-        );
-        self.http_import_indices
-            .insert("http_put_json".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_put_json".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_patch_json(urlPtr: i32, urlLen: i32, jsonPtr: i32, jsonLen: i32) -> i32
         let patch_json_type = self.add_function_type(
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_patch_json",
             wasm_encoder::EntityType::Function(patch_json_type),
-        );
-        self.http_import_indices
-            .insert("http_patch_json".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_patch_json".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // Form data method
 
@@ -1392,122 +1437,132 @@ impl super::CodeGenerator {
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_post_form",
             wasm_encoder::EntityType::Function(post_form_type),
-        );
-        self.http_import_indices
-            .insert("http_post_form".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_post_form".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // Configuration methods
 
         // http_set_user_agent(agentPtr: i32, agentLen: i32) -> void
         let set_agent_type = self.add_function_type(&[WasmType::I32, WasmType::I32], None)?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_set_user_agent",
             wasm_encoder::EntityType::Function(set_agent_type),
-        );
-        self.http_import_indices
-            .insert("http_set_user_agent".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_set_user_agent".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_set_timeout(timeoutMs: i32) -> void
         let set_timeout_type = self.add_function_type(&[WasmType::I32], None)?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_set_timeout",
             wasm_encoder::EntityType::Function(set_timeout_type),
-        );
-        self.http_import_indices
-            .insert("http_set_timeout".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_set_timeout".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_set_max_redirects(maxRedirects: i32) -> void
         let set_redirects_type = self.add_function_type(&[WasmType::I32], None)?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_set_max_redirects",
             wasm_encoder::EntityType::Function(set_redirects_type),
-        );
-        self.http_import_indices
-            .insert("http_set_max_redirects".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_set_max_redirects".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_enable_cookies(enable: i32) -> void
         let enable_cookies_type = self.add_function_type(&[WasmType::I32], None)?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_enable_cookies",
             wasm_encoder::EntityType::Function(enable_cookies_type),
-        );
-        self.http_import_indices
-            .insert("http_enable_cookies".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_enable_cookies".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // Response information methods
 
         // http_get_response_code() -> i32
         let get_code_type = self.add_function_type(&[], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_get_response_code",
             wasm_encoder::EntityType::Function(get_code_type),
-        );
-        self.http_import_indices
-            .insert("http_get_response_code".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_get_response_code".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_get_response_headers() -> i32 (returns string pointer)
         let get_headers_type = self.add_function_type(&[], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_get_response_headers",
             wasm_encoder::EntityType::Function(get_headers_type),
-        );
-        self.http_import_indices
-            .insert("http_get_response_headers".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_get_response_headers".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // Utility methods
 
         // http_encode_url(urlPtr: i32, urlLen: i32) -> i32 (returns encoded string pointer)
         let encode_type =
             self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_encode_url",
             wasm_encoder::EntityType::Function(encode_type),
-        );
-        self.http_import_indices
-            .insert("http_encode_url".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_encode_url".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_decode_url(urlPtr: i32, urlLen: i32) -> i32 (returns decoded string pointer)
         let decode_type =
             self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_decode_url",
             wasm_encoder::EntityType::Function(decode_type),
-        );
-        self.http_import_indices
-            .insert("http_decode_url".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_decode_url".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // http_build_query(paramsPtr: i32, paramsLen: i32) -> i32 (returns query string pointer)
         let build_query_type =
             self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "http_build_query",
             wasm_encoder::EntityType::Function(build_query_type),
-        );
-        self.http_import_indices
-            .insert("http_build_query".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.http_import_indices
+                .insert("http_build_query".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // =========================================
         // HTTP Server functions (for Frame runtime)
@@ -1527,34 +1582,36 @@ impl super::CodeGenerator {
                     ],
                     Some(WasmType::I32),
                 )?;
-                self.import_section.import(
+                if self.emit_import(
                     "env",
                     "_http_route",
                     wasm_encoder::EntityType::Function(route_type),
-                );
-                let route_index = self.function_count;
-                self.http_import_indices
-                    .insert("_http_route".to_string(), route_index);
-                // Also add to function_map for MIR codegen lookup
-                self.function_map
-                    .insert("_http_route".to_string(), route_index);
-                self.function_count += 1;
+                ) {
+                    let route_index = self.function_count;
+                    self.http_import_indices
+                        .insert("_http_route".to_string(), route_index);
+                    // Also add to function_map for MIR codegen lookup
+                    self.function_map
+                        .insert("_http_route".to_string(), route_index);
+                    self.function_count += 1;
+                }
             }
 
             // _http_listen(port: i32) -> i32
             let listen_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_http_listen",
                 wasm_encoder::EntityType::Function(listen_type),
-            );
-            let listen_index = self.function_count;
-            self.http_import_indices
-                .insert("_http_listen".to_string(), listen_index);
-            // Also add to function_map for MIR codegen lookup
-            self.function_map
-                .insert("_http_listen".to_string(), listen_index);
-            self.function_count += 1;
+            ) {
+                let listen_index = self.function_count;
+                self.http_import_indices
+                    .insert("_http_listen".to_string(), listen_index);
+                // Also add to function_map for MIR codegen lookup
+                self.function_map
+                    .insert("_http_listen".to_string(), listen_index);
+                self.function_count += 1;
+            }
 
             // =========================================
             // Request context access functions
@@ -1563,97 +1620,104 @@ impl super::CodeGenerator {
             // _req_param(namePtr: i32, nameLen: i32) -> i32 (returns string pointer)
             let req_param_type =
                 self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_req_param",
                 wasm_encoder::EntityType::Function(req_param_type),
-            );
-            self.http_import_indices
-                .insert("_req_param".to_string(), self.function_count);
-            self.function_map
-                .insert("_req_param".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_req_param".to_string(), self.function_count);
+                self.function_map
+                    .insert("_req_param".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _req_query(namePtr: i32, nameLen: i32) -> i32 (returns string pointer)
             let req_query_type =
                 self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_req_query",
                 wasm_encoder::EntityType::Function(req_query_type),
-            );
-            self.http_import_indices
-                .insert("_req_query".to_string(), self.function_count);
-            self.function_map
-                .insert("_req_query".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_req_query".to_string(), self.function_count);
+                self.function_map
+                    .insert("_req_query".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _req_body() -> i32 (returns string pointer)
             let req_body_type = self.add_function_type(&[], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_req_body",
                 wasm_encoder::EntityType::Function(req_body_type),
-            );
-            self.http_import_indices
-                .insert("_req_body".to_string(), self.function_count);
-            self.function_map
-                .insert("_req_body".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_req_body".to_string(), self.function_count);
+                self.function_map
+                    .insert("_req_body".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _req_header(namePtr: i32, nameLen: i32) -> i32 (returns string pointer)
             let req_header_type =
                 self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_req_header",
                 wasm_encoder::EntityType::Function(req_header_type),
-            );
-            self.http_import_indices
-                .insert("_req_header".to_string(), self.function_count);
-            self.function_map
-                .insert("_req_header".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_req_header".to_string(), self.function_count);
+                self.function_map
+                    .insert("_req_header".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _req_method() -> i32 (returns string pointer)
             let req_method_type = self.add_function_type(&[], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_req_method",
                 wasm_encoder::EntityType::Function(req_method_type),
-            );
-            self.http_import_indices
-                .insert("_req_method".to_string(), self.function_count);
-            self.function_map
-                .insert("_req_method".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_req_method".to_string(), self.function_count);
+                self.function_map
+                    .insert("_req_method".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _req_path() -> i32 (returns string pointer)
             let req_path_type = self.add_function_type(&[], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_req_path",
                 wasm_encoder::EntityType::Function(req_path_type),
-            );
-            self.http_import_indices
-                .insert("_req_path".to_string(), self.function_count);
-            self.function_map
-                .insert("_req_path".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_req_path".to_string(), self.function_count);
+                self.function_map
+                    .insert("_req_path".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _req_cookie(namePtr: i32, nameLen: i32) -> i32 (returns string pointer)
             let req_cookie_type =
                 self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_req_cookie",
                 wasm_encoder::EntityType::Function(req_cookie_type),
-            );
-            self.http_import_indices
-                .insert("_req_cookie".to_string(), self.function_count);
-            self.function_map
-                .insert("_req_cookie".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_req_cookie".to_string(), self.function_count);
+                self.function_map
+                    .insert("_req_cookie".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // =========================================
             // Protected route registration
@@ -1673,16 +1737,17 @@ impl super::CodeGenerator {
                     ],
                     Some(WasmType::I32),
                 )?;
-                self.import_section.import(
+                if self.emit_import(
                     "env",
                     "_http_route_protected",
                     wasm_encoder::EntityType::Function(route_protected_type),
-                );
-                self.http_import_indices
-                    .insert("_http_route_protected".to_string(), self.function_count);
-                self.function_map
-                    .insert("_http_route_protected".to_string(), self.function_count);
-                self.function_count += 1;
+                ) {
+                    self.http_import_indices
+                        .insert("_http_route_protected".to_string(), self.function_count);
+                    self.function_map
+                        .insert("_http_route_protected".to_string(), self.function_count);
+                    self.function_count += 1;
+                }
             }
 
             // =========================================
@@ -1700,56 +1765,60 @@ impl super::CodeGenerator {
                 ],
                 Some(WasmType::I32),
             )?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_session_store",
                 wasm_encoder::EntityType::Function(session_create_type),
-            );
-            self.http_import_indices
-                .insert("_session_store".to_string(), self.function_count);
-            self.function_map
-                .insert("_session_store".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_session_store".to_string(), self.function_count);
+                self.function_map
+                    .insert("_session_store".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _session_get() -> i32 (returns session JSON string pointer)
             let session_get_type = self.add_function_type(&[], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_session_get",
                 wasm_encoder::EntityType::Function(session_get_type),
-            );
-            self.http_import_indices
-                .insert("_session_get".to_string(), self.function_count);
-            self.function_map
-                .insert("_session_get".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_session_get".to_string(), self.function_count);
+                self.function_map
+                    .insert("_session_get".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _session_delete() -> i32 (returns 1 if deleted, 0 if not)
             let session_destroy_type = self.add_function_type(&[], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_session_delete",
                 wasm_encoder::EntityType::Function(session_destroy_type),
-            );
-            self.http_import_indices
-                .insert("_session_delete".to_string(), self.function_count);
-            self.function_map
-                .insert("_session_delete".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_session_delete".to_string(), self.function_count);
+                self.function_map
+                    .insert("_session_delete".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _http_set_cookie(cookiePtr: i32, cookieLen: i32) -> i32
             let session_set_cookie_type =
                 self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_http_set_cookie",
                 wasm_encoder::EntityType::Function(session_set_cookie_type),
-            );
-            self.http_import_indices
-                .insert("_http_set_cookie".to_string(), self.function_count);
-            self.function_map
-                .insert("_http_set_cookie".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_http_set_cookie".to_string(), self.function_count);
+                self.function_map
+                    .insert("_http_set_cookie".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // =========================================
             // Authentication context functions
@@ -1757,71 +1826,76 @@ impl super::CodeGenerator {
 
             // _auth_get_session() -> i32 (returns session JSON string pointer)
             let auth_get_session_type = self.add_function_type(&[], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_auth_get_session",
                 wasm_encoder::EntityType::Function(auth_get_session_type),
-            );
-            self.http_import_indices
-                .insert("_auth_get_session".to_string(), self.function_count);
-            self.function_map
-                .insert("_auth_get_session".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_auth_get_session".to_string(), self.function_count);
+                self.function_map
+                    .insert("_auth_get_session".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _auth_require_auth() -> i32 (returns 1 if authenticated, 0 if not)
             let auth_require_auth_type = self.add_function_type(&[], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_auth_require_auth",
                 wasm_encoder::EntityType::Function(auth_require_auth_type),
-            );
-            self.http_import_indices
-                .insert("_auth_require_auth".to_string(), self.function_count);
-            self.function_map
-                .insert("_auth_require_auth".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_auth_require_auth".to_string(), self.function_count);
+                self.function_map
+                    .insert("_auth_require_auth".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _auth_require_role(rolePtr: i32, roleLen: i32) -> i32 (returns 1 if has role, 0 if not)
             let auth_require_role_type =
                 self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_auth_require_role",
                 wasm_encoder::EntityType::Function(auth_require_role_type),
-            );
-            self.http_import_indices
-                .insert("_auth_require_role".to_string(), self.function_count);
-            self.function_map
-                .insert("_auth_require_role".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_auth_require_role".to_string(), self.function_count);
+                self.function_map
+                    .insert("_auth_require_role".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _auth_can(permissionPtr: i32, permissionLen: i32) -> i32
             let auth_can_type =
                 self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_auth_can",
                 wasm_encoder::EntityType::Function(auth_can_type),
-            );
-            self.http_import_indices
-                .insert("_auth_can".to_string(), self.function_count);
-            self.function_map
-                .insert("_auth_can".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_auth_can".to_string(), self.function_count);
+                self.function_map
+                    .insert("_auth_can".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _auth_has_any_role(rolesJsonPtr: i32, rolesJsonLen: i32) -> i32
             let auth_has_any_role_type =
                 self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_auth_has_any_role",
                 wasm_encoder::EntityType::Function(auth_has_any_role_type),
-            );
-            self.http_import_indices
-                .insert("_auth_has_any_role".to_string(), self.function_count);
-            self.function_map
-                .insert("_auth_has_any_role".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_auth_has_any_role".to_string(), self.function_count);
+                self.function_map
+                    .insert("_auth_has_any_role".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // =========================================
             // Response functions
@@ -1832,45 +1906,48 @@ impl super::CodeGenerator {
                 &[WasmType::I32, WasmType::I32, WasmType::I32],
                 Some(WasmType::I32),
             )?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_res_redirect",
                 wasm_encoder::EntityType::Function(res_redirect_type),
-            );
-            self.http_import_indices
-                .insert("_res_redirect".to_string(), self.function_count);
-            self.function_map
-                .insert("_res_redirect".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_res_redirect".to_string(), self.function_count);
+                self.function_map
+                    .insert("_res_redirect".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _res_set_header(namePtr: i32, nameLen: i32, valuePtr: i32, valueLen: i32) -> i32
             let res_set_header_type = self.add_function_type(
                 &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
                 Some(WasmType::I32),
             )?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_res_set_header",
                 wasm_encoder::EntityType::Function(res_set_header_type),
-            );
-            self.http_import_indices
-                .insert("_res_set_header".to_string(), self.function_count);
-            self.function_map
-                .insert("_res_set_header".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_res_set_header".to_string(), self.function_count);
+                self.function_map
+                    .insert("_res_set_header".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _res_status(code: i32) -> void
             let res_status_type = self.add_function_type(&[WasmType::I32], None)?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_res_status",
                 wasm_encoder::EntityType::Function(res_status_type),
-            );
-            self.http_import_indices
-                .insert("_res_status".to_string(), self.function_count);
-            self.function_map
-                .insert("_res_status".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_res_status".to_string(), self.function_count);
+                self.function_map
+                    .insert("_res_status".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _http_respond(status: i32, content_typePtr: i32, content_typeLen: i32, bodyPtr: i32, bodyLen: i32) -> i32
             let http_respond_type = self.add_function_type(
@@ -1883,32 +1960,34 @@ impl super::CodeGenerator {
                 ],
                 Some(WasmType::I32),
             )?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_http_respond",
                 wasm_encoder::EntityType::Function(http_respond_type),
-            );
-            self.http_import_indices
-                .insert("_http_respond".to_string(), self.function_count);
-            self.function_map
-                .insert("_http_respond".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_http_respond".to_string(), self.function_count);
+                self.function_map
+                    .insert("_http_respond".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
             // _http_redirect(status: i32, urlPtr: i32, urlLen: i32) -> i32
             let http_redirect_type = self.add_function_type(
                 &[WasmType::I32, WasmType::I32, WasmType::I32],
                 Some(WasmType::I32),
             )?;
-            self.import_section.import(
+            if self.emit_import(
                 "env",
                 "_http_redirect",
                 wasm_encoder::EntityType::Function(http_redirect_type),
-            );
-            self.http_import_indices
-                .insert("_http_redirect".to_string(), self.function_count);
-            self.function_map
-                .insert("_http_redirect".to_string(), self.function_count);
-            self.function_count += 1;
+            ) {
+                self.http_import_indices
+                    .insert("_http_redirect".to_string(), self.function_count);
+                self.function_map
+                    .insert("_http_redirect".to_string(), self.function_count);
+                self.function_count += 1;
+            }
         } // end if include_server_imports
 
         Ok(())
@@ -1929,27 +2008,29 @@ impl super::CodeGenerator {
     pub(crate) fn register_print_imports(&mut self) -> Result<(), CompilerError> {
         // print(ptr: i32, len: i32) -> void - matches runtime expectation
         let print_type = self.add_function_type(&[WasmType::I32, WasmType::I32], None)?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "print",
             wasm_encoder::EntityType::Function(print_type),
-        );
-        self.function_map
-            .insert("print".to_string(), self.function_count);
-        self.imported_functions.insert("print".to_string());
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("print".to_string(), self.function_count);
+            self.imported_functions.insert("print".to_string());
+            self.function_count += 1;
+        }
 
         // printl(ptr: i32, len: i32) -> void - print with newline
         let printl_type = self.add_function_type(&[WasmType::I32, WasmType::I32], None)?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "printl",
             wasm_encoder::EntityType::Function(printl_type),
-        );
-        self.function_map
-            .insert("printl".to_string(), self.function_count);
-        self.imported_functions.insert("printl".to_string());
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("printl".to_string(), self.function_count);
+            self.imported_functions.insert("printl".to_string());
+            self.function_count += 1;
+        }
 
         Ok(())
     }
@@ -1958,66 +2039,70 @@ impl super::CodeGenerator {
     pub(crate) fn register_console_imports(&mut self) -> Result<(), CompilerError> {
         // input(prompt_ptr: i32) -> string_ptr: i32
         let input_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "input",
             wasm_encoder::EntityType::Function(input_type),
-        );
-        let input_func_index = self.function_count;
-        self.function_map
-            .insert("input".to_string(), input_func_index);
-        self.function_count += 1;
-
-        // input.string (alias for input) - dotted namespace version
-        self.function_map
-            .insert("input.string".to_string(), input_func_index);
+        ) {
+            let input_func_index = self.function_count;
+            self.function_map
+                .insert("input".to_string(), input_func_index);
+            // input.string (alias for input) - dotted namespace version
+            self.function_map
+                .insert("input.string".to_string(), input_func_index);
+            self.function_count += 1;
+        }
 
         // input_integer(prompt_ptr: i32) -> integer: i32
         let input_integer_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "input_integer",
             wasm_encoder::EntityType::Function(input_integer_type),
-        );
-        self.function_map
-            .insert("input.integer".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("input.integer".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // input_float(prompt_ptr: i32) -> number: f64
         let input_number_type = self.add_function_type(&[WasmType::I32], Some(WasmType::F64))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "input_float",
             wasm_encoder::EntityType::Function(input_number_type),
-        );
-        self.function_map
-            .insert("input.number".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("input.number".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // input_yesno(prompt_ptr: i32) -> boolean: i32
         let input_yesno_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "input_yesno",
             wasm_encoder::EntityType::Function(input_yesno_type),
-        );
-        self.function_map
-            .insert("input.yesNo".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("input.yesNo".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         // input_range(prompt_ptr: i32, prompt_len: i32, min: i32, max: i32) -> integer: i32
         let input_range_type = self.add_function_type(
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "input_range",
             wasm_encoder::EntityType::Function(input_range_type),
-        );
-        self.function_map
-            .insert("input.range".to_string(), self.function_count);
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("input.range".to_string(), self.function_count);
+            self.function_count += 1;
+        }
 
         Ok(())
     }
@@ -2028,81 +2113,87 @@ impl super::CodeGenerator {
         // mem_alloc(type_id: i32, size: i32) -> i32 (returns pointer)
         let mem_alloc_type =
             self.add_function_type(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "memory_runtime",
             "mem_alloc",
             wasm_encoder::EntityType::Function(mem_alloc_type),
-        );
-        self.function_map
-            .insert("mem_alloc".to_string(), self.function_count);
-        self.imported_functions.insert("mem_alloc".to_string());
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("mem_alloc".to_string(), self.function_count);
+            self.imported_functions.insert("mem_alloc".to_string());
+            self.function_count += 1;
+        }
 
         // mem_retain(ptr: i32) -> void
         let mem_retain_type = self.add_function_type(&[WasmType::I32], None)?;
-        self.import_section.import(
+        if self.emit_import(
             "memory_runtime",
             "mem_retain",
             wasm_encoder::EntityType::Function(mem_retain_type),
-        );
-        self.function_map
-            .insert("mem_retain".to_string(), self.function_count);
-        self.imported_functions.insert("mem_retain".to_string());
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("mem_retain".to_string(), self.function_count);
+            self.imported_functions.insert("mem_retain".to_string());
+            self.function_count += 1;
+        }
 
         // mem_release(ptr: i32) -> void
         let mem_release_type = self.add_function_type(&[WasmType::I32], None)?;
-        self.import_section.import(
+        if self.emit_import(
             "memory_runtime",
             "mem_release",
             wasm_encoder::EntityType::Function(mem_release_type),
-        );
-        self.function_map
-            .insert("mem_release".to_string(), self.function_count);
-        self.imported_functions.insert("mem_release".to_string());
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("mem_release".to_string(), self.function_count);
+            self.imported_functions.insert("mem_release".to_string());
+            self.function_count += 1;
+        }
 
         // mem_scope_push() -> void - Push current allocation offset as scope mark
         // Used at the start of loops/blocks for arena-style memory management
         let mem_scope_push_type = self.add_function_type(&[], None)?;
-        self.import_section.import(
+        if self.emit_import(
             "memory_runtime",
             "mem_scope_push",
             wasm_encoder::EntityType::Function(mem_scope_push_type),
-        );
-        self.function_map
-            .insert("mem_scope_push".to_string(), self.function_count);
-        self.imported_functions.insert("mem_scope_push".to_string());
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("mem_scope_push".to_string(), self.function_count);
+            self.imported_functions.insert("mem_scope_push".to_string());
+            self.function_count += 1;
+        }
 
         // mem_scope_pop() -> void - Pop scope mark and reset allocation offset
         // Used at the end of loops/blocks to free all allocations made in that scope
         let mem_scope_pop_type = self.add_function_type(&[], None)?;
-        self.import_section.import(
+        if self.emit_import(
             "memory_runtime",
             "mem_scope_pop",
             wasm_encoder::EntityType::Function(mem_scope_pop_type),
-        );
-        self.function_map
-            .insert("mem_scope_pop".to_string(), self.function_count);
-        self.imported_functions.insert("mem_scope_pop".to_string());
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("mem_scope_pop".to_string(), self.function_count);
+            self.imported_functions.insert("mem_scope_pop".to_string());
+            self.function_count += 1;
+        }
 
         // NOTE: int_to_string is now NATIVE (registered in register_memory_operations)
         // The native implementation uses malloc to allocate strings and is fully standalone
 
         // float_to_string(value: f64) -> i32 (returns string pointer)
         let float_to_string_type = self.add_function_type(&[WasmType::F64], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "float_to_string",
             wasm_encoder::EntityType::Function(float_to_string_type),
-        );
-        self.function_map
-            .insert("float_to_string".to_string(), self.function_count);
-        self.imported_functions
-            .insert("float_to_string".to_string());
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("float_to_string".to_string(), self.function_count);
+            self.imported_functions
+                .insert("float_to_string".to_string());
+            self.function_count += 1;
+        }
 
         // NOTE: bool_to_string is now NATIVE (registered in register_memory_operations)
         // The native implementation uses pre-allocated "true"/"false" strings from the string pool
@@ -2113,16 +2204,17 @@ impl super::CodeGenerator {
         // string_to_float(str_ptr: i32) -> f64 (returns parsed float)
         // NOTE: float parsing is complex, keeping as import for accuracy
         let string_to_float_type = self.add_function_type(&[WasmType::I32], Some(WasmType::F64))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "string_to_float",
             wasm_encoder::EntityType::Function(string_to_float_type),
-        );
-        self.function_map
-            .insert("string_to_float".to_string(), self.function_count);
-        self.imported_functions
-            .insert("string_to_float".to_string());
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("string_to_float".to_string(), self.function_count);
+            self.imported_functions
+                .insert("string_to_float".to_string());
+            self.function_count += 1;
+        }
 
         // FIXED: string.concat(str1_ptr: i32, str2_ptr: i32) -> i32
         // Each pointer points to a length-prefixed string: [4-byte len][content]
@@ -2130,15 +2222,16 @@ impl super::CodeGenerator {
         let string_concat_type = self
             .type_manager
             .add_function_type_single(&[WasmType::I32, WasmType::I32], Some(WasmType::I32))?;
-        self.import_section.import(
+        if self.emit_import(
             "env",
             "string.concat",
             wasm_encoder::EntityType::Function(string_concat_type),
-        );
-        self.function_map
-            .insert("string.concat".to_string(), self.function_count);
-        self.imported_functions.insert("string.concat".to_string());
-        self.function_count += 1;
+        ) {
+            self.function_map
+                .insert("string.concat".to_string(), self.function_count);
+            self.imported_functions.insert("string.concat".to_string());
+            self.function_count += 1;
+        }
 
         Ok(())
     }

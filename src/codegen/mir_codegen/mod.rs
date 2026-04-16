@@ -379,6 +379,13 @@ impl MirCodeGenerator<'_> {
 
         // Set up WASM generator with runtime imports
         if self.wasm_generator.include_runtime_imports {
+            // Enable Import Minimality Rule (platform-architecture/EXECUTION_LAYERS.md):
+            // filter Layer 2/3 external-I/O imports to those actually
+            // reachable from the MIR call graph. Must happen BEFORE any
+            // register_*_imports() / register_*_operations() call.
+            let reachable = Self::collect_all_called_names_from_mir(&mir_program);
+            self.wasm_generator.set_reachable_imports(reachable);
+
             self.wasm_generator
                 .register_print_imports()
                 .map_err(|e| vec![e])?;
