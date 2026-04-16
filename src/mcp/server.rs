@@ -793,7 +793,7 @@ fn handle_initialize(id: serde_json::Value, params: Option<&serde_json::Value>) 
             "name": "cln",
             "version": VERSION
         },
-        "instructions": "You are working with the Clean Language compiler MCP server. Clean Language is a type-safe language that compiles to WebAssembly.\n\n## GETTING STARTED (call these tools in order)\n1. `get_quick_reference` — Learn syntax, types, patterns (CALL FIRST)\n2. `get_stack_recommendation` — Get recommended plugins for your project type\n3. `list_plugins` — See installed plugins with full DSL syntax\n4. `get_plugin_examples` — Read real example files from plugins\n\n## BEST PRACTICES FOR AI ASSISTANTS\n- ALWAYS call `get_quick_reference` at the start of a session before writing any Clean Language code\n- ALWAYS call `list_plugins` before using framework features (data:, endpoints:, component:, etc.)\n- Use `check` for fast type-checking during development (no WASM generation)\n- Use `get_specification` to look up detailed language rules\n- Use `get_architecture` to understand the execution model and host bridge\n- Clean Language applications use Clean for ALL layers — server, database, UI, graphics. NEVER use JavaScript when a Clean plugin exists.\n- Use `report_error` when you encounter what appears to be a compiler bug\n\n## KEY RULES\n- File extension: .cln\n- Indentation: tabs only (not spaces)\n- Entry point: `start:` block\n- Types: integer, number, string, boolean, list<T>, matrix<T>, pairs\n- Functions declared in `functions:` block with return type first\n- No semicolons, no curly braces\n- `return value` (no parentheses)\n- One way to do things — follow the spec exactly"
+        "instructions": "You are working with the Clean Language compiler MCP server. Clean Language is a type-safe language that compiles to WebAssembly.\n\n## GETTING STARTED (call these tools in order)\n1. `get_quick_reference` — Learn syntax, types, patterns (CALL FIRST)\n2. `get_stack_recommendation` — Get recommended plugins for your project type\n3. `list_plugins` — See installed plugins with full DSL syntax\n4. `get_plugin_examples` — Read real example files from plugins\n\n## BEST PRACTICES FOR AI ASSISTANTS\n- ALWAYS call `get_quick_reference` at the start of a session before writing any Clean Language code\n- ALWAYS call `list_plugins` before using framework features (data:, endpoints:, component:, etc.)\n- Use `check` for fast type-checking during development (no WASM generation)\n- Use `get_specification` to look up detailed language rules\n- Use `get_architecture` to understand the execution model and host bridge\n- Clean Language applications use Clean for ALL layers — server, database, UI, graphics. NEVER use JavaScript when a Clean plugin exists.\n- Use `report_error` when you encounter what appears to be a compiler bug\n- If the user reports a server runtime failure or WASM load error, call `list_server_diagnostics` BEFORE asking for reproduction details — the clean-server auto-captures structured diagnostics\n- Use `list_server_diagnostics` to surface pending compiler bugs the user may not realize are on disk\n\n## KEY RULES\n- File extension: .cln\n- Indentation: tabs only (not spaces)\n- Entry point: `start:` block\n- Types: integer, number, string, boolean, list<T>, matrix<T>, pairs\n- Functions declared in `functions:` block with return type first\n- No semicolons, no curly braces\n- `return value` (no parentheses)\n- One way to do things — follow the spec exactly\n\n## REPORTING RUNTIME_WASM_PARSE BUGS\n1. `list_server_diagnostics` → identify pending reports\n2. `show_server_diagnostic(sha)` → load the full payload\n3. `report_error` with the payload's fields mapped into the standard error-report schema\n4. Tell the user to run `clean-server errors publish <sha>` to mark it as forwarded"
     });
     JsonRpcResponse::success(id, result)
 }
@@ -1142,6 +1142,42 @@ fn get_available_tools() -> Vec<Tool> {
             },
         },
         Tool {
+            name: "list_server_diagnostics".to_string(),
+            description: "List RUNTIME_WASM_PARSE diagnostic reports captured by clean-server. These are auto-saved when wasmtime rejects a WASM module. Returns pending reports by default. Call this when a user reports server crashes or WASM load errors.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "diag_dir": {
+                        "type": "string",
+                        "description": "Path to diagnostics directory. Default: './diagnostics'"
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Filter by status: 'pending' (default), 'published', 'resolved', 'all'"
+                    }
+                }),
+                required: vec![],
+            },
+        },
+        Tool {
+            name: "show_server_diagnostic".to_string(),
+            description: "Show the full RUNTIME_WASM_PARSE diagnostic report for a given SHA. Returns the complete JSON payload ready to pass to report_error. Accepts SHA prefix (minimum 4 chars).".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "sha": {
+                        "type": "string",
+                        "description": "SHA-256 hash of the broken WASM module (prefix >= 4 chars accepted)"
+                    },
+                    "diag_dir": {
+                        "type": "string",
+                        "description": "Path to diagnostics directory. Default: './diagnostics'"
+                    }
+                }),
+                required: vec!["sha".to_string()],
+            },
+        },
+        Tool {
             name: "get_architecture".to_string(),
             description: "Get the Clean Language platform architecture: execution layers, host bridge functions, and memory model. Essential for understanding where functions execute (compiler vs runtime vs host).".to_string(),
             input_schema: ToolInputSchema {
@@ -1296,6 +1332,8 @@ fn handle_tools_call(id: serde_json::Value, params: Option<serde_json::Value>) -
         "get_stack_recommendation" => tool_get_stack_recommendation(id.clone(), arguments),
         "report_error" => tool_report_error(id.clone(), arguments),
         "check_reported_fixes" => tool_check_reported_fixes(id.clone(), arguments),
+        "list_server_diagnostics" => tool_list_server_diagnostics(id.clone(), arguments),
+        "show_server_diagnostic" => tool_show_server_diagnostic(id.clone(), arguments),
         "get_architecture" => tool_get_architecture(id.clone(), arguments),
         "format" => tool_format(id.clone(), arguments),
         "validate" => tool_validate(id.clone(), arguments),
@@ -3674,6 +3712,9 @@ fn tool_check_reported_fixes(id: serde_json::Value, args: &serde_json::Value) ->
 
     let has_updates = !fixes.is_empty() || !updates.is_empty();
 
+    // Cross-reference resolved fixes against local server diagnostics
+    let matching_local_diagnostics = cross_reference_diagnostics(&fixes);
+
     // Collect IDs of resolved reports to mark as notified
     let to_notify: Vec<String> = all_reports
         .iter()
@@ -3694,7 +3735,8 @@ fn tool_check_reported_fixes(id: serde_json::Value, args: &serde_json::Value) ->
             "fixes": fixes,
             "pending": pending,
             "current_version": crate::VERSION,
-            "has_updates": has_updates
+            "has_updates": has_updates,
+            "matching_local_diagnostics": matching_local_diagnostics
         }),
     )
 }
@@ -4173,5 +4215,368 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
         description: "This error code is not recognized.",
         example: "",
         fix: "Please check the error code or use 'list_error_codes' to see all available codes.",
+    }
+}
+
+// ============================================================================
+// Server Diagnostic Tools
+// ============================================================================
+
+/// Return the subdirectory names that correspond to the requested status filter.
+fn diagnostic_status_dirs(status: &str) -> Vec<&'static str> {
+    match status {
+        "published" => vec!["published"],
+        "resolved" => vec!["resolved"],
+        "all" => vec!["pending", "published", "resolved"],
+        _ => vec!["pending"],
+    }
+}
+
+/// Read `count.txt` from a diagnostic directory, returning 1 on any error.
+fn read_occurrence_count(dir: &std::path::Path) -> u64 {
+    let count_path = dir.join("count.txt");
+    std::fs::read_to_string(&count_path)
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(1)
+}
+
+/// Tool: list_server_diagnostics - List RUNTIME_WASM_PARSE reports from clean-server
+fn tool_list_server_diagnostics(
+    id: serde_json::Value,
+    args: &serde_json::Value,
+) -> JsonRpcResponse {
+    use std::path::PathBuf;
+
+    let diag_dir = args
+        .get("diag_dir")
+        .and_then(|v| v.as_str())
+        .unwrap_or("./diagnostics")
+        .to_string();
+
+    let status_filter = args
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("pending")
+        .to_string();
+
+    let diag_path = PathBuf::from(&diag_dir);
+
+    if !diag_path.exists() {
+        return JsonRpcResponse::success(
+            id,
+            json!({
+                "success": true,
+                "reports": [],
+                "diag_dir_exists": false,
+                "total": 0
+            }),
+        );
+    }
+
+    let status_dirs = diagnostic_status_dirs(&status_filter);
+    let mut reports: Vec<serde_json::Value> = Vec::new();
+
+    for subdir_name in status_dirs {
+        let subdir = diag_path.join(subdir_name);
+        if !subdir.exists() {
+            continue;
+        }
+
+        let entries = match std::fs::read_dir(&subdir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if !entry_path.is_dir() {
+                continue;
+            }
+
+            let sha = entry_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+
+            let report_path = entry_path.join("report.json");
+            let report_json_raw = match std::fs::read_to_string(&report_path) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            let report_obj: serde_json::Value = match serde_json::from_str(&report_json_raw) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let occurrences = read_occurrence_count(&entry_path);
+
+            // Extract a one-line summary of the wasmtime error
+            let wasmtime_error_first_line = report_obj
+                .get("wasmtime_error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_string();
+
+            reports.push(json!({
+                "sha": sha,
+                "status": subdir_name,
+                "reported_at": report_obj.get("reported_at"),
+                "server_version": report_obj.get("server_version"),
+                "compiler_version": report_obj.get("compiler_version"),
+                "compiler_version_source": report_obj.get("compiler_version_source"),
+                "occurrences": occurrences,
+                "wasmparser_validates": report_obj.get("wasmparser_validates"),
+                "wasmtime_error_summary": wasmtime_error_first_line,
+                "module_path": report_obj.get("module_path"),
+                "report_path": report_path.to_string_lossy()
+            }));
+        }
+    }
+
+    let total = reports.len();
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": true,
+            "reports": reports,
+            "diag_dir_exists": true,
+            "total": total
+        }),
+    )
+}
+
+/// Tool: show_server_diagnostic - Show the full diagnostic report for a SHA prefix
+fn tool_show_server_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    use std::path::PathBuf;
+
+    let sha_prefix = match args.get("sha").and_then(|v| v.as_str()) {
+        Some(s) if s.len() >= 4 => s.to_string(),
+        Some(_) => {
+            return JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": false,
+                    "error": "SHA prefix must be at least 4 characters"
+                }),
+            );
+        }
+        None => {
+            return JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": false,
+                    "error": "Missing required argument: sha"
+                }),
+            );
+        }
+    };
+
+    let diag_dir = args
+        .get("diag_dir")
+        .and_then(|v| v.as_str())
+        .unwrap_or("./diagnostics")
+        .to_string();
+
+    let diag_path = PathBuf::from(&diag_dir);
+
+    // Search all three status subdirs for a directory matching the prefix
+    let status_subdirs = ["pending", "published", "resolved"];
+    let mut matches: Vec<(String, String)> = Vec::new(); // (full_sha, status)
+
+    for subdir_name in &status_subdirs {
+        let subdir = diag_path.join(subdir_name);
+        if !subdir.exists() {
+            continue;
+        }
+
+        let entries = match std::fs::read_dir(&subdir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if !entry_path.is_dir() {
+                continue;
+            }
+            if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with(&sha_prefix) {
+                    matches.push((name.to_string(), subdir_name.to_string()));
+                }
+            }
+        }
+    }
+
+    match matches.len() {
+        0 => JsonRpcResponse::success(
+            id,
+            json!({
+                "success": false,
+                "error": format!("No diagnostic found for SHA prefix '{}'", sha_prefix)
+            }),
+        ),
+        1 => {
+            let (full_sha, status) = &matches[0];
+            let report_path = diag_path.join(status).join(full_sha).join("report.json");
+            let report_raw = match std::fs::read_to_string(&report_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    return JsonRpcResponse::success(
+                        id,
+                        json!({
+                            "success": false,
+                            "error": format!("Failed to read report.json: {}", e)
+                        }),
+                    );
+                }
+            };
+            let report_obj: serde_json::Value = match serde_json::from_str(&report_raw) {
+                Ok(v) => v,
+                Err(e) => {
+                    return JsonRpcResponse::success(
+                        id,
+                        json!({
+                            "success": false,
+                            "error": format!("Failed to parse report.json: {}", e)
+                        }),
+                    );
+                }
+            };
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": true,
+                    "sha": full_sha,
+                    "status": status,
+                    "report": report_obj
+                }),
+            )
+        }
+        _ => {
+            let candidates: Vec<&str> = matches.iter().map(|(s, _)| s.as_str()).collect();
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": false,
+                    "error": format!(
+                        "Ambiguous prefix '{}' matches {} diagnostics — provide more characters. Candidates: {}",
+                        sha_prefix,
+                        matches.len(),
+                        candidates.join(", ")
+                    )
+                }),
+            )
+        }
+    }
+}
+
+/// Cross-reference resolved fixes against local pending server diagnostics.
+/// Returns entries where the fix version is newer than the diagnostic's recorded compiler version,
+/// suggesting the local diagnostic may now be resolved.
+fn cross_reference_diagnostics(fixes: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    use std::path::PathBuf;
+
+    let pending_dir = PathBuf::from("./diagnostics/pending");
+    if !pending_dir.exists() {
+        return Vec::new();
+    }
+
+    let entries = match std::fs::read_dir(&pending_dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut results: Vec<serde_json::Value> = Vec::new();
+
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        if !entry_path.is_dir() {
+            continue;
+        }
+
+        let sha = match entry_path.file_name().and_then(|n| n.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+
+        let report_path = entry_path.join("report.json");
+        let report_raw = match std::fs::read_to_string(&report_path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        let report_obj: serde_json::Value = match serde_json::from_str(&report_raw) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let diagnostic_compiler_version = report_obj
+            .get("compiler_version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let reported_at = report_obj
+            .get("reported_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Check if any fix version is newer than the diagnostic's compiler version
+        let suggest_resolve = fixes.iter().any(|fix| {
+            if let Some(fixed_version) = fix.get("fixed_in_version").and_then(|v| v.as_str()) {
+                if !diagnostic_compiler_version.is_empty() && !fixed_version.is_empty() {
+                    return version_is_newer(fixed_version, &diagnostic_compiler_version);
+                }
+            }
+            false
+        });
+
+        if suggest_resolve {
+            // Use first 12 chars of sha as short form
+            let short_sha = if sha.len() > 12 {
+                sha[..12].to_string()
+            } else {
+                sha.clone()
+            };
+            results.push(json!({
+                "sha": short_sha,
+                "reported_at": reported_at,
+                "suggest_resolve": true
+            }));
+        }
+    }
+
+    results
+}
+
+/// Compare two semver-like version strings (MAJOR.MINOR.PATCH).
+/// Returns true if `candidate` is strictly newer than `baseline`.
+/// Falls back to lexicographic comparison for non-semver strings.
+fn version_is_newer(candidate: &str, baseline: &str) -> bool {
+    fn parse_parts(v: &str) -> Option<(u64, u64, u64)> {
+        let mut parts = v.splitn(3, '.');
+        let major = parts.next()?.parse::<u64>().ok()?;
+        let minor = parts.next()?.parse::<u64>().ok()?;
+        // Patch may have extra suffixes like "-alpha"; take only leading digits
+        let patch_str = parts.next().unwrap_or("0");
+        let patch = patch_str
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse::<u64>()
+            .unwrap_or(0);
+        Some((major, minor, patch))
+    }
+
+    match (parse_parts(candidate), parse_parts(baseline)) {
+        (Some(c), Some(b)) => c > b,
+        _ => candidate > baseline,
     }
 }
