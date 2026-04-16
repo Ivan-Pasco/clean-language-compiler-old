@@ -949,6 +949,21 @@ impl MirCodeGenerator<'_> {
         let data_section = self.wasm_generator.memory_utils.get_data_section();
         module.section(data_section);
 
+        // 8. clean:build custom section — compiler provenance for diagnostics.
+        // Read by host runtimes (e.g. clean-server) when reporting WASM parse
+        // failures so bugs can be attributed to a specific compiler version.
+        let build_info = serde_json::json!({
+            "compiler_version": crate::VERSION,
+            "build_profile": if cfg!(debug_assertions) { "debug" } else { "release" },
+        });
+        if let Ok(json_bytes) = serde_json::to_vec(&build_info) {
+            let custom = wasm_encoder::CustomSection {
+                name: std::borrow::Cow::Borrowed("clean:build"),
+                data: std::borrow::Cow::Borrowed(&json_bytes),
+            };
+            module.section(&custom);
+        }
+
         Ok(module.finish())
     }
 
