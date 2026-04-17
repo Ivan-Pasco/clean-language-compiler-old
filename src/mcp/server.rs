@@ -1129,7 +1129,7 @@ fn get_available_tools() -> Vec<Tool> {
         },
         Tool {
             name: "check_reported_fixes".to_string(),
-            description: "Check if any previously reported errors have been fixed. Returns a list of resolved errors with the version that includes the fix. Call this at the start of a session to inform the user about fixes to bugs they reported. Only checks errors reported from this machine.".to_string(),
+            description: "Check if any previously reported errors have been fixed. Returns resolved errors with fix versions, plus a summary of open bugs for this component from ALL reporters. Call this at the start of every session.".to_string(),
             input_schema: ToolInputSchema {
                 type_: "object".to_string(),
                 properties: json!({
@@ -1157,6 +1157,48 @@ fn get_available_tools() -> Vec<Tool> {
                     }
                 }),
                 required: vec![],
+            },
+        },
+        Tool {
+            name: "publish_diagnostic".to_string(),
+            description: "Publish a local server diagnostic to the Clean Language error server. Reads the diagnostic from ./diagnostics/pending/<sha>, converts it to a standard error report, and submits it. IMPORTANT: Always ask the user for permission before calling this tool. The response indicates if the bug was already fixed, already known, or newly accepted. On success, moves the diagnostic to published/.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "sha": {
+                        "type": "string",
+                        "description": "SHA-256 hash of the WASM module (prefix >= 4 chars accepted)"
+                    },
+                    "diag_dir": {
+                        "type": "string",
+                        "description": "Path to diagnostics directory. Default: './diagnostics'"
+                    },
+                    "user_contact": {
+                        "type": "string",
+                        "description": "Optional contact info if the user wants follow-up on this bug."
+                    }
+                }),
+                required: vec!["sha".to_string()],
+            },
+        },
+        Tool {
+            name: "list_component_bugs".to_string(),
+            description: "List all open bugs for a specific component from the error server. Unlike check_reported_fixes (which only shows bugs reported from this machine), this tool shows ALL bugs reported by ALL users and AI instances. Use this at session start when working on a component to discover bugs that need fixing. Requires network access to the error server.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "component": {
+                        "type": "string",
+                        "description": "Component to query bugs for.",
+                        "enum": ["compiler", "server", "node-server", "framework", "extension", "manager", "canvas", "ui", "all"]
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Filter by bug status. Default: 'reported' (open bugs).",
+                        "enum": ["reported", "acknowledged", "in_progress", "resolved", "all"]
+                    }
+                }),
+                required: vec!["component".to_string()],
             },
         },
         Tool {
@@ -1334,6 +1376,8 @@ fn handle_tools_call(id: serde_json::Value, params: Option<serde_json::Value>) -
         "check_reported_fixes" => tool_check_reported_fixes(id.clone(), arguments),
         "list_server_diagnostics" => tool_list_server_diagnostics(id.clone(), arguments),
         "show_server_diagnostic" => tool_show_server_diagnostic(id.clone(), arguments),
+        "publish_diagnostic" => tool_publish_diagnostic(id.clone(), arguments),
+        "list_component_bugs" => tool_list_component_bugs(id.clone(), arguments),
         "get_architecture" => tool_get_architecture(id.clone(), arguments),
         "format" => tool_format(id.clone(), arguments),
         "validate" => tool_validate(id.clone(), arguments),
@@ -2913,7 +2957,10 @@ functions:
 - `get_plugin_examples` — Read plugin example files
 - `get_stack_recommendation` — Recommended plugin stack for a project type
 - `report_error` — Report a likely compiler bug
-- `check_reported_fixes` — Check if your reported bugs are fixed
+- `check_reported_fixes` — Check if your reported bugs are fixed (also shows open bugs from all reporters)
+- `publish_diagnostic` — Publish a local server diagnostic to the error server (ask user first!)
+- `list_component_bugs` — List ALL open bugs for a component from all reporters (dev team tool)
+- `list_server_diagnostics` — List local runtime errors captured by clean-server
 
 ## Workflow
 1. Call `get_quick_reference` (this tool) to learn base syntax
@@ -2928,6 +2975,16 @@ functions:
 10. If the code follows the spec but doesn't compile, call `report_error` immediately — do NOT write workaround code
 11. Use `get_specification` for detailed docs on specific features
 12. Call `check_reported_fixes` at session start to see if previously reported bugs are now fixed
+13. Call `list_server_diagnostics` to check for runtime errors — if unpublished diagnostics exist, ask the user to publish them
+14. If user agrees, call `publish_diagnostic` with the SHA to send the error to the Clean Language team
+
+## Error Lifecycle (for Clean Language development team)
+When fixing bugs from the error server:
+1. Call `list_component_bugs` to see all open bugs for your component
+2. Pick the highest-priority bug and write a failing test
+3. Fix the root cause in the source code
+4. Run `comita` to commit, tag, push, and wait for CI
+5. After CI passes, run `/resolve-fix <ERROR_CODE> <VERSION> "<description>"` to close the bug
 
 ## Plugin Syntax Discovery
 Plugins (like Frame) add custom blocks, keywords, and types.
@@ -3090,7 +3147,7 @@ For other content types:
             "quick_reference": quick_ref,
             "version": crate::VERSION,
             "tools_available": get_available_tools().len(),
-            "tip": "Use 'check' for fast iteration, 'compile' when ready for WASM. If spec-correct code fails, call 'report_error' immediately — never write workarounds. Call 'check_reported_fixes' at session start to see resolved bugs."
+            "tip": "Use 'check' for fast iteration, 'compile' when ready for WASM. If spec-correct code fails, call 'report_error' immediately — never write workarounds. Call 'check_reported_fixes' at session start. Call 'list_server_diagnostics' to find local runtime errors — ask the user to publish them."
         }),
     )
 }
@@ -3728,6 +3785,24 @@ fn tool_check_reported_fixes(id: serde_json::Value, args: &serde_json::Value) ->
     }
     let _ = store.save();
 
+    // Also fetch open bugs for this component from the error server
+    // so AI instances discover bugs reported by OTHER users/instances
+    let component_bugs = crate::telemetry::submit::fetch_component_bugs("compiler", "reported");
+    let open_bugs: Vec<serde_json::Value> = component_bugs
+        .iter()
+        .take(10) // limit to top 10 to avoid response bloat
+        .map(|b| {
+            json!({
+                "fingerprint": b.fingerprint,
+                "error_code": b.error_code,
+                "severity": b.severity,
+                "message": b.message,
+                "occurrences": b.occurrences,
+                "priority_score": b.priority_score,
+            })
+        })
+        .collect();
+
     JsonRpcResponse::success(
         id,
         json!({
@@ -3736,7 +3811,14 @@ fn tool_check_reported_fixes(id: serde_json::Value, args: &serde_json::Value) ->
             "pending": pending,
             "current_version": crate::VERSION,
             "has_updates": has_updates,
-            "matching_local_diagnostics": matching_local_diagnostics
+            "matching_local_diagnostics": matching_local_diagnostics,
+            "open_bugs_for_component": open_bugs,
+            "open_bugs_total": component_bugs.len(),
+            "tip": if !open_bugs.is_empty() {
+                "There are open bugs for this component. Use list_component_bugs to see full details and fix guidance."
+            } else {
+                ""
+            }
         }),
     )
 }
@@ -4323,6 +4405,7 @@ fn tool_list_server_diagnostics(
                 .unwrap_or("")
                 .to_string();
 
+            let is_unpublished = subdir_name == "pending";
             reports.push(json!({
                 "sha": sha,
                 "status": subdir_name,
@@ -4334,19 +4417,41 @@ fn tool_list_server_diagnostics(
                 "wasmparser_validates": report_obj.get("wasmparser_validates"),
                 "wasmtime_error_summary": wasmtime_error_first_line,
                 "module_path": report_obj.get("module_path"),
-                "report_path": report_path.to_string_lossy()
+                "report_path": report_path.to_string_lossy(),
+                "unpublished": is_unpublished
             }));
         }
     }
 
     let total = reports.len();
+    let unpublished_count = reports
+        .iter()
+        .filter(|r| {
+            r.get("unpublished")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
+        .count();
+
+    let action_needed = if unpublished_count > 0 {
+        Some(format!(
+            "Found {} unpublished diagnostic(s). Ask the user if they would like to report {} to the Clean Language team using publish_diagnostic. This helps the team fix bugs faster.",
+            unpublished_count,
+            if unpublished_count == 1 { "it" } else { "them" }
+        ))
+    } else {
+        None
+    };
+
     JsonRpcResponse::success(
         id,
         json!({
             "success": true,
             "reports": reports,
             "diag_dir_exists": true,
-            "total": total
+            "total": total,
+            "unpublished_count": unpublished_count,
+            "action_needed": action_needed
         }),
     )
 }
@@ -4476,84 +4581,434 @@ fn tool_show_server_diagnostic(id: serde_json::Value, args: &serde_json::Value) 
     }
 }
 
-/// Cross-reference resolved fixes against local pending server diagnostics.
+/// Cross-reference resolved fixes against local pending AND published server diagnostics.
 /// Returns entries where the fix version is newer than the diagnostic's recorded compiler version,
 /// suggesting the local diagnostic may now be resolved.
 fn cross_reference_diagnostics(fixes: &[serde_json::Value]) -> Vec<serde_json::Value> {
     use std::path::PathBuf;
 
-    let pending_dir = PathBuf::from("./diagnostics/pending");
-    if !pending_dir.exists() {
-        return Vec::new();
-    }
-
-    let entries = match std::fs::read_dir(&pending_dir) {
-        Ok(e) => e,
-        Err(_) => return Vec::new(),
-    };
-
+    let diag_base = PathBuf::from("./diagnostics");
     let mut results: Vec<serde_json::Value> = Vec::new();
 
-    for entry in entries.flatten() {
-        let entry_path = entry.path();
-        if !entry_path.is_dir() {
+    // Scan both pending/ and published/ — resolved/ already handled
+    for subdir_name in &["pending", "published"] {
+        let subdir = diag_base.join(subdir_name);
+        if !subdir.exists() {
             continue;
         }
 
-        let sha = match entry_path.file_name().and_then(|n| n.to_str()) {
-            Some(s) => s.to_string(),
-            None => continue,
-        };
-
-        let report_path = entry_path.join("report.json");
-        let report_raw = match std::fs::read_to_string(&report_path) {
-            Ok(s) => s,
+        let entries = match std::fs::read_dir(&subdir) {
+            Ok(e) => e,
             Err(_) => continue,
         };
 
-        let report_obj: serde_json::Value = match serde_json::from_str(&report_raw) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        let diagnostic_compiler_version = report_obj
-            .get("compiler_version")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let reported_at = report_obj
-            .get("reported_at")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        // Check if any fix version is newer than the diagnostic's compiler version
-        let suggest_resolve = fixes.iter().any(|fix| {
-            if let Some(fixed_version) = fix.get("fixed_in_version").and_then(|v| v.as_str()) {
-                if !diagnostic_compiler_version.is_empty() && !fixed_version.is_empty() {
-                    return version_is_newer(fixed_version, &diagnostic_compiler_version);
-                }
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if !entry_path.is_dir() {
+                continue;
             }
-            false
-        });
 
-        if suggest_resolve {
-            // Use first 12 chars of sha as short form
-            let short_sha = if sha.len() > 12 {
-                sha[..12].to_string()
-            } else {
-                sha.clone()
+            let sha = match entry_path.file_name().and_then(|n| n.to_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
             };
-            results.push(json!({
-                "sha": short_sha,
-                "reported_at": reported_at,
-                "suggest_resolve": true
-            }));
+
+            let report_path = entry_path.join("report.json");
+            let report_raw = match std::fs::read_to_string(&report_path) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            let report_obj: serde_json::Value = match serde_json::from_str(&report_raw) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let diagnostic_compiler_version = report_obj
+                .get("compiler_version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let reported_at = report_obj
+                .get("reported_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            // Check if any fix version is newer than the diagnostic's compiler version
+            let suggest_resolve = fixes.iter().any(|fix| {
+                if let Some(fixed_version) = fix.get("fixed_in_version").and_then(|v| v.as_str()) {
+                    if !diagnostic_compiler_version.is_empty() && !fixed_version.is_empty() {
+                        return version_is_newer(fixed_version, &diagnostic_compiler_version);
+                    }
+                }
+                false
+            });
+
+            if suggest_resolve {
+                // Use first 12 chars of sha as short form
+                let short_sha = if sha.len() > 12 {
+                    sha[..12].to_string()
+                } else {
+                    sha.clone()
+                };
+                results.push(json!({
+                    "sha": short_sha,
+                    "status": *subdir_name,
+                    "reported_at": reported_at,
+                    "suggest_resolve": true
+                }));
+            }
         }
     }
 
     results
+}
+
+// ============================================================================
+// Publish Diagnostic Tool
+// ============================================================================
+
+/// Tool: publish_diagnostic - Publish a local server diagnostic to the error server
+fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    use crate::telemetry::{
+        report::{ErrorReport, ReportError},
+        submit::submit_report,
+        ReportStore,
+    };
+    use std::path::PathBuf;
+
+    let sha_prefix = match args.get("sha").and_then(|v| v.as_str()) {
+        Some(s) if s.len() >= 4 => s.to_string(),
+        Some(_) => {
+            return JsonRpcResponse::success(
+                id,
+                json!({ "success": false, "error": "SHA prefix must be at least 4 characters" }),
+            );
+        }
+        None => {
+            return JsonRpcResponse::success(
+                id,
+                json!({ "success": false, "error": "Missing required argument: sha" }),
+            );
+        }
+    };
+
+    let diag_dir = args
+        .get("diag_dir")
+        .and_then(|v| v.as_str())
+        .unwrap_or("./diagnostics")
+        .to_string();
+    let user_contact = args
+        .get("user_contact")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let diag_path = PathBuf::from(&diag_dir);
+    let pending_dir = diag_path.join("pending");
+    if !pending_dir.exists() {
+        return JsonRpcResponse::success(
+            id,
+            json!({ "success": false, "error": "No pending diagnostics directory found" }),
+        );
+    }
+
+    // Find matching diagnostic in pending/
+    let mut match_path: Option<(String, PathBuf)> = None;
+    if let Ok(entries) = std::fs::read_dir(&pending_dir) {
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if !entry_path.is_dir() {
+                continue;
+            }
+            if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with(&sha_prefix) {
+                    if match_path.is_some() {
+                        return JsonRpcResponse::success(
+                            id,
+                            json!({
+                                "success": false,
+                                "error": format!("Ambiguous SHA prefix '{}' — provide more characters", sha_prefix)
+                            }),
+                        );
+                    }
+                    match_path = Some((name.to_string(), entry_path.clone()));
+                }
+            }
+        }
+    }
+
+    let (full_sha, diag_entry_path) = match match_path {
+        Some(m) => m,
+        None => {
+            return JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": false,
+                    "error": format!("No pending diagnostic found for SHA prefix '{}'", sha_prefix)
+                }),
+            );
+        }
+    };
+
+    // Read the diagnostic report
+    let report_path = diag_entry_path.join("report.json");
+    let report_raw = match std::fs::read_to_string(&report_path) {
+        Ok(s) => s,
+        Err(e) => {
+            return JsonRpcResponse::success(
+                id,
+                json!({ "success": false, "error": format!("Failed to read report: {}", e) }),
+            );
+        }
+    };
+    let diag: serde_json::Value = match serde_json::from_str(&report_raw) {
+        Ok(v) => v,
+        Err(e) => {
+            return JsonRpcResponse::success(
+                id,
+                json!({ "success": false, "error": format!("Failed to parse report: {}", e) }),
+            );
+        }
+    };
+
+    // Convert server diagnostic to ErrorReport
+    let report_id = generate_report_id();
+    let wasmtime_error = diag
+        .get("wasmtime_error")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown WASM parse error")
+        .to_string();
+    let compiler_version = diag
+        .get("compiler_version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let module_path = diag
+        .get("module_path")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let error = ReportError {
+        code: "RUNTIME_WASM_PARSE".to_string(),
+        category: "runtime".to_string(),
+        component: "runtime".to_string(),
+        severity: "crash".to_string(),
+        message: wasmtime_error.clone(),
+        file_context: module_path.clone(),
+    };
+
+    let mut report = ErrorReport::new(
+        report_id.clone(),
+        error,
+        "mcp-publish-diagnostic",
+        "error_with_code",
+    );
+    report.source.compiler_version = compiler_version.clone();
+    report.source.runtime = Some(
+        diag.get("server_version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+    );
+
+    let wasmparser_validates = diag
+        .get("wasmparser_validates")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let wasmparser_error = diag
+        .get("wasmparser_error")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    report.reproduction = Some(crate::telemetry::report::ReportReproduction {
+        minimal_code: None,
+        expected_behavior: Some("WASM module should load and execute successfully".to_string()),
+        actual_behavior: Some(format!(
+            "wasmtime rejects module: {}. wasmparser validates: {}{}",
+            wasmtime_error,
+            wasmparser_validates,
+            wasmparser_error
+                .as_deref()
+                .map(|e| format!(". wasmparser error: {}", e))
+                .unwrap_or_default()
+        )),
+        spec_reference: None,
+    });
+
+    report.ai_context = Some(crate::telemetry::report::ReportAiContext {
+        analysis: Some(format!(
+            "Auto-captured RUNTIME_WASM_PARSE diagnostic. WASM SHA: {}. Compiler: {}. Module: {}",
+            full_sha,
+            compiler_version,
+            module_path.as_deref().unwrap_or("unknown")
+        )),
+        suggested_component: Some("codegen".to_string()),
+        suggested_fix: None,
+        confidence: Some("auto-captured".to_string()),
+    });
+
+    if let Some(contact) = user_contact {
+        report.user.contact = Some(contact);
+        report.user.anonymous = false;
+    }
+
+    let result = submit_report(&report);
+
+    // Track locally for fix notifications
+    let mut store = ReportStore::load();
+    store.add_report(&report);
+    let _ = store.save();
+
+    match result {
+        crate::telemetry::submit::SubmitResult::Submitted {
+            report_id: rid,
+            tracking_url,
+        } => {
+            let published_dir = diag_path.join("published").join(&full_sha);
+            let _ = std::fs::create_dir_all(published_dir.parent().unwrap());
+            let _ = std::fs::rename(&diag_entry_path, &published_dir);
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": true, "status": "published", "report_id": rid,
+                    "tracking_url": tracking_url, "sha": full_sha,
+                    "message": "Diagnostic published to the error server. The Clean Language team will be notified."
+                }),
+            )
+        }
+        crate::telemetry::submit::SubmitResult::AlreadyFixed {
+            fixed_in_version,
+            fix_description,
+            message,
+            ..
+        } => {
+            let resolved_dir = diag_path.join("resolved").join(&full_sha);
+            let _ = std::fs::create_dir_all(resolved_dir.parent().unwrap());
+            let _ = std::fs::rename(&diag_entry_path, &resolved_dir);
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": true, "status": "already_fixed",
+                    "fixed_in_version": fixed_in_version, "fix_description": fix_description,
+                    "message": message, "sha": full_sha,
+                    "action": format!("Run: cleen install {}", fixed_in_version)
+                }),
+            )
+        }
+        crate::telemetry::submit::SubmitResult::Known {
+            occurrences,
+            current_status,
+            message,
+            ..
+        } => {
+            let published_dir = diag_path.join("published").join(&full_sha);
+            let _ = std::fs::create_dir_all(published_dir.parent().unwrap());
+            let _ = std::fs::rename(&diag_entry_path, &published_dir);
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": true, "status": "known", "occurrences": occurrences,
+                    "current_status": current_status, "message": message, "sha": full_sha
+                }),
+            )
+        }
+        crate::telemetry::submit::SubmitResult::Queued {
+            report_id: rid,
+            local_path,
+        } => JsonRpcResponse::success(
+            id,
+            json!({
+                "success": true, "status": "queued", "report_id": rid,
+                "local_path": local_path, "sha": full_sha,
+                "message": "Error server unreachable. Report queued locally — will be submitted when connectivity is restored."
+            }),
+        ),
+        crate::telemetry::submit::SubmitResult::Error { message } => JsonRpcResponse::success(
+            id,
+            json!({ "success": false, "error": format!("Failed to publish: {}", message), "sha": full_sha }),
+        ),
+    }
+}
+
+// ============================================================================
+// List Component Bugs Tool
+// ============================================================================
+
+/// Tool: list_component_bugs - List all open bugs for a component from the error server
+fn tool_list_component_bugs(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    use crate::telemetry::submit::fetch_component_bugs;
+
+    let component = match args.get("component").and_then(|v| v.as_str()) {
+        Some(c) => c.to_string(),
+        None => {
+            return JsonRpcResponse::success(
+                id,
+                json!({ "success": false, "error": "Missing required argument: component" }),
+            );
+        }
+    };
+
+    let status = args
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("reported")
+        .to_string();
+
+    let bugs = fetch_component_bugs(&component, &status);
+
+    let bug_list: Vec<serde_json::Value> = bugs
+        .iter()
+        .map(|b| {
+            json!({
+                "fingerprint": b.fingerprint,
+                "error_code": b.error_code,
+                "component": b.component,
+                "severity": b.severity,
+                "message": b.message,
+                "minimal_repro": b.minimal_repro,
+                "expected_behavior": b.expected_behavior,
+                "actual_behavior": b.actual_behavior,
+                "occurrences": b.occurrences,
+                "priority_score": b.priority_score,
+                "first_reported_version": b.first_reported_version,
+                "ai_suggested_fix": b.ai_suggested_fix,
+                "report_ids": b.report_ids,
+            })
+        })
+        .collect();
+
+    let total = bug_list.len();
+
+    let guidance = if total > 0 && status != "resolved" {
+        Some(json!({
+            "next_steps": [
+                "Pick the highest-priority bug to fix",
+                "Write a failing test that reproduces the bug",
+                "Fix the root cause in the source code",
+                "Run 'comita' to commit, tag, push, and wait for CI",
+                "After CI passes, run '/resolve-fix <ERROR_CODE> <VERSION> \"<description>\"' to close the bug and notify reporters"
+            ],
+            "lifecycle_stages": {
+                "1_reported": "Bug is on the error server (done)",
+                "2_fix_committed": "comita handles commit + tag + push",
+                "3_fix_released": "comita waits for CI green + creates release",
+                "4_fix_installed": "comita runs cleen install latest",
+                "5_resolved": "/resolve-fix closes the bug and notifies reporters"
+            }
+        }))
+    } else {
+        None
+    };
+
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": true, "component": component, "status_filter": status,
+            "bugs": bug_list, "total": total, "guidance": guidance
+        }),
+    )
 }
 
 /// Compare two semver-like version strings (MAJOR.MINOR.PATCH).
