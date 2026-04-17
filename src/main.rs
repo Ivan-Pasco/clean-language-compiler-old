@@ -350,6 +350,16 @@ enum Commands {
         #[arg(long)]
         description: Option<String>,
     },
+    /// Telemetry maintenance (flush pending reports, retry unconfirmed reports)
+    #[command(subcommand)]
+    Telemetry(TelemetryCommands),
+}
+
+#[derive(Subcommand, Debug)]
+enum TelemetryCommands {
+    /// Re-POST any locally-stored error reports that never received a fingerprint
+    /// from the backend, plus drain the offline queue.
+    Flush,
 }
 
 #[derive(Subcommand, Debug)]
@@ -599,6 +609,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             code,
             description,
         } => handle_report(error, code, description, &output_config)?,
+        Commands::Telemetry(cmd) => match cmd {
+            TelemetryCommands::Flush => {
+                clean_language_compiler::telemetry::flush_pending_telemetry(true);
+            }
+        },
     }
 
     Ok(())

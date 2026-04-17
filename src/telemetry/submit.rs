@@ -91,8 +91,15 @@ pub fn submit_report(report: &ErrorReport) -> SubmitResult {
 
     match http_result {
         Ok(result) => result,
-        Err(_) => {
-            // Backend unreachable — queue locally
+        Err(reason) => {
+            // Backend unreachable — log visibly and queue locally.
+            // Prior behavior silently dropped the error which made upload bugs
+            // invisible for days; surface the reason on stderr so users know
+            // a retry will happen later (see MCP_UPLOAD_BROKEN lineage).
+            eprintln!(
+                "[telemetry] error report upload failed ({}); queued locally for retry.",
+                reason
+            );
             match PendingQueue::new() {
                 Some(queue) => match queue.enqueue(report) {
                     Ok(path) => SubmitResult::Queued {
@@ -152,11 +159,13 @@ fn batch_check_inner(compiler_version: &str, reports: &[ReportVerification]) -> 
     });
 
     let url = format!("{}/reports/check", API_BASE);
-    match client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .body(body.to_string())
-        .send()
+    match with_auth(
+        client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .body(body.to_string()),
+    )
+    .send()
     {
         Ok(response) if response.status().is_success() => {
             if let Ok(text) = response.text() {
@@ -249,7 +258,7 @@ fn fetch_bugs_inner(component: &str, status: &str) -> Vec<ComponentBug> {
         "{}/bugs?component={}&status={}",
         API_BASE, component, status
     );
-    match client.get(&url).send() {
+    match with_auth(client.get(&url)).send() {
         Ok(response) if response.status().is_success() => {
             if let Ok(text) = response.text() {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -338,7 +347,7 @@ fn check_statuses_legacy(reports: &[ReportVerification]) -> Vec<StatusUpdate> {
     let mut updates = Vec::new();
     for report in reports {
         let url = format!("{}/reports/status?id={}", API_BASE, report.report_id);
-        if let Ok(response) = client.get(&url).send() {
+        if let Ok(response) = with_auth(client.get(&url)).send() {
             if response.status().is_success() {
                 if let Ok(body) = response.text() {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
@@ -402,6 +411,28 @@ fn build_client() -> Result<reqwest::blocking::Client, reqwest::Error> {
         .build()
 }
 
+/// Load the error-API key from ~/.cleen/error-api-key.
+/// Returns None if the file is missing or empty — the server accepts unauthenticated
+/// submissions, but sending the key marks the report as trusted.
+fn load_api_key() -> Option<String> {
+    let path = dirs::home_dir()?.join(".cleen").join("error-api-key");
+    let contents = std::fs::read_to_string(path).ok()?;
+    let key = contents.trim().to_string();
+    if key.is_empty() {
+        None
+    } else {
+        Some(key)
+    }
+}
+
+/// Attach the Bearer auth header to a request builder if a local API key exists.
+fn with_auth(req: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+    match load_api_key() {
+        Some(key) => req.header("Authorization", format!("Bearer {}", key)),
+        None => req,
+    }
+}
+
 /// Try to submit a report via HTTP POST
 fn try_http_submit(report: &ErrorReport) -> Result<SubmitResult, String> {
     let client = build_client().map_err(|e| e.to_string())?;
@@ -409,12 +440,14 @@ fn try_http_submit(report: &ErrorReport) -> Result<SubmitResult, String> {
     let url = format!("{}/reports", API_BASE);
     let body = serde_json::to_string(report).map_err(|e| e.to_string())?;
 
-    let response = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .body(body)
-        .send()
-        .map_err(|e| e.to_string())?;
+    let response = with_auth(
+        client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .body(body),
+    )
+    .send()
+    .map_err(|e| e.to_string())?;
 
     if response.status().is_success() {
         let report_id = report.report_id.clone();
