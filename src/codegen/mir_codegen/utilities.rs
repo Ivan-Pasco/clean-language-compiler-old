@@ -902,9 +902,28 @@ impl MirCodeGenerator<'_> {
             .export_section
             .export("memory", wasm_encoder::ExportKind::Memory, 0);
 
-        // Export all user-defined functions (skip tree-shaken sentinel indices)
+        // Export all user-defined functions.
+        //
+        // Defensive invariants:
+        // 1. Skip the `u32::MAX` tree-shake sentinel (Import Minimality Rule).
+        // 2. Skip indices that are out of bounds w.r.t. the module's function
+        //    count. A bad index here causes wasmparser to reject the module
+        //    with "unknown function N: exported function index out of bounds".
+        //    When that happens it's a registration bug upstream — log and
+        //    skip rather than silently emitting invalid bytes.
+        let total_functions = self.wasm_generator.function_count;
         for (name, &index) in &self.wasm_generator.function_map {
             if index == u32::MAX {
+                continue;
+            }
+            if index >= total_functions {
+                tracing::error!(
+                    name = %name,
+                    index = index,
+                    total_functions = total_functions,
+                    "Refusing to emit export with out-of-bounds function index \
+                     (upstream registration bug — report via `report_error`)"
+                );
                 continue;
             }
             let is_route_handler = name.starts_with("__route_handler_");
@@ -1185,6 +1204,21 @@ impl MirCodeGenerator<'_> {
                     wasm_return,
                 )?;
 
+                // `register_import_function` returns `u32::MAX` as a sentinel
+                // when the import is tree-shaken out (Import Minimality Rule,
+                // platform-architecture/EXECUTION_LAYERS.md). If that happens,
+                // there is no real host function to wrap, so skip the wrapper
+                // entirely — otherwise the wrapper's body would emit
+                // `Call(u32::MAX)` and the wrapper would end up in the export
+                // section with a bogus index.
+                if raw_func_index == u32::MAX {
+                    tracing::debug!(
+                        name = %func.name,
+                        "Skipping wrapper for tree-shaken bridge import"
+                    );
+                    continue;
+                }
+
                 let wrapper_params: Vec<WasmType> = param_types
                     .iter()
                     .map(|t| Self::builtin_type_to_wasm_type(t))
@@ -1228,6 +1262,15 @@ impl MirCodeGenerator<'_> {
                     &wasm_params,
                     wasm_return,
                 )?;
+
+                // Tree-shaken imports return `u32::MAX` (see
+                // EXECUTION_LAYERS.md Import Minimality Rule). Never attach
+                // that sentinel to a language-level alias — aliases end up in
+                // `function_map` and anything reading from there (including
+                // the export-section emitter) must only see valid indices.
+                if import_index == u32::MAX {
+                    continue;
+                }
 
                 // Register language-name aliases
                 for (lang_name, bridge_name) in &self.language_to_bridge_map {
