@@ -675,16 +675,13 @@ pub(crate) fn is_reachability_gated_import(field: &str) -> bool {
         return true;
     }
 
-    // NOTE: other stdlib prefixes (`math_*`, `input_*`, `string_*`,
-    // `string.*`, `list_*`, `list.*`, `float_to_string`, `string_to_float`)
-    // are NOT gated here. Stdlib-generated wrapper functions embed calls
-    // to these primitives from synthesized codegen that doesn't have a
-    // 1:1 MIR call name (e.g. integer `print(x)` synthesizes an integer
-    // formatter call chain, JSON stringify calls `string.concat`, x**2
-    // synthesizes `math_pow`), so tree-shaking them produces
-    // stack-unbalanced WASM. Reducing them further requires refactoring
-    // stdlib wrapper registration to be reachability-aware — tracked as
-    // part of the broader COD001 lineage.
+    // NOTE: Stdlib prefixes `math_*`, `input_*`, `string_*`, `string.*`,
+    // `list_*`, `list.*`, `float_to_string`, `string_to_float` are NOT
+    // gated at the import level. They are gated at the register-class
+    // level instead (see `register_math_operations`, `register_console_imports`,
+    // etc.) — that pattern cleanly skips both the imports AND the wrapper
+    // functions together, avoiding stack-unbalanced WASM from wrappers
+    // that embed stale pre-tree-shake indices.
 
     false
 }

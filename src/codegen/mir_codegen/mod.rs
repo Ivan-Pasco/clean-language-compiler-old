@@ -402,6 +402,12 @@ impl MirCodeGenerator<'_> {
                 .register_print_imports()
                 .map_err(|e| vec![e])?;
 
+            // Console input is registered EARLY in the import sequence, so
+            // skipping it shifts all subsequent import indices. Some wrapper
+            // path captures a function index that expected input to be
+            // present and produces invalid WASM when it isn't (COD001
+            // follow-up f4030117). Keep input unconditional until the
+            // shift-sensitive callers are traced.
             debug_mir!("DEBUG MIR: Registering console input imports");
             self.wasm_generator
                 .register_console_imports()
@@ -484,10 +490,19 @@ impl MirCodeGenerator<'_> {
                     .map_err(|e| vec![e])?;
             }
 
-            debug_mir!("DEBUG MIR: Registering math operation imports");
-            self.wasm_generator
-                .register_math_operations()
-                .map_err(|e| vec![e])?;
+            // Math operations pull in 16 transcendental imports plus
+            // wrapper functions. Skip entirely if the module never
+            // references `math.*` / `math_*` (Import Minimality Rule).
+            if self.wasm_generator.has_reachable_prefix("math_")
+                || self.wasm_generator.has_reachable_prefix("math.")
+            {
+                debug_mir!("DEBUG MIR: Registering math operation imports");
+                self.wasm_generator
+                    .register_math_operations()
+                    .map_err(|e| vec![e])?;
+            } else {
+                debug_mir!("DEBUG MIR: Skipping math operations (no math.* reachable)");
+            }
 
             debug_mir!("DEBUG MIR: Registering string class operations");
             self.wasm_generator
