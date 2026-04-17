@@ -2609,10 +2609,14 @@ fn handle_report(
         }
         clean_language_compiler::telemetry::SubmitResult::Submitted {
             report_id,
+            fingerprint,
             tracking_url,
         } => {
             println!("Error report submitted successfully!");
             println!("Report ID: {}", report_id);
+            if let Some(fp) = fingerprint {
+                println!("Fingerprint: {}", fp);
+            }
             println!("Tracking: {}", tracking_url);
         }
         clean_language_compiler::telemetry::SubmitResult::Queued {

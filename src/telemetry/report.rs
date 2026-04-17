@@ -253,6 +253,24 @@ impl ReportStore {
             report.notified = true;
         }
     }
+
+    /// Store the server-returned fingerprint for a report
+    pub fn update_fingerprint(&mut self, report_id: &str, fingerprint: &str) {
+        if let Some(report) = self.reports.iter_mut().find(|r| r.report_id == report_id) {
+            report.fingerprint = Some(fingerprint.to_string());
+            report.last_checked = Utc::now();
+        }
+    }
+
+    /// Reports that were accepted locally but never confirmed by the backend
+    /// (no fingerprint returned). These are candidates for re-submission.
+    pub fn unposted_report_ids(&self) -> Vec<String> {
+        self.reports
+            .iter()
+            .filter(|r| r.fingerprint.is_none() && r.status == ReportStatus::Reported)
+            .map(|r| r.report_id.clone())
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -339,6 +357,31 @@ mod tests {
         // Mark as notified
         store.mark_notified("test-report-001");
         assert_eq!(store.get_updated_reports().len(), 0);
+    }
+
+    #[test]
+    fn test_update_fingerprint_sets_field() {
+        let mut store = ReportStore::default();
+        let report = make_test_report();
+        store.add_report(&report);
+        assert!(store.reports[0].fingerprint.is_none());
+
+        store.update_fingerprint("test-report-001", "abc123");
+        assert_eq!(store.reports[0].fingerprint.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn test_unposted_report_ids_returns_only_uncomfirmed() {
+        let mut store = ReportStore::default();
+        let report = make_test_report();
+        store.add_report(&report);
+
+        // Freshly-added report with no fingerprint is unposted
+        assert_eq!(store.unposted_report_ids(), vec!["test-report-001"]);
+
+        // After fingerprint is set, it's no longer unposted
+        store.update_fingerprint("test-report-001", "fp-xyz");
+        assert!(store.unposted_report_ids().is_empty());
     }
 
     #[test]

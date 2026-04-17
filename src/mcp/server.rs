@@ -623,6 +623,12 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("[MCP] Protocol: JSON-RPC 2.0");
     eprintln!("[MCP] Reading from stdin, writing to stdout");
 
+    // Background: retry locally-stored reports that were never confirmed by the
+    // backend (fingerprint still null) and flush any offline queue.
+    std::thread::spawn(|| {
+        crate::telemetry::flush_pending_telemetry(false);
+    });
+
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
     let mut reader = BufReader::new(stdin);
@@ -3588,9 +3594,16 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
     // Attempt to submit to backend (falls back to queue)
     let result = crate::telemetry::submit_report(&report);
 
+    // Persist the server-returned fingerprint so the local report is confirmed.
+    if let Some(fp) = result.fingerprint() {
+        store.update_fingerprint(&report.report_id, fp);
+        let _ = store.save();
+    }
+
     match result {
         crate::telemetry::SubmitResult::AlreadyFixed {
             report_id,
+            fingerprint,
             fixed_in_version,
             fix_description,
             message,
@@ -3611,6 +3624,7 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
                     "success": true,
                     "already_fixed": true,
                     "report_id": report_id,
+                    "fingerprint": fingerprint,
                     "fixed_in_version": fixed_in_version,
                     "fix_description": fix_description,
                     "upgrade_command": "cleen install latest",
@@ -3621,6 +3635,7 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         }
         crate::telemetry::SubmitResult::Known {
             report_id,
+            fingerprint,
             occurrences,
             current_status,
             message,
@@ -3630,6 +3645,7 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
                 "success": true,
                 "known_issue": true,
                 "report_id": report_id,
+                "fingerprint": fingerprint,
                 "occurrences": occurrences,
                 "current_status": current_status,
                 "message": message,
@@ -3638,12 +3654,14 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         ),
         crate::telemetry::SubmitResult::Submitted {
             report_id,
+            fingerprint,
             tracking_url,
         } => JsonRpcResponse::success(
             id,
             json!({
                 "success": true,
                 "report_id": report_id,
+                "fingerprint": fingerprint,
                 "tracking_url": tracking_url,
                 "message": "Error report submitted successfully. Thank you for helping improve Clean Language!"
             }),
@@ -4859,11 +4877,15 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
     // Track locally for fix notifications
     let mut store = ReportStore::load();
     store.add_report(&report);
+    if let Some(fp) = result.fingerprint() {
+        store.update_fingerprint(&report.report_id, fp);
+    }
     let _ = store.save();
 
     match result {
         crate::telemetry::submit::SubmitResult::Submitted {
             report_id: rid,
+            fingerprint,
             tracking_url,
         } => {
             let published_dir = diag_path.join("published").join(&full_sha);
@@ -4873,6 +4895,7 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
                 id,
                 json!({
                     "success": true, "status": "published", "report_id": rid,
+                    "fingerprint": fingerprint,
                     "tracking_url": tracking_url, "sha": full_sha,
                     "message": "Diagnostic published to the error server. The Clean Language team will be notified."
                 }),

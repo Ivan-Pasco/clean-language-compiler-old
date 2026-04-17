@@ -25,11 +25,13 @@ pub enum SubmitResult {
     /// Successfully submitted to the backend
     Submitted {
         report_id: String,
+        fingerprint: Option<String>,
         tracking_url: String,
     },
     /// Bug was already fixed — server returned fix details
     AlreadyFixed {
         report_id: String,
+        fingerprint: Option<String>,
         fixed_in_version: String,
         fix_description: Option<String>,
         message: String,
@@ -37,6 +39,7 @@ pub enum SubmitResult {
     /// Bug is known and being worked on
     Known {
         report_id: String,
+        fingerprint: Option<String>,
         occurrences: u64,
         current_status: String,
         message: String,
@@ -48,6 +51,18 @@ pub enum SubmitResult {
     },
     /// Failed to submit and failed to queue
     Error { message: String },
+}
+
+impl SubmitResult {
+    /// Extract the fingerprint from any variant that carries one
+    pub fn fingerprint(&self) -> Option<&str> {
+        match self {
+            Self::Submitted { fingerprint, .. }
+            | Self::AlreadyFixed { fingerprint, .. }
+            | Self::Known { fingerprint, .. } => fingerprint.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 /// Status update from the backend for a tracked report
@@ -412,10 +427,16 @@ fn try_http_submit(report: &ErrorReport) -> Result<SubmitResult, String> {
                     .and_then(|v| v.as_str())
                     .unwrap_or("received");
 
+                let fingerprint = json
+                    .get("fingerprint")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
                 // Handle "already_fixed" — bug was resolved in a newer version
                 if status == "already_fixed" {
                     return Ok(SubmitResult::AlreadyFixed {
                         report_id,
+                        fingerprint,
                         fixed_in_version: json
                             .get("fixed_in_version")
                             .and_then(|v| v.as_str())
@@ -437,6 +458,7 @@ fn try_http_submit(report: &ErrorReport) -> Result<SubmitResult, String> {
                 if status == "known" {
                     return Ok(SubmitResult::Known {
                         report_id,
+                        fingerprint,
                         occurrences: json
                             .get("occurrences")
                             .and_then(|v| v.as_u64())
@@ -463,6 +485,7 @@ fn try_http_submit(report: &ErrorReport) -> Result<SubmitResult, String> {
 
                 return Ok(SubmitResult::Submitted {
                     report_id,
+                    fingerprint,
                     tracking_url: tracking,
                 });
             }
@@ -470,6 +493,7 @@ fn try_http_submit(report: &ErrorReport) -> Result<SubmitResult, String> {
 
         Ok(SubmitResult::Submitted {
             report_id,
+            fingerprint: None,
             tracking_url,
         })
     } else {

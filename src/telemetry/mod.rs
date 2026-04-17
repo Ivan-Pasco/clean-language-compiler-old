@@ -202,9 +202,16 @@ pub fn report_compile_failure(errors: &[crate::error::CompilerError], source_fil
     store.add_report(&report);
     let _ = store.save();
 
-    // Submit in background thread — don't block the CLI
+    // Submit in background thread — don't block the CLI.
+    // Capture the server-returned fingerprint so the local record is confirmed.
+    let report_id = report.report_id.clone();
     std::thread::spawn(move || {
-        let _ = submit_report(&report);
+        let result = submit_report(&report);
+        if let Some(fp) = result.fingerprint() {
+            let mut store = ReportStore::load();
+            store.update_fingerprint(&report_id, fp);
+            let _ = store.save();
+        }
     });
 }
 
@@ -226,21 +233,121 @@ pub fn check_version_change() {
         // On version change, check for fix notifications
         if config.enabled {
             check_fix_notifications();
+            flush_pending_telemetry(true);
+        }
+    }
+}
 
-            // Also try to flush any pending reports
-            if let Some(queue) = PendingQueue::new() {
-                if queue.count() > 0 {
-                    let result = queue.flush(|report| {
-                        matches!(submit_report(report), SubmitResult::Submitted { .. })
-                    });
-                    if result.sent > 0 {
-                        eprintln!(
-                            "Sent {} queued error report(s) to the Clean Language team.",
-                            result.sent
-                        );
-                    }
+/// Flush any queued reports and retry reports that were saved locally but never
+/// confirmed by the backend (fingerprint never captured).
+///
+/// Safe to call at any time; does nothing if telemetry is disabled. When `verbose`
+/// is true, prints a short summary to stderr for CLI contexts; MCP contexts should
+/// pass false so stdout/stderr stay clean.
+pub fn flush_pending_telemetry(verbose: bool) {
+    let config = TelemetryConfig::load();
+    if !config.enabled {
+        return;
+    }
+
+    // 1) Flush the offline queue: reports that failed to POST are saved as full
+    //    ErrorReport JSON under ~/.cleen/telemetry/pending_reports/.
+    let mut queue_sent = 0usize;
+    if let Some(queue) = PendingQueue::new() {
+        if queue.count() > 0 {
+            let mut store = ReportStore::load();
+            let mut store_dirty = false;
+            let flush_result = queue.flush(|report| {
+                let result = submit_report(report);
+                if let Some(fp) = result.fingerprint() {
+                    store.update_fingerprint(&report.report_id, fp);
+                    store_dirty = true;
                 }
+                matches!(
+                    result,
+                    SubmitResult::Submitted { .. }
+                        | SubmitResult::AlreadyFixed { .. }
+                        | SubmitResult::Known { .. }
+                )
+            });
+            if store_dirty {
+                let _ = store.save();
             }
+            queue_sent = flush_result.sent;
+        }
+    }
+
+    // 2) Retry reports that live in reported_errors.json with no fingerprint.
+    //    Historically these were accepted by the server but the client discarded
+    //    the returned fingerprint, so the local record was never confirmed.
+    //    Re-POST is safe: the server deduplicates by content hash.
+    let mut retry_confirmed = 0usize;
+    let store = ReportStore::load();
+    let unposted = store.unposted_report_ids();
+    if !unposted.is_empty() {
+        let mut store = store;
+        for report_id in unposted {
+            let tracked = match store
+                .get_all_reports()
+                .iter()
+                .find(|r| r.report_id == report_id)
+                .cloned()
+            {
+                Some(r) => r,
+                None => continue,
+            };
+
+            let minimal = ErrorReport {
+                schema_version: "1.0.0".to_string(),
+                report_id: tracked.report_id.clone(),
+                timestamp: tracked.reported_at,
+                source: report::ReportSource {
+                    channel: "retry".to_string(),
+                    compiler_version: tracked.compiler_version.clone(),
+                    os: std::env::consts::OS.to_string(),
+                    arch: std::env::consts::ARCH.to_string(),
+                    runtime: None,
+                },
+                error: ReportError {
+                    code: tracked.error_code.clone(),
+                    category: "unknown".to_string(),
+                    component: "compiler".to_string(),
+                    severity: "bug".to_string(),
+                    message: tracked.summary.clone(),
+                    file_context: None,
+                },
+                reproduction: None,
+                ai_context: None,
+                user: report::ReportUser {
+                    anonymous: config.contact_email.is_none(),
+                    contact: config.contact_email.clone(),
+                    consent_level: config.consent_level.to_string(),
+                },
+            };
+
+            let result = submit_report(&minimal);
+            if let Some(fp) = result.fingerprint() {
+                store.update_fingerprint(&tracked.report_id, fp);
+                retry_confirmed += 1;
+            }
+        }
+        if retry_confirmed > 0 {
+            let _ = store.save();
+        }
+    }
+
+    if verbose {
+        if queue_sent > 0 {
+            eprintln!(
+                "Sent {} queued error report(s) to the Clean Language team.",
+                queue_sent
+            );
+        }
+        if retry_confirmed > 0 {
+            eprintln!(
+                "Confirmed {} previously-reported error(s) with the server.",
+                retry_confirmed
+            );
         }
     }
 }
