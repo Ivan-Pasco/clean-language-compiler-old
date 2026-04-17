@@ -972,7 +972,7 @@ fn compile_file_with_opt_and_tier(
     // as well as module imports like `import Math`
     let wasm_binary =
         clean_language_compiler::compile_multi_file_with_memory_tier(
-            input_path, search_paths, opt_level, memory_tier,
+            input_path, search_paths, opt_level, Some(memory_tier), memory_tier,
         ).map_err(|errors| {
             let source = fs::read_to_string(input_file).unwrap_or_default();
             for error in &errors {

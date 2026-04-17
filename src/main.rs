@@ -1026,15 +1026,17 @@ async fn handle_build(
         }
     }
 
-    // Resolve memory tier: explicit flag > standard default
-    let memory_tier = resolve_memory_tier(memory_tier_str.as_deref(), "auto")?;
+    // Parse explicit CLI tier (if any) and compute target default
+    let explicit_tier = parse_memory_tier_flag(memory_tier_str.as_deref())?;
+    let target_default = clean_language_compiler::MemoryTier::default_for_target("auto");
 
     // Use the multi-file compiler with memory tier
     let wasm_binary = clean_language_compiler::compile_multi_file_with_memory_tier(
         &input,
         lib_paths,
         opt_level,
-        memory_tier,
+        explicit_tier,
+        target_default,
     )
     .map_err(|errors| {
         // Report all errors
@@ -1108,8 +1110,9 @@ async fn handle_compile(
         "Starting multi-file compilation"
     );
 
-    // Resolve memory tier: explicit flag > target-based default > standard
-    let memory_tier = resolve_memory_tier(memory_tier_str.as_deref(), &target)?;
+    // Parse explicit CLI tier (if any) and compute target default
+    let explicit_tier = parse_memory_tier_flag(memory_tier_str.as_deref())?;
+    let target_default = clean_language_compiler::MemoryTier::default_for_target(&target);
 
     // Use multi-file compilation to support file path imports
     // This automatically handles `import "path/to/file.cln"` syntax
@@ -1119,7 +1122,8 @@ async fn handle_compile(
         input_path,
         search_paths,
         opt_level,
-        memory_tier,
+        explicit_tier,
+        target_default,
     ) {
         Ok(binary) => binary,
         Err(errors) => {
@@ -1189,25 +1193,24 @@ async fn handle_compile(
     Ok(())
 }
 
-/// Resolve the effective memory tier from CLI flag and target.
+/// Parse `--memory-tier` CLI flag value into `Option<MemoryTier>`.
 ///
-/// Priority: explicit `--memory-tier` flag > target-based default > standard.
-fn resolve_memory_tier(
+/// Returns `Ok(Some(tier))` if explicitly provided, `Ok(None)` if absent,
+/// or `Err` if the provided string is not a valid tier name.
+fn parse_memory_tier_flag(
     tier_str: Option<&str>,
-    target: &str,
-) -> Result<clean_language_compiler::MemoryTier, Box<dyn std::error::Error>> {
-    if let Some(s) = tier_str {
-        clean_language_compiler::MemoryTier::from_str(s).ok_or_else(|| {
-            format!(
-                "Unknown memory tier '{}'. Valid values: embedded, minimal, standard, heavy, canvas",
-                s
-            )
-            .into()
-        })
-    } else {
-        Ok(clean_language_compiler::MemoryTier::default_for_target(
-            target,
-        ))
+) -> Result<Option<clean_language_compiler::MemoryTier>, Box<dyn std::error::Error>> {
+    match tier_str {
+        Some(s) => {
+            let tier = clean_language_compiler::MemoryTier::from_str(s).ok_or_else(|| {
+                format!(
+                    "Unknown memory tier '{}'. Valid values: embedded, minimal, standard, heavy, canvas",
+                    s
+                )
+            })?;
+            Ok(Some(tier))
+        }
+        None => Ok(None),
     }
 }
 

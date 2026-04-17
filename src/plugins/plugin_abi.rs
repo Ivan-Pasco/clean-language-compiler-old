@@ -28,6 +28,23 @@ pub struct PluginManifest {
     /// Enforcement rules for project structure conventions
     #[serde(default)]
     pub enforcement: PluginEnforcement,
+    /// Memory budget tier requested by this plugin (MEMORY_POLICY.md §3.1 rule 3)
+    #[serde(default)]
+    pub memory: PluginMemory,
+}
+
+/// Memory configuration declared in a plugin's `[memory]` section.
+///
+/// A plugin MAY declare `tier = "canvas"` (or any valid tier name) to raise
+/// the default memory budget for projects that use it. The compiler picks
+/// the highest tier among all active plugins (MEMORY_POLICY.md §3.1 rule 3).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginMemory {
+    /// Memory tier this plugin expects. One of:
+    /// "embedded", "minimal", "standard", "heavy", "canvas".
+    /// Parsed via `MemoryTier::from_str`; unknown values produce a build error.
+    #[serde(default)]
+    pub tier: Option<String>,
 }
 
 /// Basic plugin information
@@ -817,5 +834,60 @@ mod tests {
         assert!(manifest.ai.description.is_none());
         assert!(manifest.ai.examples.is_empty());
         assert!(manifest.ai.constraints.is_empty());
+    }
+
+    #[test]
+    fn test_manifest_with_memory_tier() {
+        let toml_str = r#"
+            [plugin]
+            name = "frame.canvas"
+            version = "1.0.0"
+
+            [handles]
+            blocks = ["scene"]
+
+            [memory]
+            tier = "canvas"
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert_eq!(manifest.memory.tier, Some("canvas".to_string()));
+    }
+
+    #[test]
+    fn test_manifest_without_memory_section() {
+        let toml_str = r#"
+            [plugin]
+            name = "frame.data"
+            version = "1.0.0"
+
+            [handles]
+            blocks = ["data"]
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert_eq!(manifest.memory.tier, None);
+    }
+
+    #[test]
+    fn test_manifest_memory_tier_unknown_string_parses() {
+        // The toml parsing itself succeeds for any string —
+        // validation happens in PluginRegistry::resolve_plugin_memory_tier()
+        let toml_str = r#"
+            [plugin]
+            name = "bad.plugin"
+            version = "1.0.0"
+
+            [handles]
+            blocks = ["bad"]
+
+            [memory]
+            tier = "gigantic"
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert_eq!(manifest.memory.tier, Some("gigantic".to_string()));
+        // Validation that "gigantic" is invalid happens at resolve time, not parse time
+        assert!(crate::MemoryTier::from_str("gigantic").is_none());
     }
 }

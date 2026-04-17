@@ -166,7 +166,7 @@ impl CompilationTarget {
 /// | Standard   | 32            | 2 MB        | 512       | 32 MB    |
 /// | Heavy      | 64            | 4 MB        | 1024      | 64 MB    |
 /// | Canvas     | 256           | 16 MB       | 1024      | 64 MB    |
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum MemoryTier {
     /// IoT, constrained devices — 4 initial pages, 16 max (1 MB)
     Embedded,
@@ -1451,13 +1451,19 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
 
 /// Compiles Clean Language with multi-file support and a specific memory tier.
 ///
-/// Same as `compile_multi_file` but sets the memory budget tier on the code generator,
-/// which controls initial/max WASM memory pages and emits the `clean:memory` custom section.
+/// Same as `compile_multi_file` but allows controlling the memory budget tier.
+///
+/// # Tier resolution precedence (MEMORY_POLICY.md §3.1):
+/// 1. `explicit_tier` (`Some`) — from `--memory-tier` CLI flag, always wins.
+/// 2. Highest tier declared by any active plugin's `[memory] tier` field.
+/// 3. `target_default` — inferred from `--target` via `MemoryTier::default_for_target`.
+/// 4. `MemoryTier::Standard` — ultimate fallback.
 pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     entry_path: P,
     search_paths: Vec<std::path::PathBuf>,
     opt_level: u8,
-    memory_tier: MemoryTier,
+    explicit_tier: Option<MemoryTier>,
+    target_default: MemoryTier,
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
     use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
     use crate::mir::lower_tast_to_mir_with_opt_level;
@@ -1468,7 +1474,8 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     tracing::info!(
         entry = %entry_path.as_ref().display(),
         opt_level = opt_level,
-        memory_tier = %memory_tier,
+        explicit_tier = ?explicit_tier,
+        target_default = %target_default,
         "Starting multi-file compilation with memory tier"
     );
 
@@ -1608,6 +1615,34 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
 
     // Stage 6: TAST to MIR
     let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, opt_level)?;
+
+    // Resolve effective memory tier (MEMORY_POLICY.md §3.1):
+    // explicit CLI flag > max(plugin tiers) > target default > standard
+    let memory_tier = if let Some(tier) = explicit_tier {
+        tracing::debug!(tier = %tier, "Using explicit CLI memory tier");
+        tier
+    } else {
+        let plugin_tier = registry
+            .as_ref()
+            .map(|r| r.resolve_plugin_memory_tier())
+            .transpose()
+            .map_err(|e| vec![e])?
+            .flatten();
+
+        if let Some(pt) = plugin_tier {
+            let effective = std::cmp::max(pt, target_default);
+            tracing::info!(
+                plugin_tier = %pt,
+                target_default = %target_default,
+                effective = %effective,
+                "Memory tier resolved from plugin declaration"
+            );
+            effective
+        } else {
+            tracing::debug!(tier = %target_default, "Using target-default memory tier");
+            target_default
+        }
+    };
 
     // Stage 7: WASM generation with memory tier
     use crate::codegen::mir_codegen::MirCodeGenerator;
@@ -2008,5 +2043,50 @@ start:
 
         // At least basic functionality should work
         assert!(passed > 0, "No stdlib integration tests passed");
+    }
+
+    #[test]
+    fn test_memory_tier_ordering() {
+        use std::cmp::Ordering;
+        assert_eq!(
+            MemoryTier::Embedded.cmp(&MemoryTier::Minimal),
+            Ordering::Less
+        );
+        assert_eq!(
+            MemoryTier::Minimal.cmp(&MemoryTier::Standard),
+            Ordering::Less
+        );
+        assert_eq!(MemoryTier::Standard.cmp(&MemoryTier::Heavy), Ordering::Less);
+        assert_eq!(MemoryTier::Heavy.cmp(&MemoryTier::Canvas), Ordering::Less);
+
+        // max() picks the highest tier
+        assert_eq!(
+            std::cmp::max(MemoryTier::Standard, MemoryTier::Canvas),
+            MemoryTier::Canvas
+        );
+        assert_eq!(
+            std::cmp::max(MemoryTier::Heavy, MemoryTier::Minimal),
+            MemoryTier::Heavy
+        );
+    }
+
+    #[test]
+    fn test_memory_tier_from_str() {
+        assert_eq!(MemoryTier::from_str("embedded"), Some(MemoryTier::Embedded));
+        assert_eq!(MemoryTier::from_str("canvas"), Some(MemoryTier::Canvas));
+        assert_eq!(MemoryTier::from_str("STANDARD"), Some(MemoryTier::Standard));
+        assert_eq!(MemoryTier::from_str("gigantic"), None);
+    }
+
+    #[test]
+    fn test_memory_tier_default_for_target() {
+        assert_eq!(MemoryTier::default_for_target("web"), MemoryTier::Standard);
+        assert_eq!(MemoryTier::default_for_target("native"), MemoryTier::Heavy);
+        assert_eq!(
+            MemoryTier::default_for_target("embedded"),
+            MemoryTier::Embedded
+        );
+        assert_eq!(MemoryTier::default_for_target("wasi"), MemoryTier::Minimal);
+        assert_eq!(MemoryTier::default_for_target("auto"), MemoryTier::Standard);
     }
 }

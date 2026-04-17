@@ -460,6 +460,7 @@ mod tests {
             ai: Default::default(),
             paths: Default::default(),
             enforcement: Default::default(),
+            memory: Default::default(),
         }
     }
 

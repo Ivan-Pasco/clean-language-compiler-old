@@ -407,6 +407,40 @@ impl PluginRegistry {
         &self.manifests
     }
 
+    /// Resolve the highest memory tier declared by any active plugin.
+    ///
+    /// Returns `Ok(Some(tier))` if at least one plugin declares a `[memory] tier`,
+    /// `Ok(None)` if no plugin declares one, or `Err` if a plugin declares an
+    /// unknown tier string (build-time error per MEMORY_POLICY.md §3.1 rule 3).
+    pub fn resolve_plugin_memory_tier(
+        &self,
+    ) -> Result<Option<crate::MemoryTier>, crate::error::CompilerError> {
+        let mut max_tier: Option<crate::MemoryTier> = None;
+
+        for (plugin_name, manifest) in &self.manifests {
+            if let Some(ref tier_str) = manifest.memory.tier {
+                let tier = crate::MemoryTier::from_str(tier_str).ok_or_else(|| {
+                    crate::error::CompilerError::PluginError {
+                        message: format!(
+                            "Plugin '{}' declares unknown memory tier '{}'. \
+                                 Valid values: embedded, minimal, standard, heavy, canvas",
+                            plugin_name, tier_str
+                        ),
+                        location: None,
+                    }
+                })?;
+                tracing::debug!(
+                    plugin = %plugin_name,
+                    tier = %tier,
+                    "Plugin declares memory tier"
+                );
+                max_tier = Some(max_tier.map_or(tier, |prev| std::cmp::max(prev, tier)));
+            }
+        }
+
+        Ok(max_tier)
+    }
+
     /// Get all lifecycle registrations collected from loaded plugins.
     pub fn registrations(&self) -> &PluginRegistrations {
         &self.registrations
@@ -1209,6 +1243,7 @@ mod tests {
             ai: Default::default(),
             paths: Default::default(),
             enforcement: Default::default(),
+            memory: Default::default(),
         };
 
         let registry = PluginRegistryBuilder::new()
