@@ -28,6 +28,10 @@ use tracing::{debug, trace};
 
 /// Returns the ordering index for the 5 core sections, or None for non-core sections.
 /// Order: import: (1) → start: (2) → state: (3) → class (4) → functions: (5)
+///
+/// Enforces the ordering rule documented in
+/// `documentation/Clean_Language_Specification.md:1114-1134` and formalised in
+/// `spec/grammar.ebnf:544`.
 fn core_section_order(kind: &TokenKind) -> Option<u8> {
     match kind {
         TokenKind::Import => Some(1),
@@ -62,7 +66,7 @@ pub struct TokenParser {
     /// Original source text for raw content extraction in framework blocks
     pub(super) source_content: String,
     /// When true, skip section ordering enforcement (used for plugin output parsing
-    /// where sections like external:, functions:, start: may appear in any order)
+    /// where generated sections may appear in any order)
     pub(super) lenient_section_order: bool,
 }
 
@@ -102,7 +106,7 @@ impl TokenParser {
     }
 
     /// Enable lenient section ordering (for plugin output parsing).
-    /// When enabled, sections like external:, functions:, start: can appear in any order.
+    /// When enabled, the 5 core sections can appear in any order.
     pub fn set_lenient_section_order(&mut self, lenient: bool) {
         self.lenient_section_order = lenient;
     }
@@ -153,7 +157,9 @@ impl TokenParser {
         let mut source_block: Option<crate::ast::Statement> = None;
 
         // Track section ordering for the 5 core sections:
-        // import: (1) → start: (2) → state: (3) → class (4) → functions: (5)
+        // import: (1) → start: (2) → state: (3) → class (4) → functions: (5).
+        // Per documentation/Clean_Language_Specification.md:1114 and
+        // spec/grammar.ebnf:544, these must appear in order when present.
         let mut last_core_section: u8 = 0;
 
         while !self.is_at_end() {
@@ -171,29 +177,36 @@ impl TokenParser {
                 continue;
             }
 
-            // Enforce section ordering for the 5 core sections
-            // (skipped in lenient mode, used for plugin output parsing)
+            // Enforce section ordering for the 5 core sections (SYN007).
+            // Skipped in lenient mode, used for plugin output parsing.
             if !self.lenient_section_order {
                 if let Some(current_order) = core_section_order(self.current_kind()) {
                     if current_order < last_core_section {
                         let current_name = core_section_name(current_order);
                         let last_name = core_section_name(last_core_section);
                         let token = self.current();
-                        self.errors.push(CompilerError::parse_error(
-                        format!(
-                            "'{}' section is out of order — it must appear before '{}'",
-                            current_name, last_name
-                        ),
-                        Some(token.location.clone()),
-                        Some(
-                            "Expected section order: import:, start:, state:, class, functions:"
-                                .to_string(),
-                        ),
-                    ));
+                        use crate::error::{ErrorContext, ErrorType};
+                        self.errors.push(CompilerError::Syntax {
+                            context: Box::new(
+                                ErrorContext::new(
+                                    format!(
+                                        "'{}' section is out of order — it must appear before '{}'",
+                                        current_name, last_name
+                                    ),
+                                    Some(
+                                        "Expected section order: import:, start:, state:, class, functions:"
+                                            .to_string(),
+                                    ),
+                                    ErrorType::Syntax,
+                                    Some(token.location.clone()),
+                                )
+                                .with_error_code("SYN007"),
+                            ),
+                        });
                     }
                     last_core_section = last_core_section.max(current_order);
                 }
-            } // end if !self.lenient_section_order
+            }
 
             // Parse top-level declarations
             match self.current_kind() {
