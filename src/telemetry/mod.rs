@@ -171,6 +171,20 @@ pub fn report_compile_failure(errors: &[crate::error::CompilerError], source_fil
         None => return,
     };
 
+    // Only auto-report errors that indicate a compiler/plugin bug. Errors in
+    // the user's source code (syntax, types, lex, missing files, etc.) are the
+    // compiler *working correctly* — surfacing them to the bug dashboard
+    // pollutes it with non-bugs and inflates occurrence counts against issues
+    // that aren't actionable. See errors.cleanlanguage.dev scope: it tracks
+    // bugs in the Clean Language toolchain, not in user programs.
+    if !is_likely_compiler_bug(first_error) {
+        tracing::debug!(
+            error_kind = ?std::mem::discriminant(first_error),
+            "Skipping auto-report: error is user-caused, not a compiler bug"
+        );
+        return;
+    }
+
     let (code, category, component, message) = extract_error_info(first_error);
 
     let report_id = generate_report_id();
@@ -431,6 +445,26 @@ pub fn check_fix_notifications() {
     }
 }
 
+/// Classify whether a compiler error likely indicates a bug in the Clean
+/// Language toolchain (compiler/plugin) vs. a correctness issue in the user's
+/// source code. Only the former is appropriate for the bug dashboard.
+///
+/// Policy:
+/// - `Codegen` / `Validation` / `Memory` / `Module` — compiler-internal
+///   failures, always treated as bugs.
+/// - `PluginError` — bubbles up from plugin WASM execution; treated as a bug
+///   (either the plugin or the compiler that invoked it is at fault).
+/// - Everything else — syntax/type/lex errors are the compiler correctly
+///   rejecting bad user code; IO errors are the user's environment; runtime
+///   errors surface from executing user code.
+fn is_likely_compiler_bug(error: &crate::error::CompilerError) -> bool {
+    use crate::error::CompilerError::*;
+    matches!(
+        error,
+        Codegen { .. } | Validation { .. } | Memory { .. } | Module { .. } | PluginError { .. }
+    )
+}
+
 /// Extract structured error info from a CompilerError
 fn extract_error_info(error: &crate::error::CompilerError) -> (String, String, String, String) {
     match error {
@@ -500,6 +534,45 @@ fn extract_error_info(error: &crate::error::CompilerError) -> (String, String, S
             "plugin".to_string(),
             message.clone(),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::CompilerError;
+
+    #[test]
+    fn user_syntax_errors_are_not_bugs() {
+        let err = CompilerError::syntax_error("unexpected token", None, None);
+        assert!(!is_likely_compiler_bug(&err));
+    }
+
+    #[test]
+    fn user_type_errors_are_not_bugs() {
+        let err = CompilerError::type_error("type mismatch", None, None);
+        assert!(!is_likely_compiler_bug(&err));
+    }
+
+    #[test]
+    fn missing_file_is_not_a_bug() {
+        let err = CompilerError::io_error("file not found", None, None);
+        assert!(!is_likely_compiler_bug(&err));
+    }
+
+    #[test]
+    fn codegen_errors_are_bugs() {
+        let err = CompilerError::codegen_error("internal codegen failure", None, None);
+        assert!(is_likely_compiler_bug(&err));
+    }
+
+    #[test]
+    fn plugin_errors_are_bugs() {
+        let err = CompilerError::PluginError {
+            message: "plugin failed".to_string(),
+            location: None,
+        };
+        assert!(is_likely_compiler_bug(&err));
     }
 }
 
