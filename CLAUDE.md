@@ -131,6 +131,15 @@ When plugins change in the ecosystem, update `src/mcp/server.rs` → `get_ecosys
 
 ## Cross-Component Work Policy
 
-Do NOT directly edit code in other components. Instead, create a prompt in `../management/cross-component-prompts/` with: Component, Issue Type, Priority, Description, Context, Suggested Fix, Files Affected.
+Do NOT directly edit code in other components. You CAN read other components to understand interfaces. You MUST NOT modify their code.
 
-You CAN read other components to understand interfaces. You MUST NOT modify their code.
+**When you discover something in another component, choose ONE channel:**
+
+| What you found | Channel | Why |
+|---|---|---|
+| A **bug** (crash, wrong output, spec violation, regression) | **`report_error` MCP tool** — MANDATORY | Fingerprint dedup, occurrence tracking, automatic user notification on fix, visible on the ecosystem dashboard at errors.cleanlanguage.dev. This is the canonical bug-tracking path per `../CLAUDE.md` § "Cross-Component Bug Reporting". |
+| A **design proposal, directive change, schema/API request, architectural ask** | Markdown file in `../management/cross-component-prompts/` | Requires discussion, not auto-fix. Not a bug. |
+
+**Never** write a markdown prompt for something that is a bug. Bug reports that sit in a markdown file are invisible to the dashboard dedup, don't notify users when fixed, and can't be pulled via `list_component_bugs`.
+
+If in doubt: it's a bug → `report_error`.
