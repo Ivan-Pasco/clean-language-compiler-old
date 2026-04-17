@@ -21,7 +21,17 @@ impl FileClass {
 
     /// Register only specification-compliant file functions
     /// Clean Language specification defines only: file.read, file.write, file.append, file.exists, file.delete
+    ///
+    /// Skipped when no `file_*` import is reachable — see HttpClass for the
+    /// same pattern; both classes generate wrappers over Layer 2 host bridge
+    /// imports that get tree-shaken by the Import Minimality Rule.
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+        if !codegen.has_reachable_prefix("file_") {
+            tracing::debug!(
+                "FileClass: no file_* imports reachable, skipping wrapper registration"
+            );
+            return Ok(());
+        }
         self.register_basic_operations(codegen)?;
         self.register_info_operations(codegen)?;
         Ok(())

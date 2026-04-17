@@ -612,37 +612,69 @@ impl CodeGenerator {
     pub fn set_reachable_imports(&mut self, reachable: HashSet<String>) {
         self.reachable_imports = Some(reachable);
     }
+
+    /// Returns true if any reachable call name starts with the given prefix.
+    /// Used by stdlib class registration to decide whether to generate
+    /// wrapper functions (e.g. skip HttpClass wrappers entirely when no
+    /// `http_*` import is reachable — the wrappers would reference
+    /// tree-shaken imports and fail to generate).
+    ///
+    /// When reachability has not been populated (legacy compilation path),
+    /// returns true so registration behaves as before.
+    pub fn has_reachable_prefix(&self, prefix: &str) -> bool {
+        match &self.reachable_imports {
+            Some(set) => set.iter().any(|n| n.starts_with(prefix)),
+            None => true,
+        }
+    }
 } // impl CodeGenerator (constructors and basic setup)
 
-/// Returns true if the WASM import `field` name is a Layer 3 server-only
-/// function whose emission should be gated on reachability.
-///
-/// Only Layer 3 server imports are gated here: HTTP server routing, request
-/// context, response, session, and auth. A client-only Clean program (e.g.
-/// `plugins: frame.ui`) does not reference any of these, and the host it
-/// runs on (e.g. a browser) cannot provide them — so emitting them would
-/// force every host to stub ~30 server functions that will never be called.
-///
-/// Layer 2 categories (http client, file I/O, crypto, database) are NOT
-/// gated here because Clean's stdlib classes (`HttpClass`, `FileClass`,
-/// `JsonClass`, etc.) generate WASM wrapper functions that reference these
-/// imports at registration time regardless of user-program usage. Filtering
-/// them would require refactoring the stdlib class registration to be lazy.
-///
-/// Internal imports (print, math, memory, string ops, type conversion,
-/// list ops, JSON) are never filtered — they are invoked from synthesized
-/// codegen paths without a 1:1 MIR call name.
+/// Returns true if the WASM import `field` name is a Layer 2 or Layer 3
+/// external-I/O function whose emission should be gated on reachability.
 ///
 /// Spec: platform-architecture/EXECUTION_LAYERS.md — Import Minimality Rule.
+///
+/// **Layer 3 (server extensions):** HTTP server routing, request context,
+/// response, session, auth. A browser host cannot provide these.
+///
+/// **Layer 2 (host bridge):** HTTP client, file I/O, crypto, database,
+/// timer. A browser host cannot provide most of these either; a CLI host
+/// may not provide HTTP client etc. Per the spec:
+///
+/// > A **browser host** (client-only) cannot provide Layer 3 functions.
+/// > A **CLI host** (no HTTP stack) cannot provide `http_get`, `http_post`.
+/// > Emitting them forces non-networked hosts to stub them.
+///
+/// Internal runtime imports (print, math, memory, string ops, type
+/// conversion, list ops, JSON) are never gated — they are called from
+/// synthesized codegen paths without a 1:1 MIR call name, and are cheap
+/// for any host to provide.
 pub(crate) fn is_reachability_gated_import(field: &str) -> bool {
-    // HTTP server / request / response (Layer 3)
+    // Layer 3 — server extensions
     if field.starts_with("_http_") || field.starts_with("_req_") || field.starts_with("_res_") {
         return true;
     }
-    // Session / auth (Layer 3)
     if field.starts_with("_session_") || field.starts_with("_auth_") {
         return true;
     }
+
+    // Layer 2 — host bridge external I/O.
+    // Gated so that a client-only program (`plugins: frame.ui` with no
+    // Http/File/etc. references) produces a .wasm whose import section
+    // contains zero Layer 2 I/O functions.
+    if field.starts_with("http_") {
+        return true;
+    }
+    if field.starts_with("file_") {
+        return true;
+    }
+    if field.starts_with("_crypto_") || field.starts_with("crypto_") {
+        return true;
+    }
+    if field.starts_with("_db_") {
+        return true;
+    }
+
     false
 }
 

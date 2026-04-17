@@ -19,8 +19,24 @@ impl HttpClass {
         Self
     }
 
-    /// Register all Http class methods as static functions
+    /// Register all Http class methods as static functions.
+    ///
+    /// Skipped entirely when the module does not reference any `http_*`
+    /// import: every wrapper method here calls one of the HTTP host bridge
+    /// imports, and those get tree-shaken under the Import Minimality Rule
+    /// (EXECUTION_LAYERS.md) when unused. Generating wrappers that call
+    /// tree-shaken imports would fail here and produce invalid WASM even
+    /// if it succeeded. Client-only programs (e.g. `plugins: frame.ui`
+    /// running in a browser) need this skip so the output does not carry
+    /// any Layer 2 HTTP imports the host cannot provide.
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+        if !codegen.has_reachable_prefix("http_") {
+            tracing::debug!(
+                "HttpClass: no http_* imports reachable, skipping wrapper registration"
+            );
+            return Ok(());
+        }
+
         // Basic HTTP operations
         self.register_basic_operations(codegen)?;
 
