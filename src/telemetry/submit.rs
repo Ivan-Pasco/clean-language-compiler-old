@@ -19,6 +19,59 @@ const API_BASE: &str = "https://errors.cleanlanguage.dev/api/v1";
 /// HTTP timeout for submissions (short to avoid blocking)
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Path to the rate-limit backoff file. When the server asks us to back off,
+/// we record the "don't retry before" epoch-seconds timestamp here. Every
+/// submission checks it first and skips the HTTP round-trip if we're still
+/// in the backoff window — this keeps the client from DDoS'ing the server
+/// when rate-limiting is in effect across many short-lived CLI invocations.
+fn backoff_file() -> Option<std::path::PathBuf> {
+    super::config::TelemetryConfig::telemetry_dir().map(|d| d.join("retry_after"))
+}
+
+/// Public re-export so the `flush_pending_telemetry` entry point can short-
+/// circuit before walking the queue. Same semantics as
+/// `backoff_seconds_remaining` but visible outside this module.
+pub fn backoff_seconds_remaining_public() -> Option<u64> {
+    backoff_seconds_remaining()
+}
+
+/// Return Some(seconds_remaining) if we're still inside a server-requested
+/// backoff window; None if no active backoff or it has elapsed.
+fn backoff_seconds_remaining() -> Option<u64> {
+    let path = backoff_file()?;
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let until_epoch = contents.trim().parse::<u64>().ok()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if now < until_epoch {
+        Some(until_epoch - now)
+    } else {
+        // Window elapsed — clean up the marker so future reads are quick
+        let _ = std::fs::remove_file(path);
+        None
+    }
+}
+
+/// Record a backoff window after a `rate_limited` response.
+fn record_backoff(retry_after_seconds: u64) {
+    let Some(path) = backoff_file() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Cap at 1 hour — even if the server sends a huge value, we shouldn't
+    // silently disable telemetry for days. The server can re-ask each cycle.
+    let until = now + retry_after_seconds.min(3600);
+    let _ = std::fs::write(path, until.to_string());
+}
+
 /// Result of a submission attempt
 #[derive(Debug)]
 pub enum SubmitResult {
@@ -43,6 +96,13 @@ pub enum SubmitResult {
         occurrences: u64,
         current_status: String,
         message: String,
+    },
+    /// Backend rate-limited this request. Report is queued; no retry before
+    /// `retry_after_seconds` elapses.
+    RateLimited {
+        report_id: String,
+        local_path: String,
+        retry_after_seconds: u64,
     },
     /// Backend unreachable — queued locally for later
     Queued {
@@ -79,9 +139,15 @@ pub struct StatusUpdate {
 }
 
 /// Attempt to submit an error report to the backend API.
-/// Falls back to local queue if the backend is unreachable.
+/// Falls back to local queue if the backend is unreachable or rate-limiting.
 pub fn submit_report(report: &ErrorReport) -> SubmitResult {
-    let report_id = report.report_id.clone();
+    // Respect any in-flight rate-limit backoff. When the server recently
+    // returned `{"error":"rate_limited","retry_after":N}` we recorded the
+    // resume-at timestamp on disk; skip the HTTP call entirely until it
+    // elapses so a burst of CLI invocations does not DDoS the backend.
+    if let Some(seconds_remaining) = backoff_seconds_remaining() {
+        return queue_for_rate_limit(report, seconds_remaining);
+    }
 
     // Run HTTP in a separate thread to avoid tokio runtime conflict
     let report_clone = report.clone();
@@ -92,29 +158,103 @@ pub fn submit_report(report: &ErrorReport) -> SubmitResult {
     match http_result {
         Ok(result) => result,
         Err(reason) => {
-            // Backend unreachable — log visibly and queue locally.
+            // Backend unreachable or rate-limiting — log visibly and queue locally.
             // Prior behavior silently dropped the error which made upload bugs
             // invisible for days; surface the reason on stderr so users know
             // a retry will happen later (see MCP_UPLOAD_BROKEN lineage).
+            if let Some(retry_after) = parse_rate_limited_reason(&reason) {
+                eprintln!(
+                    "[telemetry] server rate-limited error reports (retry_after={}s); queued locally.",
+                    retry_after
+                );
+                return queue_for_rate_limit(report, retry_after);
+            }
             eprintln!(
                 "[telemetry] error report upload failed ({}); queued locally for retry.",
                 reason
             );
-            match PendingQueue::new() {
-                Some(queue) => match queue.enqueue(report) {
-                    Ok(path) => SubmitResult::Queued {
-                        report_id,
-                        local_path: path.to_string_lossy().to_string(),
-                    },
-                    Err(e) => SubmitResult::Error {
-                        message: format!("Failed to queue report locally: {}", e),
-                    },
-                },
-                None => SubmitResult::Error {
-                    message: "Cannot determine home directory for local queue".to_string(),
-                },
-            }
+            queue_for_retry(report, &reason)
         }
+    }
+}
+
+/// If `try_http_submit` came back with our internal "rate_limited" error
+/// signature, extract the retry_after seconds. Returns None otherwise.
+fn parse_rate_limited_reason(reason: &str) -> Option<u64> {
+    if !reason.starts_with("rate_limited") {
+        return None;
+    }
+    let start = reason.find("retry_after=")? + "retry_after=".len();
+    let end = reason[start..]
+        .find('s')
+        .map(|i| start + i)
+        .unwrap_or(reason.len());
+    reason[start..end].parse::<u64>().ok()
+}
+
+/// Queue a rate-limited report. The difference from `queue_for_retry` is that
+/// the SubmitResult carries the `retry_after_seconds` so callers (and the
+/// MCP tool user) can surface the backoff expectation.
+fn queue_for_rate_limit(report: &ErrorReport, retry_after_seconds: u64) -> SubmitResult {
+    let report_id = report.report_id.clone();
+    match PendingQueue::new() {
+        Some(queue) => match queue.enqueue(report) {
+            Ok(path) => SubmitResult::RateLimited {
+                report_id,
+                local_path: path.to_string_lossy().to_string(),
+                retry_after_seconds,
+            },
+            Err(e) => SubmitResult::Error {
+                message: format!("Failed to queue rate-limited report: {}", e),
+            },
+        },
+        None => SubmitResult::Error {
+            message: "Cannot determine home directory for local queue".to_string(),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_limited_reason_parses_retry_after() {
+        assert_eq!(
+            parse_rate_limited_reason("rate_limited (retry_after=3600s)"),
+            Some(3600)
+        );
+        assert_eq!(
+            parse_rate_limited_reason("rate_limited (retry_after=60s)"),
+            Some(60)
+        );
+    }
+
+    #[test]
+    fn non_rate_limit_reason_returns_none() {
+        assert_eq!(parse_rate_limited_reason("HTTP 502 Bad Gateway"), None);
+        assert_eq!(parse_rate_limited_reason("Connection refused"), None);
+        assert_eq!(parse_rate_limited_reason(""), None);
+    }
+}
+
+/// Helper: enqueue a report for later retry. Used by both the rate-limit path
+/// and the generic network-failure path so the disk state is identical.
+fn queue_for_retry(report: &ErrorReport, _reason: &str) -> SubmitResult {
+    let report_id = report.report_id.clone();
+    match PendingQueue::new() {
+        Some(queue) => match queue.enqueue(report) {
+            Ok(path) => SubmitResult::Queued {
+                report_id,
+                local_path: path.to_string_lossy().to_string(),
+            },
+            Err(e) => SubmitResult::Error {
+                message: format!("Failed to queue report locally: {}", e),
+            },
+        },
+        None => SubmitResult::Error {
+            message: "Cannot determine home directory for local queue".to_string(),
+        },
     }
 }
 
@@ -449,12 +589,35 @@ fn try_http_submit(report: &ErrorReport) -> Result<SubmitResult, String> {
     .send()
     .map_err(|e| e.to_string())?;
 
-    if response.status().is_success() {
+    // Detect rate-limiting early, regardless of HTTP status code. The server
+    // currently returns HTTP 200 with `{"error":"rate_limited","retry_after":N}`
+    // (it SHOULD return 429, but we defend against both shapes).
+    let status_code = response.status();
+    let body_text = response.text().unwrap_or_default();
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body_text) {
+        let is_rate_limited = status_code.as_u16() == 429
+            || json
+                .get("error")
+                .and_then(|v| v.as_str())
+                .map(|e| e == "rate_limited")
+                .unwrap_or(false);
+        if is_rate_limited {
+            let retry_after = json
+                .get("retry_after")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(60);
+            record_backoff(retry_after);
+            return Err(format!("rate_limited (retry_after={}s)", retry_after));
+        }
+    }
+
+    if status_code.is_success() {
         let report_id = report.report_id.clone();
         let tracking_url = format!("https://errors.cleanlanguage.dev/report/{}", report_id);
 
-        if let Ok(body) = response.text() {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+        {
+            let body = &body_text;
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
                 let status = json
                     .get("status")
                     .and_then(|v| v.as_str())
@@ -530,6 +693,6 @@ fn try_http_submit(report: &ErrorReport) -> Result<SubmitResult, String> {
             tracking_url,
         })
     } else {
-        Err(format!("HTTP {}", response.status()))
+        Err(format!("HTTP {}", status_code))
     }
 }

@@ -3679,6 +3679,25 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
                 "message": "Report saved locally. It will be sent when connectivity to the error reporting service is available."
             }),
         ),
+        crate::telemetry::SubmitResult::RateLimited {
+            report_id,
+            local_path,
+            retry_after_seconds,
+        } => JsonRpcResponse::success(
+            id,
+            json!({
+                "success": true,
+                "queued": true,
+                "rate_limited": true,
+                "report_id": report_id,
+                "local_path": local_path,
+                "retry_after_seconds": retry_after_seconds,
+                "message": format!(
+                    "Report saved locally. Server rate-limited; retry will occur after {}s.",
+                    retry_after_seconds
+                )
+            }),
+        ),
         crate::telemetry::SubmitResult::Error { message } => JsonRpcResponse::success(
             id,
             json!({
@@ -4946,6 +4965,22 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
                 "success": true, "status": "queued", "report_id": rid,
                 "local_path": local_path, "sha": full_sha,
                 "message": "Error server unreachable. Report queued locally — will be submitted when connectivity is restored."
+            }),
+        ),
+        crate::telemetry::submit::SubmitResult::RateLimited {
+            report_id: rid,
+            local_path,
+            retry_after_seconds,
+        } => JsonRpcResponse::success(
+            id,
+            json!({
+                "success": true, "status": "queued", "rate_limited": true,
+                "report_id": rid, "local_path": local_path, "sha": full_sha,
+                "retry_after_seconds": retry_after_seconds,
+                "message": format!(
+                    "Error server rate-limited. Report queued locally — retry after {}s.",
+                    retry_after_seconds
+                )
             }),
         ),
         crate::telemetry::submit::SubmitResult::Error { message } => JsonRpcResponse::success(

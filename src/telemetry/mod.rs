@@ -264,6 +264,24 @@ pub fn flush_pending_telemetry(verbose: bool) {
         return;
     }
 
+    // Respect server-side backoff. If the server recently told us to back off,
+    // skip the entire flush — even a single POST under rate-limit would
+    // burn our quota and the resubmission path would just re-queue each one.
+    if let Some(seconds_remaining) = submit::backoff_seconds_remaining_public() {
+        if verbose {
+            eprintln!(
+                "[telemetry] server rate-limit active ({}s remaining); skipping flush.",
+                seconds_remaining
+            );
+        } else {
+            tracing::debug!(
+                seconds_remaining,
+                "Skipping telemetry flush: server rate-limit active"
+            );
+        }
+        return;
+    }
+
     // 1) Flush the offline queue: reports that failed to POST are saved as full
     //    ErrorReport JSON under ~/.cleen/telemetry/pending_reports/.
     let mut queue_sent = 0usize;

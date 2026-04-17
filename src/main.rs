@@ -2643,6 +2643,16 @@ fn handle_report(
             println!("Local path: {}", local_path);
             println!("It will be sent when the error reporting service is available.");
         }
+        clean_language_compiler::telemetry::SubmitResult::RateLimited {
+            report_id,
+            local_path,
+            retry_after_seconds,
+        } => {
+            println!("Report saved locally — backend is rate-limiting submissions.");
+            println!("Report ID: {}", report_id);
+            println!("Local path: {}", local_path);
+            println!("Retry will be attempted after {}s.", retry_after_seconds);
+        }
         clean_language_compiler::telemetry::SubmitResult::Error { message } => {
             eprintln!("Failed to save report: {}", message);
         }
