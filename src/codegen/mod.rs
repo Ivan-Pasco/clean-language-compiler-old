@@ -26,6 +26,7 @@ pub mod optimizations;
 mod stdlib_generator;
 mod type_conversion;
 mod type_manager;
+pub mod validate;
 // Legacy wasm_generator module removed - use mir_codegen instead
 mod codegen_generation;
 mod codegen_module_builder;

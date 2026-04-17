@@ -895,6 +895,7 @@ pub fn compile_with_plugins_and_opt_level(
         .generate(mir_result.program)
         .map_err(|errors| errors)?;
     let wasm_bytes = codegen_result.wasm_bytes;
+    crate::codegen::validate::validate_generated_wasm(&wasm_bytes).map_err(|e| vec![e])?;
     tracing::info!(
         bytes = wasm_bytes.len(),
         "Compilation complete: WASM generated"
@@ -1064,6 +1065,9 @@ pub fn compile_with_target(
     let codegen_result = mir_codegen
         .generate(mir_result.program)
         .map_err(|errors| errors)?;
+
+    crate::codegen::validate::validate_generated_wasm(&codegen_result.wasm_bytes)
+        .map_err(|e| vec![e])?;
 
     tracing::info!(
         bytes = codegen_result.wasm_bytes.len(),
@@ -1441,6 +1445,9 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
 
     let codegen_result = mir_codegen.generate(mir_result.program)?;
 
+    crate::codegen::validate::validate_generated_wasm(&codegen_result.wasm_bytes)
+        .map_err(|e| vec![e])?;
+
     tracing::info!(
         bytes = codegen_result.wasm_bytes.len(),
         "Multi-file compilation complete"
@@ -1658,6 +1665,13 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
 
     let codegen_result = mir_codegen.generate(mir_result.program)?;
 
+    // Validate the generated WASM before handing it off. If codegen ever
+    // produces a malformed module we want to catch it here with offset +
+    // section info, not let it flow out to the server/runtime where it
+    // surfaces as an opaque "failed to parse".
+    crate::codegen::validate::validate_generated_wasm(&codegen_result.wasm_bytes)
+        .map_err(|e| vec![e])?;
+
     tracing::info!(
         bytes = codegen_result.wasm_bytes.len(),
         memory_tier = %memory_tier,
@@ -1870,6 +1884,7 @@ pub fn compile_minimal(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
     let type_result = TypeChecker::check(resolved_hir)?;
     let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, 0)?; // No optimization for testing
     let wasm_bytes = generate_wasm_from_mir_minimal(mir_result.program).map_err(|e| vec![e])?;
+    crate::codegen::validate::validate_generated_wasm(&wasm_bytes).map_err(|e| vec![e])?;
 
     Ok(wasm_bytes)
 }
