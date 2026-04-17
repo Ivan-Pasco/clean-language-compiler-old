@@ -20,11 +20,26 @@ pub mod type_conversions;
 
 use wasm_encoder::{Instruction, MemArg, ValType};
 
-/// Memory layout constants
-/// HEAP_START must be after all static data sections to avoid memory overlap.
-/// Set to 1MB (16 WASM pages) to allow generous compile-time data sections for
-/// programs with many string literals (SQL queries, HTML templates, etc.).
-/// Must match MAX_MEMORY_SIZE in src/codegen/memory.rs.
+/// Runtime heap start offset — the initial value of the `__heap_ptr` WASM global.
+///
+/// This is the byte offset where the bump allocator begins at runtime.
+/// It is set to 1 MB (16 WASM pages) so that the entire first megabyte is
+/// reserved for compile-time static data (the WASM data section containing
+/// string literals, SQL queries, HTML templates, etc.).
+///
+/// **Not to be confused with `codegen::DATA_SECTION_START` (1 KB)**, which is
+/// the offset where the *data section layout engine* begins placing static data.
+/// The relationship:
+///
+///   [0 .. 1 KB]           Null-pointer guard / reserved
+///   [1 KB .. 1 MB]        Data section (string pool, globals) — layout starts
+///                          at `DATA_SECTION_START` (1024), up to `MAX_MEMORY_SIZE`
+///   [1 MB .. top]         Runtime heap — bump allocator starts at `HEAP_START`
+///
+/// Must match `MAX_MEMORY_SIZE` in `src/codegen/memory.rs` (both are 1 MB).
+/// Must match the `NEXT_ALLOCATION_OFFSET` in `src/bin/wasmtime_runner.rs`.
+/// The host bridge reads `__heap_ptr` from WASM exports to know where the
+/// heap begins (see MEMORY_POLICY.md section 7.2).
 pub const HEAP_START: u32 = 1048576;
 pub const ALIGNMENT: u32 = 8;
 

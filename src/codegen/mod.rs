@@ -57,8 +57,23 @@ pub const PAIRS_TYPE_ID: u32 = 6;
 pub const PAGE_SIZE: u32 = 65536;
 pub const HEADER_SIZE: u32 = 16; // 16-byte header for memory blocks
 pub const MIN_ALLOCATION: u32 = 16;
-pub const HEAP_START: usize = 1024; // Start heap at 1KB, leaving room for static data
-pub const DEFAULT_MAX_MEMORY_PAGES: u64 = 1024; // 64MB max - generous for SSR, no cost until used
+/// Data-section layout offset: static data (string pool, globals) is placed
+/// starting at byte 1024 in WASM linear memory.  This is *not* the runtime
+/// heap start — see `native_stdlib::HEAP_START` (1 MB) for that.
+///
+/// Layout:
+///   [0 .. 1 KB]           Reserved (null-pointer guard, stack scratch)
+///   [1 KB .. ~1 MB]       Data section (string literals, static data)
+///   [1 MB .. top]         Runtime heap (bump allocator, `__heap_ptr` global)
+pub const DATA_SECTION_START: usize = 1024;
+
+/// Legacy alias — some stdlib code references `HEAP_START` meaning the
+/// data-section start.  New code should use `DATA_SECTION_START` instead.
+pub const HEAP_START: usize = DATA_SECTION_START;
+
+/// Default maximum WASM memory pages for the `standard` tier (32 MB).
+/// Other tiers override this via `MemoryTier::max_pages()`.
+pub const DEFAULT_MAX_MEMORY_PAGES: u64 = 512;
 
 /// Code generator for Clean Language
 pub struct CodeGenerator {
@@ -296,11 +311,11 @@ impl CodeGenerator {
         Ok(codegen)
     }
 
-    /// Configure the memory section with standard settings
+    /// Configure the memory section with standard tier defaults.
     fn setup_memory_section(&mut self) {
         self.memory_section.memory(wasm_encoder::MemoryType {
             minimum: 32, // 32 pages = 2MB initial memory (1MB data section + 1MB heap)
-            maximum: Some(DEFAULT_MAX_MEMORY_PAGES), // 64MB max - physical memory only committed on grow
+            maximum: Some(DEFAULT_MAX_MEMORY_PAGES), // standard tier: 512 pages = 32 MB
             memory64: false,
             shared: false,
         });

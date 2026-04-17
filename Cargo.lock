@@ -448,7 +448,7 @@ checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
 name = "clean-language-compiler"
-version = "0.30.54"
+version = "0.30.55"
 dependencies = [
  "anyhow",
  "arbitrary",

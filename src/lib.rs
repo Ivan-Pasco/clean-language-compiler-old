@@ -154,6 +154,109 @@ impl CompilationTarget {
     }
 }
 
+/// Memory budget tier for WASM modules.
+///
+/// Each tier defines initial pages, max pages, and intended use case.
+/// Values are from `platform-architecture/MEMORY_POLICY.md` section 3.
+///
+/// | Tier       | Initial Pages | Initial Size | Max Pages | Max Size |
+/// |------------|---------------|-------------|-----------|----------|
+/// | Embedded   | 4             | 256 KB      | 16        | 1 MB     |
+/// | Minimal    | 8             | 512 KB      | 128       | 8 MB     |
+/// | Standard   | 32            | 2 MB        | 512       | 32 MB    |
+/// | Heavy      | 64            | 4 MB        | 1024      | 64 MB    |
+/// | Canvas     | 256           | 16 MB       | 1024      | 64 MB    |
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MemoryTier {
+    /// IoT, constrained devices — 4 initial pages, 16 max (1 MB)
+    Embedded,
+    /// CLI tools, simple scripts, plugins — 8 initial pages, 128 max (8 MB)
+    Minimal,
+    /// Web apps, APIs, PWAs, mobile, server — 32 initial pages, 512 max (32 MB)
+    #[default]
+    Standard,
+    /// SSR, large data processing, desktop — 64 initial pages, 1024 max (64 MB)
+    Heavy,
+    /// Games, real-time rendering — 256 initial pages, 1024 max (64 MB)
+    Canvas,
+}
+
+impl MemoryTier {
+    /// Initial WASM memory pages for this tier.
+    pub fn initial_pages(self) -> u64 {
+        match self {
+            MemoryTier::Embedded => 4,
+            MemoryTier::Minimal => 8,
+            MemoryTier::Standard => 32,
+            MemoryTier::Heavy => 64,
+            MemoryTier::Canvas => 256,
+        }
+    }
+
+    /// Maximum WASM memory pages for this tier.
+    pub fn max_pages(self) -> u64 {
+        match self {
+            MemoryTier::Embedded => 16,
+            MemoryTier::Minimal => 128,
+            MemoryTier::Standard => 512,
+            MemoryTier::Heavy => 1024,
+            MemoryTier::Canvas => 1024,
+        }
+    }
+
+    /// Maximum memory in bytes for this tier.
+    pub fn max_bytes(self) -> usize {
+        self.max_pages() as usize * 65536
+    }
+
+    /// Tier name as used in CLI flags and custom sections.
+    pub fn name(self) -> &'static str {
+        match self {
+            MemoryTier::Embedded => "embedded",
+            MemoryTier::Minimal => "minimal",
+            MemoryTier::Standard => "standard",
+            MemoryTier::Heavy => "heavy",
+            MemoryTier::Canvas => "canvas",
+        }
+    }
+
+    /// Parse a tier from string (CLI flag value).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "embedded" => Some(MemoryTier::Embedded),
+            "minimal" => Some(MemoryTier::Minimal),
+            "standard" => Some(MemoryTier::Standard),
+            "heavy" => Some(MemoryTier::Heavy),
+            "canvas" => Some(MemoryTier::Canvas),
+            _ => None,
+        }
+    }
+
+    /// Default memory tier for a given compilation target string.
+    ///
+    /// Mapping from MEMORY_POLICY.md section 3.2:
+    /// - web, pwa, nodejs, server → standard
+    /// - native → heavy
+    /// - embedded → embedded
+    /// - wasi → minimal
+    /// - auto/standalone/plugin → standard (default)
+    pub fn default_for_target(target: &str) -> Self {
+        match target.to_lowercase().as_str() {
+            "web" | "pwa" | "nodejs" | "server" => MemoryTier::Standard,
+            "native" => MemoryTier::Heavy,
+            "embedded" => MemoryTier::Embedded,
+            "wasi" => MemoryTier::Minimal,
+            _ => MemoryTier::Standard,
+        }
+    }
+}
+
+impl std::fmt::Display for MemoryTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// Minimum compatible compiler version for plugins
 /// Plugins should check compatibility using semver rules
 pub const MIN_PLUGIN_VERSION: &str = "0.14.0";
@@ -1341,6 +1444,189 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
     tracing::info!(
         bytes = codegen_result.wasm_bytes.len(),
         "Multi-file compilation complete"
+    );
+
+    Ok(codegen_result.wasm_bytes)
+}
+
+/// Compiles Clean Language with multi-file support and a specific memory tier.
+///
+/// Same as `compile_multi_file` but sets the memory budget tier on the code generator,
+/// which controls initial/max WASM memory pages and emits the `clean:memory` custom section.
+pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
+    entry_path: P,
+    search_paths: Vec<std::path::PathBuf>,
+    opt_level: u8,
+    memory_tier: MemoryTier,
+) -> Result<Vec<u8>, Vec<CompilerError>> {
+    use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
+    use crate::mir::lower_tast_to_mir_with_opt_level;
+    use crate::resolver::Resolver;
+    use crate::typechecker::TypeChecker;
+    use std::sync::Arc;
+
+    tracing::info!(
+        entry = %entry_path.as_ref().display(),
+        opt_level = opt_level,
+        memory_tier = %memory_tier,
+        "Starting multi-file compilation with memory tier"
+    );
+
+    // Step 0: Read entry file to extract plugins
+    let entry_source = std::fs::read_to_string(entry_path.as_ref()).map_err(|e| {
+        vec![CompilerError::io_error(
+            format!("Failed to read entry file: {}", e),
+            None,
+            None,
+        )]
+    })?;
+
+    let plugin_names = extract_plugins(&entry_source);
+
+    let registry = if !plugin_names.is_empty() {
+        tracing::info!(plugins = ?plugin_names, "Loading plugins for multi-file compilation");
+
+        let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
+            vec![CompilerError::PluginError {
+                message: format!("Failed to create plugin loader: {}", e),
+                location: None,
+            }]
+        })?;
+
+        let reg = loader.load_plugins(&plugin_names).map_err(|e| {
+            vec![CompilerError::PluginError {
+                message: format!("Failed to load plugins: {}", e),
+                location: None,
+            }]
+        })?;
+
+        Some(Arc::new(reg))
+    } else {
+        None
+    };
+
+    // Step 1: Build the compilation unit
+    let mut config = MultiFileCompilerConfig::default()
+        .with_search_paths(search_paths)
+        .with_opt_level(opt_level);
+
+    if let Some(ref reg) = registry {
+        config = config.with_plugin_registry(Arc::clone(reg));
+    }
+
+    let compiler = MultiFileCompiler::with_config(config);
+    let unit = compiler.build_from_file(&entry_path)?;
+
+    // Step 2: Merge all HIR programs into a single unified program
+    let merged_hir = {
+        use crate::hir::HirProgram;
+
+        let mut all_functions = Vec::new();
+        let mut all_classes = Vec::new();
+        let mut start_function = None;
+        let mut all_imports = Vec::new();
+        let mut all_tests = Vec::new();
+        let mut all_externals = Vec::new();
+        let mut merged_state: Option<crate::hir::HirStateBlock> = None;
+        let mut root_location = None;
+
+        for module_id in &unit.compilation_order {
+            if let Some(module) = unit.get_module(*module_id) {
+                if let Some(hir) = &module.hir {
+                    for func in &hir.functions {
+                        all_functions.push(func.clone());
+                    }
+                    for class in &hir.classes {
+                        all_classes.push(class.clone());
+                    }
+                    if module.is_entry {
+                        start_function = hir.start_function.clone();
+                        merged_state = hir.state.clone();
+                        root_location = Some(hir.location.clone());
+                    }
+                    for import in &hir.imports {
+                        all_imports.push(import.clone());
+                    }
+                    if module.is_entry {
+                        for test in &hir.tests {
+                            all_tests.push(test.clone());
+                        }
+                    }
+                    for external in &hir.externals {
+                        all_externals.push(external.clone());
+                    }
+                }
+            }
+        }
+
+        let location = root_location.unwrap_or_else(|| crate::ast::SourceLocation {
+            file: entry_path.as_ref().to_string_lossy().to_string(),
+            line: 1,
+            column: 1,
+            byte_start: None,
+            byte_end: None,
+        });
+
+        HirProgram {
+            functions: all_functions,
+            classes: all_classes,
+            start_function,
+            imports: all_imports,
+            tests: all_tests,
+            state: merged_state,
+            watch_blocks: Vec::new(),
+            externals: all_externals,
+            location,
+        }
+    };
+
+    let bridge_functions = registry
+        .as_ref()
+        .map(|r| r.bridge_functions().to_vec())
+        .unwrap_or_default();
+    let lang_to_bridge = registry
+        .as_ref()
+        .map(|r| r.language_to_bridge_map())
+        .unwrap_or_default();
+
+    // Stage 4: Resolution
+    let resolution_result = if bridge_functions.is_empty() {
+        Resolver::resolve(merged_hir)?
+    } else if lang_to_bridge.is_empty() {
+        Resolver::resolve_with_bridge_functions(merged_hir, &bridge_functions)?
+    } else {
+        Resolver::resolve_with_bridge_and_language_aliases(
+            merged_hir,
+            &bridge_functions,
+            &lang_to_bridge,
+        )?
+    };
+    let resolved_hir = resolution_result.resolved_hir;
+
+    // Stage 5: Type checking
+    let type_result = TypeChecker::check(resolved_hir)?;
+
+    // Stage 6: TAST to MIR
+    let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, opt_level)?;
+
+    // Stage 7: WASM generation with memory tier
+    use crate::codegen::mir_codegen::MirCodeGenerator;
+    let mut mir_codegen = MirCodeGenerator::default();
+    mir_codegen.set_memory_tier(memory_tier);
+
+    if !bridge_functions.is_empty() {
+        mir_codegen.set_bridge_functions(bridge_functions);
+    }
+    if !lang_to_bridge.is_empty() {
+        mir_codegen.set_language_to_bridge_map(lang_to_bridge);
+    }
+
+    let codegen_result = mir_codegen.generate(mir_result.program)?;
+
+    tracing::info!(
+        bytes = codegen_result.wasm_bytes.len(),
+        memory_tier = %memory_tier,
+        "Multi-file compilation with memory tier complete"
     );
 
     Ok(codegen_result.wasm_bytes)

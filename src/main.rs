@@ -145,6 +145,10 @@ enum Commands {
         #[arg(short = 'O', long, default_value_t = 2)]
         opt_level: u8,
 
+        /// Memory budget tier (embedded, minimal, standard, heavy, canvas)
+        #[arg(long, default_value = None)]
+        memory_tier: Option<String>,
+
         /// Include debug information
         #[arg(short, long)]
         debug: bool,
@@ -165,6 +169,10 @@ enum Commands {
         /// Target platform for bridge generation (browser, node, ios, android, server)
         #[arg(short, long, default_value = "server")]
         target: String,
+
+        /// Memory budget tier (embedded, minimal, standard, heavy, canvas)
+        #[arg(long, default_value = None)]
+        memory_tier: Option<String>,
 
         /// Run tests during compilation
         #[arg(long)]
@@ -493,13 +501,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             output,
             lib_paths,
             opt_level,
+            memory_tier,
             debug,
-        } => handle_build(input, output, lib_paths, opt_level, debug, &output_config).await?,
+        } => {
+            handle_build(
+                input,
+                output,
+                lib_paths,
+                opt_level,
+                memory_tier,
+                debug,
+                &output_config,
+            )
+            .await?
+        }
         Commands::Compile {
             input,
             output,
             opt_level,
             target,
+            memory_tier,
             test,
             include_tests,
             plugins,
@@ -509,6 +530,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 output,
                 opt_level,
                 target,
+                memory_tier,
                 test,
                 include_tests,
                 plugins,
@@ -695,6 +717,7 @@ async fn handle_serve(
         wasm_output.clone(),
         2,                    // opt_level
         "server".to_string(), // target - no bridge needed for serve
+        None,                 // memory_tier - use target default
         false,                // test
         false,                // include_tests
         true,                 // plugins enabled
@@ -973,6 +996,7 @@ async fn handle_build(
     output: Option<String>,
     lib_paths: Vec<PathBuf>,
     opt_level: u8,
+    memory_tier_str: Option<String>,
     debug: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1002,18 +1026,26 @@ async fn handle_build(
         }
     }
 
-    // Use the multi-file compiler
-    let wasm_binary = clean_language_compiler::compile_multi_file(&input, lib_paths, opt_level)
-        .map_err(|errors| {
-            // Report all errors
-            let error_messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
-            output_config.report_errors(&errors, None);
-            format!(
-                "Build failed with {} error(s): {}",
-                errors.len(),
-                error_messages.join("; ")
-            )
-        })?;
+    // Resolve memory tier: explicit flag > standard default
+    let memory_tier = resolve_memory_tier(memory_tier_str.as_deref(), "auto")?;
+
+    // Use the multi-file compiler with memory tier
+    let wasm_binary = clean_language_compiler::compile_multi_file_with_memory_tier(
+        &input,
+        lib_paths,
+        opt_level,
+        memory_tier,
+    )
+    .map_err(|errors| {
+        // Report all errors
+        let error_messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+        output_config.report_errors(&errors, None);
+        format!(
+            "Build failed with {} error(s): {}",
+            errors.len(),
+            error_messages.join("; ")
+        )
+    })?;
 
     // Write output
     fs::write(&output_file, wasm_binary)?;
@@ -1030,6 +1062,7 @@ async fn handle_compile(
     output: String,
     opt_level: u8,
     target: String,
+    memory_tier_str: Option<String>,
     test: bool,
     _include_tests: bool,
     plugins: bool,
@@ -1075,21 +1108,28 @@ async fn handle_compile(
         "Starting multi-file compilation"
     );
 
+    // Resolve memory tier: explicit flag > target-based default > standard
+    let memory_tier = resolve_memory_tier(memory_tier_str.as_deref(), &target)?;
+
     // Use multi-file compilation to support file path imports
     // This automatically handles `import "path/to/file.cln"` syntax
     // as well as module imports like `import Math`
     let _ = plugins; // Ignore the flag for now, multi-file compilation handles imports
-    let wasm_binary =
-        match clean_language_compiler::compile_multi_file(input_path, search_paths, opt_level) {
-            Ok(binary) => binary,
-            Err(errors) => {
-                let source = fs::read_to_string(&input).unwrap_or_default();
-                output_config.report_errors(&errors, Some(&source));
-                // Auto-report compile failure if telemetry is enabled
-                clean_language_compiler::telemetry::report_compile_failure(&errors, &input);
-                return Err(format!("Compilation failed with {} errors", errors.len()).into());
-            }
-        };
+    let wasm_binary = match clean_language_compiler::compile_multi_file_with_memory_tier(
+        input_path,
+        search_paths,
+        opt_level,
+        memory_tier,
+    ) {
+        Ok(binary) => binary,
+        Err(errors) => {
+            let source = fs::read_to_string(&input).unwrap_or_default();
+            output_config.report_errors(&errors, Some(&source));
+            // Auto-report compile failure if telemetry is enabled
+            clean_language_compiler::telemetry::report_compile_failure(&errors, &input);
+            return Err(format!("Compilation failed with {} errors", errors.len()).into());
+        }
+    };
 
     // Note: Tests are not currently supported in the 7-stage pipeline
     if test {
@@ -1147,6 +1187,28 @@ async fn handle_compile(
     }
 
     Ok(())
+}
+
+/// Resolve the effective memory tier from CLI flag and target.
+///
+/// Priority: explicit `--memory-tier` flag > target-based default > standard.
+fn resolve_memory_tier(
+    tier_str: Option<&str>,
+    target: &str,
+) -> Result<clean_language_compiler::MemoryTier, Box<dyn std::error::Error>> {
+    if let Some(s) = tier_str {
+        clean_language_compiler::MemoryTier::from_str(s).ok_or_else(|| {
+            format!(
+                "Unknown memory tier '{}'. Valid values: embedded, minimal, standard, heavy, canvas",
+                s
+            )
+            .into()
+        })
+    } else {
+        Ok(clean_language_compiler::MemoryTier::default_for_target(
+            target,
+        ))
+    }
 }
 
 async fn handle_package(package_cmd: PackageCommands) -> Result<(), Box<dyn std::error::Error>> {

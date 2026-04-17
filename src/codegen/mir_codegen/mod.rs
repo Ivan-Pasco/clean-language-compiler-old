@@ -216,6 +216,10 @@ pub struct MirCodeGenerator<'a> {
     ///
     /// Maps bridge function name → list of `BuiltinType` parameter types.
     pub(super) bridge_param_types: HashMap<String, Vec<crate::builtins::registry::BuiltinType>>,
+
+    /// Memory budget tier — controls initial/max pages in the WASM memory section
+    /// and the `clean:memory` custom section emitted into the module.
+    pub(super) memory_tier: crate::MemoryTier,
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +258,7 @@ impl MirCodeGenerator<'_> {
             handler_indices: HashMap::new(),
             next_handler_index: 0,
             bridge_param_types: HashMap::new(),
+            memory_tier: crate::MemoryTier::Standard,
         }
     }
 
@@ -288,6 +293,7 @@ impl MirCodeGenerator<'_> {
             handler_indices: HashMap::new(),
             next_handler_index: 0,
             bridge_param_types: HashMap::new(),
+            memory_tier: crate::MemoryTier::Standard,
         }
     }
 
@@ -322,12 +328,18 @@ impl MirCodeGenerator<'_> {
             handler_indices: HashMap::new(),
             next_handler_index: 0,
             bridge_param_types: HashMap::new(),
+            memory_tier: crate::MemoryTier::Standard,
         }
     }
 
     /// Set the compilation target.
     pub fn set_target(&mut self, target: crate::CompilationTarget) {
         self.target = target;
+    }
+
+    /// Set the memory budget tier.
+    pub fn set_memory_tier(&mut self, tier: crate::MemoryTier) {
+        self.memory_tier = tier;
     }
 
     /// Set plugin bridge functions to be registered as WASM imports.

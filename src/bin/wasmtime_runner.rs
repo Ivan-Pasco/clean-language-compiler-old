@@ -6,9 +6,11 @@ use std::fs;
 use std::sync::Mutex;
 use wasmtime::{Caller, Extern, Linker, Memory, Module, Result, Store};
 
-// Global allocator for dynamic string storage with scope-based arena management
-// Start at 1MB (16 WASM pages) to avoid overlapping with compile-time data sections.
-// Must match native_stdlib::HEAP_START (1048576) in src/codegen/native_stdlib/mod.rs.
+// Global allocator for dynamic string storage with scope-based arena management.
+// Starts at 1 MB — the boundary between compile-time data sections and the
+// runtime heap.  Must match `native_stdlib::HEAP_START` (1,048,576) in
+// `src/codegen/native_stdlib/mod.rs`.  See MEMORY_POLICY.md section 7 for the
+// full memory layout:  [0..1KB] reserved, [1KB..1MB] data section, [1MB..] heap.
 static NEXT_ALLOCATION_OFFSET: Mutex<usize> = Mutex::new(1048576);
 
 // Scope marks for arena-style memory management

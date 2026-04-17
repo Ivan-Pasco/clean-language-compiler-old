@@ -98,6 +98,7 @@ struct CompileConfig {
     runtime: RuntimeType,
     optimization_level: OptimizationLevel,
     optimization_profile: Option<String>,
+    memory_tier: Option<clean_language_compiler::MemoryTier>,
     debug: bool,
     verbose: bool,
 }
@@ -268,6 +269,7 @@ fn parse_compile_args(args: &[String]) -> Result<CompileConfig, CompilerError> {
         runtime: RuntimeType::Auto,
         optimization_level: OptimizationLevel::Speed, // Default: -O2 equivalent
         optimization_profile: None,
+        memory_tier: None,
         debug: false,
         verbose: false,
     };
@@ -360,6 +362,29 @@ fn parse_compile_args(args: &[String]) -> Result<CompileConfig, CompilerError> {
                 } else {
                     return Err(CompilerError::runtime_error(
                         "Optimization option requires a value (0-3, none, speed, size, development, production, debug)".to_string(),
+                        None,
+                        None,
+                    ));
+                }
+            }
+            "--memory-tier" => {
+                if i + 1 < args.len() {
+                    config.memory_tier = Some(
+                        clean_language_compiler::MemoryTier::from_str(&args[i + 1]).ok_or_else(|| {
+                            CompilerError::runtime_error(
+                                format!(
+                                    "Unknown memory tier: '{}'. Valid values: embedded, minimal, standard, heavy, canvas",
+                                    args[i + 1]
+                                ),
+                                None,
+                                None,
+                            )
+                        })?,
+                    );
+                    i += 2;
+                } else {
+                    return Err(CompilerError::runtime_error(
+                        "Memory tier option requires a value (embedded, minimal, standard, heavy, canvas)".to_string(),
                         None,
                         None,
                     ));
@@ -476,11 +501,17 @@ fn compile_with_config(config: &CompileConfig) -> Result<(), CompilerError> {
         format!("{:?}", config.optimization_level)
     };
 
+    // Resolve memory tier: explicit flag > target-based default > standard
+    let memory_tier = config.memory_tier.unwrap_or_else(|| {
+        clean_language_compiler::MemoryTier::default_for_target(&config.target)
+    });
+
     if config.verbose {
         println!("🔧 Compile Configuration:");
         println!("   Input: {}", config.input_file);
         println!("   Output: {}", config.output_file);
         println!("   Target: {}", config.target);
+        println!("   Memory tier: {}", memory_tier);
         println!("   Runtime: {}", config.runtime);
         println!("   Optimization: {}", opt_info);
         println!("   Debug: {}", config.debug);
@@ -544,7 +575,7 @@ fn compile_with_config(config: &CompileConfig) -> Result<(), CompilerError> {
     };
 
     // Perform compilation with external plugin support
-    compile_file_with_opt(&config.input_file, &config.output_file, opt_level)?;
+    compile_file_with_opt_and_tier(&config.input_file, &config.output_file, opt_level, memory_tier)?;
 
     // Generate bridge files based on target
     let bridge_target = match config.target.to_lowercase().as_str() {
@@ -913,6 +944,15 @@ fn compile_file(input_file: &str, output_file: &str) -> Result<(), CompilerError
 }
 
 fn compile_file_with_opt(input_file: &str, output_file: &str, opt_level: u8) -> Result<(), CompilerError> {
+    compile_file_with_opt_and_tier(input_file, output_file, opt_level, clean_language_compiler::MemoryTier::Standard)
+}
+
+fn compile_file_with_opt_and_tier(
+    input_file: &str,
+    output_file: &str,
+    opt_level: u8,
+    memory_tier: clean_language_compiler::MemoryTier,
+) -> Result<(), CompilerError> {
     println!("🔨 Compiling {input_file} → {output_file}");
 
     // Get the input file path and its directory for search paths
@@ -931,7 +971,9 @@ fn compile_file_with_opt(input_file: &str, output_file: &str, opt_level: u8) -> 
     // This automatically handles `import "path/to/file.cln"` syntax
     // as well as module imports like `import Math`
     let wasm_binary =
-        clean_language_compiler::compile_multi_file(input_path, search_paths, opt_level).map_err(|errors| {
+        clean_language_compiler::compile_multi_file_with_memory_tier(
+            input_path, search_paths, opt_level, memory_tier,
+        ).map_err(|errors| {
             let source = fs::read_to_string(input_file).unwrap_or_default();
             for error in &errors {
                 display_error(error, &source, input_file);

@@ -571,14 +571,19 @@ impl MirCodeGenerator<'_> {
         );
     }
 
-    /// Set up the WASM memory section (32 pages minimum, 1024 pages maximum).
+    /// Set up the WASM memory section using the configured memory tier.
     pub(super) fn setup_memory_section(&mut self) -> Result<(), CompilerError> {
-        debug_mir!("DEBUG MIR: Setting up memory section with 32 pages (2MB) minimum");
+        let initial = self.memory_tier.initial_pages();
+        let max = self.memory_tier.max_pages();
+        debug_mir!(
+            "DEBUG MIR: Setting up memory section: tier={}, initial={} pages ({}KB), max={} pages ({}KB)",
+            self.memory_tier.name(), initial, initial * 64, max, max * 64
+        );
         self.wasm_generator
             .memory_section
             .memory(wasm_encoder::MemoryType {
-                minimum: 32,
-                maximum: Some(crate::codegen::DEFAULT_MAX_MEMORY_PAGES),
+                minimum: initial,
+                maximum: Some(max),
                 memory64: false,
                 shared: false,
             });
@@ -959,6 +964,22 @@ impl MirCodeGenerator<'_> {
         if let Ok(json_bytes) = serde_json::to_vec(&build_info) {
             let custom = wasm_encoder::CustomSection {
                 name: std::borrow::Cow::Borrowed("clean:build"),
+                data: std::borrow::Cow::Borrowed(&json_bytes),
+            };
+            module.section(&custom);
+        }
+
+        // 9. clean:memory custom section — memory tier metadata for host runtimes.
+        // Allows hosts (clean-server, JS loaders) to read the module's intended
+        // memory configuration without CLI flags.  See MEMORY_POLICY.md section 3.
+        let memory_info = serde_json::json!({
+            "tier": self.memory_tier.name(),
+            "initial_pages": self.memory_tier.initial_pages(),
+            "max_pages": self.memory_tier.max_pages(),
+        });
+        if let Ok(json_bytes) = serde_json::to_vec(&memory_info) {
+            let custom = wasm_encoder::CustomSection {
+                name: std::borrow::Cow::Borrowed("clean:memory"),
                 data: std::borrow::Cow::Borrowed(&json_bytes),
             };
             module.section(&custom);
