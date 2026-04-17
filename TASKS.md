@@ -872,6 +872,45 @@ In `extract_block_attributes` (func 324): `remaining.substring(0, eq_pos)` resul
 
 ---
 
+## 🟡 MEDIUM-HIGH: Import Minimality — Finish Tree-Shaking Stdlib Layer 2
+
+**Priority**: MEDIUM-HIGH
+**Discovered**: April 17, 2026
+**Status**: PARTIAL — HTTP/file/crypto/db/math gated (0.30.66–0.30.67); input/string/list still emitted.
+**Tracked as**: error report `f4030117-0f04-4f9b-88d3-62835c8cae42` (COD001_FOLLOWUP_STDLIB_LAZY).
+
+### Description
+`platform-architecture/EXECUTION_LAYERS.md` §"Import Minimality Rule — Test (planned strengthening)" lists the Layer 2 categories still emitted unconditionally. They need to be reachability-gated at the class-registration call site (same pattern as `register_math_operations` in 0.30.67 and HttpClass/FileClass in 0.30.66) so both the imports and their wrapper functions are removed together.
+
+### Remaining categories
+- `input_integer`, `input_float`, `input_yesno`, `input_range` (Layer 2, typed console input). Plain `input` stays always-on.
+- String primitives referenced from synthesized stdlib wrappers: `string.concat`, `string.split`, `string_compare`, `string_replace`.
+- `list.push_f64` (the only list primitive currently imported; more will come as list ops grow).
+
+### Blocker
+Early-order imports like `input_integer` cannot be gated at the import level — `register_import_function` returning `u32::MAX` shifts all subsequent import indices down, and some stdlib wrappers have captured Call(N) targets that expected the original layout. Attempting this in 0.30.67 produced "type mismatch at end of block" validation errors.
+
+### Fix plan
+For each stdlib class/category, gate the entire `register_*_operations` call in `src/codegen/mir_codegen/mod.rs` on `has_reachable_prefix("…")` so the imports AND their wrappers are both skipped — mirrors MathClass in 0.30.67. Check each wrapper for captured indices; any `get_function_index` lookup must tolerate `None` cleanly (the MathClass `if let Some(idx)` pattern works).
+
+### Files likely affected
+- `src/codegen/mir_codegen/mod.rs` — add gates around `register_console_imports`, string wrapper calls, list wrapper calls.
+- `src/codegen/codegen_module_builder.rs` — ensure each register_* function's wrappers tolerate missing imports (the emit_import guard pattern is already in place, just verify).
+- `src/stdlib/*.rs` — inspect for wrappers with eagerly-captured indices; prefer function_map lookups at wrapper-call time.
+
+### Verification
+After fix: compile `tests/cln/core/basics/00_minimal.cln`, inspect import section, confirm it contains only `print`, `printl`, `mem_*`, `float_to_string`, `string_to_float`, plus the core string/list primitives used by synthesized codegen. Expected import count: <15.
+
+### Current state
+| Version | Minimal-program import count |
+|---|---|
+| 0.30.65 | 80+ (baseline) |
+| 0.30.66 | 35 (HTTP/file/crypto/db gated) |
+| 0.30.67 | 19 (math class-level gated) |
+| Target  | <15 (input/string wrappers fully lazy) |
+
+---
+
 ## 🔴 CRITICAL: Codegen Bug — Complex Function Returns Empty (0.30.49+)
 
 **Priority**: CRITICAL
