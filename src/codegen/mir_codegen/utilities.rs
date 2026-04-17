@@ -902,8 +902,11 @@ impl MirCodeGenerator<'_> {
             .export_section
             .export("memory", wasm_encoder::ExportKind::Memory, 0);
 
-        // Export all user-defined functions
+        // Export all user-defined functions (skip tree-shaken sentinel indices)
         for (name, &index) in &self.wasm_generator.function_map {
+            if index == u32::MAX {
+                continue;
+            }
             let is_route_handler = name.starts_with("__route_handler_");
             let is_frame_callback = name == "_frame_callback";
             if is_route_handler
@@ -1027,14 +1030,18 @@ impl MirCodeGenerator<'_> {
 
         // Expand language-level names to the WASM import field names used by
         // host bridges. A call to `http.get` in the program maps to the
-        // import `http_get` on the WASM module.
+        // import `http_get` on the WASM module. Plugin bridge functions use
+        // underscore-prefixed names like `_http_set_cache`.
         let expansions: Vec<String> = names
             .iter()
             .flat_map(|n| {
                 let mut out = Vec::new();
                 if n.contains('.') {
-                    // "http.get" → "http_get"
-                    out.push(n.replace('.', "_"));
+                    // "http.set_cache" → "http_set_cache"
+                    let underscored = n.replace('.', "_");
+                    out.push(underscored.clone());
+                    // "http.set_cache" → "_http_set_cache" (plugin bridge name)
+                    out.push(format!("_{}", underscored));
                 }
                 if n.contains('_') && !n.starts_with('_') {
                     // "http_get" → "http.get"
