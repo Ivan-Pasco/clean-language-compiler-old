@@ -38,49 +38,64 @@ impl FileClass {
     }
 
     fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        register_stdlib_function(
-            codegen,
-            "file.read",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_read(codegen)?,
-        )?;
+        // Each wrapper is gated on whether its specific host import was emitted.
+        // The Import Minimality Rule tree-shakes unused `file_*` imports, so a
+        // program that only calls `file.read` will not have `file_delete`
+        // registered. Generating the `file.delete` wrapper in that case would
+        // reference a missing import (E007, mirrors HttpClass fix in 0.30.71).
+        if codegen.get_file_import_index("file_read").is_some() {
+            register_stdlib_function(
+                codegen,
+                "file.read",
+                &[WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_read(codegen)?,
+            )?;
+        }
 
-        register_stdlib_function(
-            codegen,
-            "file.write",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_write(codegen)?,
-        )?;
+        if codegen.get_file_import_index("file_write").is_some() {
+            register_stdlib_function(
+                codegen,
+                "file.write",
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_write(codegen)?,
+            )?;
+        }
 
-        register_stdlib_function(
-            codegen,
-            "file.append",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_append(codegen)?,
-        )?;
+        if codegen.get_file_import_index("file_append").is_some() {
+            register_stdlib_function(
+                codegen,
+                "file.append",
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_append(codegen)?,
+            )?;
+        }
 
-        register_stdlib_function(
-            codegen,
-            "file.delete",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_delete(codegen)?,
-        )?;
+        if codegen.get_file_import_index("file_delete").is_some() {
+            register_stdlib_function(
+                codegen,
+                "file.delete",
+                &[WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_delete(codegen)?,
+            )?;
+        }
 
         Ok(())
     }
 
     fn register_info_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        register_stdlib_function(
-            codegen,
-            "file.exists",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_exists(codegen)?,
-        )?;
+        if codegen.get_file_import_index("file_exists").is_some() {
+            register_stdlib_function(
+                codegen,
+                "file.exists",
+                &[WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_exists(codegen)?,
+            )?;
+        }
 
         Ok(())
     }

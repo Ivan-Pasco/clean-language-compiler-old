@@ -1,0 +1,13 @@
+// Test: core — Unary minus on number variable
+// Regression: E007 (type mismatch: expected i32, found f64) — previously
+// generate_unary_operation emitted I32Const(0)+I32Sub for MirUnaryOp::Neg
+// regardless of operand type, so negating a `number` produced an f64/i32
+// mismatch. Fix branches on operand type and emits F64Neg for f64.
+
+start:
+	number a = 3.5
+	number b = -a
+	print(b.toString())
+	integer i = 7
+	integer j = -i
+	print(j.toString())

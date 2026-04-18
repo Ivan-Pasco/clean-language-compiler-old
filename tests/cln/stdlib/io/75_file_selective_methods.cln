@@ -1,0 +1,9 @@
+// Test: stdlib/io — Selective file method use
+// Regression: E007 — "File import function 'file_delete' not found"
+// When only file.read is used, FileClass previously tried to register the
+// file.delete wrapper which referenced the tree-shaken file_delete import.
+// Each wrapper must gate on its specific host import reachability.
+
+start:
+	string contents = file.read("/tmp/cln-regression-read-only.txt")
+	print(contents)

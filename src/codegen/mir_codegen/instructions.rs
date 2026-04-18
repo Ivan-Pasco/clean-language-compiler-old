@@ -133,9 +133,12 @@ impl MirCodeGenerator<'_> {
                         // Value was consumed by the check, nothing to drop
                     }
                 } else {
-                    // Normal unary operation
+                    // Normal unary operation — need the operand MIR type so we
+                    // can emit the correct i32/f64 instructions (E0Xx avoids
+                    // mismatches when negating a `number`).
+                    let operand_type = self.get_operand_mir_type(operand);
                     self.load_operand(operand)?;
-                    self.generate_unary_operation(op)?;
+                    self.generate_unary_operation(op, operand_type.as_ref())?;
                     if let Some(dest) = instruction.dest {
                         self.store_to_local(dest)?;
                     } else {
@@ -1969,17 +1972,32 @@ impl MirCodeGenerator<'_> {
     }
 
     /// Generate WASM unary operation.
+    ///
+    /// `operand_type` is used to pick the correct instruction family (i32
+    /// vs f64). Negating a `number` (f64) with `0 - x` via i32 ops produces
+    /// a type-mismatch validation error, so this path must branch by type.
     pub(super) fn generate_unary_operation(
         &mut self,
         op: &MirUnaryOp,
+        operand_type: Option<&MirType>,
     ) -> Result<(), CompilerError> {
+        let is_f64 = matches!(operand_type, Some(MirType::F64));
         match op {
             MirUnaryOp::Neg => {
-                // Negate: 0 - x
-                self.current_instructions.push(Instruction::I32Const(0));
-                // Swap the order so we have: 0, x
-                // Then subtract: 0 - x
-                self.current_instructions.push(Instruction::I32Sub);
+                if is_f64 {
+                    // F64Neg is a single-instruction float negation and
+                    // preserves IEEE-754 sign correctly (e.g. -0.0, -NaN).
+                    self.current_instructions.push(Instruction::F64Neg);
+                } else {
+                    // Integer negate via two's complement: -x = ~x + 1.
+                    // Stackless — no temp local required, and avoids the
+                    // earlier bug where `0 - x` was emitted as
+                    // `[x, 0] ; i32.sub` = x (identity, not negation).
+                    self.current_instructions.push(Instruction::I32Const(-1));
+                    self.current_instructions.push(Instruction::I32Xor);
+                    self.current_instructions.push(Instruction::I32Const(1));
+                    self.current_instructions.push(Instruction::I32Add);
+                }
             }
             MirUnaryOp::Not => {
                 // Logical not: x == 0
