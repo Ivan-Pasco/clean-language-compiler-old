@@ -3621,6 +3621,38 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         });
     }
 
+    // Dev-mode gate: when the MCP server runs inside the source tree of the
+    // component being reported, route the report to the local dev queue
+    // instead of uploading. This prevents the dashboard from filling with
+    // in-progress work-in-flight from the platform authors themselves.
+    let dev_ctx = crate::telemetry::detect_dev_context_for_component(&report.error.component);
+    if dev_ctx.is_dev() {
+        let entry = crate::telemetry::dev_queue::entry_from(
+            &dev_ctx,
+            &report.error.code,
+            &report.error.component,
+            &report.error.message,
+            report.error.file_context.as_deref(),
+            crate::VERSION,
+        );
+        crate::telemetry::dev_queue::append(entry);
+
+        let payload = serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": format!(
+                    "Dev-mode: recorded locally (not uploaded).\nReason: {}\nComponent: {}\nError: {}",
+                    dev_ctx.reason().unwrap_or("dev"),
+                    report.error.component,
+                    report.error.code,
+                ),
+            }],
+            "dev_mode": true,
+            "dev_reason": dev_ctx.reason().unwrap_or("dev"),
+        });
+        return JsonRpcResponse::success(id, payload);
+    }
+
     // Store locally for fix notification tracking
     let mut store = ReportStore::load();
     store.add_report(&report);
@@ -4925,6 +4957,33 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
     if let Some(contact) = user_contact {
         report.user.contact = Some(contact);
         report.user.anonymous = false;
+    }
+
+    // Dev-mode gate: if the MCP server is running inside the reported
+    // component's source tree, the publish goes to the local dev queue.
+    let dev_ctx = crate::telemetry::detect_dev_context_for_component(&report.error.component);
+    if dev_ctx.is_dev() {
+        let entry = crate::telemetry::dev_queue::entry_from(
+            &dev_ctx,
+            &report.error.code,
+            &report.error.component,
+            &report.error.message,
+            report.error.file_context.as_deref(),
+            crate::VERSION,
+        );
+        crate::telemetry::dev_queue::append(entry);
+        let payload = serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": format!(
+                    "Dev-mode: diagnostic recorded locally (not uploaded).\nReason: {}",
+                    dev_ctx.reason().unwrap_or("dev")
+                ),
+            }],
+            "dev_mode": true,
+            "dev_reason": dev_ctx.reason().unwrap_or("dev"),
+        });
+        return JsonRpcResponse::success(id, payload);
     }
 
     let result = submit_report(&report);

@@ -13,11 +13,17 @@
  */
 
 pub mod config;
+pub mod dev_context;
+pub mod dev_queue;
 pub mod queue;
 pub mod report;
 pub mod submit;
 
 pub use config::{ConsentLevel, TelemetryConfig};
+pub use dev_context::{
+    detect as detect_dev_context, detect_for_component as detect_dev_context_for_component,
+    DevContext,
+};
 pub use queue::PendingQueue;
 pub use report::{ErrorReport, ReportError, ReportStatus, ReportStore, TrackedReport};
 pub use submit::{
@@ -186,6 +192,29 @@ pub fn report_compile_failure(errors: &[crate::error::CompilerError], source_fil
     }
 
     let (code, category, component, message) = extract_error_info(first_error);
+
+    // Dev-context gate: when the platform authors are iterating on Clean
+    // Language itself, route the failure to a local dev queue instead of the
+    // public dashboard. Signals: the running binary is a `target/` build, or
+    // the .cln source sits inside a known component tree. Env var
+    // `CLEEN_TELEMETRY_FORCE=publish|local` overrides auto-detect.
+    let dev_ctx = dev_context::detect(source_file);
+    if dev_ctx.is_dev() {
+        let entry = dev_queue::entry_from(
+            &dev_ctx,
+            &code,
+            &component,
+            &message,
+            Some(source_file),
+            crate::VERSION,
+        );
+        dev_queue::append(entry);
+        tracing::debug!(
+            reason = ?dev_ctx.reason(),
+            "Dev-mode failure captured in local dev_queue; skipping dashboard upload"
+        );
+        return;
+    }
 
     let report_id = generate_report_id();
     let mut report = ErrorReport::new(

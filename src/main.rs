@@ -2592,6 +2592,32 @@ fn handle_report(
         }
     }
 
+    // Dev-mode gate: if this `cln report` invocation is happening inside a
+    // component source tree, record to the local dev queue instead of
+    // publishing. Override with CLEEN_TELEMETRY_FORCE=publish.
+    let dev_ctx = clean_language_compiler::telemetry::detect_dev_context_for_component(
+        &report.error.component,
+    );
+    if dev_ctx.is_dev() {
+        let entry = clean_language_compiler::telemetry::dev_queue::entry_from(
+            &dev_ctx,
+            &report.error.code,
+            &report.error.component,
+            &report.error.message,
+            report.error.file_context.as_deref(),
+            clean_language_compiler::VERSION,
+        );
+        clean_language_compiler::telemetry::dev_queue::append(entry);
+        println!(
+            "Recorded locally in dev queue (not uploaded).\nReason: {}\nComponent: {}\nError: {}",
+            dev_ctx.reason().unwrap_or("dev"),
+            report.error.component,
+            report.error.code,
+        );
+        println!("Override with CLEEN_TELEMETRY_FORCE=publish to force upload.");
+        return Ok(());
+    }
+
     // Track locally
     let mut store = ReportStore::load();
     store.add_report(&report);
