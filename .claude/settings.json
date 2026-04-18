@@ -4,7 +4,10 @@
       "mcp__clean-language__check_reported_fixes",
       "mcp__clean-language__list_server_diagnostics",
       "mcp__clean-language__list_error_codes",
-      "WebFetch(domain:errors.cleanlanguage.dev)"
+      "WebFetch(domain:errors.cleanlanguage.dev)",
+      "Bash(/Users/earcandy/.cleen/versions/0.30.70/cln)",
+      "Bash(/Users/earcandy/.cleen/versions/0.30.70/cln --version)",
+      "Bash(/Users/earcandy/.cleen/versions/0.30.70/cln --help)"
     ]
   }
 }

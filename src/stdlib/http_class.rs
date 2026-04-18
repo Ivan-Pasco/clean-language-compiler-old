@@ -50,75 +50,88 @@ impl HttpClass {
     }
 
     fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+        // Each wrapper is gated on whether its specific host import was
+        // emitted. The Import Minimality Rule (EXECUTION_LAYERS.md) tree-shakes
+        // unused `http_*` imports at `emit_import`, so a module that only
+        // calls `http.post` will not have `http_get` registered. Generating
+        // the `http.get` wrapper in that case would reference a missing import.
+
         // http.get(string url) -> string
-        // Takes 1 string pointer parameter, internally extracts data ptr and length
-        register_stdlib_function(
-            codegen,
-            "http.get",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_get_with_host_call(codegen, "http_get")?,
-        )?;
+        if codegen.get_http_import_index("http_get").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.get",
+                &[WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_get_with_host_call(codegen, "http_get")?,
+            )?;
+        }
 
         // http.post(string url, string data) -> string
-        // Takes 2 string pointer parameters (url_ptr, body_ptr)
-        register_stdlib_function(
-            codegen,
-            "http.post",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_post_with_host_call(codegen, "http_post")?,
-        )?;
+        if codegen.get_http_import_index("http_post").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.post",
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_post_with_host_call(codegen, "http_post")?,
+            )?;
+        }
 
         // http.put(string url, string data) -> string
-        // Takes 2 string pointer parameters (url_ptr, body_ptr)
-        register_stdlib_function(
-            codegen,
-            "http.put",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_post_with_host_call(codegen, "http_put")?,
-        )?;
+        if codegen.get_http_import_index("http_put").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.put",
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_post_with_host_call(codegen, "http_put")?,
+            )?;
+        }
 
         // http.patch(string url, string data) -> string
-        // Takes 2 string pointer parameters (url_ptr, body_ptr)
-        register_stdlib_function(
-            codegen,
-            "http.patch",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_post_with_host_call(codegen, "http_patch")?,
-        )?;
+        if codegen.get_http_import_index("http_patch").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.patch",
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_post_with_host_call(codegen, "http_patch")?,
+            )?;
+        }
 
         // http.delete(string url) -> string
-        // Takes 1 string pointer parameter
-        register_stdlib_function(
-            codegen,
-            "http.delete",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_get_with_host_call(codegen, "http_delete")?,
-        )?;
+        if codegen.get_http_import_index("http_delete").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.delete",
+                &[WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_get_with_host_call(codegen, "http_delete")?,
+            )?;
+        }
 
         // http.head(string url) -> string
-        // Takes 1 string pointer parameter
-        register_stdlib_function(
-            codegen,
-            "http.head",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_get_with_host_call(codegen, "http_head")?,
-        )?;
+        if codegen.get_http_import_index("http_head").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.head",
+                &[WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_get_with_host_call(codegen, "http_head")?,
+            )?;
+        }
 
         // http.options(string url) -> string
-        // Takes 1 string pointer parameter
-        register_stdlib_function(
-            codegen,
-            "http.options",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_get_with_host_call(codegen, "http_options")?,
-        )?;
+        if codegen.get_http_import_index("http_options").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.options",
+                &[WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_get_with_host_call(codegen, "http_options")?,
+            )?;
+        }
 
         Ok(())
     }
@@ -128,64 +141,76 @@ impl HttpClass {
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
         // http.getWithHeaders(string url, array<string> headers) -> string
-        // Takes 2 string pointers (url_ptr, headers_ptr)
-        register_stdlib_function(
-            codegen,
-            "http.getWithHeaders",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_post_with_host_call(codegen, "http_get_with_headers")?,
-        )?;
+        if codegen
+            .get_http_import_index("http_get_with_headers")
+            .is_some()
+        {
+            register_stdlib_function(
+                codegen,
+                "http.getWithHeaders",
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_post_with_host_call(codegen, "http_get_with_headers")?,
+            )?;
+        }
 
         // http.postWithHeaders(string url, string data, array<string> headers) -> string
-        // Takes 3 string pointers (url_ptr, body_ptr, headers_ptr)
-        register_stdlib_function(
-            codegen,
-            "http.postWithHeaders",
-            &[WasmType::I32, WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_post_with_headers_host_call(codegen, "http_post_with_headers")?,
-        )?;
+        if codegen
+            .get_http_import_index("http_post_with_headers")
+            .is_some()
+        {
+            register_stdlib_function(
+                codegen,
+                "http.postWithHeaders",
+                &[WasmType::I32, WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_post_with_headers_host_call(codegen, "http_post_with_headers")?,
+            )?;
+        }
 
         // http.postJson(string url, string jsonData) -> string
-        // Takes 2 string pointers (url_ptr, body_ptr)
-        register_stdlib_function(
-            codegen,
-            "http.postJson",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_post_with_host_call(codegen, "http_post_json")?,
-        )?;
+        if codegen.get_http_import_index("http_post_json").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.postJson",
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_post_with_host_call(codegen, "http_post_json")?,
+            )?;
+        }
 
         // http.putJson(string url, string jsonData) -> string
-        // Takes 2 string pointers (url_ptr, body_ptr)
-        register_stdlib_function(
-            codegen,
-            "http.putJson",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_post_with_host_call(codegen, "http_put_json")?,
-        )?;
+        if codegen.get_http_import_index("http_put_json").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.putJson",
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_post_with_host_call(codegen, "http_put_json")?,
+            )?;
+        }
 
         // http.patchJson(string url, string jsonData) -> string
-        // Takes 2 string pointers (url_ptr, body_ptr)
-        register_stdlib_function(
-            codegen,
-            "http.patchJson",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_post_with_host_call(codegen, "http_patch_json")?,
-        )?;
+        if codegen.get_http_import_index("http_patch_json").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.patchJson",
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_post_with_host_call(codegen, "http_patch_json")?,
+            )?;
+        }
 
         // http.postForm(string url, array<string> formData) -> string
-        // Takes 2 string pointers (url_ptr, formdata_ptr)
-        register_stdlib_function(
-            codegen,
-            "http.postForm",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_post_with_host_call(codegen, "http_post_form")?,
-        )?;
+        if codegen.get_http_import_index("http_post_form").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.postForm",
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_post_with_host_call(codegen, "http_post_form")?,
+            )?;
+        }
 
         Ok(())
     }
@@ -195,88 +220,118 @@ impl HttpClass {
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
         // http.setUserAgent(string userAgent) -> void
-        register_stdlib_function(
-            codegen,
-            "http.setUserAgent",
-            &[WasmType::I32],
-            None,
-            self.generate_set_user_agent_host_call(codegen, "http_set_user_agent")?,
-        )?;
+        if codegen
+            .get_http_import_index("http_set_user_agent")
+            .is_some()
+        {
+            register_stdlib_function(
+                codegen,
+                "http.setUserAgent",
+                &[WasmType::I32],
+                None,
+                self.generate_set_user_agent_host_call(codegen, "http_set_user_agent")?,
+            )?;
+        }
 
         // http.setTimeout(integer timeoutMs) -> void
-        register_stdlib_function(
-            codegen,
-            "http.setTimeout",
-            &[WasmType::I32],
-            None,
-            self.generate_simple_host_call(codegen, "http_set_timeout")?,
-        )?;
+        if codegen.get_http_import_index("http_set_timeout").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.setTimeout",
+                &[WasmType::I32],
+                None,
+                self.generate_simple_host_call(codegen, "http_set_timeout")?,
+            )?;
+        }
 
         // http.setMaxRedirects(integer maxRedirects) -> void
-        register_stdlib_function(
-            codegen,
-            "http.setMaxRedirects",
-            &[WasmType::I32],
-            None,
-            self.generate_simple_host_call(codegen, "http_set_max_redirects")?,
-        )?;
+        if codegen
+            .get_http_import_index("http_set_max_redirects")
+            .is_some()
+        {
+            register_stdlib_function(
+                codegen,
+                "http.setMaxRedirects",
+                &[WasmType::I32],
+                None,
+                self.generate_simple_host_call(codegen, "http_set_max_redirects")?,
+            )?;
+        }
 
         // http.enableCookies(boolean enable) -> void
-        register_stdlib_function(
-            codegen,
-            "http.enableCookies",
-            &[WasmType::I32],
-            None,
-            self.generate_simple_host_call(codegen, "http_enable_cookies")?,
-        )?;
+        if codegen
+            .get_http_import_index("http_enable_cookies")
+            .is_some()
+        {
+            register_stdlib_function(
+                codegen,
+                "http.enableCookies",
+                &[WasmType::I32],
+                None,
+                self.generate_simple_host_call(codegen, "http_enable_cookies")?,
+            )?;
+        }
 
         // http.getResponseCode() -> integer
-        register_stdlib_function(
-            codegen,
-            "http.getResponseCode",
-            &[],
-            Some(WasmType::I32),
-            self.generate_no_params_host_call(codegen, "http_get_response_code")?,
-        )?;
+        if codegen
+            .get_http_import_index("http_get_response_code")
+            .is_some()
+        {
+            register_stdlib_function(
+                codegen,
+                "http.getResponseCode",
+                &[],
+                Some(WasmType::I32),
+                self.generate_no_params_host_call(codegen, "http_get_response_code")?,
+            )?;
+        }
 
         // http.getResponseHeaders() -> array<string>
-        register_stdlib_function(
-            codegen,
-            "http.getResponseHeaders",
-            &[],
-            Some(WasmType::I32),
-            self.generate_no_params_host_call(codegen, "http_get_response_headers")?,
-        )?;
+        if codegen
+            .get_http_import_index("http_get_response_headers")
+            .is_some()
+        {
+            register_stdlib_function(
+                codegen,
+                "http.getResponseHeaders",
+                &[],
+                Some(WasmType::I32),
+                self.generate_no_params_host_call(codegen, "http_get_response_headers")?,
+            )?;
+        }
 
         // http.encodeUrl(string url) -> string
-        // Takes 1 string pointer parameter
-        register_stdlib_function(
-            codegen,
-            "http.encodeUrl",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_get_with_host_call(codegen, "http_encode_url")?,
-        )?;
+        if codegen.get_http_import_index("http_encode_url").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.encodeUrl",
+                &[WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_get_with_host_call(codegen, "http_encode_url")?,
+            )?;
+        }
 
         // http.decodeUrl(string encodedUrl) -> string
-        // Takes 1 string pointer parameter
-        register_stdlib_function(
-            codegen,
-            "http.decodeUrl",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_get_with_host_call(codegen, "http_decode_url")?,
-        )?;
+        if codegen.get_http_import_index("http_decode_url").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.decodeUrl",
+                &[WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_get_with_host_call(codegen, "http_decode_url")?,
+            )?;
+        }
 
         // http.buildQuery(array<string> params) -> string
-        // Takes 1 array pointer parameter
-        register_stdlib_function(
-            codegen,
-            "http.buildQuery",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_get_with_host_call(codegen, "http_build_query")?,
-        )?;
+        if codegen.get_http_import_index("http_build_query").is_some() {
+            register_stdlib_function(
+                codegen,
+                "http.buildQuery",
+                &[WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_get_with_host_call(codegen, "http_build_query")?,
+            )?;
+        }
 
         Ok(())
     }

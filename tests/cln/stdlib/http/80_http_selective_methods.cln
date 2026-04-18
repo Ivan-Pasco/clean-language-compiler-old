@@ -1,0 +1,9 @@
+// Test: stdlib/http — Selective HTTP Method Use
+// Regression: E007/COD001 — "HTTP import function 'http_get' not found"
+// When only http.post is used, the compiler would try to register http.get
+// wrapper which references the tree-shaken http_get import. Each wrapper
+// must be gated on its specific host import's reachability.
+
+start:
+	string response = http.post("https://example.com", "data")
+	print(response)
