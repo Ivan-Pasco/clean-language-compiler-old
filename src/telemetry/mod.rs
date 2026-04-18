@@ -194,6 +194,7 @@ pub fn report_compile_failure(errors: &[crate::error::CompilerError], source_fil
             code,
             category,
             component,
+            subsystem: None,
             severity: "bug".to_string(),
             message,
             file_context: Some(source_file.to_string()),
@@ -343,8 +344,15 @@ pub fn flush_pending_telemetry(verbose: bool) {
                 error: ReportError {
                     code: tracked.error_code.clone(),
                     category: "unknown".to_string(),
-                    component: "compiler".to_string(),
-                    severity: "bug".to_string(),
+                    component: tracked
+                        .component
+                        .clone()
+                        .unwrap_or_else(|| "compiler".to_string()),
+                    subsystem: tracked.subsystem.clone(),
+                    severity: tracked
+                        .severity
+                        .clone()
+                        .unwrap_or_else(|| "bug".to_string()),
                     message: tracked.summary.clone(),
                     file_context: None,
                 },

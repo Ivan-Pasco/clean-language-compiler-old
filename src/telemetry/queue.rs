@@ -180,7 +180,8 @@ mod tests {
             error: ReportError {
                 code: "SYN001".to_string(),
                 category: "syntax".to_string(),
-                component: "parser".to_string(),
+                component: "compiler".to_string(),
+                subsystem: Some("parser".to_string()),
                 severity: "bug".to_string(),
                 message: "Test error".to_string(),
                 file_context: None,

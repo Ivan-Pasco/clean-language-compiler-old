@@ -1083,8 +1083,12 @@ fn get_available_tools() -> Vec<Tool> {
                     },
                     "component": {
                         "type": "string",
-                        "description": "Which component produced the error.",
-                        "enum": ["parser", "semantic", "codegen", "runtime", "plugin", "cli", "unknown"]
+                        "description": "Which project component produced the error.",
+                        "enum": ["compiler", "server", "node-server", "framework", "extension", "manager", "website", "canvas", "ui", "mcp", "unknown"]
+                    },
+                    "subsystem": {
+                        "type": "string",
+                        "description": "Optional: which subsystem within the component (e.g., parser, semantic, codegen, runtime, bridge, plugin, lsp, cli)."
                     },
                     "severity": {
                         "type": "string",
@@ -1196,7 +1200,7 @@ fn get_available_tools() -> Vec<Tool> {
                     "component": {
                         "type": "string",
                         "description": "Component to query bugs for.",
-                        "enum": ["compiler", "server", "node-server", "framework", "extension", "manager", "canvas", "ui", "all"]
+                        "enum": ["compiler", "server", "node-server", "framework", "extension", "manager", "website", "canvas", "ui", "mcp", "all"]
                     },
                     "status": {
                         "type": "string",
@@ -3502,13 +3506,17 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         .get("user_contact")
         .and_then(|v| v.as_str())
         .map(String::from);
+    let explicit_subsystem = args
+        .get("subsystem")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     // Determine error category from code prefix
     let category = if error_code.starts_with("SYN") {
         "syntax"
     } else if error_code.starts_with("SEM") {
         "semantic"
-    } else if error_code.starts_with("COM") {
+    } else if error_code.starts_with("COD") || error_code.starts_with("COM") {
         "codegen"
     } else if error_code.starts_with("RUN") {
         "runtime"
@@ -3516,6 +3524,32 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         "system"
     } else {
         "unknown"
+    };
+
+    // Auto-detect subsystem from error code prefix (if not explicitly provided)
+    let subsystem = explicit_subsystem.or_else(|| {
+        let auto = if error_code.starts_with("SYN") {
+            "parser"
+        } else if error_code.starts_with("SEM") {
+            "semantic"
+        } else if error_code.starts_with("COD") || error_code.starts_with("COM") {
+            "codegen"
+        } else if error_code.starts_with("RUN") {
+            "runtime"
+        } else if error_code.starts_with("SYS") {
+            "system"
+        } else {
+            return None;
+        };
+        Some(auto.to_string())
+    });
+
+    // Normalize legacy component names to unified taxonomy
+    let component = match component.as_str() {
+        "parser" | "semantic" | "codegen" | "cli" | "syntax" | "system" => "compiler".to_string(),
+        "runtime" => "server".to_string(),
+        "plugin" => "framework".to_string(),
+        _ => component,
     };
 
     // Generate report ID
@@ -3528,6 +3562,7 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
             code: error_code,
             category: category.to_string(),
             component,
+            subsystem,
             severity,
             message: error_message,
             file_context: None,
@@ -4830,7 +4865,8 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
     let error = ReportError {
         code: "RUNTIME_WASM_PARSE".to_string(),
         category: "runtime".to_string(),
-        component: "runtime".to_string(),
+        component: "server".to_string(),
+        subsystem: Some("runtime".to_string()),
         severity: "crash".to_string(),
         message: wasmtime_error.clone(),
         file_context: module_path.clone(),

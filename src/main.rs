@@ -2562,7 +2562,8 @@ fn handle_report(
         ReportError {
             code: error_code.clone(),
             category: "unknown".to_string(),
-            component: "unknown".to_string(),
+            component: "compiler".to_string(),
+            subsystem: None,
             severity: "bug".to_string(),
             message: message.clone(),
             file_context: None,

@@ -40,6 +40,8 @@ pub struct ReportError {
     pub code: String,
     pub category: String,
     pub component: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subsystem: Option<String>,
     pub severity: String,
     pub message: String,
     pub file_context: Option<String>,
@@ -127,6 +129,11 @@ pub struct TrackedReport {
     pub report_id: String,
     pub fingerprint: Option<String>,
     pub error_code: String,
+    pub component: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subsystem: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
     pub summary: String,
     pub reported_at: DateTime<Utc>,
     pub compiler_version: String,
@@ -136,6 +143,8 @@ pub struct TrackedReport {
     pub fix_pr: Option<String>,
     pub last_checked: DateTime<Utc>,
     pub notified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimal_repro: Option<String>,
 }
 
 /// Persistent store of tracked reports in ~/.cleen/telemetry/reported_errors.json
@@ -204,6 +213,9 @@ impl ReportStore {
             report_id: report.report_id.clone(),
             fingerprint: None,
             error_code: report.error.code.clone(),
+            component: Some(report.error.component.clone()),
+            subsystem: report.error.subsystem.clone(),
+            severity: Some(report.error.severity.clone()),
             summary: report.error.message.clone(),
             reported_at: report.timestamp,
             compiler_version: report.source.compiler_version.clone(),
@@ -213,6 +225,10 @@ impl ReportStore {
             fix_pr: None,
             last_checked: Utc::now(),
             notified: false,
+            minimal_repro: report
+                .reproduction
+                .as_ref()
+                .and_then(|r| r.minimal_code.clone()),
         });
     }
 
@@ -283,7 +299,8 @@ mod tests {
             ReportError {
                 code: "SYN042".to_string(),
                 category: "syntax".to_string(),
-                component: "parser".to_string(),
+                component: "compiler".to_string(),
+                subsystem: Some("parser".to_string()),
                 severity: "bug".to_string(),
                 message: "Nested generic types fail to parse".to_string(),
                 file_context: None,
