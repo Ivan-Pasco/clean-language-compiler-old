@@ -216,23 +216,43 @@ impl MirBuilder {
                 let is_function = self.all_functions.iter().any(|f| &f.name == name);
 
                 if is_function {
-                    // Function reference - using i32 placeholder (WASM funcref requires table support)
+                    // Function reference — emit the function's WASM index as i32 via
+                    // `MirOperand::Function(symbol_id)`. Codegen resolves it to the
+                    // concrete function index. The table + __indirect_function_table
+                    // export make the value usable as a call_indirect target from
+                    // the host side.
+                    let symbol_id = self
+                        .all_functions
+                        .iter()
+                        .find(|f| &f.name == name)
+                        .map(|f| f.symbol_id)
+                        .ok_or_else(|| {
+                            vec![CompilerError::type_error(
+                                &format!("Function '{}' not found for reference", name),
+                                None,
+                                Some(expression.location.clone()),
+                            )]
+                        })?;
+
                     let value_id = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;
 
-                    // Register this as a local with function pointer type (represented as I32 pointer for now)
                     let local = MirLocal {
                         name: Some(format!("funcref_{}", name)),
-                        local_type: MirType::I32, // Function reference placeholder
+                        local_type: MirType::I32,
                         is_mutable: false,
                         location: expression.location.clone(),
                     };
                     context.function.locals.insert(value_id, local);
 
-                    tracing::warn!(
-                        "Function reference '{}' used but function pointers not fully implemented",
-                        name
-                    );
+                    let copy_instruction = MirInstruction {
+                        dest: Some(value_id),
+                        operation: MirOperation::Copy {
+                            source: MirOperand::Function(symbol_id),
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, copy_instruction);
 
                     return Ok(value_id);
                 }

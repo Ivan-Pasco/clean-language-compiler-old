@@ -825,6 +825,26 @@ impl MirCodeGenerator<'_> {
         let function_section = self.wasm_generator.function_section.clone();
         module.section(&function_section);
 
+        // 3.5 Table section — emitted only when the module uses first-class
+        // function references (MirOperand::Function / NamedFunction as values).
+        // The table holds user-function indices so hosts can dispatch them via
+        // `call_indirect` using the i32 handle the compiler emitted at the
+        // reference site. Exported below as `__indirect_function_table`.
+        let emit_function_table = !self.referenced_function_indices.is_empty();
+        let mut sorted_referenced_funcs: Vec<u32> =
+            self.referenced_function_indices.iter().copied().collect();
+        sorted_referenced_funcs.sort_unstable();
+        let table_size = sorted_referenced_funcs.last().map(|&n| n + 1).unwrap_or(0);
+        if emit_function_table {
+            let mut table_section = wasm_encoder::TableSection::new();
+            table_section.table(wasm_encoder::TableType {
+                element_type: wasm_encoder::RefType::FUNCREF,
+                minimum: table_size,
+                maximum: Some(table_size),
+            });
+            module.section(&table_section);
+        }
+
         // 4. Memory section
         let memory_section = self.wasm_generator.memory_section.clone();
         module.section(&memory_section);
@@ -964,9 +984,35 @@ impl MirCodeGenerator<'_> {
             }
         }
 
+        // Export the indirect function table so hosts can call_indirect on it.
+        if emit_function_table {
+            self.wasm_generator.export_section.export(
+                "__indirect_function_table",
+                wasm_encoder::ExportKind::Table,
+                0,
+            );
+        }
+
         // 5. Export section
         let export_section = self.wasm_generator.export_section.clone();
         module.section(&export_section);
+
+        // 5.5 Element section — populate `__indirect_function_table` with the
+        // WASM function indices referenced as first-class values. Each entry
+        // sits at its own slot (slot N holds function N), so the i32 value
+        // emitted at the reference site is a valid call_indirect index.
+        if emit_function_table {
+            let mut element_section = wasm_encoder::ElementSection::new();
+            for func_idx in &sorted_referenced_funcs {
+                let funcs = [*func_idx];
+                element_section.active(
+                    Some(0),
+                    &wasm_encoder::ConstExpr::i32_const(*func_idx as i32),
+                    wasm_encoder::Elements::Functions(&funcs),
+                );
+            }
+            module.section(&element_section);
+        }
 
         // 6. Code section
         let code_section = self.wasm_generator.code_section.clone();

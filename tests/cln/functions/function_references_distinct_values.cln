@@ -1,0 +1,26 @@
+// Test: functions — First-class function references yield distinct stable indices
+// Regression: COMPILER_FN_POINTERS_UNIMPL — previously every function reference
+// compiled to i32.const 0, so every handler shared the same value. Fix emits the
+// function's WASM index plus a __indirect_function_table so hosts can dispatch.
+
+start:
+	integer a = take_fn(handler_a)
+	integer b = take_fn(handler_b)
+	integer a2 = take_fn(handler_a)
+	// Distinct references must produce distinct values.
+	// Same function must produce the same value across references.
+	if a == b
+		print("FAIL: distinct functions collided")
+	if a != a2
+		print("FAIL: same function produced different values")
+	if a == 0 or b == 0
+		print("FAIL: function reference is still zero")
+	print("OK")
+
+functions:
+	integer take_fn(integer fn)
+		return fn
+	handler_a()
+		integer x = 0
+	handler_b()
+		integer x = 0

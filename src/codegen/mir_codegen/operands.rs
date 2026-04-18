@@ -37,14 +37,33 @@ impl MirCodeGenerator<'_> {
                 self.load_constant(constant)?;
             }
 
-            MirOperand::Function(_symbol_id) => {
-                // Function reference placeholder (WASM funcref tables not yet used)
-                self.current_instructions.push(Instruction::I32Const(0));
+            MirOperand::Function(symbol_id) => {
+                // Resolve the function's WASM index and emit it as an i32
+                // constant. Each function reference now yields a distinct stable
+                // integer (the WASM function index), so downstream host callers
+                // (e.g. frame.ui handlers) receive unique handles instead of 0.
+                let function_index = self
+                    .symbol_to_function_index
+                    .get(symbol_id)
+                    .copied()
+                    .unwrap_or(0);
+                self.referenced_function_indices.insert(function_index);
+                self.current_instructions
+                    .push(Instruction::I32Const(function_index as i32));
             }
 
-            MirOperand::NamedFunction { .. } => {
-                // Named function reference placeholder (resolved at call site)
-                self.current_instructions.push(Instruction::I32Const(0));
+            MirOperand::NamedFunction { symbol_id, name } => {
+                // Named function reference — same resolution as Function(symbol_id),
+                // with a name-based fallback through function_map.
+                let function_index = self
+                    .symbol_to_function_index
+                    .get(symbol_id)
+                    .copied()
+                    .or_else(|| self.wasm_generator.function_map.get(name).copied())
+                    .unwrap_or(0);
+                self.referenced_function_indices.insert(function_index);
+                self.current_instructions
+                    .push(Instruction::I32Const(function_index as i32));
             }
 
             MirOperand::Global(_symbol_id) => {

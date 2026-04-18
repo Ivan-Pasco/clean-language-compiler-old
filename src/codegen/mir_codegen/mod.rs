@@ -220,6 +220,14 @@ pub struct MirCodeGenerator<'a> {
     /// Memory budget tier — controls initial/max pages in the WASM memory section
     /// and the `clean:memory` custom section emitted into the module.
     pub(super) memory_tier: crate::MemoryTier,
+
+    /// WASM function indices referenced as first-class values (function pointers).
+    ///
+    /// Populated while lowering `MirOperand::Function` / `MirOperand::NamedFunction`
+    /// to i32 constants. When non-empty, a `__indirect_function_table` is emitted
+    /// and populated with these entries so hosts can invoke referenced functions
+    /// via `call_indirect` using the i32 value as the table index.
+    pub(super) referenced_function_indices: HashSet<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +267,7 @@ impl MirCodeGenerator<'_> {
             next_handler_index: 0,
             bridge_param_types: HashMap::new(),
             memory_tier: crate::MemoryTier::Standard,
+            referenced_function_indices: HashSet::new(),
         }
     }
 
@@ -294,6 +303,7 @@ impl MirCodeGenerator<'_> {
             next_handler_index: 0,
             bridge_param_types: HashMap::new(),
             memory_tier: crate::MemoryTier::Standard,
+            referenced_function_indices: HashSet::new(),
         }
     }
 
@@ -329,6 +339,7 @@ impl MirCodeGenerator<'_> {
             next_handler_index: 0,
             bridge_param_types: HashMap::new(),
             memory_tier: crate::MemoryTier::Standard,
+            referenced_function_indices: HashSet::new(),
         }
     }
 
