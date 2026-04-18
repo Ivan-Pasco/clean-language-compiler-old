@@ -872,6 +872,53 @@ In `extract_block_attributes` (func 324): `remaining.substring(0, eq_pos)` resul
 
 ---
 
+## 🟡 MEDIUM-HIGH: FileClass — per-method import gating (same pattern as HttpClass)
+
+**Priority**: MEDIUM-HIGH
+**Discovered**: April 18, 2026
+**Status**: OPEN
+
+### Description
+`tests/cln/stdlib/io/74_file_module_comprehensive.cln` fails with
+`File import function 'file_delete' not found`. Same root cause as E007/COD001
+fixed in HttpClass (v0.30.71): `FileClass::register_basic_operations` registers
+wrappers for every file method, but Import Minimality tree-shakes unused
+`file_*` imports. When the program doesn't call a specific file method, that
+import isn't emitted — but the wrapper still tries to reference it.
+
+### Fix plan
+Mirror the HttpClass fix: in `src/stdlib/file_class.rs`, gate each
+`register_stdlib_function` call on `codegen.get_file_import_index("file_X").is_some()`.
+See `src/stdlib/http_class.rs` v0.30.71 for the pattern.
+
+### Verification
+`tests/cln/stdlib/io/74_file_module_comprehensive.cln` must compile cleanly.
+Also add a narrower regression test that uses only a subset of file methods.
+
+---
+
+## 🟡 MEDIUM-HIGH: Comprehensive stdlib test — f64/i32 type mismatch
+
+**Priority**: MEDIUM-HIGH
+**Discovered**: April 18, 2026
+**Status**: OPEN — pre-existed before v0.30.72
+
+### Description
+`tests/cln/stdlib/32_comprehensive_stdlib.cln` fails validation with
+`type mismatch: expected i32, found f64; offset=0x462c, section=code`. A math
+operation produces f64 where the consuming op expects i32 — likely a missing
+`F64ConvertI32S` / `I32TruncF64S` in a specific math wrapper path.
+
+### Fix plan
+Read the bytes near the offset to identify the instruction that pushes f64
+before an i32-consuming op. Check the MIR for the triggering expression and
+ensure the type-conversion codepath runs.
+
+### Verification
+`32_comprehensive_stdlib.cln` must pass wasmparser validation.
+
+---
+
 ## 🟡 MEDIUM-HIGH: Import Minimality — Finish Tree-Shaking Stdlib Layer 2
 
 **Priority**: MEDIUM-HIGH
