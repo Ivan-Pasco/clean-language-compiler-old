@@ -5059,6 +5059,7 @@ fn tool_list_component_bugs(id: serde_json::Value, args: &serde_json::Value) -> 
                 "fingerprint": b.fingerprint,
                 "error_code": b.error_code,
                 "component": b.component,
+                "subsystem": b.subsystem,
                 "severity": b.severity,
                 "message": b.message,
                 "minimal_repro": b.minimal_repro,

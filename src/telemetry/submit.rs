@@ -367,6 +367,7 @@ pub struct ComponentBug {
     pub fingerprint: String,
     pub error_code: String,
     pub component: String,
+    pub subsystem: Option<String>,
     pub severity: String,
     pub message: String,
     pub minimal_repro: Option<String>,
@@ -418,6 +419,10 @@ fn fetch_bugs_inner(component: &str, status: &str) -> Vec<ComponentBug> {
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("")
                                         .to_string(),
+                                    subsystem: b
+                                        .get("subsystem")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
                                     severity: b
                                         .get("severity")
                                         .and_then(|v| v.as_str())
