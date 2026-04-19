@@ -3635,20 +3635,24 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
             report.error.file_context.as_deref(),
             crate::VERSION,
         );
-        crate::telemetry::dev_queue::append(entry);
+        let outcome = crate::telemetry::dev_queue::append(entry);
 
         let payload = serde_json::json!({
             "content": [{
                 "type": "text",
                 "text": format!(
-                    "Dev-mode: recorded locally (not uploaded).\nReason: {}\nComponent: {}\nError: {}",
+                    "Dev-mode: recorded locally (not uploaded).\nReason: {}\nComponent: {}\nError: {} \u{00d7}{} (fingerprint {})",
                     dev_ctx.reason().unwrap_or("dev"),
                     report.error.component,
                     report.error.code,
+                    outcome.occurrences,
+                    outcome.fingerprint,
                 ),
             }],
             "dev_mode": true,
             "dev_reason": dev_ctx.reason().unwrap_or("dev"),
+            "fingerprint": outcome.fingerprint,
+            "occurrences": outcome.occurrences,
         });
         return JsonRpcResponse::success(id, payload);
     }
@@ -3907,6 +3911,11 @@ fn tool_check_reported_fixes(id: serde_json::Value, args: &serde_json::Value) ->
         })
         .collect();
 
+    // Surface local dev-queue summary so AI agents see in-progress dev-time
+    // errors at session start — these are bugs the dev needs to fix before
+    // shipping, never uploaded to the public dashboard.
+    let dev_queue_summary = build_dev_queue_summary();
+
     JsonRpcResponse::success(
         id,
         json!({
@@ -3918,6 +3927,7 @@ fn tool_check_reported_fixes(id: serde_json::Value, args: &serde_json::Value) ->
             "matching_local_diagnostics": matching_local_diagnostics,
             "open_bugs_for_component": open_bugs,
             "open_bugs_total": component_bugs.len(),
+            "dev_queue_summary": dev_queue_summary,
             "tip": if !open_bugs.is_empty() {
                 "There are open bugs for this component. Use list_component_bugs to see full details and fix guidance."
             } else {
@@ -3925,6 +3935,49 @@ fn tool_check_reported_fixes(id: serde_json::Value, args: &serde_json::Value) ->
             }
         }),
     )
+}
+
+/// Build a compact summary of the local dev queue for the check_reported_fixes
+/// response. Returns `{count, top_entries: [...]}` with the 5 most-recently-
+/// seen entries so an AI agent can raise them at session start without
+/// drowning in full payloads.
+fn build_dev_queue_summary() -> serde_json::Value {
+    let mut entries = crate::telemetry::dev_queue::load();
+    if entries.is_empty() {
+        return json!({ "count": 0, "top_entries": [] });
+    }
+    // Most recent first
+    entries.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
+    let total = entries.len();
+    let top: Vec<serde_json::Value> = entries
+        .iter()
+        .take(5)
+        .map(|e| {
+            let mut msg = e.message.replace('\n', " ");
+            if msg.len() > 120 {
+                msg.truncate(117);
+                msg.push_str("...");
+            }
+            json!({
+                "fingerprint": e.fingerprint,
+                "error_code": e.error_code,
+                "component": e.component,
+                "occurrences": e.occurrences,
+                "first_seen_at": e.first_seen_at,
+                "last_seen_at": e.last_seen_at,
+                "message": msg,
+                "file_context": e.file_context,
+            })
+        })
+        .collect();
+    json!({
+        "count": total,
+        "top_entries": top,
+        "guidance": format!(
+            "{} dev-mode error(s) pending local fix. These were captured from failed compiles against component source trees and never uploaded. Run `cln dev-queue list` for full details, `cln dev-queue show <prefix>` for one entry, `cln dev-queue clear <prefix>` after fixing. Resolve these before running `comita`.",
+            total
+        ),
+    })
 }
 
 /// Generate a UUID v4-format report ID
@@ -4971,17 +5024,21 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
             report.error.file_context.as_deref(),
             crate::VERSION,
         );
-        crate::telemetry::dev_queue::append(entry);
+        let outcome = crate::telemetry::dev_queue::append(entry);
         let payload = serde_json::json!({
             "content": [{
                 "type": "text",
                 "text": format!(
-                    "Dev-mode: diagnostic recorded locally (not uploaded).\nReason: {}",
-                    dev_ctx.reason().unwrap_or("dev")
+                    "Dev-mode: diagnostic recorded locally (not uploaded).\nReason: {}\nFingerprint: {} \u{00d7}{}",
+                    dev_ctx.reason().unwrap_or("dev"),
+                    outcome.fingerprint,
+                    outcome.occurrences,
                 ),
             }],
             "dev_mode": true,
             "dev_reason": dev_ctx.reason().unwrap_or("dev"),
+            "fingerprint": outcome.fingerprint,
+            "occurrences": outcome.occurrences,
         });
         return JsonRpcResponse::success(id, payload);
     }

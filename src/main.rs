@@ -353,6 +353,9 @@ enum Commands {
     /// Telemetry maintenance (flush pending reports, retry unconfirmed reports)
     #[command(subcommand)]
     Telemetry(TelemetryCommands),
+    /// Inspect and manage the local dev-mode error queue
+    #[command(name = "dev-queue", subcommand)]
+    DevQueue(DevQueueCommands),
 }
 
 #[derive(Subcommand, Debug)]
@@ -360,6 +363,31 @@ enum TelemetryCommands {
     /// Re-POST any locally-stored error reports that never received a fingerprint
     /// from the backend, plus drain the offline queue.
     Flush,
+}
+
+#[derive(Subcommand, Debug)]
+enum DevQueueCommands {
+    /// List all dev-mode errors captured locally, newest first.
+    List {
+        /// Include full error message (not just first 80 chars)
+        #[arg(long)]
+        full: bool,
+    },
+    /// Show one entry in detail.
+    Show {
+        /// Fingerprint prefix (4+ chars)
+        fingerprint: String,
+    },
+    /// Print just the number of distinct fingerprints. Machine-readable.
+    Count,
+    /// Remove one entry by fingerprint prefix.
+    Clear {
+        /// Fingerprint prefix (4+ chars)
+        fingerprint: String,
+    },
+    /// Remove every entry.
+    #[command(name = "clear-all")]
+    ClearAll,
 }
 
 #[derive(Subcommand, Debug)]
@@ -614,6 +642,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 clean_language_compiler::telemetry::flush_pending_telemetry(true);
             }
         },
+        Commands::DevQueue(cmd) => handle_dev_queue(cmd)?,
     }
 
     Ok(())
@@ -2424,6 +2453,107 @@ fn handle_config(
     Ok(())
 }
 
+fn handle_dev_queue(cmd: DevQueueCommands) -> Result<(), Box<dyn std::error::Error>> {
+    use clean_language_compiler::telemetry::dev_queue;
+    match cmd {
+        DevQueueCommands::Count => {
+            println!("{}", dev_queue::count());
+        }
+        DevQueueCommands::List { full } => {
+            let mut entries = dev_queue::load();
+            if entries.is_empty() {
+                println!("Dev queue is empty.");
+                return Ok(());
+            }
+            // Newest first by last_seen_at
+            entries.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
+            println!(
+                "{:<16}  {:<8}  {:>5}  {:<19}  {}",
+                "fingerprint", "code", "×", "last seen (UTC)", "message"
+            );
+            println!("{}", "-".repeat(96));
+            for e in &entries {
+                let msg = if full {
+                    e.message.clone()
+                } else {
+                    let mut s = e.message.replace('\n', " ");
+                    if s.len() > 80 {
+                        s.truncate(77);
+                        s.push_str("...");
+                    }
+                    s
+                };
+                let ts = e.last_seen_at.trim_end_matches('Z').replace('T', " ");
+                println!(
+                    "{:<16}  {:<8}  {:>5}  {:<19}  {}",
+                    e.fingerprint, e.error_code, e.occurrences, ts, msg
+                );
+            }
+            println!();
+            println!(
+                "{} distinct error(s) in dev queue. Show one: `cln dev-queue show <prefix>`",
+                entries.len()
+            );
+        }
+        DevQueueCommands::Show { fingerprint } => {
+            let entries = dev_queue::load();
+            let matches: Vec<_> = entries
+                .iter()
+                .filter(|e| e.fingerprint.starts_with(&fingerprint))
+                .collect();
+            match matches.len() {
+                0 => {
+                    eprintln!("No entry matching prefix '{}'", fingerprint);
+                    std::process::exit(1);
+                }
+                1 => {
+                    let e = matches[0];
+                    println!("Fingerprint:     {}", e.fingerprint);
+                    println!("Error code:      {}", e.error_code);
+                    println!("Component:       {}", e.component);
+                    println!("Occurrences:     {}", e.occurrences);
+                    println!("First seen:      {}", e.first_seen_at);
+                    println!("Last seen:       {}", e.last_seen_at);
+                    println!("Compiler:        {}", e.compiler_version);
+                    println!("Dev reason:      {}", e.dev_reason);
+                    if let Some(ref f) = e.file_context {
+                        println!("Source:          {}", f);
+                    }
+                    println!();
+                    println!("Message:");
+                    println!("{}", e.message);
+                }
+                n => {
+                    eprintln!("Ambiguous prefix '{}' matches {} entries:", fingerprint, n);
+                    for e in &matches {
+                        eprintln!("  {}  {}  ×{}", e.fingerprint, e.error_code, e.occurrences);
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
+        DevQueueCommands::Clear { fingerprint } => match dev_queue::clear_by_prefix(&fingerprint) {
+            Ok(true) => println!("Removed entry matching '{}'.", fingerprint),
+            Ok(false) => {
+                eprintln!("No entry matching '{}'", fingerprint);
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        },
+        DevQueueCommands::ClearAll => match dev_queue::clear_all() {
+            Ok(n) => println!("Cleared {} entries from dev queue.", n),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        },
+    }
+    Ok(())
+}
+
 fn handle_fixes(
     since: Option<String>,
     pending_only: bool,
@@ -2607,14 +2737,16 @@ fn handle_report(
             report.error.file_context.as_deref(),
             clean_language_compiler::VERSION,
         );
-        clean_language_compiler::telemetry::dev_queue::append(entry);
+        let outcome = clean_language_compiler::telemetry::dev_queue::append(entry);
         println!(
-            "Recorded locally in dev queue (not uploaded).\nReason: {}\nComponent: {}\nError: {}",
+            "Recorded locally in dev queue (not uploaded).\nReason: {}\nComponent: {}\nError: {} \u{00d7}{} (fingerprint {})",
             dev_ctx.reason().unwrap_or("dev"),
             report.error.component,
             report.error.code,
+            outcome.occurrences,
+            outcome.fingerprint,
         );
-        println!("Override with CLEEN_TELEMETRY_FORCE=publish to force upload.");
+        println!("View: cln dev-queue list  |  Override: CLEEN_TELEMETRY_FORCE=publish");
         return Ok(());
     }
 

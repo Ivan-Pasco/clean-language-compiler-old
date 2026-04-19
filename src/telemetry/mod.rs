@@ -208,9 +208,18 @@ pub fn report_compile_failure(errors: &[crate::error::CompilerError], source_fil
             Some(source_file),
             crate::VERSION,
         );
-        dev_queue::append(entry);
+        let outcome = dev_queue::append(entry);
+        // Surface the hint on stderr so a developer watching their terminal
+        // sees "this went to the dev queue, here's the count" right after
+        // the error itself. Kept to one line so it doesn't crowd the error.
+        eprintln!(
+            "[dev-queue] {} recorded locally ({} \u{00d7}{}) \u{2014} `cln dev-queue list`",
+            code, outcome.fingerprint, outcome.occurrences
+        );
         tracing::debug!(
             reason = ?dev_ctx.reason(),
+            fingerprint = %outcome.fingerprint,
+            occurrences = outcome.occurrences,
             "Dev-mode failure captured in local dev_queue; skipping dashboard upload"
         );
         return;
