@@ -1,0 +1,45 @@
+// Test: control/conditionals/is_not_operator
+// Grammar: comparison_expression → expr 'is' 'not' expr | expr 'is' expr
+// Semantic: SEM-COMPARE-01
+// Expected output:
+//   a is b: true
+//   c is not d: true
+//   not of true: false
+//   x is not y: ok
+//
+// Regression: `is not` must be parsed as a single two-token operator.
+// Before this fix, `value is not expr` was parsed as `value is (not expr)`,
+// meaning BinaryOperator::IsNot was never emitted by the token parser.
+
+start:
+	// Test `is` for equality (same integer value)
+	integer a = 42
+	integer b = 42
+	if a is b
+		print("a is b: true") +
+	else
+		print("a is b: false") +
+
+	// Test `is not` for inequality (different integer values)
+	integer c = 42
+	integer d = 99
+	if c is not d
+		print("c is not d: true") +
+	else
+		print("c is not d: false") +
+
+	// Test unary `not` still works after the parser fix
+	boolean flag = true
+	boolean negated = not flag
+	if negated
+		print("not of true: true") +
+	else
+		print("not of true: false") +
+
+	// Test that `is not` parses as a single compound operator
+	integer x = 5
+	integer y = 10
+	if x is not y
+		print("x is not y: ok") +
+	else
+		print("x is not y: fail") +

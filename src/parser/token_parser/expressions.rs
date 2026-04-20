@@ -106,12 +106,12 @@ impl TokenParser {
                 | TokenKind::LessEqual
                 | TokenKind::GreaterEqual
                 | TokenKind::Is
-                | TokenKind::Not
         ) {
             let op_token = self.bump();
             self.skip_whitespace();
-            let right = self.parse_term()?;
 
+            // When we see `is`, peek ahead for `not` to handle `value is not null`.
+            // `is not` is a single two-token operator meaning inequality / non-null check.
             let op = match &op_token.kind {
                 TokenKind::Equal => BinaryOperator::Equal,
                 TokenKind::NotEqual => BinaryOperator::NotEqual,
@@ -119,11 +119,20 @@ impl TokenParser {
                 TokenKind::Greater => BinaryOperator::Greater,
                 TokenKind::LessEqual => BinaryOperator::LessEqual,
                 TokenKind::GreaterEqual => BinaryOperator::GreaterEqual,
-                TokenKind::Is => BinaryOperator::Is,
-                TokenKind::Not => BinaryOperator::Not,
+                TokenKind::Is => {
+                    // Check for `is not` two-token operator
+                    if self.check(&TokenKind::Not) {
+                        self.bump(); // consume `not`
+                        self.skip_whitespace();
+                        BinaryOperator::Not
+                    } else {
+                        BinaryOperator::Is
+                    }
+                }
                 _ => unreachable!(),
             };
 
+            let right = self.parse_term()?;
             expr = Expression::Binary(Box::new(expr), op, Box::new(right));
         }
 

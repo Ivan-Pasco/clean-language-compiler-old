@@ -363,18 +363,104 @@ impl WasmPluginAdapter {
             },
         )?;
 
-        // env.string.split - Split string (stub)
+        // env.string.split - Split a string by a delimiter.
+        //
+        // Parameters:
+        //   str_ptr   - pointer to length-prefixed source string
+        //   delim_ptr - pointer to length-prefixed delimiter string
+        //
+        // Returns a pointer to a list structure:
+        //   Header (16 bytes): [length: i32, capacity: i32, type_tag: i32, flags: i32]
+        //   Data (4 bytes * length): i32 pointers, each pointing to a
+        //                            length-prefixed substring in linear memory.
+        //
+        // Returns 0 on any memory error.
         linker.func_wrap(
             "env",
             "string.split",
-            |mut caller: Caller<'_, PluginState>, _str_ptr: i32, _delim_ptr: i32| -> i32 {
-                // Return empty array
-                let state = caller.data_mut();
-                let ptr = state.allocate(4);
-                if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    let _ = memory.write(&mut caller, ptr, &[0u8; 4]);
+            |mut caller: Caller<'_, PluginState>, str_ptr: i32, delim_ptr: i32| -> i32 {
+                // Read both strings safely.
+                let source = match read_clean_string(&mut caller, str_ptr) {
+                    Some(s) => s,
+                    None => return 0,
+                };
+                let delimiter = match read_clean_string(&mut caller, delim_ptr) {
+                    Some(s) => s,
+                    None => return 0,
+                };
+
+                // Perform the split.
+                let parts: Vec<&str> = if delimiter.is_empty() {
+                    // Empty delimiter: split into individual characters.
+                    // Collect into a Vec<&str> by splitting at char boundaries.
+                    // We'll use a temporary approach: split on "" returns the
+                    // same string, so instead split on every char.
+                    source.split("").filter(|s| !s.is_empty()).collect()
+                } else {
+                    source.split(delimiter.as_str()).collect()
+                };
+
+                let count = parts.len();
+
+                // Write each substring and collect their pointers.
+                let mut part_ptrs: Vec<i32> = Vec::with_capacity(count);
+                for part in &parts {
+                    let p = write_clean_string(&mut caller, part.as_bytes());
+                    if p == 0 && !part.is_empty() {
+                        return 0; // memory allocation failure
+                    }
+                    part_ptrs.push(p);
                 }
-                ptr as i32
+
+                // Build the list header + pointer array.
+                // Header: [length(i32), capacity(i32), type_tag(i32), flags(i32)] = 16 bytes
+                // Each element is a 4-byte i32 pointer.
+                let header_size = 16usize;
+                let data_size = count * 4;
+                let total = header_size + data_size;
+
+                let list_ptr = caller.data_mut().allocate(total);
+
+                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(m) => m,
+                    None => return 0,
+                };
+
+                // Grow if needed.
+                let current_size = memory.data_size(&caller);
+                let required_size = list_ptr + total;
+                if required_size > current_size {
+                    let pages_needed = ((required_size - current_size) + 65535) / 65536;
+                    if memory.grow(&mut caller, pages_needed as u64).is_err() {
+                        return 0;
+                    }
+                }
+
+                // Write header: length = count, capacity = count, type_tag = 0, flags = 0
+                let count_u32 = count as u32;
+                let header_bytes = [
+                    count_u32.to_le_bytes(),
+                    count_u32.to_le_bytes(),
+                    0u32.to_le_bytes(),
+                    0u32.to_le_bytes(),
+                ]
+                .concat();
+                if memory.write(&mut caller, list_ptr, &header_bytes).is_err() {
+                    return 0;
+                }
+
+                // Write each element pointer.
+                for (i, &p) in part_ptrs.iter().enumerate() {
+                    let offset = list_ptr + header_size + i * 4;
+                    if memory
+                        .write(&mut caller, offset, &(p as u32).to_le_bytes())
+                        .is_err()
+                    {
+                        return 0;
+                    }
+                }
+
+                list_ptr as i32
             },
         )?;
 
@@ -384,34 +470,13 @@ impl WasmPluginAdapter {
             "env",
             "string_trim",
             |mut caller: Caller<'_, PluginState>, str_ptr: i32| -> i32 {
-                // Use the read_clean_string helper pattern
-                let original = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
-                    let data = memory.data(&caller);
-                    let len_start = str_ptr as usize;
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                // Use the safe read_clean_string helper — returns None on out-of-bounds.
+                let original = match read_clean_string(&mut caller, str_ptr) {
+                    Some(s) => s,
+                    None => return 0,
                 };
-                let trimmed = original.trim();
-
-                // Allocate and write result
-                let result = trimmed.as_bytes();
-                let result_len = result.len();
-                let state = caller.data_mut();
-                let ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, ptr, &len_bytes);
-                let _ = memory.write(&mut caller, ptr + 4, result);
-                ptr as i32
+                let trimmed = original.trim().to_owned();
+                write_clean_string(&mut caller, trimmed.as_bytes())
             },
         )?;
 
@@ -420,32 +485,12 @@ impl WasmPluginAdapter {
             "env",
             "string_trim_start",
             |mut caller: Caller<'_, PluginState>, str_ptr: i32| -> i32 {
-                let original = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
-                    let data = memory.data(&caller);
-                    let len_start = str_ptr as usize;
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                let original = match read_clean_string(&mut caller, str_ptr) {
+                    Some(s) => s,
+                    None => return 0,
                 };
-                let trimmed = original.trim_start();
-
-                let result = trimmed.as_bytes();
-                let result_len = result.len();
-                let state = caller.data_mut();
-                let ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, ptr, &len_bytes);
-                let _ = memory.write(&mut caller, ptr + 4, result);
-                ptr as i32
+                let trimmed = original.trim_start().to_owned();
+                write_clean_string(&mut caller, trimmed.as_bytes())
             },
         )?;
 
@@ -454,32 +499,12 @@ impl WasmPluginAdapter {
             "env",
             "string_trim_end",
             |mut caller: Caller<'_, PluginState>, str_ptr: i32| -> i32 {
-                let original = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
-                    let data = memory.data(&caller);
-                    let len_start = str_ptr as usize;
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                let original = match read_clean_string(&mut caller, str_ptr) {
+                    Some(s) => s,
+                    None => return 0,
                 };
-                let trimmed = original.trim_end();
-
-                let result = trimmed.as_bytes();
-                let result_len = result.len();
-                let state = caller.data_mut();
-                let ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, ptr, &len_bytes);
-                let _ = memory.write(&mut caller, ptr + 4, result);
-                ptr as i32
+                let trimmed = original.trim_end().to_owned();
+                write_clean_string(&mut caller, trimmed.as_bytes())
             },
         )?;
 
@@ -493,38 +518,12 @@ impl WasmPluginAdapter {
             "env",
             "string.trim",
             |mut caller: Caller<'_, PluginState>, str_ptr: i32| -> i32 {
-                let original = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
-                    let data = memory.data(&caller);
-                    let len_start = str_ptr as usize;
-                    if len_start + 4 > data.len() {
-                        return 0;
-                    }
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    if data_start + len > data.len() {
-                        return 0;
-                    }
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                let original = match read_clean_string(&mut caller, str_ptr) {
+                    Some(s) => s,
+                    None => return 0,
                 };
-                let trimmed = original.trim();
-
-                let result = trimmed.as_bytes();
-                let result_len = result.len();
-                let state = caller.data_mut();
-                let ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, ptr, &len_bytes);
-                let _ = memory.write(&mut caller, ptr + 4, result);
-                ptr as i32
+                let trimmed = original.trim().to_owned();
+                write_clean_string(&mut caller, trimmed.as_bytes())
             },
         )?;
 
@@ -533,38 +532,12 @@ impl WasmPluginAdapter {
             "env",
             "string.trimStart",
             |mut caller: Caller<'_, PluginState>, str_ptr: i32| -> i32 {
-                let original = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
-                    let data = memory.data(&caller);
-                    let len_start = str_ptr as usize;
-                    if len_start + 4 > data.len() {
-                        return 0;
-                    }
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    if data_start + len > data.len() {
-                        return 0;
-                    }
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                let original = match read_clean_string(&mut caller, str_ptr) {
+                    Some(s) => s,
+                    None => return 0,
                 };
-                let trimmed = original.trim_start();
-
-                let result = trimmed.as_bytes();
-                let result_len = result.len();
-                let state = caller.data_mut();
-                let ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, ptr, &len_bytes);
-                let _ = memory.write(&mut caller, ptr + 4, result);
-                ptr as i32
+                let trimmed = original.trim_start().to_owned();
+                write_clean_string(&mut caller, trimmed.as_bytes())
             },
         )?;
 
@@ -573,38 +546,12 @@ impl WasmPluginAdapter {
             "env",
             "string.trimEnd",
             |mut caller: Caller<'_, PluginState>, str_ptr: i32| -> i32 {
-                let original = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
-                    let data = memory.data(&caller);
-                    let len_start = str_ptr as usize;
-                    if len_start + 4 > data.len() {
-                        return 0;
-                    }
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    if data_start + len > data.len() {
-                        return 0;
-                    }
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                let original = match read_clean_string(&mut caller, str_ptr) {
+                    Some(s) => s,
+                    None => return 0,
                 };
-                let trimmed = original.trim_end();
-
-                let result = trimmed.as_bytes();
-                let result_len = result.len();
-                let state = caller.data_mut();
-                let ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, ptr, &len_bytes);
-                let _ = memory.write(&mut caller, ptr + 4, result);
-                ptr as i32
+                let trimmed = original.trim_end().to_owned();
+                write_clean_string(&mut caller, trimmed.as_bytes())
             },
         )?;
 
@@ -3154,6 +3101,47 @@ fn read_clean_string(caller: &mut Caller<'_, PluginState>, ptr: i32) -> Option<S
     std::str::from_utf8(&data[data_start..data_end])
         .ok()
         .map(|s| s.to_string())
+}
+
+/// Helper to write a byte slice as a Clean length-prefixed string into WASM memory.
+///
+/// Allocates space via the bump allocator, grows the module's linear memory if the
+/// allocation exceeds the current `data_size`, then writes `[4-byte LE length][data]`.
+///
+/// Returns the pointer on success or 0 if memory cannot be obtained / grown.
+fn write_clean_string(caller: &mut Caller<'_, PluginState>, data: &[u8]) -> i32 {
+    let data_len = data.len();
+    let total_size = 4 + data_len;
+
+    // Allocate via the bump allocator.
+    let ptr = caller.data_mut().allocate(total_size);
+
+    let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+        Some(m) => m,
+        None => return 0,
+    };
+
+    // Grow the module's linear memory if the allocation extends past the current limit.
+    // Use reborrows (&mut *caller) so the borrow-checker knows we re-use the same caller.
+    let current_size = memory.data_size(&mut *caller);
+    let required_size = ptr + total_size;
+    if required_size > current_size {
+        let pages_needed = ((required_size - current_size) + 65535) / 65536;
+        if memory.grow(&mut *caller, pages_needed as u64).is_err() {
+            return 0;
+        }
+    }
+
+    // Write length header then content.
+    let len_bytes = (data_len as u32).to_le_bytes();
+    if memory.write(&mut *caller, ptr, &len_bytes).is_err() {
+        return 0;
+    }
+    if memory.write(&mut *caller, ptr + 4, data).is_err() {
+        return 0;
+    }
+
+    ptr as i32
 }
 
 /// Extract inline `key="value"` pairs from the first line of block content.

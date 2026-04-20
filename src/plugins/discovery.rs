@@ -131,15 +131,35 @@ impl PluginDiscovery {
             message: e.to_string(),
         })?;
 
-        for entry in entries.flatten() {
+        for entry_result in entries {
+            let entry = match entry_result {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to read directory entry in '{}': {}",
+                        dir.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
             let path = entry.path();
 
             // Check for plugin.toml directly in directory
             if path.is_dir() {
                 let manifest_path = path.join("plugin.toml");
                 if manifest_path.exists() {
-                    if let Ok(manifest) = self.load_manifest(&manifest_path) {
-                        manifests.insert(manifest.plugin.name.clone(), manifest);
+                    match self.load_manifest(&manifest_path) {
+                        Ok(manifest) => {
+                            manifests.insert(manifest.plugin.name.clone(), manifest);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Skipping broken plugin manifest '{}': {}",
+                                manifest_path.display(),
+                                e
+                            );
+                        }
                     }
                 }
             }
@@ -161,6 +181,23 @@ impl PluginDiscovery {
         })
     }
 
+    /// Validate that a candidate path is strictly contained within the allowed root.
+    ///
+    /// Returns `true` only when the canonicalized candidate starts with the
+    /// canonicalized root, preventing `..` / absolute-path directory traversal.
+    fn is_within_root(root: &Path, candidate: &Path) -> bool {
+        // Canonicalize both paths so that `..` segments and symlinks are resolved.
+        // If canonicalization fails (e.g. the path doesn't exist yet) we err on the
+        // side of safety and reject the candidate.
+        let Ok(canonical_root) = root.canonicalize() else {
+            return false;
+        };
+        let Ok(canonical_candidate) = candidate.canonicalize() else {
+            return false;
+        };
+        canonical_candidate.starts_with(&canonical_root)
+    }
+
     /// Load a specific plugin by name
     ///
     /// Searches in project directory first, then global directory.
@@ -172,6 +209,14 @@ impl PluginDiscovery {
     /// * `Ok(PluginManifest)` - The loaded manifest
     /// * `Err(DiscoveryError::PluginNotFound)` - If plugin doesn't exist
     pub fn load_plugin(&self, name: &str) -> Result<PluginManifest, DiscoveryError> {
+        // Reject names that are absolute paths or contain path-traversal sequences.
+        // Plugin names must be simple identifiers like "frame.data" or "frame-data".
+        if name.contains("..") || std::path::Path::new(name).is_absolute() {
+            return Err(DiscoveryError::PluginNotFound {
+                name: name.to_string(),
+            });
+        }
+
         // Convert plugin name to directory name (e.g., "frame.data" -> "frame.data" or "frame-data")
         let dir_names = [name.to_string(), name.replace('.', "-")];
 
@@ -179,7 +224,8 @@ impl PluginDiscovery {
         if let Some(ref project_dir) = self.project_dir {
             for dir_name in &dir_names {
                 let manifest_path = project_dir.join(dir_name).join("plugin.toml");
-                if manifest_path.exists() {
+                // Only proceed if the resolved path stays inside the project root.
+                if manifest_path.exists() && Self::is_within_root(project_dir, &manifest_path) {
                     return self.load_manifest(&manifest_path);
                 }
             }
@@ -188,7 +234,8 @@ impl PluginDiscovery {
         // Check global directory
         for dir_name in &dir_names {
             let manifest_path = self.global_dir.join(dir_name).join("plugin.toml");
-            if manifest_path.exists() {
+            // Only proceed if the resolved path stays inside the global root.
+            if manifest_path.exists() && Self::is_within_root(&self.global_dir, &manifest_path) {
                 return self.load_manifest(&manifest_path);
             }
         }
