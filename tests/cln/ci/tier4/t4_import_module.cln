@@ -2,8 +2,10 @@
 // Grammar: import statement for external module
 // Status: KNOWN INCOMPLETE — module import system not fully implemented
 // Purpose: Verify module import syntax is accepted by parser
+// Fixed: was using inline `import MathUtils`, spec requires block form `import:`
 
-import MathUtils
+import:
+	MathUtils
 
 start:
 	integer r = MathUtils.square(5)

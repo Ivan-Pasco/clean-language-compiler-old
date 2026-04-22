@@ -19,6 +19,10 @@ pub struct HirBuilder {
     type_inference_counter: usize,
     warnings: Vec<CompilerError>,
     constant_bindings: std::collections::HashSet<String>,
+    /// Nesting depth: 0 = top-level, >0 = inside a function/block.
+    /// Used to enforce that apply blocks and import statements may only
+    /// appear at the top level of a program.
+    scope_depth: usize,
 }
 
 impl HirBuilder {
@@ -28,6 +32,7 @@ impl HirBuilder {
             type_inference_counter: 0,
             warnings: Vec::new(),
             constant_bindings: std::collections::HashSet::new(),
+            scope_depth: 0,
         }
     }
 
@@ -425,9 +430,40 @@ impl HirBuilder {
 
     /// Convert statements to HIR block
     fn build_block(&mut self, statements: &[Statement]) -> Result<HirBlock, CompilerError> {
+        // Enter a nested scope: apply blocks and imports are now forbidden.
+        self.scope_depth += 1;
+        let result = self.build_block_inner(statements);
+        self.scope_depth -= 1;
+        result
+    }
+
+    /// Inner implementation of build_block, called after scope_depth has been incremented.
+    fn build_block_inner(&mut self, statements: &[Statement]) -> Result<HirBlock, CompilerError> {
         let mut hir_statements = Vec::new();
 
         for stmt in statements {
+            // Validate that apply blocks and imports do not appear inside nested scopes.
+            match stmt {
+                Statement::TypeApplyBlock { location, .. }
+                | Statement::FunctionApplyBlock { location, .. }
+                | Statement::MethodApplyBlock { location, .. }
+                | Statement::ConstantApplyBlock { location, .. } => {
+                    let loc = location.clone().unwrap_or_default();
+                    return Err(CompilerError::validation_error(
+                        "apply blocks must appear at the top level of a program, not inside a function or block",
+                        loc,
+                    ));
+                }
+                Statement::Import { location, .. } => {
+                    let loc = location.clone().unwrap_or_default();
+                    return Err(CompilerError::validation_error(
+                        "import statements must appear at the top level of a program, not inside a function or block",
+                        loc,
+                    ));
+                }
+                _ => {}
+            }
+
             // Special handling for TypeApplyBlock - expand into multiple statements
             if let Statement::TypeApplyBlock {
                 type_,

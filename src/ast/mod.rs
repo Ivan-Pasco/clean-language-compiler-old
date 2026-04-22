@@ -47,7 +47,7 @@ pub enum Value {
     Number(f64),  // Default number (platform optimal)
     Boolean(bool),
     String(String),
-    Matrix(Vec<Vec<f64>>),
+    Matrix(Vec<Vec<Value>>),
     Null,
     Void,
     // Advanced sized types
@@ -291,13 +291,6 @@ pub enum Expression {
         location: SourceLocation,
     },
 
-    // Match expressions
-    Match {
-        value: Box<Expression>,
-        cases: Vec<MatchCase>,
-        location: SourceLocation,
-    },
-
     // Input expressions (for console input)
     Input {
         prompt: Option<String>,
@@ -327,59 +320,6 @@ pub enum InputType {
     Integer, // input.integer("prompt")
     Number,  // input.number("prompt")
     Boolean, // input.yesNo("prompt")
-}
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct MatchCase {
-    pub pattern: Pattern,
-    pub guard: Option<Expression>, // Optional when condition
-    pub body: Vec<Statement>,
-    pub location: SourceLocation,
-}
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub enum Pattern {
-    // Literal patterns: 42, "hello", true
-    Literal(Value),
-
-    // Variable patterns: x (binds to variable)
-    Variable(String),
-
-    // Wildcard pattern: _
-    Wildcard,
-
-    // Constructor patterns: Some(x), Point(x, y)
-    Constructor {
-        name: String,
-        patterns: Vec<Pattern>,
-    },
-
-    // List patterns: [x, y, z] or [head, ...tail]
-    List {
-        patterns: Vec<Pattern>,
-        rest: Option<String>, // For spread patterns like [x, ...rest]
-    },
-
-    // Object patterns: { x, y } or { x: pattern }
-    Object {
-        fields: Vec<FieldPattern>,
-    },
-
-    // Or patterns: pattern1 | pattern2
-    Or(Vec<Pattern>),
-
-    // Range patterns: 1..10
-    Range {
-        start: Box<Expression>,
-        end: Box<Expression>,
-        inclusive: bool,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct FieldPattern {
-    pub name: String,
-    pub pattern: Option<Pattern>, // None means shorthand { x } instead of { x: pattern }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -547,13 +487,6 @@ pub enum Statement {
     OnErrorBlock {
         expression: Expression,
         error_block: Vec<Statement>,
-        location: Option<SourceLocation>,
-    },
-
-    // Match expressions
-    Match {
-        value: Expression,
-        cases: Vec<MatchCase>,
         location: Option<SourceLocation>,
     },
 

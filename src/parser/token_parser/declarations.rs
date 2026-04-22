@@ -641,50 +641,45 @@ impl TokenParser {
             return Ok(import_items);
         }
 
-        // Check for import: block syntax vs. single import
-        if self.eat(&TokenKind::Colon) {
-            // Block syntax: import:\n\tmath\n\tstring.concat\n\t...
+        // Only the block form is supported: import:\n\tmodule\n\t...
+        // The inline form `import module` is not part of the specification.
+        if !self.eat(&TokenKind::Colon) {
+            return Err(CompilerError::parse_error(
+                "Expected ':' after 'import'. Use the block form:\n  import:\n      module_name",
+                None,
+                Some("Inline import syntax is not supported. Use 'import:' followed by an indented block of module names.".to_string()),
+            ));
+        }
+
+        self.skip_whitespace();
+
+        // Parse indented import items
+        while !self.is_at_end() {
             self.skip_whitespace();
 
-            // Parse indented import items
-            while !self.is_at_end() {
-                self.skip_whitespace();
+            // Check for indentation or end of block
+            if matches!(self.current_kind(), TokenKind::Indent(_)) {
+                self.skip_indentation();
 
-                // Check for indentation or end of block
-                if matches!(self.current_kind(), TokenKind::Indent(_)) {
-                    self.skip_indentation();
-
-                    // Parse import item
-                    import_items.push(self.parse_import_item()?);
-                    self.skip_whitespace();
-                } else if matches!(self.current_kind(), TokenKind::Dedent(_)) {
-                    // End of import block
-                    break;
-                } else if matches!(
-                    self.current_kind(),
-                    TokenKind::Functions
-                        | TokenKind::Class
-                        | TokenKind::Start
-                        | TokenKind::Tests
-                        | TokenKind::Private
-                ) {
-                    // Hit next top-level block
-                    break;
-                } else {
-                    // Not indented and not a dedent = end of block
-                    break;
-                }
-            }
-        } else {
-            // Old syntax: import math (single line, comma-separated)
-            import_items.push(self.parse_import_item()?);
-            self.skip_whitespace();
-
-            // Parse additional import items if present
-            while self.eat(&TokenKind::Comma) {
-                self.skip_whitespace();
+                // Parse import item
                 import_items.push(self.parse_import_item()?);
                 self.skip_whitespace();
+            } else if matches!(self.current_kind(), TokenKind::Dedent(_)) {
+                // End of import block
+                break;
+            } else if matches!(
+                self.current_kind(),
+                TokenKind::Functions
+                    | TokenKind::Class
+                    | TokenKind::Start
+                    | TokenKind::Tests
+                    | TokenKind::Private
+            ) {
+                // Hit next top-level block
+                break;
+            } else {
+                // Not indented and not a dedent = end of block
+                break;
             }
         }
 

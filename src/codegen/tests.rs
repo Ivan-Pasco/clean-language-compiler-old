@@ -198,9 +198,15 @@ fn test_matrix_operations() {
     instr_gen.add_function_mapping("matrix_inverse", 4);
 
     // Create sample matrix expressions
-    let matrix_a = Expression::Literal(Value::Matrix(vec![vec![1.0, 2.0], vec![3.0, 4.0]]));
+    let matrix_a = Expression::Literal(Value::Matrix(vec![
+        vec![Value::Number(1.0), Value::Number(2.0)],
+        vec![Value::Number(3.0), Value::Number(4.0)],
+    ]));
 
-    let matrix_b = Expression::Literal(Value::Matrix(vec![vec![5.0, 6.0], vec![7.0, 8.0]]));
+    let matrix_b = Expression::Literal(Value::Matrix(vec![
+        vec![Value::Number(5.0), Value::Number(6.0)],
+        vec![Value::Number(7.0), Value::Number(8.0)],
+    ]));
 
     // Test basic matrix operations using binary expressions
     let add_expr = Expression::Binary(

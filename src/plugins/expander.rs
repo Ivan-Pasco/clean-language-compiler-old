@@ -350,19 +350,6 @@ impl<'a> PluginExpander<'a> {
                     });
                 }
 
-                Statement::Match {
-                    value,
-                    cases,
-                    location,
-                } => {
-                    // Match cases may contain statements in future extensions
-                    result.push(Statement::Match {
-                        value,
-                        cases,
-                        location,
-                    });
-                }
-
                 Statement::ClassDefinition { class, location } => {
                     let expanded_class = self.expand_class(class)?;
                     result.push(Statement::ClassDefinition {

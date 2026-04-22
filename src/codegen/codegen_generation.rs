@@ -3,8 +3,8 @@
 
 use super::instruction_generator::LocalVarInfo;
 use crate::ast::{
-    self, BinaryOperator, Expression, Function as AstFunction, Pattern, SourceLocation, Statement,
-    Type, UnaryOperator, Value,
+    self, BinaryOperator, Expression, Function as AstFunction, SourceLocation, Statement, Type,
+    UnaryOperator, Value,
 };
 use crate::error::CompilerError;
 use crate::types::WasmType;
@@ -476,82 +476,6 @@ impl super::CodeGenerator {
                 // Functions block - generate code for all functions
                 for function in functions {
                     self.generate_function(function)?;
-                }
-            }
-
-            Statement::Match { value, cases, .. } => {
-                // Match statement - generate WASM if-else chain for pattern matching
-                // Generate value to match against
-                self.generate_expression(value, instructions)?;
-
-                if cases.is_empty() {
-                    // No cases - just drop the value from stack
-                    instructions.push(Instruction::Drop);
-                    return Ok(());
-                }
-
-                // For each case, generate: (value_copy == pattern) ? execute_body : try_next_case
-                for (case_index, case) in cases.iter().enumerate() {
-                    if case_index > 0 {
-                        // For cases after the first, duplicate the match value
-                        instructions.push(Instruction::LocalTee(self.get_or_create_temp_local()?));
-                    }
-
-                    // Generate pattern comparison based on pattern type
-                    match &case.pattern {
-                        Pattern::Literal(value) => {
-                            // Generate literal value to compare against
-                            match value {
-                                Value::Integer(n) => {
-                                    instructions.push(Instruction::I32Const((*n) as i32))
-                                }
-                                Value::Number(n) => instructions.push(Instruction::F64Const(*n)),
-                                Value::Boolean(b) => {
-                                    instructions.push(Instruction::I32Const(if *b { 1 } else { 0 }))
-                                }
-                                _ => {
-                                    // For complex values, generate a comparison expression
-                                    self.generate_expression(
-                                        &Expression::Literal(value.clone()),
-                                        instructions,
-                                    )?;
-                                }
-                            }
-                            instructions.push(Instruction::I32Eq); // Compare value == pattern
-                        }
-                        Pattern::Wildcard => {
-                            // Wildcard pattern (catch-all) - always true
-                            instructions.push(Instruction::Drop); // Drop the value
-                            instructions.push(Instruction::I32Const(1)); // Push true
-                        }
-                        _ => {
-                            // Other pattern types treated as wildcard match
-                            instructions.push(Instruction::Drop); // Drop the value
-                            instructions.push(Instruction::I32Const(1)); // Push true
-                        }
-                    }
-
-                    // Generate conditional execution
-                    instructions.push(Instruction::If(BlockType::Empty));
-
-                    // Generate case body
-                    for stmt in &case.body {
-                        self.generate_statement(stmt, instructions)?;
-                    }
-
-                    // If this is not the last case, need to skip other cases
-                    if case_index < cases.len() - 1 {
-                        // Branch to end of match statement
-                        let branch_depth = (cases.len() - case_index - 1) as u32;
-                        instructions.push(Instruction::Br(branch_depth));
-                    }
-
-                    instructions.push(Instruction::End); // End if
-                }
-
-                // Clean up any remaining values on stack
-                if cases.len() > 1 {
-                    instructions.push(Instruction::Drop); // Drop the match value if still on stack
                 }
             }
 
@@ -3844,15 +3768,31 @@ impl super::CodeGenerator {
                 Ok(WasmType::I32)
             }
             Value::Matrix(rows) => {
-                // Convert the matrix values to f64 rows
-                let mut matrix_data = Vec::new();
+                // Convert the matrix Values to f64 for WASM memory layout.
+                // Each element is coerced: Number/Integer → f64, others → 0.0.
+                let mut matrix_data: Vec<f64> = Vec::new();
                 for row in rows {
                     for val in row {
-                        matrix_data.push(*val); // Since row is Vec<f64>, just dereference
+                        let f = match val {
+                            Value::Number(f) => *f,
+                            Value::Integer(i) => *i as f64,
+                            Value::Number32(f) => *f as f64,
+                            Value::Number64(f) => *f,
+                            Value::Integer8(i) => *i as f64,
+                            Value::Integer8u(u) => *u as f64,
+                            Value::Integer16(i) => *i as f64,
+                            Value::Integer16u(u) => *u as f64,
+                            Value::Integer32(i) => *i as f64,
+                            Value::Integer64(i) => *i as f64,
+                            _ => 0.0,
+                        };
+                        matrix_data.push(f);
                     }
                 }
 
-                let ptr = self.allocate_matrix(&matrix_data, rows.len(), rows[0].len())?;
+                let num_rows = rows.len();
+                let num_cols = rows.first().map(|r| r.len()).unwrap_or(0);
+                let ptr = self.allocate_matrix(&matrix_data, num_rows, num_cols)?;
                 instructions.push(Instruction::I32Const(ptr as i32));
                 Ok(WasmType::I32)
             }

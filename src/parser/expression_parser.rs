@@ -1185,23 +1185,24 @@ pub fn parse_list_element(pair: Pair<Rule>) -> Result<Expression, CompilerError>
 }
 
 pub fn parse_matrix_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
-    let mut rows = Vec::new();
+    let mut rows: Vec<Vec<Value>> = Vec::new();
 
     for matrix_row_pair in pair.into_inner() {
         if let Rule::matrix_row = matrix_row_pair.as_rule() {
-            let mut row = Vec::new();
+            let mut row: Vec<Value> = Vec::new();
 
             for element in matrix_row_pair.into_inner() {
                 if let Rule::expression = element.as_rule() {
                     let expr = parse_expression(element)?;
                     match expr {
-                        Expression::Literal(Value::Number(f)) => row.push(f),
-                        Expression::Literal(Value::Integer(i)) => row.push(i as f64),
+                        Expression::Literal(Value::Number(f)) => row.push(Value::Number(f)),
+                        Expression::Literal(Value::Integer(i)) => row.push(Value::Integer(i)),
+                        Expression::Literal(v) => row.push(v),
                         _ => {
                             return Err(CompilerError::parse_error(
-                                "Matrix literals can only contain numeric values".to_string(),
+                                "Matrix literals can only contain literal values".to_string(),
                                 None,
-                                Some("Use numeric literals in matrix definitions".to_string()),
+                                Some("Use literal values in matrix definitions".to_string()),
                             ))
                         }
                     }
