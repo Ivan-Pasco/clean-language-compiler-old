@@ -591,13 +591,6 @@ impl super::CodeGenerator {
         local_index
     }
 
-    // Helper method to get or create a temporary local for intermediate values
-    pub(crate) fn get_or_create_temp_local(&mut self) -> Result<u32, CompilerError> {
-        // Check if we already have a temp local for this function
-        // For now, just create a new i32 local each time (could be optimized)
-        Ok(self.add_local_variable(WasmType::I32))
-    }
-
     pub fn get_expression_type(&mut self, expr: &Expression) -> Result<WasmType, CompilerError> {
         // This is a simplified implementation - in a full implementation this would
         // analyze the expression to determine its type
