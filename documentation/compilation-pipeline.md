@@ -2,7 +2,7 @@
 
 The Clean Language compiler transforms source code to WebAssembly through seven stages. The authoritative entry point is `compile_with_plugins_and_opt_level()` in `src/lib.rs`. This document describes what each stage does, what data structure it produces, where it lives in the source tree, and what crosses the stage boundary.
 
-For language semantics and type rules, see [`spec/semantic-rules.md`](../../spec/semantic-rules.md) and [`spec/type-system.md`](../../spec/type-system.md). For the WASM memory layout, see [`platform-architecture/MEMORY_MODEL.md`](../../platform-architecture/MEMORY_MODEL.md).
+For language semantics and type rules, see [`foundation/spec/semantic-rules.md`](../../foundation/spec/semantic-rules.md) and [`foundation/spec/type-system.md`](../../foundation/spec/type-system.md). For the WASM memory layout, see [`foundation/platform-architecture/MEMORY_MODEL.md`](../../foundation/platform-architecture/MEMORY_MODEL.md).
 
 ---
 
@@ -140,7 +140,7 @@ Checks that the program obeys plugin constraints: forbidden functions in certain
 
 Framework DSL blocks (e.g., `endpoint:`, `component:`, `model:`) are not native Clean Language syntax. The expander calls into the plugin's WASM module to transform each `ast::PluginBlock` into a sequence of standard `ast::Statement` and `ast::Function` nodes. The resulting `ast::Program` contains no remaining `PluginBlock` nodes after this step.
 
-The compiler does not contain any plugin-specific logic. If the plugin WASM produces wrong output, the bug is in the codegen that compiled the plugin — not in the compiler's expander. See `management/ARCHITECTURE_BOUNDARIES.md` for the boundary rule.
+The compiler does not contain any plugin-specific logic. If the plugin WASM produces wrong output, the bug is in the codegen that compiled the plugin — not in the compiler's expander. See `foundation/management/ARCHITECTURE_BOUNDARIES.md` for the boundary rule.
 
 ### Stage 2.6 — Bridge Function Registration
 
@@ -241,7 +241,7 @@ The type checker uses constraint-based inference. For each expression it either:
 - Assigns a concrete type directly from a literal or declared type annotation, or
 - Generates a type constraint (e.g., "left operand of `+` must equal right operand's type") and solves the constraint set.
 
-Type compatibility rules are defined in [`spec/type-system.md`](../../spec/type-system.md). The type checker consults those rules directly — it does not duplicate them.
+Type compatibility rules are defined in [`foundation/spec/type-system.md`](../../foundation/spec/type-system.md). The type checker consults those rules directly — it does not duplicate them.
 
 When a type error is encountered, `SemanticErrorRecovery::recover_from_type_error` assigns `Type::Error` or `Type::Unknown` to the failing node so that downstream checking can continue. See [Error Handling Guide](./error-handling-guide.md) §Semantic Error Recovery.
 
@@ -352,13 +352,13 @@ External functions declared by plugins must generate WASM imports matching the h
 
 - String parameters use `(ptr: i32, len: i32)` pairs (length-prefixed).
 - `integer` values in host-boundary functions use `i64` (not `i32`).
-- The authoritative signatures are in [`platform-architecture/HOST_BRIDGE.md`](../../platform-architecture/HOST_BRIDGE.md).
+- The authoritative signatures are in [`foundation/platform-architecture/HOST_BRIDGE.md`](../../foundation/platform-architecture/HOST_BRIDGE.md).
 
 Any mismatch between the compiler-generated import and the host's export is a contract violation that produces a WASM link error at runtime.
 
 ### String Pool
 
-The `StringPool` in `MirProgram` holds all string literals used in the program. During codegen, each unique string is written to the WASM data section at a fixed offset. The pool tracks `(content, wasm_offset)` pairs. When a `MirInstruction` references a string literal, codegen emits an `i32.const <wasm_offset>` instruction. See [`platform-architecture/MEMORY_MODEL.md`](../../platform-architecture/MEMORY_MODEL.md) for the memory layout.
+The `StringPool` in `MirProgram` holds all string literals used in the program. During codegen, each unique string is written to the WASM data section at a fixed offset. The pool tracks `(content, wasm_offset)` pairs. When a `MirInstruction` references a string literal, codegen emits an `i32.const <wasm_offset>` instruction. See [`foundation/platform-architecture/MEMORY_MODEL.md`](../../foundation/platform-architecture/MEMORY_MODEL.md) for the memory layout.
 
 ### Function Table and Indirect Calls
 
@@ -391,7 +391,7 @@ If a new transformation pass is needed (e.g., a new optimization or a new IR low
 2. Implement the transformation as a `fn transform(input: &InputType, ...) -> Result<OutputType, CompilerError>`.
 3. Insert the call in `compile_with_plugins_and_opt_level()` in `src/lib.rs` at the correct position in the pipeline.
 4. Update this document with the new stage entry and add it to the data flow summary table.
-5. Error codes for the new stage must be defined in `spec/error-codes.md` before use (requires developer approval per Principle 25).
+5. Error codes for the new stage must be defined in `foundation/spec/error-codes.md` before use (requires developer approval per Principle 25).
 
 ---
 

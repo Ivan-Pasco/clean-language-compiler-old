@@ -17,7 +17,7 @@ use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 
 impl super::CodeGenerator {
     /// Emit a WASM import subject to the Import Minimality Rule
-    /// (see platform-architecture/EXECUTION_LAYERS.md).
+    /// (see foundation/platform-architecture/EXECUTION_LAYERS.md).
     ///
     /// Returns `true` if the import was emitted and the caller should
     /// record its function index (via `self.function_count`) and then

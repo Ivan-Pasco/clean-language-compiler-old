@@ -1063,7 +1063,7 @@ impl MirCodeGenerator<'_> {
     /// Walk the MIR call graph and collect every called function name.
     ///
     /// This is a general-purpose reachability scan used to drive the
-    /// Import Minimality Rule (see platform-architecture/EXECUTION_LAYERS.md).
+    /// Import Minimality Rule (see foundation/platform-architecture/EXECUTION_LAYERS.md).
     /// Returns the set of names that appear as call targets anywhere in the
     /// MIR program, expanded with common import-name aliases so that
     /// language-level names (`http.get`) match WASM import field names
@@ -1252,7 +1252,7 @@ impl MirCodeGenerator<'_> {
 
                 // `register_import_function` returns `u32::MAX` as a sentinel
                 // when the import is tree-shaken out (Import Minimality Rule,
-                // platform-architecture/EXECUTION_LAYERS.md). If that happens,
+                // foundation/platform-architecture/EXECUTION_LAYERS.md). If that happens,
                 // there is no real host function to wrap, so skip the wrapper
                 // entirely — otherwise the wrapper's body would emit
                 // `Call(u32::MAX)` and the wrapper would end up in the export

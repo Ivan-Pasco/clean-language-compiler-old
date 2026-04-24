@@ -390,7 +390,7 @@ impl TokenParser {
                 } else if self.check(&TokenKind::Dot) {
                     // Could be a property-chain assignment: `obj.prop = val`
                     // or `obj.a.b = val`, or just a method-call expression.
-                    // spec/grammar.ebnf `assignment_target`:
+                    // foundation/spec/grammar.ebnf `assignment_target`:
                     //   identifier , "." , identifier , { "." , identifier }
                     // Peek ahead: collect dot-separated identifiers, then check for `=`.
                     let mut path: Vec<String> = Vec::new();
@@ -452,7 +452,7 @@ impl TokenParser {
                         // Check if lhs_expr is a list access (e.g., numbers[0])
                         if let Expression::ListAccess(list, index) = lhs_expr {
                             // Prefer AssignmentTarget::Index when the collection is a
-                            // simple variable (spec/grammar.ebnf `assignment_target`).
+                            // simple variable (foundation/spec/grammar.ebnf `assignment_target`).
                             // Fall back to the legacy ListAssignment expression for
                             // complex receivers (e.g., method-call results) that the
                             // codegen already handles.

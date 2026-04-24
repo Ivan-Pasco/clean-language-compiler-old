@@ -2939,7 +2939,7 @@ functions:
 		return n * factorial(n - 1)
 ```
 
-## AI Metadata (spec/intent)
+## AI Metadata (foundation/spec/intent)
 ```
 functions:
 	integer divide(integer a, integer b)

@@ -3,9 +3,9 @@
 > Extend Clean Language with custom DSL blocks that compile to WebAssembly
 
 > **Formal references** — before reading this guide, check the authoritative specs:
-> - [Plugin Contract](../../spec/plugins/plugin-contract.md) — compiler-plugin interface (bridge functions, expand_block, type exposure)
-> - [Plugin Grammar Extensions](../../spec/plugins/) — EBNF grammar for each plugin's syntax
-> - [Execution Layers](../../platform-architecture/EXECUTION_LAYERS.md) — which layer implements which function
+> - [Plugin Contract](../../foundation/spec/plugins/plugin-contract.md) — compiler-plugin interface (bridge functions, expand_block, type exposure)
+> - [Plugin Grammar Extensions](../../foundation/spec/plugins/) — EBNF grammar for each plugin's syntax
+> - [Execution Layers](../../foundation/platform-architecture/EXECUTION_LAYERS.md) — which layer implements which function
 
 ## Table of Contents
 

@@ -1,6 +1,6 @@
 # Error Handling and Debugging — Implementation Guide
 
-> Error code definitions and semantic rules live in [`spec/semantic-rules.md`](../../spec/semantic-rules.md) and [`spec/error-codes.md`](../../spec/error-codes.md). This guide covers the compiler's implementation of error reporting and recovery.
+> Error code definitions and semantic rules live in [`foundation/spec/semantic-rules.md`](../../foundation/spec/semantic-rules.md) and [`foundation/spec/error-codes.md`](../../foundation/spec/error-codes.md). This guide covers the compiler's implementation of error reporting and recovery.
 
 > 🔗 **Related Documentation**: [Compilation Pipeline](./compilation-pipeline.md) • [Development Guide](./development-guide.md) • [Parser](./parser.md)
 
@@ -605,11 +605,11 @@ cln --json explain SEM002
 cln explain --list
 ```
 
-For the full list of error codes and their definitions, see [`spec/error-codes.md`](../../spec/error-codes.md).
+For the full list of error codes and their definitions, see [`foundation/spec/error-codes.md`](../../foundation/spec/error-codes.md).
 
 ### Diagnostic Output Format
 
-The compiler emits diagnostics in this format (see also `spec/error-codes.md` §"Diagnostic Format"):
+The compiler emits diagnostics in this format (see also `foundation/spec/error-codes.md` §"Diagnostic Format"):
 
 ```
 error[SEM002]: undefined symbol 'undefinedVariable'
@@ -660,9 +660,9 @@ RUST_LOG=clean_language_compiler::codegen=trace cln compile file.cln -o output.w
 
 Follow this sequence when adding a new diagnostic:
 
-1. **Check `spec/error-codes.md`** to see if a code already covers the condition. If not, propose a new code (requires developer approval per Principle 25).
+1. **Check `foundation/spec/error-codes.md`** to see if a code already covers the condition. If not, propose a new code (requires developer approval per Principle 25).
 
-2. **Add the error code to `spec/semantic-rules.md`** and `spec/error-codes.md` (after approval), with:
+2. **Add the error code to `foundation/spec/semantic-rules.md`** and `foundation/spec/error-codes.md` (after approval), with:
    - The triggering condition
    - An example of code that triggers it
    - The exact message format

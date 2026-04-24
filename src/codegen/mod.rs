@@ -524,7 +524,7 @@ impl CodeGenerator {
         }
 
         // Reachability-gated tree-shaking (Import Minimality Rule,
-        // platform-architecture/EXECUTION_LAYERS.md).
+        // foundation/platform-architecture/EXECUTION_LAYERS.md).
         //
         // Skip Layer 2/3 external-I/O imports that are not reachable from any
         // MIR call. Internal runtime imports (print, math, memory, string ops,
@@ -632,7 +632,7 @@ impl CodeGenerator {
 /// Returns true if the WASM import `field` name is a Layer 2 or Layer 3
 /// external-I/O function whose emission should be gated on reachability.
 ///
-/// Spec: platform-architecture/EXECUTION_LAYERS.md — Import Minimality Rule.
+/// Spec: foundation/platform-architecture/EXECUTION_LAYERS.md — Import Minimality Rule.
 ///
 /// **Layer 3 (server extensions):** HTTP server routing, request context,
 /// response, session, auth. A browser host cannot provide these.

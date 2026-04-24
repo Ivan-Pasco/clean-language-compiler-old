@@ -31,7 +31,7 @@ use tracing::{debug, trace};
 ///
 /// Enforces the ordering rule documented in
 /// `documentation/Clean_Language_Specification.md:1114-1134` and formalised in
-/// `spec/grammar.ebnf:544`.
+/// `foundation/spec/grammar.ebnf:544`.
 fn core_section_order(kind: &TokenKind) -> Option<u8> {
     match kind {
         TokenKind::Import => Some(1),
@@ -159,7 +159,7 @@ impl TokenParser {
         // Track section ordering for the 5 core sections:
         // import: (1) → start: (2) → state: (3) → class (4) → functions: (5).
         // Per documentation/Clean_Language_Specification.md:1114 and
-        // spec/grammar.ebnf:544, these must appear in order when present.
+        // foundation/spec/grammar.ebnf:544, these must appear in order when present.
         let mut last_core_section: u8 = 0;
 
         while !self.is_at_end() {

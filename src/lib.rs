@@ -157,7 +157,7 @@ impl CompilationTarget {
 /// Memory budget tier for WASM modules.
 ///
 /// Each tier defines initial pages, max pages, and intended use case.
-/// Values are from `platform-architecture/MEMORY_POLICY.md` section 3.
+/// Values are from `foundation/platform-architecture/MEMORY_POLICY.md` section 3.
 ///
 /// | Tier       | Initial Pages | Initial Size | Max Pages | Max Size |
 /// |------------|---------------|-------------|-----------|----------|

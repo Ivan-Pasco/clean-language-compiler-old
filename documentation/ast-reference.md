@@ -1,6 +1,6 @@
 # AST Implementation Notes
 
-> The authoritative AST node reference is **[spec/ast.md](../../spec/ast.md)**.
+> The authoritative AST node reference is **[spec/ast.md](../../foundation/spec/ast.md)**.
 > That document is the 1:1 formal definition of every node in `src/ast/mod.rs`.
 > Read it first. This file covers compiler-internal implementation details only.
 

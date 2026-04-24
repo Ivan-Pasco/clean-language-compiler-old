@@ -248,7 +248,7 @@ fn parse_assignment_statement(
         ));
     }
 
-    // Regular variable assignment — spec/grammar.ebnf `assignment_target`
+    // Regular variable assignment — foundation/spec/grammar.ebnf `assignment_target`
     let target_str = target_part.as_str().trim().to_string();
     Ok(Statement::Assignment {
         target: AssignmentTarget::Variable(target_str),

@@ -22,13 +22,13 @@ The MCP server is configured in `.mcp.json` at the project root.
 
 The **single source of truth** for the Clean Language is:
 - **[Language Specification](./documentation/Clean_Language_Specification.md)** — prose specification
-- **[`spec/grammar.ebnf`](../spec/grammar.ebnf)** — formal EBNF grammar (authoritative for syntax)
-- **[`spec/semantic-rules.md`](../spec/semantic-rules.md)** — numbered semantic rules
-- **[`spec/type-system.md`](../spec/type-system.md)** — type hierarchy and compatibility
-- **[`spec/stdlib-reference.md`](../spec/stdlib-reference.md)** — built-in function signatures
-- **[`spec/plugins/`](../spec/plugins/)** — plugin grammar extensions (EBNF)
+- **[`foundation/spec/grammar.ebnf`](../foundation/spec/grammar.ebnf)** — formal EBNF grammar (authoritative for syntax)
+- **[`foundation/spec/semantic-rules.md`](../foundation/spec/semantic-rules.md)** — numbered semantic rules
+- **[`foundation/spec/type-system.md`](../foundation/spec/type-system.md)** — type hierarchy and compatibility
+- **[`foundation/spec/stdlib-reference.md`](../foundation/spec/stdlib-reference.md)** — built-in function signatures
+- **[`foundation/spec/plugins/`](../foundation/spec/plugins/)** — plugin grammar extensions (EBNF)
 
-When resolving syntax ambiguity, `spec/grammar.ebnf` takes precedence. If something is not in the spec, propose a spec change before implementing it. When something is added, update both the prose spec and the formal EBNF.
+When resolving syntax ambiguity, `foundation/spec/grammar.ebnf` takes precedence. If something is not in the spec, propose a spec change before implementing it. When something is added, update both the prose spec and the formal EBNF.
 
 See also: **[KNOWLEDGE.md](./KNOWLEDGE.md)** — known fragile areas in compiler code.
 
@@ -36,11 +36,11 @@ See also: **[KNOWLEDGE.md](./KNOWLEDGE.md)** — known fragile areas in compiler
 
 The compiler generates WASM imports — it does NOT implement runtime functions.
 
-- **[Execution Layers](../platform-architecture/EXECUTION_LAYERS.md)** — read FIRST before implementing any function
-- **[Host Bridge](../platform-architecture/HOST_BRIDGE.md)** — Layer 2 portable functions
-- **[Memory Model](../platform-architecture/MEMORY_MODEL.md)** — WASM memory layout
-- **[Server Extensions](../platform-architecture/SERVER_EXTENSIONS.md)** — Layer 3 HTTP functions
-- **[Architecture Boundaries](../management/ARCHITECTURE_BOUNDARIES.md)** — component responsibilities
+- **[Execution Layers](../foundation/platform-architecture/EXECUTION_LAYERS.md)** — read FIRST before implementing any function
+- **[Host Bridge](../foundation/platform-architecture/HOST_BRIDGE.md)** — Layer 2 portable functions
+- **[Memory Model](../foundation/platform-architecture/MEMORY_MODEL.md)** — WASM memory layout
+- **[Server Extensions](../foundation/platform-architecture/SERVER_EXTENSIONS.md)** — Layer 3 HTTP functions
+- **[Architecture Boundaries](../foundation/management/ARCHITECTURE_BOUNDARIES.md)** — component responsibilities
 
 **Rule of thumb:** If a function needs I/O, network, or database, it belongs in a plugin declaration, NOT in the compiler registry.
 
@@ -138,7 +138,7 @@ Do NOT directly edit code in other components. You CAN read other components to 
 | What you found | Channel | Why |
 |---|---|---|
 | A **bug** (crash, wrong output, spec violation, regression) | **`report_error` MCP tool** — MANDATORY | Fingerprint dedup, occurrence tracking, automatic user notification on fix, visible on the ecosystem dashboard at errors.cleanlanguage.dev. This is the canonical bug-tracking path per `../CLAUDE.md` § "Cross-Component Bug Reporting". |
-| A **design proposal, directive change, schema/API request, architectural ask** | Markdown file in `../management/cross-component-prompts/` | Requires discussion, not auto-fix. Not a bug. |
+| A **design proposal, directive change, schema/API request, architectural ask** | Markdown file in `../foundation/management/cross-component-prompts/` | Requires discussion, not auto-fix. Not a bug. |
 
 **Never** write a markdown prompt for something that is a bug. Bug reports that sit in a markdown file are invisible to the dashboard dedup, don't notify users when fixed, and can't be pulled via `list_component_bugs`.
 
@@ -146,19 +146,19 @@ If in doubt: it's a bug → `report_error`.
 
 ## Documentation Sync Protocol
 
-Facts about the language live in `spec/` (at the project root). Facts about the platform live in `platform-architecture/`. Do not duplicate them here — link to them instead.
+Facts about the language live in `foundation/spec/` (at the project root). Facts about the platform live in `foundation/platform-architecture/`. Do not duplicate them here — link to them instead.
 
 **When you make a change in this component, update the corresponding spec file in the same commit:**
 
 | Change type | Update required |
 |-------------|-----------------|
-| New language syntax | `spec/grammar.ebnf` |
-| New semantic rule or error code | `spec/semantic-rules.md` + `spec/error-codes.md` |
-| New or changed type rule | `spec/type-system.md` |
-| New or changed built-in function | `spec/stdlib-reference.md` |
-| New or changed AST node | `spec/ast.md` |
-| New or changed plugin contract | `spec/plugins/plugin-contract.md` |
-| New or changed host bridge function | `platform-architecture/HOST_BRIDGE.md` |
-| New or changed execution layer | `platform-architecture/EXECUTION_LAYERS.md` |
+| New language syntax | `foundation/spec/grammar.ebnf` |
+| New semantic rule or error code | `foundation/spec/semantic-rules.md` + `foundation/spec/error-codes.md` |
+| New or changed type rule | `foundation/spec/type-system.md` |
+| New or changed built-in function | `foundation/spec/stdlib-reference.md` |
+| New or changed AST node | `foundation/spec/ast.md` |
+| New or changed plugin contract | `foundation/spec/plugins/plugin-contract.md` |
+| New or changed host bridge function | `foundation/platform-architecture/HOST_BRIDGE.md` |
+| New or changed execution layer | `foundation/platform-architecture/EXECUTION_LAYERS.md` |
 
 The spec files are the single source of truth. Component documentation explains implementation — it does not redefine language rules.

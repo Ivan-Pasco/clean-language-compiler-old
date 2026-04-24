@@ -150,14 +150,14 @@ pub enum UnaryOperator {
 }
 
 /// Postfix operators applied after a primary expression.
-/// Defined by `postfix_primary = primary , [ required_op ]` in spec/grammar.ebnf.
+/// Defined by `postfix_primary = primary , [ required_op ]` in foundation/spec/grammar.ebnf.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum PostfixOperator {
     /// `expr!` — asserts the value is not null; traps at runtime if null.
     Required,
 }
 
-/// Assignment target variants as defined by `assignment_target` in spec/grammar.ebnf:
+/// Assignment target variants as defined by `assignment_target` in foundation/spec/grammar.ebnf:
 ///   assignment_target = identifier
 ///                     , [ ( "[" , additive_expression , "]" )
 ///                       | ( "." , identifier , { "." , identifier } ) ]
@@ -206,7 +206,7 @@ pub enum Expression {
     Binary(Box<Expression>, BinaryOperator, Box<Expression>),
     Unary(UnaryOperator, Box<Expression>),
     /// Postfix operator applied after a primary expression.
-    /// Covers `postfix_primary = primary , [ required_op ]` from spec/grammar.ebnf.
+    /// Covers `postfix_primary = primary , [ required_op ]` from foundation/spec/grammar.ebnf.
     Postfix {
         operand: Box<Expression>,
         operator: PostfixOperator,
@@ -253,7 +253,7 @@ pub enum Expression {
 
     /// `chained_method_call` — (function_call | property_access | identifier)
     /// followed by one or more `.method()` segments.
-    /// spec/grammar.ebnf: `chained_method_call`
+    /// foundation/spec/grammar.ebnf: `chained_method_call`
     ChainedMethodCall {
         receiver: Box<Expression>,
         chain: Vec<(String, Vec<Expression>)>, // (method_name, args) pairs
@@ -262,7 +262,7 @@ pub enum Expression {
 
     /// `multiple_method_call` — a base receiver followed by two or more
     /// `.method()` segments (superset of `method_call`; kept distinct per spec).
-    /// spec/grammar.ebnf: `multiple_method_call`
+    /// foundation/spec/grammar.ebnf: `multiple_method_call`
     ///
     /// Note: structurally identical to `ChainedMethodCall` (two or more
     /// segments); mapped to the same WASM codegen path. Kept as a separate
@@ -275,7 +275,7 @@ pub enum Expression {
 
     /// `three_level_method_call` — `a.b.method(args)` where all three parts
     /// are identifiers.
-    /// spec/grammar.ebnf: `three_level_method_call`
+    /// foundation/spec/grammar.ebnf: `three_level_method_call`
     ThreeLevelMethodCall {
         first: String,
         second: String,
@@ -286,7 +286,7 @@ pub enum Expression {
 
     /// `property_method_call` — property chain ending in a method call:
     /// `a.b.c...method(args)` where the path is 3+ identifiers.
-    /// spec/grammar.ebnf: `property_method_call`
+    /// foundation/spec/grammar.ebnf: `property_method_call`
     PropertyMethodCall {
         object: String,
         path: Vec<String>, // intermediate property segments (may be empty)
@@ -445,7 +445,7 @@ pub enum Statement {
     },
 
     // Assignment — target supports variable, index, and property-chain forms
-    // per spec/grammar.ebnf `assignment_target` rule.
+    // per foundation/spec/grammar.ebnf `assignment_target` rule.
     Assignment {
         target: AssignmentTarget,
         value: Expression,

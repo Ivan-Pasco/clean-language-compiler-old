@@ -7,7 +7,15 @@
       "WebFetch(domain:errors.cleanlanguage.dev)",
       "Bash(/Users/earcandy/.cleen/versions/0.30.70/cln)",
       "Bash(/Users/earcandy/.cleen/versions/0.30.70/cln --version)",
-      "Bash(/Users/earcandy/.cleen/versions/0.30.70/cln --help)"
+      "Bash(/Users/earcandy/.cleen/versions/0.30.70/cln --help)",
+      "mcp__clean-language__list_component_bugs",
+      "Bash(mkdir -p /tmp/mock-install/bin)",
+      "Bash(cp \"/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/target/release/cln\" /tmp/mock-install/bin/cln)",
+      "Bash(unset CLEEN_TELEMETRY_FORCE)",
+      "Bash(/tmp/mock-install/bin/cln report *)"
+    ],
+    "additionalDirectories": [
+      "/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"
     ]
   }
 }

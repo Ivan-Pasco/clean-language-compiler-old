@@ -330,7 +330,7 @@ impl TokenParser {
                     expr = Expression::ListAccess(Box::new(expr), Box::new(index));
                 }
                 // Postfix `!` — `postfix_primary = primary , [ required_op ]`
-                // spec/grammar.ebnf: required_op = "!"
+                // foundation/spec/grammar.ebnf: required_op = "!"
                 TokenKind::Bang => {
                     let location = self.current().location.clone();
                     self.bump(); // consume !

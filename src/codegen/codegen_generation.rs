@@ -2710,7 +2710,7 @@ impl super::CodeGenerator {
             Expression::Unary(op, expr) => self.generate_unary_operation(op, expr, instructions),
 
             // Postfix `!` (Required assertion).
-            // spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
+            // foundation/spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
             // Asserts the operand is not null; traps at runtime if it is.
             Expression::Postfix {
                 operand,
@@ -2721,7 +2721,7 @@ impl super::CodeGenerator {
                 self.generate_required_assertion(operand_type, instructions)
             }
 
-            // ChainedMethodCall — spec/grammar.ebnf `chained_method_call`.
+            // ChainedMethodCall — foundation/spec/grammar.ebnf `chained_method_call`.
             // Left-to-right chain: evaluate receiver, then apply each segment.
             Expression::ChainedMethodCall {
                 receiver,
@@ -2729,7 +2729,7 @@ impl super::CodeGenerator {
                 location,
             } => self.generate_chained_calls(receiver, chain, location, instructions),
 
-            // MultipleMethodCall — spec/grammar.ebnf `multiple_method_call`.
+            // MultipleMethodCall — foundation/spec/grammar.ebnf `multiple_method_call`.
             // Structurally identical to ChainedMethodCall; uses the same codegen.
             Expression::MultipleMethodCall {
                 receiver,
@@ -2738,7 +2738,7 @@ impl super::CodeGenerator {
             } => self.generate_chained_calls(receiver, chain, location, instructions),
 
             // ThreeLevelMethodCall — `a.b.method(args)`.
-            // spec/grammar.ebnf: `three_level_method_call`.
+            // foundation/spec/grammar.ebnf: `three_level_method_call`.
             Expression::ThreeLevelMethodCall {
                 first,
                 second,
@@ -2761,7 +2761,7 @@ impl super::CodeGenerator {
             }
 
             // PropertyMethodCall — `obj.path...method(args)`.
-            // spec/grammar.ebnf: `property_method_call`.
+            // foundation/spec/grammar.ebnf: `property_method_call`.
             Expression::PropertyMethodCall {
                 object,
                 path,
@@ -3719,7 +3719,7 @@ impl super::CodeGenerator {
     /// and trap if it is.  Called by both the legacy `UnaryOperator`-based path
     /// and the new `Expression::Postfix { Required }` path.
     ///
-    /// spec/grammar.ebnf: `required_op = "!"`
+    /// foundation/spec/grammar.ebnf: `required_op = "!"`
     pub(crate) fn generate_required_assertion(
         &mut self,
         operand_type: WasmType,

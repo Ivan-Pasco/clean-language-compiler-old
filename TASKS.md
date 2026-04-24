@@ -927,7 +927,7 @@ ensure the type-conversion codepath runs.
 **Tracked as**: error report `f4030117-0f04-4f9b-88d3-62835c8cae42` (COD001_FOLLOWUP_STDLIB_LAZY).
 
 ### Description
-`platform-architecture/EXECUTION_LAYERS.md` §"Import Minimality Rule — Test (planned strengthening)" lists the Layer 2 categories still emitted unconditionally. They need to be reachability-gated at the class-registration call site (same pattern as `register_math_operations` in 0.30.67 and HttpClass/FileClass in 0.30.66) so both the imports and their wrapper functions are removed together.
+`foundation/platform-architecture/EXECUTION_LAYERS.md` §"Import Minimality Rule — Test (planned strengthening)" lists the Layer 2 categories still emitted unconditionally. They need to be reachability-gated at the class-registration call site (same pattern as `register_math_operations` in 0.30.67 and HttpClass/FileClass in 0.30.66) so both the imports and their wrapper functions are removed together.
 
 ### Remaining categories
 - `input_integer`, `input_float`, `input_yesno`, `input_range` (Layer 2, typed console input). Plain `input` stays always-on.

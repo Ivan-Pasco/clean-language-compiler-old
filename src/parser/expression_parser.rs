@@ -697,7 +697,7 @@ pub fn parse_multiplicative_expression(pair: Pair<Rule>) -> Result<Expression, C
 }
 
 // Parse postfix primary (primary with optional `!`).
-// spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
+// foundation/spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
 pub fn parse_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let span_location = convert_to_ast_location(&get_location(&pair));
     let mut result: Option<Expression> = None;
@@ -724,7 +724,7 @@ pub fn parse_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerErr
     })?;
 
     // If there's a required `!` operator, wrap in Postfix { Required }.
-    // spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
+    // foundation/spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
     if has_required {
         Ok(Expression::Postfix {
             operand: Box::new(expr),
@@ -2248,7 +2248,7 @@ pub fn parse_argument_power(pair: Pair<Rule>) -> Result<Expression, CompilerErro
 }
 
 // Parse argument postfix primary (primary with optional `!`).
-// spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
+// foundation/spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
 pub fn parse_argument_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let span_location = convert_to_ast_location(&get_location(&pair));
     let mut result: Option<Expression> = None;
@@ -2715,7 +2715,7 @@ pub fn parse_single_line_multiplicative_expression(
 }
 
 // Parse single-line postfix primary (primary with optional `!`).
-// spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
+// foundation/spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
 pub fn parse_single_line_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let span_location = convert_to_ast_location(&get_location(&pair));
     let mut result: Option<Expression> = None;
@@ -3183,7 +3183,7 @@ pub fn parse_multiline_power_expression(pair: Pair<Rule>) -> Result<Expression, 
 }
 
 // Parse multiline postfix primary (primary with optional `!`).
-// spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
+// foundation/spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
 pub fn parse_multiline_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let span_location = convert_to_ast_location(&get_location(&pair));
     let mut result: Option<Expression> = None;

@@ -40,7 +40,7 @@ impl HirBuilder {
     /// import → start → state → class → functions.
     ///
     /// Auxiliary items (watch, screen, framework, apply, private) are exempt from
-    /// this ordering rule, as defined by spec/grammar.ebnf §6 "TOP-LEVEL DECLARATIONS".
+    /// this ordering rule, as defined by foundation/spec/grammar.ebnf §6 "TOP-LEVEL DECLARATIONS".
     ///
     /// Returns `Err` with a descriptive `CompilerError` if a core section appears
     /// before a section that is supposed to precede it.
@@ -923,7 +923,7 @@ impl HirBuilder {
                 })
             }
 
-            // Postfix `!` (Required assertion) — spec/grammar.ebnf `postfix_primary`.
+            // Postfix `!` (Required assertion) — foundation/spec/grammar.ebnf `postfix_primary`.
             // Lowered to HIR as UnaryOp { Required } to reuse the existing null-trap path.
             Expression::Postfix {
                 operand,
@@ -984,7 +984,7 @@ impl HirBuilder {
                 })
             }
 
-            // ChainedMethodCall — spec/grammar.ebnf `chained_method_call`.
+            // ChainedMethodCall — foundation/spec/grammar.ebnf `chained_method_call`.
             // Lowered to a left-to-right fold of HirExpression::MethodCall nodes.
             Expression::ChainedMethodCall {
                 receiver,
@@ -1007,7 +1007,7 @@ impl HirBuilder {
                 Ok(hir_recv)
             }
 
-            // MultipleMethodCall — spec/grammar.ebnf `multiple_method_call`.
+            // MultipleMethodCall — foundation/spec/grammar.ebnf `multiple_method_call`.
             // Structurally identical to ChainedMethodCall; lowered the same way.
             Expression::MultipleMethodCall {
                 receiver,
@@ -1030,7 +1030,7 @@ impl HirBuilder {
                 Ok(hir_recv)
             }
 
-            // ThreeLevelMethodCall — spec/grammar.ebnf `three_level_method_call`.
+            // ThreeLevelMethodCall — foundation/spec/grammar.ebnf `three_level_method_call`.
             // `first.second.method(args)` — lowered to nested FieldAccess then MethodCall.
             Expression::ThreeLevelMethodCall {
                 first,
@@ -1060,7 +1060,7 @@ impl HirBuilder {
                 })
             }
 
-            // PropertyMethodCall — spec/grammar.ebnf `property_method_call`.
+            // PropertyMethodCall — foundation/spec/grammar.ebnf `property_method_call`.
             // `obj.a.b...method(args)` — lowered to a chain of FieldAccess then MethodCall.
             Expression::PropertyMethodCall {
                 object,
