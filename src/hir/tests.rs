@@ -206,7 +206,7 @@ mod hir_builder_tests {
                     default_value: None,
                 }],
                 body: vec![Statement::Assignment {
-                    target: "name".to_string(),
+                    target: AssignmentTarget::Variable("name".to_string()),
                     value: Expression::Variable("name".to_string()),
                     location: Some(test_location()),
                 }],

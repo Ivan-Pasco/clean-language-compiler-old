@@ -1,6 +1,8 @@
 //! Module for generating WebAssembly instructions.
 
-use crate::ast::{self, BinaryOperator, Expression, Statement, StringPart, Value};
+use crate::ast::{
+    self, AssignmentTarget, BinaryOperator, Expression, Statement, StringPart, Value,
+};
 use crate::error::CompilerError;
 use crate::types::WasmType;
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
@@ -727,8 +729,15 @@ impl InstructionGenerator {
                 value,
                 location: _,
             } => {
+                // Extract the simple variable name; index/property assignments are
+                // not supported in the legacy codegen path.
+                let target_name = match target {
+                    AssignmentTarget::Variable(name) => name.as_str(),
+                    AssignmentTarget::Index { collection, .. } => collection.as_str(),
+                    AssignmentTarget::Property { object, .. } => object.as_str(),
+                };
                 // First find the local variable
-                if let Some(local_info) = self.find_local(target) {
+                if let Some(local_info) = self.find_local(target_name) {
                     let local_index = local_info.index;
 
                     // Generate instructions for the value
@@ -738,7 +747,7 @@ impl InstructionGenerator {
                     instructions.push(Instruction::LocalSet(local_index));
                 } else {
                     return Err(CompilerError::codegen_error(
-                        format!("Cannot assign to unknown variable: {target}"),
+                        format!("Cannot assign to unknown variable: {target_name}"),
                         None,
                         None,
                     ));

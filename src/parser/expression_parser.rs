@@ -696,8 +696,10 @@ pub fn parse_multiplicative_expression(pair: Pair<Rule>) -> Result<Expression, C
     Ok(result)
 }
 
-// BOOK: required-operator - Parse postfix primary (primary with optional !)
+// Parse postfix primary (primary with optional `!`).
+// spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
 pub fn parse_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let span_location = convert_to_ast_location(&get_location(&pair));
     let mut result: Option<Expression> = None;
     let mut has_required = false;
 
@@ -721,9 +723,14 @@ pub fn parse_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerErr
         )
     })?;
 
-    // If there's a required operator, wrap in Unary(Required)
+    // If there's a required `!` operator, wrap in Postfix { Required }.
+    // spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
     if has_required {
-        Ok(Expression::Unary(UnaryOperator::Required, Box::new(expr)))
+        Ok(Expression::Postfix {
+            operand: Box::new(expr),
+            operator: crate::ast::PostfixOperator::Required,
+            location: span_location,
+        })
     } else {
         Ok(expr)
     }
@@ -2240,8 +2247,10 @@ pub fn parse_argument_power(pair: Pair<Rule>) -> Result<Expression, CompilerErro
     Ok(left)
 }
 
-// BOOK: required-operator - Parse argument postfix primary (primary with optional !)
+// Parse argument postfix primary (primary with optional `!`).
+// spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
 pub fn parse_argument_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let span_location = convert_to_ast_location(&get_location(&pair));
     let mut result: Option<Expression> = None;
     let mut has_required = false;
 
@@ -2265,9 +2274,12 @@ pub fn parse_argument_postfix_primary(pair: Pair<Rule>) -> Result<Expression, Co
         )
     })?;
 
-    // If there's a required operator, wrap in Unary(Required)
     if has_required {
-        Ok(Expression::Unary(UnaryOperator::Required, Box::new(expr)))
+        Ok(Expression::Postfix {
+            operand: Box::new(expr),
+            operator: crate::ast::PostfixOperator::Required,
+            location: span_location,
+        })
     } else {
         Ok(expr)
     }
@@ -2702,8 +2714,10 @@ pub fn parse_single_line_multiplicative_expression(
     Ok(result)
 }
 
-// BOOK: required-operator - Parse single-line postfix primary (primary with optional !)
+// Parse single-line postfix primary (primary with optional `!`).
+// spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
 pub fn parse_single_line_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let span_location = convert_to_ast_location(&get_location(&pair));
     let mut result: Option<Expression> = None;
     let mut has_required = false;
 
@@ -2727,9 +2741,12 @@ pub fn parse_single_line_postfix_primary(pair: Pair<Rule>) -> Result<Expression,
         )
     })?;
 
-    // If there's a required operator, wrap in Unary(Required)
     if has_required {
-        Ok(Expression::Unary(UnaryOperator::Required, Box::new(expr)))
+        Ok(Expression::Postfix {
+            operand: Box::new(expr),
+            operator: crate::ast::PostfixOperator::Required,
+            location: span_location,
+        })
     } else {
         Ok(expr)
     }
@@ -3165,8 +3182,10 @@ pub fn parse_multiline_power_expression(pair: Pair<Rule>) -> Result<Expression, 
     Ok(result)
 }
 
-// BOOK: required-operator - Parse multiline postfix primary (primary with optional !)
+// Parse multiline postfix primary (primary with optional `!`).
+// spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
 pub fn parse_multiline_postfix_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
+    let span_location = convert_to_ast_location(&get_location(&pair));
     let mut result: Option<Expression> = None;
     let mut has_required = false;
 
@@ -3190,9 +3209,12 @@ pub fn parse_multiline_postfix_primary(pair: Pair<Rule>) -> Result<Expression, C
         )
     })?;
 
-    // If there's a required operator, wrap in Unary(Required)
     if has_required {
-        Ok(Expression::Unary(UnaryOperator::Required, Box::new(expr)))
+        Ok(Expression::Postfix {
+            operand: Box::new(expr),
+            operator: crate::ast::PostfixOperator::Required,
+            location: span_location,
+        })
     } else {
         Ok(expr)
     }

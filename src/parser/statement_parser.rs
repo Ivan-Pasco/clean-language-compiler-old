@@ -2,7 +2,7 @@ use super::expression_parser::{parse_expression, parse_start_expression};
 use super::type_parser::parse_type;
 use super::Rule;
 use super::{convert_to_ast_location, get_location};
-use crate::ast::{Expression, ResetTarget, Statement};
+use crate::ast::{AssignmentTarget, Expression, ResetTarget, Statement};
 use crate::error::CompilerError;
 use pest::iterators::Pair;
 
@@ -248,10 +248,10 @@ fn parse_assignment_statement(
         ));
     }
 
-    // Regular variable assignment
-    let target = target_part.as_str().trim().to_string();
+    // Regular variable assignment — spec/grammar.ebnf `assignment_target`
+    let target_str = target_part.as_str().trim().to_string();
     Ok(Statement::Assignment {
-        target,
+        target: AssignmentTarget::Variable(target_str),
         value,
         location: Some(ast_location),
     })

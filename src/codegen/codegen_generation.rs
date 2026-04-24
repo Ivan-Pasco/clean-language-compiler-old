@@ -3,8 +3,8 @@
 
 use super::instruction_generator::LocalVarInfo;
 use crate::ast::{
-    self, BinaryOperator, Expression, Function as AstFunction, SourceLocation, Statement, Type,
-    UnaryOperator, Value,
+    self, AssignmentTarget, BinaryOperator, Expression, Function as AstFunction, PostfixOperator,
+    SourceLocation, Statement, Type, UnaryOperator, Value,
 };
 use crate::error::CompilerError;
 use crate::types::WasmType;
@@ -307,7 +307,7 @@ impl super::CodeGenerator {
                 value,
                 location,
             } => {
-                self.generate_assignment_statement(target, value, location, instructions)?;
+                self.generate_assignment_target(target, value, location, instructions)?;
             }
             Statement::Print {
                 expression,
@@ -659,6 +659,73 @@ impl super::CodeGenerator {
             }
         }
         Ok(())
+    }
+
+    /// Dispatcher for `Statement::Assignment` — routes to the correct code-generation
+    /// path based on the `AssignmentTarget` variant.
+    pub(crate) fn generate_assignment_target(
+        &mut self,
+        target: &AssignmentTarget,
+        value: &Expression,
+        location: &Option<SourceLocation>,
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<(), CompilerError> {
+        match target {
+            AssignmentTarget::Variable(name) => {
+                self.generate_assignment_statement(name, value, location, instructions)
+            }
+            AssignmentTarget::Index { collection, index } => {
+                // Reuse the existing ListAssignment expression codegen path:
+                // generate an Expression::ListAssignment and evaluate it.
+                let expr = Expression::ListAssignment {
+                    list: Box::new(Expression::Variable(collection.clone())),
+                    index: index.clone(),
+                    value: Box::new(value.clone()),
+                    location: location.clone().unwrap_or_default(),
+                };
+                self.generate_expression(&expr, instructions)?;
+                Ok(())
+            }
+            AssignmentTarget::Property { object, path } => {
+                // Property field assignment. We look up the object in the local
+                // variable map then generate a field-write using the same logic
+                // as generate_assignment_statement on the nested field name.
+                // For `obj.a.b = val`, the canonical path is obj → a → b where
+                // "b" is the final field and the prefix determines the object.
+                // At the codegen level we treat `object.path[0..n-1]` as the
+                // receiver and `path[n-1]` as the field.  For single-element
+                // paths (`obj.field`) this becomes `object` + `field`.
+                let (field, prefix) = path
+                    .split_last()
+                    .expect("AssignmentTarget::Property requires at least one path element");
+                // Build the variable name used to look up the receiver.
+                // For simple `obj.field`, just look up `object`.
+                let receiver_name = if prefix.is_empty() {
+                    object.clone()
+                } else {
+                    // For deeper chains we join with '.' — the variable_map
+                    // typically only contains the root object, so we use the
+                    // root object name as the receiver and the entire path chain
+                    // as field access.  Nested field writes beyond two levels
+                    // require runtime support; for now we report a codegen error.
+                    return Err(CompilerError::codegen_error(
+                        format!(
+                            "Nested property assignment '{}.{}.{field}' is not yet supported in codegen",
+                            object,
+                            prefix.join(".")
+                        ),
+                        Some("Use a temporary variable for deeply nested field assignments".to_string()),
+                        location.clone(),
+                    ));
+                };
+                self.generate_assignment_statement(
+                    &format!("{receiver_name}.{field}"),
+                    value,
+                    location,
+                    instructions,
+                )
+            }
+        }
     }
 
     pub(crate) fn generate_assignment_statement(
@@ -2641,6 +2708,84 @@ impl super::CodeGenerator {
             }
 
             Expression::Unary(op, expr) => self.generate_unary_operation(op, expr, instructions),
+
+            // Postfix `!` (Required assertion).
+            // spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
+            // Asserts the operand is not null; traps at runtime if it is.
+            Expression::Postfix {
+                operand,
+                operator: PostfixOperator::Required,
+                ..
+            } => {
+                let operand_type = self.generate_expression(operand, instructions)?;
+                self.generate_required_assertion(operand_type, instructions)
+            }
+
+            // ChainedMethodCall — spec/grammar.ebnf `chained_method_call`.
+            // Left-to-right chain: evaluate receiver, then apply each segment.
+            Expression::ChainedMethodCall {
+                receiver,
+                chain,
+                location,
+            } => self.generate_chained_calls(receiver, chain, location, instructions),
+
+            // MultipleMethodCall — spec/grammar.ebnf `multiple_method_call`.
+            // Structurally identical to ChainedMethodCall; uses the same codegen.
+            Expression::MultipleMethodCall {
+                receiver,
+                chain,
+                location,
+            } => self.generate_chained_calls(receiver, chain, location, instructions),
+
+            // ThreeLevelMethodCall — `a.b.method(args)`.
+            // spec/grammar.ebnf: `three_level_method_call`.
+            Expression::ThreeLevelMethodCall {
+                first,
+                second,
+                method,
+                arguments,
+                location,
+            } => {
+                let property_access = Expression::PropertyAccess {
+                    object: Box::new(Expression::Variable(first.clone())),
+                    property: second.clone(),
+                    location: location.clone(),
+                };
+                let method_call = Expression::MethodCall {
+                    object: Box::new(property_access),
+                    method: method.clone(),
+                    arguments: arguments.clone(),
+                    location: location.clone(),
+                };
+                self.generate_expression(&method_call, instructions)
+            }
+
+            // PropertyMethodCall — `obj.path...method(args)`.
+            // spec/grammar.ebnf: `property_method_call`.
+            Expression::PropertyMethodCall {
+                object,
+                path,
+                method,
+                arguments,
+                location,
+            } => {
+                let base = Expression::Variable(object.clone());
+                let receiver = path
+                    .iter()
+                    .fold(base, |acc, seg| Expression::PropertyAccess {
+                        object: Box::new(acc),
+                        property: seg.clone(),
+                        location: location.clone(),
+                    });
+                let method_call = Expression::MethodCall {
+                    object: Box::new(receiver),
+                    method: method.clone(),
+                    arguments: arguments.clone(),
+                    location: location.clone(),
+                };
+                self.generate_expression(&method_call, instructions)
+            }
+
             Expression::PropertyAccess {
                 object, property, ..
             } => {
@@ -3567,64 +3712,73 @@ impl super::CodeGenerator {
                     )),
                 }
             }
-            // BOOK: required-operator - Postfix ! assertion for null check
-            // Usage: value! (asserts value is not null, fails at runtime if null)
-            UnaryOperator::Required => {
-                // Required operator: assert value is not null
-                // For i32 (reference types), null is represented as 0
-                // For f64, null would be represented as 0.0 (though less common)
-                match operand_type {
-                    WasmType::I32 => {
-                        // Stack: [value]
-                        // Check if value is null (0)
-                        // If null, trap with unreachable
-                        // Otherwise, return the value
+        }
+    }
 
-                        // We need to duplicate the value for the check
-                        // value! → if (value == 0) unreachable else value
-                        // Use a local to store the value, check it, then push it back
-
-                        // Get a temp local for the value
-                        let temp_local = self.add_local(WasmType::I32);
-
-                        // Store value in temp
-                        instructions.push(Instruction::LocalSet(temp_local));
-
-                        // Load and check for null
-                        instructions.push(Instruction::LocalGet(temp_local));
-                        instructions.push(Instruction::I32Eqz);
-                        instructions.push(Instruction::If(wasm_encoder::BlockType::Empty));
-                        instructions.push(Instruction::Unreachable);
-                        instructions.push(Instruction::End);
-
-                        // Push the non-null value back
-                        instructions.push(Instruction::LocalGet(temp_local));
-
-                        Ok(WasmType::I32)
-                    }
-                    WasmType::F64 => {
-                        // For f64, check if value is 0.0
-                        let temp_local = self.add_local(WasmType::F64);
-
-                        instructions.push(Instruction::LocalSet(temp_local));
-                        instructions.push(Instruction::LocalGet(temp_local));
-                        instructions.push(Instruction::F64Const(0.0));
-                        instructions.push(Instruction::F64Eq);
-                        instructions.push(Instruction::If(wasm_encoder::BlockType::Empty));
-                        instructions.push(Instruction::Unreachable);
-                        instructions.push(Instruction::End);
-
-                        instructions.push(Instruction::LocalGet(temp_local));
-
-                        Ok(WasmType::F64)
-                    }
-                    _ => {
-                        // For other types, just pass through (they can't be null)
-                        Ok(operand_type)
-                    }
-                }
+    /// Emit WASM instructions that assert the top-of-stack value is not null
+    /// and trap if it is.  Called by both the legacy `UnaryOperator`-based path
+    /// and the new `Expression::Postfix { Required }` path.
+    ///
+    /// spec/grammar.ebnf: `required_op = "!"`
+    pub(crate) fn generate_required_assertion(
+        &mut self,
+        operand_type: WasmType,
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<WasmType, CompilerError> {
+        match operand_type {
+            WasmType::I32 => {
+                let temp_local = self.add_local(WasmType::I32);
+                instructions.push(Instruction::LocalSet(temp_local));
+                instructions.push(Instruction::LocalGet(temp_local));
+                instructions.push(Instruction::I32Eqz);
+                instructions.push(Instruction::If(wasm_encoder::BlockType::Empty));
+                instructions.push(Instruction::Unreachable);
+                instructions.push(Instruction::End);
+                instructions.push(Instruction::LocalGet(temp_local));
+                Ok(WasmType::I32)
+            }
+            WasmType::F64 => {
+                let temp_local = self.add_local(WasmType::F64);
+                instructions.push(Instruction::LocalSet(temp_local));
+                instructions.push(Instruction::LocalGet(temp_local));
+                instructions.push(Instruction::F64Const(0.0));
+                instructions.push(Instruction::F64Eq);
+                instructions.push(Instruction::If(wasm_encoder::BlockType::Empty));
+                instructions.push(Instruction::Unreachable);
+                instructions.push(Instruction::End);
+                instructions.push(Instruction::LocalGet(temp_local));
+                Ok(WasmType::F64)
+            }
+            _ => {
+                // Non-nullable types pass through unchanged.
+                Ok(operand_type)
             }
         }
+    }
+
+    /// Emit WASM for a chained method call: evaluate the receiver then apply
+    /// each `(method, args)` segment in left-to-right order.
+    ///
+    /// Used by `Expression::ChainedMethodCall` and `Expression::MultipleMethodCall`.
+    fn generate_chained_calls(
+        &mut self,
+        receiver: &Expression,
+        chain: &[(String, Vec<Expression>)],
+        location: &crate::ast::SourceLocation,
+        instructions: &mut Vec<Instruction>,
+    ) -> Result<WasmType, CompilerError> {
+        // Build an Expression tree that the existing MethodCall codegen can handle.
+        // Each segment wraps the previous result as the object.
+        let mut current_expr: Expression = *Box::new(receiver.clone());
+        for (method, args) in chain {
+            current_expr = Expression::MethodCall {
+                object: Box::new(current_expr),
+                method: method.clone(),
+                arguments: args.clone(),
+                location: location.clone(),
+            };
+        }
+        self.generate_expression(&current_expr, instructions)
     }
 
     pub(crate) fn generate_conversion(

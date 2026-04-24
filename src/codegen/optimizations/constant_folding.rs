@@ -1,5 +1,5 @@
 use crate::error::CompilerError;
-use crate::ast::{Expression, Statement, Function, Program, BinaryOperator, UnaryOperator};
+use crate::ast::{AssignmentTarget, Expression, Statement, Function, Program, BinaryOperator, UnaryOperator};
 use std::collections::HashMap;
 
 /// Constant folding optimizer
@@ -87,8 +87,11 @@ impl ConstantFolder {
                 if self.fold_expression(value)? {
                     results.constants_folded += 1;
                 }
-                if self.fold_expression(target)? {
-                    results.expressions_simplified += 1;
+                // Fold index expressions inside assignment targets where applicable.
+                if let AssignmentTarget::Index { index, .. } = target {
+                    if self.fold_expression(index)? {
+                        results.expressions_simplified += 1;
+                    }
                 }
             }
             Statement::If { condition, then_stmt, else_stmt } => {

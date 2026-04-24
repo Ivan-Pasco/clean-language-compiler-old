@@ -1893,7 +1893,7 @@ Clean Language uses implicit context for accessing class fields:
 - ✅ `this.name` (explicit field access — equivalent to just `name`)
 - ❌ Parameter names cannot match field names (compiler enforced)
 
-Fields can be accessed directly by name (implicit `this`) or with explicit `this.field`. The `this` keyword is available inside all class methods and refers to the current instance. Explicit `this` is useful for self-method calls and clarity in complex expressions.
+Fields can be accessed directly by name (implicit `this`) or with explicit `this.field`. The `this` keyword is available inside all class methods and refers to the current instance. Explicit `this` is useful only for self-method calls.
 
 ### Object Creation and Usage
 

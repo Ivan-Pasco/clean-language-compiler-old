@@ -1,5 +1,5 @@
 use crate::error::CompilerError;
-use crate::ast::{Expression, Statement, Function, Program};
+use crate::ast::{AssignmentTarget, Expression, Statement, Function, Program};
 use std::collections::{HashMap, HashSet};
 
 /// Function inlining optimizer
@@ -156,7 +156,10 @@ impl FunctionInliner {
                 self.count_calls_in_expression(expr, call_counts);
             }
             Statement::Assignment { target, value } => {
-                self.count_calls_in_expression(target, call_counts);
+                // Count calls in index expressions within compound targets.
+                if let AssignmentTarget::Index { index, .. } = target {
+                    self.count_calls_in_expression(index, call_counts);
+                }
                 self.count_calls_in_expression(value, call_counts);
             }
             Statement::If { condition, then_stmt, else_stmt } => {

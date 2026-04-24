@@ -8,7 +8,7 @@
 //! - `try_parse_on_error_block` — onError: block suffix
 
 use super::TokenParser;
-use crate::ast::{Expression, Statement, Type};
+use crate::ast::{AssignmentTarget, Expression, Statement, Type};
 use crate::error::CompilerError;
 use crate::lexer::specification_token::TokenKind;
 
@@ -383,10 +383,57 @@ impl TokenParser {
                     let value = self.parse_expression()?;
 
                     return Ok(Statement::Assignment {
-                        target: first_name,
+                        target: AssignmentTarget::Variable(first_name),
                         value,
                         location: Some(first_location),
                     });
+                } else if self.check(&TokenKind::Dot) {
+                    // Could be a property-chain assignment: `obj.prop = val`
+                    // or `obj.a.b = val`, or just a method-call expression.
+                    // spec/grammar.ebnf `assignment_target`:
+                    //   identifier , "." , identifier , { "." , identifier }
+                    // Peek ahead: collect dot-separated identifiers, then check for `=`.
+                    let mut path: Vec<String> = Vec::new();
+                    let save_cursor = self.cursor;
+
+                    // Consume the leading dot and subsequent identifier segments.
+                    while self.check(&TokenKind::Dot) {
+                        self.bump(); // consume .
+                        match self.current_kind() {
+                            TokenKind::Identifier(seg) => {
+                                path.push(seg.clone());
+                                self.bump();
+                            }
+                            _ => {
+                                // Not a plain identifier after dot — not a property assignment.
+                                break;
+                            }
+                        }
+                    }
+
+                    self.skip_whitespace();
+                    if !path.is_empty() && self.check(&TokenKind::Assign) {
+                        // Property-chain assignment.
+                        self.bump(); // consume =
+                        self.skip_whitespace();
+                        let value = self.parse_expression()?;
+                        return Ok(Statement::Assignment {
+                            target: AssignmentTarget::Property {
+                                object: first_name,
+                                path,
+                            },
+                            value,
+                            location: Some(first_location),
+                        });
+                    } else {
+                        // Not an assignment — backtrack and parse as expression.
+                        self.cursor = save_cursor;
+                        let expr = self.parse_expression()?;
+                        return Ok(Statement::Expression {
+                            expr,
+                            location: Some(first_location),
+                        });
+                    }
                 } else if self.check(&TokenKind::LeftBracket) {
                     // This could be an indexed assignment: VAR[index] = value
                     // or an expression statement: VAR[index]
@@ -404,7 +451,22 @@ impl TokenParser {
 
                         // Check if lhs_expr is a list access (e.g., numbers[0])
                         if let Expression::ListAccess(list, index) = lhs_expr {
-                            // Create indexed assignment (numbers[0] = 99)
+                            // Prefer AssignmentTarget::Index when the collection is a
+                            // simple variable (spec/grammar.ebnf `assignment_target`).
+                            // Fall back to the legacy ListAssignment expression for
+                            // complex receivers (e.g., method-call results) that the
+                            // codegen already handles.
+                            if let Expression::Variable(collection_name) = *list.clone() {
+                                return Ok(Statement::Assignment {
+                                    target: AssignmentTarget::Index {
+                                        collection: collection_name,
+                                        index,
+                                    },
+                                    value,
+                                    location: Some(first_location),
+                                });
+                            }
+                            // Non-variable receiver — keep as ListAssignment expression.
                             return Ok(Statement::Expression {
                                 expr: Expression::ListAssignment {
                                     list,
@@ -523,7 +585,7 @@ impl TokenParser {
                     self.skip_whitespace();
                     let value = self.parse_expression()?;
                     return Ok(Statement::Assignment {
-                        target: first_name,
+                        target: AssignmentTarget::Variable(first_name),
                         value,
                         location: Some(first_location),
                     });

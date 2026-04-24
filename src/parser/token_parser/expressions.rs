@@ -7,7 +7,7 @@
 //! - String interpolation
 
 use super::TokenParser;
-use crate::ast::{BinaryOperator, Expression, StringPart, UnaryOperator, Value};
+use crate::ast::{BinaryOperator, Expression, PostfixOperator, StringPart, Value};
 use crate::error::CompilerError;
 use crate::lexer::specification_token::TokenKind;
 
@@ -329,11 +329,16 @@ impl TokenParser {
 
                     expr = Expression::ListAccess(Box::new(expr), Box::new(index));
                 }
-                // BOOK: required-operator - Postfix ! assertion for null check
+                // Postfix `!` — `postfix_primary = primary , [ required_op ]`
+                // spec/grammar.ebnf: required_op = "!"
                 TokenKind::Bang => {
-                    // Required assertion: expr!
+                    let location = self.current().location.clone();
                     self.bump(); // consume !
-                    expr = Expression::Unary(UnaryOperator::Required, Box::new(expr));
+                    expr = Expression::Postfix {
+                        operand: Box::new(expr),
+                        operator: PostfixOperator::Required,
+                        location,
+                    };
                 }
                 _ => break,
             }

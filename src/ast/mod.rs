@@ -147,9 +147,31 @@ pub enum BinaryOperator {
 pub enum UnaryOperator {
     Negate,
     Not,
-    // BOOK: required-operator - Postfix ! assertion for null check
-    // Usage: value! (asserts value is not null, fails at runtime if null)
+}
+
+/// Postfix operators applied after a primary expression.
+/// Defined by `postfix_primary = primary , [ required_op ]` in spec/grammar.ebnf.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+pub enum PostfixOperator {
+    /// `expr!` — asserts the value is not null; traps at runtime if null.
     Required,
+}
+
+/// Assignment target variants as defined by `assignment_target` in spec/grammar.ebnf:
+///   assignment_target = identifier
+///                     , [ ( "[" , additive_expression , "]" )
+///                       | ( "." , identifier , { "." , identifier } ) ]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub enum AssignmentTarget {
+    /// Simple variable assignment: `name = value`
+    Variable(String),
+    /// List index assignment: `list[index] = value`
+    Index {
+        collection: String,
+        index: Box<Expression>,
+    },
+    /// Property chain assignment: `obj.prop = value` or `obj.a.b = value`
+    Property { object: String, path: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -183,6 +205,13 @@ pub enum Expression {
     Variable(String),
     Binary(Box<Expression>, BinaryOperator, Box<Expression>),
     Unary(UnaryOperator, Box<Expression>),
+    /// Postfix operator applied after a primary expression.
+    /// Covers `postfix_primary = primary , [ required_op ]` from spec/grammar.ebnf.
+    Postfix {
+        operand: Box<Expression>,
+        operator: PostfixOperator,
+        location: SourceLocation,
+    },
     Call(String, Vec<Expression>),
 
     // Namespace calls (math.sqrt(), string.length(), etc.)
@@ -217,6 +246,50 @@ pub enum Expression {
     },
     MethodCall {
         object: Box<Expression>,
+        method: String,
+        arguments: Vec<Expression>,
+        location: SourceLocation,
+    },
+
+    /// `chained_method_call` — (function_call | property_access | identifier)
+    /// followed by one or more `.method()` segments.
+    /// spec/grammar.ebnf: `chained_method_call`
+    ChainedMethodCall {
+        receiver: Box<Expression>,
+        chain: Vec<(String, Vec<Expression>)>, // (method_name, args) pairs
+        location: SourceLocation,
+    },
+
+    /// `multiple_method_call` — a base receiver followed by two or more
+    /// `.method()` segments (superset of `method_call`; kept distinct per spec).
+    /// spec/grammar.ebnf: `multiple_method_call`
+    ///
+    /// Note: structurally identical to `ChainedMethodCall` (two or more
+    /// segments); mapped to the same WASM codegen path. Kept as a separate
+    /// variant to preserve spec fidelity.
+    MultipleMethodCall {
+        receiver: Box<Expression>,
+        chain: Vec<(String, Vec<Expression>)>,
+        location: SourceLocation,
+    },
+
+    /// `three_level_method_call` — `a.b.method(args)` where all three parts
+    /// are identifiers.
+    /// spec/grammar.ebnf: `three_level_method_call`
+    ThreeLevelMethodCall {
+        first: String,
+        second: String,
+        method: String,
+        arguments: Vec<Expression>,
+        location: SourceLocation,
+    },
+
+    /// `property_method_call` — property chain ending in a method call:
+    /// `a.b.c...method(args)` where the path is 3+ identifiers.
+    /// spec/grammar.ebnf: `property_method_call`
+    PropertyMethodCall {
+        object: String,
+        path: Vec<String>, // intermediate property segments (may be empty)
         method: String,
         arguments: Vec<Expression>,
         location: SourceLocation,
@@ -371,9 +444,10 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
-    // Assignment
+    // Assignment — target supports variable, index, and property-chain forms
+    // per spec/grammar.ebnf `assignment_target` rule.
     Assignment {
-        target: String,
+        target: AssignmentTarget,
         value: Expression,
         location: Option<SourceLocation>,
     },

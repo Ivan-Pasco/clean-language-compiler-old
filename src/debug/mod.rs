@@ -1,4 +1,4 @@
-use crate::ast::{Expression, Function, Program, Statement, Type};
+use crate::ast::{AssignmentTarget, Expression, Function, Program, Statement, Type};
 use crate::error::CompilerError;
 use crate::error::CompilerWarning;
 // Rule import removed - using only 7-stage pipeline
@@ -113,7 +113,14 @@ impl DebugUtils {
                 format!("var {name} : {}", Self::type_to_string(type_))
             }
             Statement::Assignment { target, .. } => {
-                format!("assign to {target}")
+                let target_str = match target {
+                    AssignmentTarget::Variable(name) => name.clone(),
+                    AssignmentTarget::Index { collection, .. } => format!("{collection}[…]"),
+                    AssignmentTarget::Property { object, path } => {
+                        format!("{object}.{}", path.join("."))
+                    }
+                };
+                format!("assign to {target_str}")
             }
             Statement::Expression { expr, .. } => {
                 format!("expr: {}", Self::expression_to_string(expr))

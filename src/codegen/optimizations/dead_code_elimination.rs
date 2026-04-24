@@ -1,4 +1,4 @@
-use crate::ast::{Expression, Function, Program, Statement};
+use crate::ast::{AssignmentTarget, Expression, Function, Program, Statement};
 use crate::error::CompilerError;
 use std::collections::HashSet;
 
@@ -479,19 +479,28 @@ impl DeadCodeEliminator {
 
         for (i, statement) in statements.iter().enumerate() {
             if let Statement::Assignment { target, .. } = statement {
+                // Only simple variable assignments can be dead-code eliminated.
+                // Index and property assignments always have observable side effects.
+                let target_name = match target {
+                    AssignmentTarget::Variable(name) => name.as_str(),
+                    _ => continue,
+                };
                 // Check if this variable is used after this assignment
                 let mut used_after = false;
                 for later_stmt in &statements[i + 1..] {
                     let mut used_vars = HashSet::new();
                     self.find_used_variables_in_statement(later_stmt, &mut used_vars);
-                    if used_vars.contains(target) {
+                    if used_vars.contains(target_name) {
                         used_after = true;
                         break;
                     }
                 }
 
                 if !used_after && self.debug {
-                    println!("DCE: Dead store to variable '{}' at position {}", target, i);
+                    println!(
+                        "DCE: Dead store to variable '{}' at position {}",
+                        target_name, i
+                    );
                     assignments_to_remove.push(i);
                 }
             }

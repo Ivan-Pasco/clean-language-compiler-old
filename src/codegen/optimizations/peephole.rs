@@ -1,5 +1,5 @@
 use crate::error::CompilerError;
-use crate::ast::{Expression, Statement, Function, Program, BinaryOperator, UnaryOperator};
+use crate::ast::{AssignmentTarget, Expression, Statement, Function, Program, BinaryOperator, UnaryOperator};
 use std::collections::HashMap;
 
 /// Peephole optimization optimizer
@@ -310,15 +310,24 @@ impl PeepholeOptimizer {
                 self.merge_results(&mut results, expr_results);
             }
             Statement::Assignment { target, value } => {
-                // Check for self-assignment pattern first
-                if self.is_self_assignment(target, value) {
+                // Check for self-assignment: `x = x` is a no-op.
+                // Only applicable for simple variable targets.
+                let is_self = if let AssignmentTarget::Variable(name) = target {
+                    self.is_self_assignment_var(name, value)
+                } else {
+                    false
+                };
+                if is_self {
                     self.apply_pattern_to_statement(statement, "self_assignment")?;
                     results.patterns_applied.insert("self_assignment".to_string(), 1);
                     results.total_optimizations += 1;
                 } else {
-                    let target_results = self.optimize_expression(target)?;
+                    // Fold index expressions in target if present.
+                    if let AssignmentTarget::Index { index, .. } = target {
+                        let idx_results = self.optimize_expression(index)?;
+                        self.merge_results(&mut results, idx_results);
+                    }
                     let value_results = self.optimize_expression(value)?;
-                    self.merge_results(&mut results, target_results);
                     self.merge_results(&mut results, value_results);
                 }
             }
@@ -603,8 +612,8 @@ impl PeepholeOptimizer {
     }
 
     /// Check if assignment is self-assignment (x = x)
-    fn is_self_assignment(&self, target: &Expression, value: &Expression) -> bool {
-        self.expressions_equal(target, value)
+    fn is_self_assignment_var(&self, target_name: &str, value: &Expression) -> bool {
+        matches!(value, Expression::Variable(v) if v == target_name)
     }
 
     /// Check if statement is effectively a no-op

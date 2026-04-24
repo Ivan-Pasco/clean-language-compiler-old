@@ -8,8 +8,8 @@
 
 use crate::ast::SourceLocation;
 use crate::ast::{
-    BinaryOperator, Class, Constructor, Expression, Function, Parameter, Program, Statement, Type,
-    UnaryOperator, Value,
+    AssignmentTarget, BinaryOperator, Class, Constructor, Expression, Function, Parameter,
+    PostfixOperator, Program, Statement, Type, UnaryOperator, Value,
 };
 use crate::error::CompilerError;
 use crate::hir::*;
@@ -36,8 +36,82 @@ impl HirBuilder {
         }
     }
 
+    /// Validate that the five core program sections appear in the required order:
+    /// import → start → state → class → functions.
+    ///
+    /// Auxiliary items (watch, screen, framework, apply, private) are exempt from
+    /// this ordering rule, as defined by spec/grammar.ebnf §6 "TOP-LEVEL DECLARATIONS".
+    ///
+    /// Returns `Err` with a descriptive `CompilerError` if a core section appears
+    /// before a section that is supposed to precede it.
+    fn validate_section_order(program: &Program) -> Result<(), CompilerError> {
+        /// Numeric rank for the five ordered sections.  Auxiliary sections
+        /// return `None` and are skipped during the scan.
+        fn section_rank(stmt: &Statement) -> Option<(u8, &'static str, Option<SourceLocation>)> {
+            match stmt {
+                Statement::Import { location, .. } => Some((0, "import", location.clone())),
+                // The start: block is represented as FunctionsBlock containing "start",
+                // or directly as a standalone start function in program.start_function.
+                // In the statement stream the start block appears as FunctionsBlock
+                // where the first function is named "start".
+                Statement::FunctionsBlock {
+                    functions,
+                    location,
+                    ..
+                } => {
+                    if functions.iter().any(|f| f.name == "start") {
+                        Some((1, "start", location.clone()))
+                    } else {
+                        Some((4, "functions", location.clone()))
+                    }
+                }
+                Statement::StateBlockStmt { location, .. } => Some((2, "state", location.clone())),
+                Statement::ClassDefinition { location, .. } => Some((3, "class", location.clone())),
+                // Auxiliary — exempt from ordering.
+                Statement::WatchBlockStmt { .. }
+                | Statement::ScreenBlockStmt { .. }
+                | Statement::ScreenBlock { .. }
+                | Statement::FrameworkBlock { .. }
+                | Statement::PrivateBlock { .. }
+                | Statement::TestsBlock { .. } => None,
+                _ => None,
+            }
+        }
+
+        let mut highest_rank_seen: i8 = -1;
+        let mut highest_name_seen: &'static str = "";
+
+        for stmt in &program.statements {
+            if let Some((rank, name, loc)) = section_rank(stmt) {
+                if (rank as i8) < highest_rank_seen {
+                    // This section appears after a section with a higher rank — violation.
+                    let order_str = "import → start → state → class → functions";
+                    return Err(CompilerError::syntax_error(
+                        format!(
+                            "'{name}' section must appear before '{highest_name_seen}' section \
+                             (spec requires: {order_str})"
+                        ),
+                        Some(format!(
+                            "Move the '{name}:' block so it appears before '{highest_name_seen}:'"
+                        )),
+                        loc,
+                    ));
+                }
+                if (rank as i8) > highest_rank_seen {
+                    highest_rank_seen = rank as i8;
+                    highest_name_seen = name;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Build HIR from an AST program
     pub fn build_hir(&mut self, program: Program) -> Result<HirValidationResult, CompilerError> {
+        // Enforce the spec-mandated section ordering before any other processing.
+        Self::validate_section_order(&program)?;
+
         let mut functions = Vec::new();
         let mut classes = Vec::new();
         let mut start_function = None;
@@ -563,16 +637,56 @@ impl HirBuilder {
                 value,
                 location,
             } => {
-                let lvalue = HirLValue::Variable {
-                    name: target.clone(),
-                    location: location.clone().unwrap_or_default(),
+                let loc = location.clone().unwrap_or_default();
+                let lvalue = match target {
+                    AssignmentTarget::Variable(name) => HirLValue::Variable {
+                        name: name.clone(),
+                        location: loc.clone(),
+                    },
+                    AssignmentTarget::Index { collection, index } => {
+                        let array_expr = HirExpression::Variable {
+                            name: collection.clone(),
+                            location: loc.clone(),
+                        };
+                        let index_expr = self.build_expression(index)?;
+                        HirLValue::Index {
+                            array: Box::new(array_expr),
+                            index: Box::new(index_expr),
+                            location: loc.clone(),
+                        }
+                    }
+                    AssignmentTarget::Property { object, path } => {
+                        // Build a chain of FieldAccess expressions for nested paths.
+                        // For a single-element path `obj.field`, there is exactly one field.
+                        // For `obj.a.b`, we nest: FieldAccess(FieldAccess(Variable(obj), a), b).
+                        let base = HirExpression::Variable {
+                            name: object.clone(),
+                            location: loc.clone(),
+                        };
+                        let (last_field, prefix) = path.split_last().expect(
+                            "AssignmentTarget::Property requires at least one path element",
+                        );
+                        let inner =
+                            prefix
+                                .iter()
+                                .fold(base, |acc, seg| HirExpression::FieldAccess {
+                                    object: Box::new(acc),
+                                    field: seg.clone(),
+                                    location: loc.clone(),
+                                });
+                        HirLValue::FieldAccess {
+                            object: Box::new(inner),
+                            field: last_field.clone(),
+                            location: loc.clone(),
+                        }
+                    }
                 };
                 let hir_value = self.build_expression(value)?;
 
                 Ok(HirStatement::Assignment {
                     target: lvalue,
                     value: hir_value,
-                    location: location.clone().unwrap_or_default(),
+                    location: loc,
                 })
             }
 
@@ -809,6 +923,21 @@ impl HirBuilder {
                 })
             }
 
+            // Postfix `!` (Required assertion) — spec/grammar.ebnf `postfix_primary`.
+            // Lowered to HIR as UnaryOp { Required } to reuse the existing null-trap path.
+            Expression::Postfix {
+                operand,
+                operator: PostfixOperator::Required,
+                location,
+            } => {
+                let hir_operand = self.build_expression(operand)?;
+                Ok(HirExpression::UnaryOp {
+                    op: HirUnaryOp::Required,
+                    operand: Box::new(hir_operand),
+                    location: location.clone(),
+                })
+            }
+
             Expression::Call(name, args) => {
                 let hir_args = args
                     .iter()
@@ -849,6 +978,114 @@ impl HirBuilder {
 
                 Ok(HirExpression::MethodCall {
                     receiver: Box::new(hir_object),
+                    method: method.clone(),
+                    arguments: hir_args,
+                    location: location.clone(),
+                })
+            }
+
+            // ChainedMethodCall — spec/grammar.ebnf `chained_method_call`.
+            // Lowered to a left-to-right fold of HirExpression::MethodCall nodes.
+            Expression::ChainedMethodCall {
+                receiver,
+                chain,
+                location,
+            } => {
+                let mut hir_recv = self.build_expression(receiver)?;
+                for (method, args) in chain {
+                    let hir_args = args
+                        .iter()
+                        .map(|arg| self.build_expression(arg))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    hir_recv = HirExpression::MethodCall {
+                        receiver: Box::new(hir_recv),
+                        method: method.clone(),
+                        arguments: hir_args,
+                        location: location.clone(),
+                    };
+                }
+                Ok(hir_recv)
+            }
+
+            // MultipleMethodCall — spec/grammar.ebnf `multiple_method_call`.
+            // Structurally identical to ChainedMethodCall; lowered the same way.
+            Expression::MultipleMethodCall {
+                receiver,
+                chain,
+                location,
+            } => {
+                let mut hir_recv = self.build_expression(receiver)?;
+                for (method, args) in chain {
+                    let hir_args = args
+                        .iter()
+                        .map(|arg| self.build_expression(arg))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    hir_recv = HirExpression::MethodCall {
+                        receiver: Box::new(hir_recv),
+                        method: method.clone(),
+                        arguments: hir_args,
+                        location: location.clone(),
+                    };
+                }
+                Ok(hir_recv)
+            }
+
+            // ThreeLevelMethodCall — spec/grammar.ebnf `three_level_method_call`.
+            // `first.second.method(args)` — lowered to nested FieldAccess then MethodCall.
+            Expression::ThreeLevelMethodCall {
+                first,
+                second,
+                method,
+                arguments,
+                location,
+            } => {
+                let base = HirExpression::Variable {
+                    name: first.clone(),
+                    location: location.clone(),
+                };
+                let intermediate = HirExpression::FieldAccess {
+                    object: Box::new(base),
+                    field: second.clone(),
+                    location: location.clone(),
+                };
+                let hir_args = arguments
+                    .iter()
+                    .map(|arg| self.build_expression(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(HirExpression::MethodCall {
+                    receiver: Box::new(intermediate),
+                    method: method.clone(),
+                    arguments: hir_args,
+                    location: location.clone(),
+                })
+            }
+
+            // PropertyMethodCall — spec/grammar.ebnf `property_method_call`.
+            // `obj.a.b...method(args)` — lowered to a chain of FieldAccess then MethodCall.
+            Expression::PropertyMethodCall {
+                object,
+                path,
+                method,
+                arguments,
+                location,
+            } => {
+                let base = HirExpression::Variable {
+                    name: object.clone(),
+                    location: location.clone(),
+                };
+                let receiver = path
+                    .iter()
+                    .fold(base, |acc, seg| HirExpression::FieldAccess {
+                        object: Box::new(acc),
+                        field: seg.clone(),
+                        location: location.clone(),
+                    });
+                let hir_args = arguments
+                    .iter()
+                    .map(|arg| self.build_expression(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(HirExpression::MethodCall {
+                    receiver: Box::new(receiver),
                     method: method.clone(),
                     arguments: hir_args,
                     location: location.clone(),
@@ -1048,8 +1285,6 @@ impl HirBuilder {
         match op {
             UnaryOperator::Negate => HirUnaryOp::Negate,
             UnaryOperator::Not => HirUnaryOp::Not,
-            // BOOK: required-operator - Postfix ! assertion for null check
-            UnaryOperator::Required => HirUnaryOp::Required,
         }
     }
 
