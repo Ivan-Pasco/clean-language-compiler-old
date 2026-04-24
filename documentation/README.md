@@ -4,9 +4,12 @@
 
 | Document | Purpose |
 |----------|---------|
-| [Clean Language Specification](./Clean_Language_Specification.md) | **Single source of truth** for the language: syntax, types, semantics |
+| [Clean Language Specification](../../Clean_Language_Specification.md) | **Human-friendly** language spec (syntax, types, semantics, examples) |
+| [Formal Grammar](../../spec/grammar.ebnf) | **Authoritative** EBNF grammar — takes precedence over prose |
+| [Semantic Rules](../../spec/semantic-rules.md) | Numbered semantic rules (SYN, SEM, SCOPE, FUNC, CLASS) |
+| [Type System](../../spec/type-system.md) | Type hierarchy, compatibility matrix, conversions |
 | [Execution Layers](../../platform-architecture/EXECUTION_LAYERS.md) | What each layer does — read before implementing any function |
-| [Architecture Boundaries](../../system-documents/ARCHITECTURE_BOUNDARIES.md) | What each component is and is not responsible for |
+| [Architecture Boundaries](../../management/ARCHITECTURE_BOUNDARIES.md) | What each component is and is not responsible for |
 
 ## Compiler Documentation
 
@@ -22,8 +25,8 @@
 | Document | Covers |
 |----------|--------|
 | [Parser](./parser.md) | Pest grammar, AST generation, error recovery |
-| [AST Reference](./ast-reference.md) | AST node types and structure |
-| [Semantic Analysis](./semantic-analysis.md) | Type checking, scope management, validation |
+| [AST Reference](../../spec/ast.md) | AST node types and structure (formal spec) |
+| [AST Implementation Notes](./ast-reference.md) | Compiler-internal AST implementation details |
 | [Compilation Pipeline](./compilation-pipeline.md) | HIR → MIR → WASM transformation pipeline |
 | [WebAssembly](./webassembly.md) | WASM code generation, memory management |
 
@@ -31,10 +34,8 @@
 
 | Document | Covers |
 |----------|--------|
-| [Standard Library](./standard-library.md) | Built-in functions, namespaces, host imports |
 | [Error Handling Guide](./error-handling-guide.md) | Error recovery system, onError syntax |
 | [Memory Management](./memory-management.md) | WASM memory layout, bump allocator, GC |
-| [Pattern System](./clean_pattern_system_specification.md) | Pattern matching specification |
 | [Plugin Architecture](./Plugin-Architecture.md) | Plugin system, plugin.toml, bridge functions |
 
 ### Tooling
