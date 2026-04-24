@@ -359,6 +359,77 @@ impl TokenParser {
         })
     }
 
+    /// Parse a print block statement: print:\n\texpr1\n\texpr2
+    ///
+    /// Each indented expression is printed on its own line (equivalent to
+    /// `print(expr) +` for each line).  The parser cursor must be positioned
+    /// at the `print` token on entry.
+    pub(super) fn parse_print_block(&mut self) -> Result<Statement, CompilerError> {
+        let location = self.current().location.clone();
+
+        // Consume the `print` keyword.
+        self.expect(&TokenKind::Print)?;
+        self.skip_whitespace();
+
+        // Consume the `:` colon.
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Skip the newline after the colon.
+        self.eat(&TokenKind::Newline);
+        self.skip_whitespace();
+
+        // Determine indentation level from the first indented token.
+        let block_level = if let TokenKind::Indent(level) = self.current_kind() {
+            *level
+        } else {
+            1
+        };
+
+        let mut expressions = Vec::new();
+
+        while !self.is_at_end() {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Consume Dedent tokens — exit when we encounter a dedent that
+            // falls below our block's indentation level.
+            while let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                let level = *dedent_level;
+                self.bump();
+                self.skip_whitespace();
+                if level < block_level {
+                    break;
+                }
+            }
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // A line at the correct indentation level is a print expression.
+            if matches!(self.current_kind(), TokenKind::Indent(level) if *level == block_level) {
+                self.bump(); // consume Indent token
+                self.skip_whitespace();
+
+                let expr = self.parse_expression()?;
+                expressions.push(expr);
+            } else {
+                // Wrong indentation level or no indentation — exit the block.
+                break;
+            }
+        }
+
+        Ok(Statement::PrintBlock {
+            expressions,
+            newline: true,
+            location: Some(location),
+        })
+    }
+
     /// Parse a method apply block: OBJECT.METHOD:\n\targ1\n\targ2
     /// Example: list.push:\n\titem1\n\titem2
     /// Equivalent to: list.push(item1), list.push(item2)

@@ -143,3 +143,22 @@ Do NOT directly edit code in other components. You CAN read other components to 
 **Never** write a markdown prompt for something that is a bug. Bug reports that sit in a markdown file are invisible to the dashboard dedup, don't notify users when fixed, and can't be pulled via `list_component_bugs`.
 
 If in doubt: it's a bug → `report_error`.
+
+## Documentation Sync Protocol
+
+Facts about the language live in `spec/` (at the project root). Facts about the platform live in `platform-architecture/`. Do not duplicate them here — link to them instead.
+
+**When you make a change in this component, update the corresponding spec file in the same commit:**
+
+| Change type | Update required |
+|-------------|-----------------|
+| New language syntax | `spec/grammar.ebnf` |
+| New semantic rule or error code | `spec/semantic-rules.md` + `spec/error-codes.md` |
+| New or changed type rule | `spec/type-system.md` |
+| New or changed built-in function | `spec/stdlib-reference.md` |
+| New or changed AST node | `spec/ast.md` |
+| New or changed plugin contract | `spec/plugins/plugin-contract.md` |
+| New or changed host bridge function | `platform-architecture/HOST_BRIDGE.md` |
+| New or changed execution layer | `platform-architecture/EXECUTION_LAYERS.md` |
+
+The spec files are the single source of truth. Component documentation explains implementation — it does not redefine language rules.

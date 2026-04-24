@@ -65,9 +65,11 @@ These are core design rules that define how Clean Language code must be structur
    text = value.toString()  // ✅ Correct
    ```
 
-3. **Use `any` for generic types**
-   - ✅ `any identity(any value) -> any`
-   - Treat any capitalized type name not declared as a concrete type as a generic
+3. **Use `any` when the type cannot be known at compile time**
+   - `any` is a **compile-time escape hatch** — the compiler trusts that the developer knows the type is correct, similar to TypeScript's `any`.
+   - Use `any` when the type genuinely cannot be known at compile time (plugin returns, JSON parsing, external data).
+   - There is no runtime boxing or type tag — the compiler simply skips type checking for that value.
+   - For type-safe collections, use explicit type parameters: `list<integer>`, `list<string>`, etc.
    ```clean
    functions:
        any identity(any value)
@@ -93,9 +95,11 @@ These are core design rules that define how Clean Language code must be structur
    - ✅ `list<item>`, `matrix<type>`
    - ❌ No angle brackets in user code (`<>`) - these are internal representations
 
-7. **Clean uses `any` as the single generic placeholder type**
-   - It represents a value of any type, determined when the function or class is used
-   - No explicit type parameter declarations needed - `any` is automatically generic
+7. **`any` is a compile-time generic escape hatch**
+   - `any` tells the compiler to skip type checking for that value — the developer takes responsibility for correctness.
+   - Use `any` only when the type genuinely cannot be known at compile time (plugin returns, JSON parsing, external data).
+   - There is no runtime boxing or type tag involved — `any` is purely a compile-time concept.
+   - For type-safe collections, use `list<integer>`, `list<string>`, etc. — use `list<any>` only when you genuinely need a heterogeneous collection.
 
 8. **One way to do things**
    - Basic math: Use operators (`a + b`, `a * b`)
@@ -417,11 +421,10 @@ functions:
 
 | Type syntax | What it is | Example |
 |-------------|------------|---------|
-| `list<any>`  | Homogeneous resizable list | `list<integer>`, `[1, 2, 3]` |
-| `list<any>` | Flexible list with behavior properties | `list<string>`, `[]`, behavior via `.type` property |
-| `matrix<any>` | 2-D list (list of lists) | `matrix<number>`, `[[1.0, 2.0], [3.0, 4.0]]` |
-| `pairs<any,any>`  | Key-value associative container | `pairs<string, integer>` |
-| `any`         | Generic type parameter | Used in function definitions |
+| `list<T>`  | Homogeneous resizable list (T is the element type) | `list<integer>`, `list<string>` |
+| `matrix<T>` | 2-D list of lists (T is the element type) | `matrix<number>`, `[[1.0, 2.0], [3.0, 4.0]]` |
+| `pairs<K,V>`  | Key-value associative container | `pairs<string, integer>` |
+| `any`         | Compile-time generic: compiler skips type checking for this value | Used when the type genuinely cannot be known at compile time (plugin returns, JSON, external data) |
 
 Lists in Clean are zero-indexed by default (list[0] is the first element).
 For readability, you can access elements starting from 1 using:
@@ -429,75 +432,75 @@ For readability, you can access elements starting from 1 using:
 list.at(index)
 This returns the element at position index - 1.
 
-### List Properties - Collection Behavior Modifiers
+### List Behaviors — Collection Behavior Modifiers
 
-Clean Language extends the core `list<any>` type with **property modifiers** that change the list's behavior without requiring separate collection types. This provides a unified, consistent approach to different collection patterns while maintaining type safety and simplicity.
+**List behaviors change how a list handles insertions and removals without changing its type.** Clean Language extends the core `list<T>` type with dot-notation behavior modifiers. This provides a unified, consistent approach to different collection patterns while maintaining type safety and simplicity.
 
-#### Property Syntax
+#### Behavior Type Syntax
+
+The type is declared inline in the variable declaration using dot notation:
 
 ```clean
-list<any> myList = []                    // Create empty list
-myList.type = "behavior_type"            // Set behavior using string
+list<integer>.line numbers = []          // FIFO queue of integers
+list<string>.unique visitors = []        // Set of strings (no duplicates)
+list<string>.line.unique taskQueue = []  // FIFO queue with uniqueness
 ```
 
-Where `behavior_type` is a string that defines how the list handles insertions, removals, and access patterns.
-
-**Supported behavior strings:**
-- `"default"` - Standard list behavior
-- `"line"` - FIFO queue behavior  
-- `"pile"` - LIFO stack behavior
-- `"unique"` - Set behavior (no duplicates)
-- `"line-unique"` - FIFO queue with uniqueness
-- `"pile-unique"` - LIFO stack with uniqueness
+The canonical behavior suffixes are:
+- `.line` — FIFO queue behavior
+- `.pile` — LIFO stack behavior
+- `.unique` — set behavior (no duplicates)
+- `.line.pile` — FIFO + LIFO combined
+- `.line.unique` — FIFO queue with uniqueness
+- `.pile.unique` — LIFO stack with uniqueness
+- `.line.unique.pile` — all three behaviors
 
 #### Supported Properties
 
-**`"line"` - Queue Behavior (FIFO)**
+**`.line` — Queue Behavior (FIFO)**
 
-First-In-First-Out behavior. Elements are added to the back and removed from the front.
+**First-In-First-Out behavior: elements are added to the back and removed from the front.**
 
 ```clean
 functions:
-    void processTaskQueue()
-        list<string> tasks = []
-        tasks.type = "line"
-        
-        // Add tasks (to back)
-        tasks.add("Task 1")
-        tasks.add("Task 2") 
-        tasks.add("Task 3")
-        
-        // Process tasks (from front)
-        iterate i in 1 to 3
-            string currentTask = tasks.remove()  // Gets "Task 1", then "Task 2", etc.
-            print("Processing: " + currentTask) +
+	void processTaskQueue()
+		list<string>.line tasks = []
+
+		// Add tasks (to back)
+		tasks.add("Task 1")
+		tasks.add("Task 2")
+		tasks.add("Task 3")
+
+		// Process tasks (from front)
+		iterate i in 1 to 3
+			string currentTask = tasks.remove()  // Gets "Task 1", then "Task 2", etc.
+			print("Processing: " + currentTask) +
 ```
 
 **Modified Operations**:
 - `add(item)` → Adds to the **back** of the list
-- `remove()` → Removes from the **front** of the list  
+- `remove()` → Removes from the **front** of the list
 - `peek()` → Views the **front** element without removing
 - Standard list operations (`get(index)`, `size()`) remain unchanged
 
-**`"pile"` - Stack Behavior (LIFO)**
+**`.pile` — Stack Behavior (LIFO)**
 
-Last-In-First-Out behavior. Elements are added and removed from the same end (top).
+**Last-In-First-Out behavior: elements are added and removed from the same end (top).**
 
 ```clean
 functions:
-    void undoSystem()
-        list<string> actions = []
-        actions.type = "pile"
-        
-        // Perform actions (add to top)
-        actions.add("Create file")
-        actions.add("Edit text")
-        actions.add("Save file")
-        
-        // Undo actions (remove from top)
-        iterate i in 1 to 3
-            string lastAction = actions.remove()  // Gets "Save file", then "Edit text", etc.
-            print("Undoing: " + lastAction) +
+	void undoSystem()
+		list<string>.pile actions = []
+
+		// Perform actions (add to top)
+		actions.add("Create file")
+		actions.add("Edit text")
+		actions.add("Save file")
+
+		// Undo actions (remove from top)
+		iterate i in 1 to 3
+			string lastAction = actions.remove()  // Gets "Save file", then "Edit text", etc.
+			print("Undoing: " + lastAction) +
 ```
 
 **Modified Operations**:
@@ -506,50 +509,46 @@ functions:
 - `peek()` → Views the **top** element without removing
 - Standard list operations (`get(index)`, `size()`) remain unchanged
 
-**`"unique"` - Set Behavior (Uniqueness Constraint)**
+**`.unique` — Set Behavior (Uniqueness Constraint)**
 
-Only allows unique elements. Duplicate additions are ignored.
+**Only unique elements are stored; duplicate additions are silently ignored.**
 
 ```clean
 functions:
-    void trackUniqueVisitors()
-        list<string> visitors = []
-        visitors.type = "unique"
-        
-        // Add visitors (duplicates ignored)
-        visitors.add("Alice")    // Added
-        visitors.add("Bob")      // Added  
-        visitors.add("Alice")    // Ignored (duplicate)
-        visitors.add("Charlie")  // Added
-        
-        print("Unique visitors: " + visitors.size().toString()) +  // Prints: 3
+	void trackUniqueVisitors()
+		list<string>.unique visitors = []
 
-        if visitors.contains("Alice")
-            print("Alice has visited") +
+		// Add visitors (duplicates ignored)
+		visitors.add("Alice")    // Added
+		visitors.add("Bob")      // Added
+		visitors.add("Alice")    // Ignored (duplicate)
+		visitors.add("Charlie")  // Added
+
+		print("Unique visitors: " + visitors.size().toString()) +  // Prints: 3
+
+		if visitors.contains("Alice")
+			print("Alice has visited") +
 ```
 
 **Modified Operations**:
 - `add(item)` → Adds only if `item` is not already present
-- `remove()` → Removes from default position (implementation-dependent)
+- `remove()` → Removes from default position (front)
 - `contains(item)` → Optimized for membership testing
 - Standard list operations remain available
 
-#### Property Combinations
+#### Behavior Combinations
 
-Properties can be combined by setting the type to a combined behavior string:
+**Behaviors combine by chaining dot suffixes on the type declaration.**
 
 ```clean
-// Unique queue - FIFO with no duplicates
-list<string> uniqueQueue = []
-uniqueQueue.type = "line-unique"
+// Unique queue — FIFO with no duplicates
+list<string>.line.unique uniqueQueue = []
 
-// Unique stack - LIFO with no duplicates  
-list<integer> uniqueStack = []
-uniqueStack.type = "pile-unique"
+// Unique stack — LIFO with no duplicates
+list<integer>.pile.unique uniqueStack = []
 
-// All combinations are supported
-list<integer> allFeatures = []
-allFeatures.type = "line-unique-pile"  // Advanced combination
+// All three behaviors combined
+list<integer>.line.unique.pile allFeatures = []
 ```
 
 #### Available Methods
@@ -569,13 +568,13 @@ All list types support these methods regardless of behavior:
 - `isEmpty()` → Returns `true` if list is empty
 - `isNotEmpty()` → Returns `true` if list contains items
 
-**Behavior Management:**
-- Setting `myList.type = "behavior"` changes the list's behavior at runtime
+**Behavior Declaration:**
+- Behavior is declared as part of the type at variable declaration time: `list<T>.line`, `list<T>.pile`, `list<T>.unique`, or combinations thereof.
 
 #### Performance Characteristics
-- `"line"`: O(1) add, O(1) remove, O(1) peek
-- `"pile"`: O(1) add, O(1) remove, O(1) peek  
-- `"unique"`: O(1) add/contains (hash-based), O(1) remove
+- `.line`: O(1) add, O(1) remove, O(1) peek
+- `.pile`: O(1) add, O(1) remove, O(1) peek
+- `.unique`: O(1) add/contains (hash-based), O(1) remove
 
 #### Advantages
 
@@ -590,36 +589,33 @@ All list types support these methods regardless of behavior:
 
 ```clean
 start:
-    // Test different list behaviors
-    list<integer> myList = []
-    
-    // Test line behavior (FIFO queue)
-    myList.type = "line"
-    myList.add(1)
-    myList.add(2)
-    myList.add(3)
-    
-    integer first = myList.remove()   // Returns 1 (first in, first out)
-    integer second = myList.remove()  // Returns 2
-    
-    // Switch to pile behavior (LIFO stack)
-    myList.type = "pile"
-    myList.add(10)
-    myList.add(20)
-    myList.add(30)
-    
-    integer top = myList.remove()     // Returns 30 (last in, first out)
-    
-    // Switch to unique behavior (set)
-    myList.type = "unique"
-    myList.add(100)
-    myList.add(200)
-    myList.add(100)  // Ignored (duplicate)
-    
-    boolean hasHundred = myList.contains(100)  // Returns true
-    integer listSize = myList.size()           // Returns 2 (no duplicates)
-    
-    print("List demonstrates flexible behavior at runtime")
+	// Test line behavior (FIFO queue)
+	list<integer>.line lineList = []
+	lineList.add(1)
+	lineList.add(2)
+	lineList.add(3)
+
+	integer first = lineList.remove()   // Returns 1 (first in, first out)
+	integer second = lineList.remove()  // Returns 2
+
+	// Pile behavior (LIFO stack)
+	list<integer>.pile pileList = []
+	pileList.add(10)
+	pileList.add(20)
+	pileList.add(30)
+
+	integer top = pileList.remove()     // Returns 30 (last in, first out)
+
+	// Unique behavior (set)
+	list<integer>.unique uniqueList = []
+	uniqueList.add(100)
+	uniqueList.add(200)
+	uniqueList.add(100)  // Ignored (duplicate)
+
+	boolean hasHundred = uniqueList.contains(100)  // Returns true
+	integer listSize = uniqueList.size()            // Returns 2 (no duplicates)
+
+	print("List demonstrates flexible behavior via type declaration") +
 ```
 
 ### Type Annotations and Variable Declaration
@@ -644,40 +640,45 @@ string message
 - `integer` → `number` (with precision loss warning)
 - Same-sign, wider types → OK
 
-**Explicit conversions:**
+**Explicit conversions (all require parentheses):**
 ```clean
-value.toInteger   // convert to integer
-value.toNumber     // convert to floating-point
-value.toString    // convert to string
-value.toBoolean   // convert to boolean
+value.toInteger()   // convert to integer
+value.toNumber()    // convert to floating-point
+value.toString()    // convert to string
+value.toBoolean()   // convert to boolean
 ```
-
 
 **Examples:**
 ```clean
 integer num = 42
-number numFloat = num.toNumber      // ✅ Works: converts 42 to 42.0
-integer piInt = 3.14.toInteger    // ✅ Works: converts 3.14 to 3 (truncated)
-boolean flag = 0.toBoolean        // ✅ Works: converts 0 to false
-boolean nonZero = 5.toBoolean     // ✅ Works: converts 5 to true
+number numFloat = num.toNumber()      // ✅ Works: converts 42 to 42.0
+integer piInt = 3.14.toInteger()      // ✅ Works: converts 3.14 to 3 (truncated)
+boolean flag = 0.toBoolean()          // ✅ Works: converts 0 to false
+boolean nonZero = 5.toBoolean()       // ✅ Works: converts 5 to true
 ```
 
 ## Apply-Blocks
 
-Apply-blocks are a core language feature where `identifier:` applies that identifier to each indented item.
+**Apply-blocks are a core language feature where `identifier:` applies that identifier to each indented item.**
 
 ### Function Calls
-```clean
-print:
-    "Hello"
-    "World"
-// Equivalent to: print("Hello"), print("World")
 
+Apply-blocks work with any function or method that takes a single argument. `print` is not valid as an apply-block target — use parenthesized `print()` calls instead:
+
+```clean
 items.add:
-    item1
-    item2
-    item3
+	item1
+	item2
+	item3
 // Equivalent to: items.add(item1), items.add(item2), items.add(item3)
+```
+
+For printing multiple values, use individual `print()` calls:
+
+```clean
+print("First line") +
+print(variable_name) +
+print(result.toString()) +
 ```
 
 ### Variable Declarations
@@ -706,20 +707,24 @@ constant:
 
 ### Operator Precedence
 
+**Operators with higher precedence bind more tightly than those with lower precedence. All binary operators are left-associative except `^`, which is right-associative.**
+
 From highest to lowest precedence:
 
-1. **Primary** - `()`, function calls, method calls, property access
-2. **Postfix** - `!` (required assertion)
-3. **Unary** - `not`, `-` (unary minus)
-4. **Exponentiation** - `^` (right-associative)
-5. **Multiplicative** - `*`, `/`, `%`
-6. **Additive** - `+`, `-`
-7. **Comparison** - `<`, `>`, `<=`, `>=`
-8. **Equality** - `==`, `!=`, `is`, `not`
-9. **Logical AND** - `and`
-10. **Logical OR** - `or`
-11. **Null-Coalescing** - `default`
-12. **Assignment** - `=`
+1. **Primary** — `()`, function calls, method calls, property access
+2. **Postfix** — `!` (required non-null assertion)
+3. **Unary** — `not`, `-` (unary minus)
+4. **Exponentiation** — `^` (**right-associative**: `2^3^2` evaluates as `2^(3^2)` = 512, not `(2^3)^2` = 64)
+5. **Multiplicative** — `*`, `/`, `%`
+6. **Additive** — `+`, `-`
+7. **Comparison** — `<`, `>`, `<=`, `>=`
+8. **Equality** — `==`, `!=`, `is`
+9. **Logical AND** — `and`
+10. **Logical OR** — `or`
+11. **Null-Coalescing** — `default`
+12. **Assignment** — `=`
+
+All binary operators at levels 5–11 are **left-associative**: `a - b - c` evaluates as `(a - b) - c`.
 
 ### Multi-Line Expressions
 
@@ -820,8 +825,7 @@ a not b     // Negated identity comparison
 ```clean
 a and b     // Logical AND
 a or b      // Logical OR
-a not b     // Logical NOT (binary, equivalent to !=)
-// Note: Unary not operator not yet implemented
+not a       // Logical NOT (unary prefix)
 ```
 
 ### Null-Handling Operators
@@ -866,28 +870,37 @@ string value = primary default secondary default "final fallback"
 
 #### Required Assertion Operator (`!`)
 
-The `!` (required) operator asserts that a value is not null. If the value is null, it causes a runtime error.
+**`!` is a postfix operator that asserts a value is non-null at runtime, and narrows its type at compile time.**
+
+The `!` operator is written immediately after the expression it applies to — it comes after the value, never before:
 
 ```clean
-value!    // Asserts value is not null, returns value or fails
+value!    // ✅ Correct postfix form
+!value    // ❌ Not valid — ! is not a prefix here
 ```
 
-**Usage:**
+**Runtime behavior:** If the value is `null` at the point of evaluation, execution halts with a runtime reference error (RUN004). If the value is not null, it is returned unchanged.
+
+**Compile-time behavior:** After `!`, the compiler treats the result as a guaranteed non-null value for subsequent type checking. Null checks and `default` branches that follow are not required.
+
 ```clean
-// Assert that a value exists
-string name = maybeNull!    // Fails if maybeNull is null
+// maybeNull has type string (nullable)
+string? maybeNull = getUser()
+
+// After !, the compiler treats the result as string (non-null)
+string name = maybeNull!    // Runtime check: halts if null; compile-time: treated as string
+
+// Chaining with method calls
+string upper = getText()!.toUpperCase()    // getText() is checked for null before .toUpperCase()
 
 // Use when you're certain a value is not null
 integer count = list.find(item)!
-
-// Combine with method calls
-string upper = getText()!.toUpperCase()
 ```
 
 **When to Use:**
-- Use `!` when you're confident a value is not null and want to express that intent
-- Use `default` when you want to provide a fallback instead of failing
-- Prefer `default` for user-facing code; use `!` for internal assertions
+- Use `!` when you are certain a value is not null and want to express that intent explicitly
+- Use `default` when you want to provide a fallback value instead of halting
+- Prefer `default` for user-facing code; use `!` for internal assertions where null would indicate a programming error
 
 ### Matrix Operations
 
@@ -917,6 +930,8 @@ myList.get(0)           // Built-in method
 ```
 
 ### Function Calls
+
+**Function arguments are evaluated left-to-right before the function is called.** Side effects in argument expressions (such as function calls that mutate state) occur in left-to-right order.
 
 ```clean
 functionName()                     // No arguments
@@ -999,12 +1014,6 @@ print("Price:")
 print(price.toString())
 ```
 
-**Implementation Status:**
-- ✅ **toString() method calls**: `print(value.toString())` works perfectly
-- ✅ **String variables**: `print(string_var)` works perfectly  
-- ✅ **String literals**: `print("text")` works perfectly
-- ✅ **Variable assignment**: `string result = value.toString()` works perfectly
-
 #### Default toString() Behavior
 
 Every type in Clean Language has a built-in `toString()` method with sensible defaults:
@@ -1040,18 +1049,30 @@ print(user)             // Prints: Alice (30 years old)
 - You can override `toString()` in any class for custom string representation
 - The custom `toString()` method is automatically used by print functions
 
-#### Block Syntax
-For multiple values or complex formatting, use the block syntax with colon (consistent with Clean Language's block patterns):
+#### Printing Multiple Values
+
+To print multiple values in sequence, use the `print:` block form or individual `print()` calls.
+
+**Block form — `print:` block:**
+
+The `print:` block prints each indented expression on its own line. This is the idiomatic way to print several values in a row:
 
 ```clean
 print:
-    "First line"
-    variable_name
-    (complex + expression)
-    result.toString()
+    "User: " + username
+    "Score: " + score
+    "Status: active"
 ```
 
-The block syntax allows for cleaner formatting when printing multiple values sequentially, maintaining consistency with other Clean Language block constructs like `functions:`, `string:`, etc.
+Each line in the block is equivalent to a `print(expr) +` call. The above is exactly the same as:
+
+```clean
+print("User: " + username) +
+print("Score: " + score) +
+print("Status: active") +
+```
+
+Use the block form when printing several related values together; use the individual call form when the print statements are spread through conditional or loop logic.
 
 ### Console Input
 
@@ -1402,10 +1423,10 @@ start:
 
 #### Default Value Rules
 
-1. **Expression Support**: Default values can be any valid Clean Language expression
-2. **Type Compatibility**: Default values must match the parameter's declared type
-3. **Evaluation Time**: Default values are evaluated at function call time
-4. **Optional Nature**: Parameters with default values become optional in function calls
+1. **Expression Support**: Default values can be any valid Clean Language expression.
+2. **Type Compatibility**: Default values must match the parameter's declared type (SEM001).
+3. **Lazy Evaluation**: Default values are evaluated **at call time, only when the argument is omitted** — they are not evaluated when the function is defined. If the default is a function call, it runs fresh each time the default is used.
+4. **Optional Nature**: Parameters with default values become optional in function calls — they must still appear after all required parameters.
 
 **Examples of Valid Default Values:**
 ```clean
@@ -1763,8 +1784,7 @@ while i < 10
 - Infinite loops occur if the condition never becomes false (ensure loop variables are updated)
 
 **Important Notes:**
-- Clean Language does not currently support `break` or `continue` keywords
-- To exit a while loop early, modify the condition variable or use a boolean flag
+- Use `break` to exit a loop early and `continue` to skip to the next iteration
 - The while loop is useful for input validation, processing until a condition is met, or when the number of iterations is unknown
 
 ## Error Handling
@@ -1810,18 +1830,18 @@ Classes are the primary mechanism for expressing domain behavior and responsibil
 
 ```clean
 class Point
-    integer x
-    integer y
+	integer x
+	integer y
 
-    constructor(integer x, integer y)        // Auto-stores matching parameter names
+	constructor(integer x, integer y)
 
-    functions:
-    integer distanceFromOrigin()
-        return sqrt(x * x + y * y)
+	functions:
+		integer distanceFromOrigin()
+			return sqrt(x * x + y * y)
 
-        void move(integer dx, integer dy)
-        x = x + dx
-        y = y + dy
+		void move(integer dx, integer dy)
+			x = x + dx
+			y = y + dy
 ```
 
 ### Generic Classes with `any`
@@ -1830,16 +1850,16 @@ Clean Language uses `any` for generic class fields and methods:
 
 ```clean
 class Container
-    any value                  // any makes class generic
+	any value
 
-    constructor(any value)     // Auto-stores to matching field
+	constructor(any value)
 
-    functions:
-        any get()
-        return value
+	functions:
+		any get()
+			return value
 
-        void set(any newValue)
-        value = newValue
+		void set(any newValue)
+			value = newValue
 ```
 
 ### Inheritance
@@ -2037,71 +2057,44 @@ The math module follows Clean Language's "one way to do things" principle. Basic
 
 **Advanced Mathematics - Use Functions:**
 
+**Available functions:**
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `math.sqrt(x)` | number | Square root |
+| `math.abs(x)` | number or integer | Absolute value |
+| `math.max(a, b)` | number | Larger of two values |
+| `math.min(a, b)` | number | Smaller of two values |
+| `math.floor(x)` | number | Round down to nearest integer |
+| `math.ceil(x)` | number | Round up to nearest integer |
+| `math.round(x)` | number | Round to nearest integer |
+| `math.trunc(x)` | number | Remove decimal part |
+| `math.sign(x)` | number | Returns -1, 0, or 1 |
+| `math.sin(x)` | number | Sine (radians) |
+| `math.cos(x)` | number | Cosine (radians) |
+| `math.tan(x)` | number | Tangent (radians) |
+| `math.asin(x)` | number | Arc sine |
+| `math.acos(x)` | number | Arc cosine |
+| `math.atan(x)` | number | Arc tangent |
+| `math.atan2(y, x)` | number | Two-argument arc tangent |
+| `math.ln(x)` | number | Natural logarithm (base e) |
+| `math.log10(x)` | number | Base-10 logarithm |
+| `math.log2(x)` | number | Base-2 logarithm |
+| `math.exp(x)` | number | e raised to the power of x |
+| `math.exp2(x)` | number | 2 raised to the power of x |
+| `math.sinh(x)` | number | Hyperbolic sine |
+| `math.cosh(x)` | number | Hyperbolic cosine |
+| `math.tanh(x)` | number | Hyperbolic tangent |
+| `math.pi()` | number | π ≈ 3.14159 |
+| `math.e()` | number | Euler's number ≈ 2.71828 |
+| `math.tau()` | number | τ = 2π ≈ 6.28318 |
+
+**Examples:**
+
 ```clean
-// Core mathematical operations
-math.sqrt(x), math.abs(x), math.max(a, b), math.min(a, b)
-
-// Rounding and precision functions
-math.floor(x), math.ceil(x), math.round(x), math.trunc(x), math.sign(x)
-
-// Trigonometric functions (complete support)
-math.sin(x), math.cos(x), math.tan(x), math.asin(x), math.acos(x), math.atan(x), math.atan2(y, x)
-
-// Logarithmic and exponential functions
-math.ln(x), math.log10(x), math.log2(x), math.exp(x), math.exp2(x)
-
-// Hyperbolic functions
-math.sinh(x), math.cosh(x), math.tanh(x)
-
-// Mathematical constants
-math.pi(), math.e(), math.tau()
-```
-    functions:
-        
-        // Core mathematical operations
-        number sqrt(number x)
-        number abs(number x)          // Absolute value for numbers
-        integer abs(integer x)      // Absolute value for integers
-        number max(number a, number b)
-        number min(number a, number b)
-        
-        // Rounding and precision functions
-        number floor(number x)    // Round down to nearest integer
-        number ceil(number x)     // Round up to nearest integer  
-        number round(number x)    // Round to nearest integer
-        number trunc(number x)    // Remove decimal part
-        number sign(number x)     // Returns -1, 0, or 1
-        
-        // Trigonometric functions - work with radians
-        number sin(number x)      // Sine
-        number cos(number x)      // Cosine
-        number tan(number x)      // Tangent
-        number asin(number x)     // Arc sine (inverse sine)
-        number acos(number x)     // Arc cosine (inverse cosine)
-        number atan(number x)     // Arc tangent (inverse tangent)
-        number atan2(number y, number x)  // Two-argument arc tangent
-        
-        // Logarithmic and exponential functions
-        number ln(number x)       // Natural logarithm (base e)
-        number log10(number x)    // Base-10 logarithm
-        number log2(number x)     // Base-2 logarithm
-        number exp(number x)      // e raised to the power of x
-        number exp2(number x)     // 2 raised to the power of x
-        
-        // Hyperbolic functions - useful for advanced calculations
-        number sinh(number x)     // Hyperbolic sine
-        number cosh(number x)     // Hyperbolic cosine
-        number tanh(number x)     // Hyperbolic tangent
-        
-        // Mathematical constants
-        number pi()              // π ≈ 3.14159
-        number e()               // Euler's number ≈ 2.71828
-        number tau()             // τ = 2π ≈ 6.28318
-
-// Usage Examples
 start:
-    // Basic calculations - using operators for basic math
-    number result = 5.0 + 3.0               // Use + operator, not math.add()
+	// Basic calculations — use operators for basic math, math.* for advanced operations
+	number result = 5.0 + 3.0               // Use + operator, not math.add()
     number maximum = math.max(10.5, 7.2)    // Use math functions for advanced operations
 
     // Geometry - calculate circle area
@@ -2136,126 +2129,43 @@ start:
 
 The string module provides powerful text manipulation capabilities. Whether you're processing user input, formatting output, or analyzing text data, string has all the tools you need for effective text handling.
 
-```clean
-// Core operations
-text.length(), text.toUpperCase(), text.toLowerCase(), text.trim()
-text.contains(search), text.replace(old, new), text.split(delimiter)
-string.concat(a, b), string.join(parts, separator)
-```
-    functions:
-        // Basic operations
-        integer length(string text)
-            // Returns the number of characters in the string
-            // Perfect for validation and loop bounds
-        
-        string concat(string a, string b)
-            // Joins two strings together
-            // Creates a new string without modifying the originals
-        
-        string substring(string text, integer start, integer end)
-            // Extracts a portion of the string from start to end position
-            // Great for parsing and text extraction
-        
-        // Case operations - useful for user input normalization
-        string toUpperCase(string text)
-            // Converts all letters to uppercase
-            // Perfect for case-insensitive comparisons
-        
-        string toLowerCase(string text)
-            // Converts all letters to lowercase
-            // Ideal for standardizing user input
-        
-        // Search and validation operations
-        boolean contains(string text, string search)
-            // Checks if the text contains the search string
-            // Returns true if found, false otherwise
-        
-        integer indexOf(string text, string search)
-            // Finds the first position of search string in text
-            // Returns -1 if not found, position index if found
-        
-        integer lastIndexOf(string text, string search)
-            // Finds the last position of search string in text
-            // Useful for finding file extensions or repeated patterns
-        
-        boolean startsWith(string text, string prefix)
-            // Checks if text begins with the given prefix
-            // Great for URL validation or command parsing
-        
-        boolean endsWith(string text, string suffix)
-            // Checks if text ends with the given suffix
-            // Perfect for file type checking
-        
-        // Text cleaning and formatting
-        string trim(string text)
-            // Removes whitespace from both ends of the string
-            // Essential for cleaning user input
-        
-        string trimStart(string text)
-            // Removes whitespace from the beginning only
-            // Useful for preserving trailing spaces
-        
-        string trimEnd(string text)
-            // Removes whitespace from the end only
-            // Helpful for cleaning line endings
-        
-        // Advanced text manipulation - powerful tools for text transformation
-        string replace(string text, string oldValue, string newValue)
-            // Replaces all occurrences of oldValue with newValue
-            // Like find-and-replace-all in a word processor
-            // Example: replace("Hello Hello", "Hello", "Hi") → "Hi Hi"
-        
-        list<string> split(string text, string delimiter)
-            // Breaks a string into pieces using a separator character
-            // Like cutting a rope at specific points - very useful for data processing
-            // Example: split("apple,banana,orange", ",") → ["apple", "banana", "orange"]
-        
-        string join(list<string> parts, string separator)
-            // Combines an array of strings into one string with separators
-            // The opposite of split - like gluing pieces back together
-            // Example: join(["apple", "banana", "orange"], ", ") → "apple, banana, orange"
-        
-        // Character operations - work with individual letters and symbols
-        string charAt(string text, integer index)
-            // Gets the character (letter/symbol) at a specific position
-            // Like picking out the 3rd letter from a word
-            // Example: charAt("Hello", 1) → "e" (positions start at 0)
-        
-        integer charCodeAt(string text, integer index)
-            // Gets the numeric code of a character (useful for sorting or encoding)
-            // Every character has a number - 'A' is 65, 'a' is 97, etc.
-            // Example: charCodeAt("Hello", 0) → 72 (the code for 'H')
-        
-        // Validation helpers - check if text meets certain conditions
-        boolean isEmpty(string text)
-            // Checks if a string has no characters at all
-            // Like checking if a box is completely empty
-            // Example: isEmpty("") → true, isEmpty("Hi") → false
-        
-        boolean isBlank(string text)
-            // Checks if a string is empty OR contains only spaces/tabs
-            // More thorough than isEmpty - catches "invisible" content too
-            // Example: isBlank("   ") → true, isBlank("Hi") → false
-        
-        // Padding operations - add characters to make text a specific length
-        string padStart(string text, integer length, string padString)
-            // Adds characters to the beginning until the text reaches desired length
-            // Like adding zeros before a number: "42" becomes "00042"
-            // Example: padStart("42", 5, "0") → "00042"
-        
-        string padEnd(string text, integer length, string padString)
-            // Adds characters to the end until the text reaches desired length
-            // Like adding spaces after text to align it in columns
-            // Example: padEnd("Name", 10, " ") → "Name      "
-        
-        // Conversion utilities
-        string toString(any value)
-            // Converts any value to its string representation
-            // Universal conversion for display purposes
+**Method-style calls (act on a string value):**
 
-// Usage Examples - Real-world string processing scenarios
+| Call | Returns | Description |
+|------|---------|-------------|
+| `text.length()` | integer | Number of characters |
+| `text.toUpperCase()` | string | All letters uppercase |
+| `text.toLowerCase()` | string | All letters lowercase |
+| `text.trim()` | string | Remove leading/trailing whitespace |
+| `text.trimStart()` | string | Remove leading whitespace only |
+| `text.trimEnd()` | string | Remove trailing whitespace only |
+| `text.contains(search)` | boolean | Returns true if search string is found |
+| `text.indexOf(search)` | integer | First position of search, or -1 |
+| `text.lastIndexOf(search)` | integer | Last position of search, or -1 |
+| `text.startsWith(prefix)` | boolean | True if text begins with prefix |
+| `text.endsWith(suffix)` | boolean | True if text ends with suffix |
+| `text.replace(old, new)` | string | Replace all occurrences of old with new |
+| `text.split(delimiter)` | list\<string\> | Split into a list on the delimiter |
+| `text.charAt(index)` | string | Character at position (0-based) |
+| `text.charCodeAt(index)` | integer | Numeric code of character at position |
+| `text.isEmpty()` | boolean | True if length is zero |
+| `text.isBlank()` | boolean | True if empty or only whitespace |
+| `text.padStart(length, pad)` | string | Pad beginning to reach length |
+| `text.padEnd(length, pad)` | string | Pad end to reach length |
+| `text.substring(start, end)` | string | Extract substring from start to end |
+
+**Namespace-style calls (utility functions on the `string` module):**
+
+| Call | Returns | Description |
+|------|---------|-------------|
+| `string.concat(a, b)` | string | Concatenate two strings |
+| `string.join(parts, sep)` | string | Join a list of strings with a separator |
+
+**Examples:**
+
+```clean
 start:
-    // Basic text processing
+	// Basic text processing
     string userInput = "  Hello World!  "
     string cleaned = userInput.trim()              // "Hello World!"
     integer length = cleaned.length()              // 12
@@ -2302,148 +2212,46 @@ start:
 
 The list module provides powerful data collection capabilities. Whether you're managing lists of items, processing data sets, or organizing information, list has all the tools you need for effective data manipulation.
 
-```clean
-// Essential operations
-items.add(item), items.remove(index), items.get(index)
-items.length(), items.contains(item), items.sort(), items.reverse()
-list.concat(a, b), list.range(start, end), list.join(items, separator)
-```
-    functions:
-        // Basic operations - fundamental list access
-        integer length(list<any> array)
-            // Returns the number of elements in the list
-            // Like counting how many items are in a box
-            // Example: length([1, 2, 3]) → 3
-        
-        any get(list<any> array, integer index)
-            // Gets the element at the specified position
-            // Like picking out the 3rd item from a list
-            // Example: get([10, 20, 30], 1) → 20 (positions start at 0)
-        
-        void set(list<any> array, integer index, any value)
-            // Updates the element at the specified position
-            // Like replacing an item in a specific slot
-            // Example: set([1, 2, 3], 1, 99) → [1, 99, 3]
-        
-        // Modification operations - changing array contents
-        list<any> add(list<any> array, any item)
-            // Adds an element to the end of the list
-            // Like adding a new item to the end of a list
-            // Example: add([1, 2], 3) → [1, 2, 3]
-        
-        any removeLast(list<any> array)
-            // Removes and returns the last element from the list
-            // Like taking the top item off a stack
-            // Example: removeLast([1, 2, 3]) → 3, array becomes [1, 2]
-        
-        list<any> insert(list<any> array, integer index, any item)
-            // Inserts an element at a specific position
-            // Like squeezing a new item into the middle of a line
-            // Example: insert([1, 3], 1, 2) → [1, 2, 3]
-        
-        any remove(list<any> array, integer index)
-            // Removes and returns the element at the specified position
-            // Like taking out a specific item and closing the gap
-            // Example: remove([1, 2, 3], 1) → 2, array becomes [1, 3]
-        
-        // Search operations - finding elements in lists
-        boolean contains(list<any> array, any item)
-            // Checks if the list contains the specified item
-            // Like looking through a box to see if something is there
-            // Example: contains([1, 2, 3], 2) → true
-        
-        integer indexOf(list<any> array, any item)
-            // Finds the first position of the item in the list
-            // Like finding where something is located in a list
-            // Example: indexOf([10, 20, 30], 20) → 1
-        
-        integer lastIndexOf(list<any> array, any item)
-            // Finds the last position of the item in the list
-            // Useful when the same item appears multiple times
-            // Example: lastIndexOf([1, 2, 1, 3], 1) → 2
-        
-        // List transformation operations - creating new lists
-        list<any> slice(list<any> array, integer start, integer end)
-            // Creates a new array containing elements from start to end position
-            // Like cutting out a section of the original array
-            // Example: slice([1, 2, 3, 4, 5], 1, 4) → [2, 3, 4]
-        
-        list<any> concat(list<any> array1, list<any> array2)
-            // Combines two lists into a single new array
-            // Like joining two lists together
-            // Example: concat([1, 2], [3, 4]) → [1, 2, 3, 4]
-        
-        list<any> reverse(list<any> array)
-            // Creates a new array with elements in reverse order
-            // Like flipping the list upside down
-            // Example: reverse([1, 2, 3]) → [3, 2, 1]
-        
-        list<any> sort(list<any> array)
-            // Creates a new array with elements sorted in ascending order
-            // Like organizing items from smallest to largest
-            // Example: sort([3, 1, 4, 2]) → [1, 2, 3, 4]
-        
-        // Functional programming operations - advanced array processing
-        list<any> map(list<any> array, function callback)
-            // Creates a new array by applying a function to each element
-            // Like transforming every item in the list using a rule
-            // Example: map([1, 2, 3], x => x * 2) → [2, 4, 6]
-        
-        list<any> filter(list<any> array, function callback)
-            // Creates a new array containing only elements that pass a test
-            // Like keeping only the items that meet certain criteria
-            // Example: filter([1, 2, 3, 4], x => x > 2) → [3, 4]
-        
-        any reduce(list<any> array, function callback, any initialValue)
-            // Reduces the list to a single value by applying a function
-            // Like combining all elements into one result
-            // Example: reduce([1, 2, 3, 4], (sum, x) => sum + x, 0) → 10
-        
-        void forEach(list<any> array, function callback)
-            // Executes a function for each element in the list
-            // Like doing something with every item in the list
-            // Example: forEach([1, 2, 3], x => print(x)) → prints 1, 2, 3
-        
-        // Utility operations - helpful array functions
-        boolean isEmpty(list<any> array)
-            // Checks if the list has no elements
-            // Like checking if a box is completely empty
-            // Example: isEmpty([]) → true, isEmpty([1]) → false
-        
-        boolean isNotEmpty(list<any> array)
-            // Checks if the list has at least one element
-            // Opposite of isEmpty - checks if there's something there
-            // Example: isNotEmpty([1, 2]) → true
-        
-        any first(list<any> array)
-            // Gets the first element of the list
-            // Like looking at the item at the front of the line
-            // Example: first([10, 20, 30]) → 10
-        
-        any last(list<any> array)
-            // Gets the last element of the list
-            // Like looking at the item at the back of the line
-            // Example: last([10, 20, 30]) → 30
-        
-        string join(list<string> array, string separator)
-            // Combines all array elements into a single string with separators
-            // Like gluing text pieces together with a connector
-            // Example: join(["apple", "banana", "orange"], ", ") → "apple, banana, orange"
-        
-        // List creation helpers - building new lists
-        list<any> fill(integer size, any value)
-            // Creates a new array of specified size filled with the same value
-            // Like making multiple copies of the same item
-            // Example: fill(3, "hello") → ["hello", "hello", "hello"]
-        
-        list<integer> range(integer start, integer end)
-            // Creates an array of numbers from start to end
-            // Like counting from one number to another
-            // Example: range(1, 5) → [1, 2, 3, 4, 5]
+**Method-style calls (act on a list value):**
 
-// Usage Examples - Real-world list processing scenarios
+| Call | Returns | Description |
+|------|---------|-------------|
+| `items.length()` | integer | Number of elements |
+| `items.get(index)` | element type | Element at index (0-based) |
+| `items.set(index, value)` | void | Set element at index |
+| `items.add(item)` | void | Add item to the end |
+| `items.remove(index)` | element type | Remove and return element at index |
+| `items.removeLast()` | element type | Remove and return the last element |
+| `items.insert(index, item)` | void | Insert item at position |
+| `items.contains(item)` | boolean | True if item is in the list |
+| `items.indexOf(item)` | integer | First position of item, or -1 |
+| `items.lastIndexOf(item)` | integer | Last position of item, or -1 |
+| `items.slice(start, end)` | list | New list with elements from start to end |
+| `items.reverse()` | list | New list in reverse order |
+| `items.sort()` | list | New list sorted ascending |
+| `items.isEmpty()` | boolean | True if length is zero |
+| `items.isNotEmpty()` | boolean | True if length is non-zero |
+| `items.first()` | element type | First element |
+| `items.last()` | element type | Last element |
+| `items.map(fn)` | list | New list with fn applied to each element |
+| `items.filter(fn)` | list | New list with only elements where fn is true |
+| `items.reduce(fn, init)` | any | Combine all elements into one value |
+| `items.forEach(fn)` | void | Execute fn for each element |
+
+**Namespace-style calls (utility functions on the `list` module):**
+
+| Call | Returns | Description |
+|------|---------|-------------|
+| `list.concat(a, b)` | list | Combine two lists into one |
+| `list.range(start, end)` | list\<integer\> | List of integers from start to end |
+| `list.fill(size, value)` | list | New list of size filled with value |
+| `list.join(items, sep)` | string | Join list elements into a string with separator |
+
+**Examples:**
+
+```clean
 start:
-    // Basic list operations
+	// Basic list operations
     list<integer> numbers = [1, 2, 3]
     integer count = numbers.length()              // 3
     integer first = numbers.get(0)                // 1
@@ -2493,41 +2301,20 @@ start:
 
 The file module makes working with files simple and straightforward. Whether you need to read configuration files, save user data, or process text documents, file has you covered with easy-to-use methods.
 
-```clean
-// Basic I/O
-file.read(path), file.write(path, content), file.exists(path)
-```
-    functions:
-        // Reading files
-        string read(string path)
-            // Reads the entire file content as a single string
-            // Perfect for small to medium-sized files
-        
-        list<string> lines(string path)
-            // Reads the file and returns each line as a separate string
-            // Great for processing text files line by line
-        
-        // Writing files
-        void write(string path, string content)
-            // Writes text to a file, replacing any existing content
-            // Creates the file if it doesn't exist
-        
-        void append(string path, string content)
-            // Adds text to the end of an existing file
-            // Creates the file if it doesn't exist
-        
-        // File management
-        boolean exists(string path)
-            // Checks if a file exists at the given path
-            // Returns true if found, false otherwise
-        
-        void delete(string path)
-            // Removes a file from the filesystem
-            // Does nothing if the file doesn't exist
+| Call | Returns | Description |
+|------|---------|-------------|
+| `file.read(path)` | string | Read entire file as a string |
+| `file.lines(path)` | list\<string\> | Read file and return each line as a list element |
+| `file.write(path, content)` | void | Write content to file (creates if missing, replaces if existing) |
+| `file.append(path, content)` | void | Append content to end of file (creates if missing) |
+| `file.exists(path)` | boolean | True if a file exists at path |
+| `file.delete(path)` | void | Delete a file (does nothing if not found) |
 
-// Usage Examples
+**Examples:**
+
+```clean
 start:
-    // Read a configuration file
+	// Read a configuration file
     string config = file.read("settings.txt")
 
     // Process a log file line by line (read content, then split by newline)
@@ -2552,39 +2339,19 @@ start:
 
 The http module makes web requests simple and intuitive. Whether you're fetching data from APIs, submitting forms, or building web applications, http provides all the essential HTTP methods you need.
 
-```clean
-// Core requests
-http.get(url), http.post(url, body)
-```
-    functions:
-        // GET - Retrieve data from a server
-        string get(string url)
-            // Sends a GET request to fetch data
-            // Returns the response body as a string
-        
-        // POST - Send new data to a server
-        string post(string url, string body)
-            // Sends a POST request with data in the body
-            // Returns the server's response as a string
-        
-        // PUT - Update existing data on a server
-        string put(string url, string body)
-            // Sends a PUT request to update a resource
-            // Returns the server's response as a string
-        
-        // PATCH - Partially update data on a server
-        string patch(string url, string body)
-            // Sends a PATCH request for partial updates
-            // Returns the server's response as a string
-        
-        // DELETE - Remove data from a server
-        string delete(string url)
-            // Sends a DELETE request to remove a resource
-            // Returns the server's response as a string
+| Call | Returns | Description |
+|------|---------|-------------|
+| `http.get(url)` | string | Send a GET request; return response body |
+| `http.post(url, body)` | string | Send a POST request with body; return response body |
+| `http.put(url, body)` | string | Send a PUT request with body; return response body |
+| `http.patch(url, body)` | string | Send a PATCH request with body; return response body |
+| `http.delete(url)` | string | Send a DELETE request; return response body |
 
-// Usage Examples
+**Examples:**
+
+```clean
 start:
-    // Fetch user data from an API
+	// Fetch user data from an API
     string users = http.get("https://api.example.com/users")
 
     // Create a new user
@@ -2618,32 +2385,20 @@ json.tryTextToData(text), json.prettyDataToText(data)
 
 #### Parsing JSON
 
-```clean
-functions:
-    // Parse JSON text into Clean Language data
-    any textToData(string jsonText)
-        // Parses a JSON string and returns the corresponding Clean value
-        // Throws an error if the JSON is invalid
-        // JSON types map to Clean types:
-        //   - JSON object → pairs<string, any>
-        //   - JSON array → list<any>
-        //   - JSON string → string
-        //   - JSON number → number
-        //   - JSON boolean → boolean
-        //   - JSON null → null
-        //
-        // Supports nested structures with unlimited depth:
-        //   - Nested objects: {"user": {"name": "John", "age": 42}}
-        //   - Nested arrays: {"matrix": [[1,2], [3,4]]}
-        //   - Arrays of objects: [{"id": 1}, {"id": 2}]
-        //   - Complex combinations: {"users": [{"name": "Alice", "tags": ["admin"]}]}
+| Call | Returns | Description |
+|------|---------|-------------|
+| `json.textToData(text)` | any | Parse a JSON string into a Clean value. Throws on invalid JSON. |
+| `json.tryTextToData(text)` | any | Parse a JSON string; returns `null` on invalid JSON instead of throwing. |
 
-    any tryTextToData(string jsonText)
-        // Attempts to parse JSON, returns null on failure
-        // Useful when you want to handle invalid JSON gracefully
-        // Does not throw errors for malformed JSON
-        // Supports all nested structures same as textToData()
-```
+JSON types map to Clean types:
+- JSON object → `pairs<string, any>`
+- JSON array → `list<any>`
+- JSON string → `string`
+- JSON number → `number`
+- JSON boolean → `boolean`
+- JSON null → `null`
+
+Both functions support nested structures with unlimited depth.
 
 #### Accessing JSON Data
 
@@ -2710,23 +2465,10 @@ start:
 
 #### Serializing to JSON
 
-```clean
-functions:
-    // Convert Clean Language data to JSON text
-    string dataToText(any data)
-        // Converts a Clean value to a compact JSON string
-        // Supports: strings, numbers, booleans, null, lists, pairs
-        // Example output: {"name":"Alice","age":25}
-
-    string prettyDataToText(any data)
-        // Converts a Clean value to a formatted, readable JSON string
-        // Adds indentation and line breaks for human readability
-        // Example output:
-        // {
-        //   "name": "Alice",
-        //   "age": 25
-        // }
-```
+| Call | Returns | Description |
+|------|---------|-------------|
+| `json.dataToText(data)` | string | Compact JSON string from a Clean value |
+| `json.prettyDataToText(data)` | string | Formatted, human-readable JSON string |
 
 #### Usage Examples
 
@@ -2961,9 +2703,9 @@ string.join(parts, "-")
 
 ## Modules and Imports
 
-Clean Language supports multi-file programs through a module system. Each `.cln` file is a module that can import and use code from other modules.
+**Clean Language supports multi-file programs through a module system.** Each `.cln` file is a module that can import and use code from other modules.
 
-**Important:** The `import:` statement is **exclusively for Clean Language modules** (`.cln` files). Plugins are NOT imported - they are declared at the project level in `configuration.cln`. See the [Plugin System](#plugin-system) section for details.
+**Important:** The `import:` statement is **exclusively for Clean Language source files** (`.cln` files). Plugins (frame.data, frame.server, frame.ui, etc.) are declared in `configuration.cln` using the `plugins:` block — they are never imported. See the [Plugin System](#plugin-system) section for details.
 
 ### Module Definition
 
@@ -3278,10 +3020,6 @@ Compile with:
 cln build main.cln -o app.wasm
 ```
 
-## Package Management (Future Feature)
-
-**Note:** Package management is planned for future releases of Clean Language. Currently, Clean Language focuses on core language features and WebAssembly compilation. Package management capabilities will be added in subsequent versions to enable code sharing and dependency management.
-
 ## Asynchronous Programming
 
 Clean uses `start`, `later`, and `background` for simple background execution:
@@ -3318,17 +3056,36 @@ start:
 
 ### Background Functions
 
-You can mark a function as `background` so it always runs in the background:
+**Mark a function as `background` so every call to it runs in the background automatically.**
 
 ```clean
 functions:
-    void syncCache() background
-        sendUpdateToServer()
-        clearLocalTemp()
+	void syncCache() background
+		sendUpdateToServer()
+		clearLocalTemp()
 
 start:
-    syncCache()    // runs in background automatically
+	syncCache()    // runs in background automatically
 ```
+
+### Background Task Error Handling
+
+**Errors in background tasks do not propagate to the calling context.** If a background task throws, it fails silently unless an `onError` handler is attached to the expression that started it.
+
+The `loading` pattern — setting a flag before an async operation and clearing it after — should always be wrapped in `onError` to ensure cleanup happens even on failure:
+
+```clean
+functions:
+	void fetchUser(integer id) background
+		loading = true
+		any user = start api.getUser(id) onError:
+			loading = false
+			error("Failed to fetch user")
+		username = user.name
+		loading = false
+```
+
+Without the `onError` block, if `api.getUser(id)` fails, `loading` would stay `true` and the UI would be stuck in a loading state.
 
 ## Memory Management
 
@@ -3657,28 +3414,41 @@ The Clean Language Plugin System allows you to extend the language with custom D
 
 ### Important: Plugins vs Imports
 
-**Plugins are NOT imported in source files.** The `import:` statement is exclusively for importing Clean Language modules (other `.cln` files).
+**`import:` is only for `.cln` source files. Plugins are never imported — they are declared in the project configuration.**
 
-Plugins are declared at the **project level** in `configuration.cln`:
+| Mechanism | What it is for | Where it goes |
+|-----------|---------------|---------------|
+| `import:` | Other `.cln` source files from your project or external Clean Language modules | At the top of each `.cln` file that needs them |
+| `plugins:` | Framework plugins (frame.data, frame.server, frame.ui, etc.) | In `configuration.cln` at the project root |
+
+**Plugins work differently from modules:**
+- Plugins are declared once at the **project level** in `configuration.cln` — they are never declared in individual `.cln` files.
+- Plugin-generated functions and types are **automatically available** across the project when the plugin is declared — no import statement is needed in individual files.
+- Plugins cannot export `.cln` modules that are then imported via `import:`.
 
 ```clean
-// configuration.cln - Project configuration file
+// configuration.cln — declare plugins here, once, for the whole project
 plugins:
-    frame.web
-    frame.ui
-    frame.data
+	frame.server
+	frame.ui
+	frame.data
 ```
 
-If a plugin provides runtime helper functions, those helpers may be imported using `import:`, but the plugin itself is never imported:
+```clean
+// app.cln — use plugin blocks and functions directly, no import needed
+endpoints:
+	GET "/users" -> listUsers
+```
 
 ```clean
-// ✅ CORRECT - Import runtime helpers provided by a plugin
+// ❌ WRONG — never import a plugin
 import:
-    frame.web.request    // Runtime helpers from the web plugin
+	frame.server
 
-// ❌ WRONG - Never import plugins directly
+// ✅ CORRECT — import another .cln file you wrote
 import:
-    frame.web            // This is NOT how plugins work!
+	utils
+	models
 ```
 
 ### Overview
@@ -3929,10 +3699,11 @@ screen Home:
 ```
 
 **Rules:**
-- Top-level `state:` creates app-scoped state
-- `state:` inside `screen:` creates screen-scoped state
-- Initial values are required
-- **Names must be unique across all scopes** (no prefixes needed)
+- State can be declared at **two levels**: top-level (`state:` at module level) for app-wide state, and inside a `screen:` block for screen-local state.
+- Top-level `state:` creates app-scoped state — accessible from any function or screen in the module.
+- `state:` inside `screen:` creates screen-scoped state — accessible only within that screen block. Screen-local state is destroyed when the screen is removed.
+- Initial values are required for all state variables.
+- App-level names and screen-level names are **separate namespaces** — a screen can declare a variable with the same name as an app-level variable without conflict. Within each scope, names must be unique.
 
 ### State Rules
 
@@ -3989,7 +3760,7 @@ Rule violation: rule failed in state block
 
 ### State Access
 
-Access state directly by name. No scope prefix is ever needed because names are unique.
+**Access state directly by name.** Within a scope (app-level or screen-level), state variable names are unique, so no prefix is ever needed.
 
 ```clean
 state:
@@ -4048,53 +3819,58 @@ watch (firstName, lastName):
 
 ### Computed State
 
-Derived values that update automatically when their dependencies change. Declared inside a `computed:` block within `state:`.
+**Computed state is a read-only derived value that is automatically re-evaluated when its dependencies change.** Declare computed values inside a `computed:` block within `state:`.
 
 ```clean
 state:
-    string firstName = ""
-    string lastName = ""
+	string firstName = ""
+	string lastName = ""
 
-    computed:
-        string fullName
-            return firstName + " " + lastName
+	computed:
+		string fullName
+			return firstName + " " + lastName
 
 functions:
-    void setName(string first, string last)
-        firstName = first
-        lastName = last
+	void setName(string first, string last)
+		firstName = first
+		lastName = last
 
 start:
-    setName("Alice", "Smith")
-    print(fullName)    // Prints: Alice Smith
+	setName("Alice", "Smith")
+	print(fullName)    // Prints: Alice Smith
 ```
 
-**Rules:**
-- Computed state is read-only
-- Dependencies are tracked automatically
-- Re-evaluated only when dependencies change
+**Rules (STATE003):**
+- Computed state is **read-only** — it cannot be assigned to directly.
+- **Dependency tracking is performed by static analysis at compile time.** The compiler inspects which state variables appear in the computed block's body and registers them as dependencies.
+- External function calls inside a computed body are treated as opaque — their internal dependencies cannot be tracked. If a computed value depends on an external function, it is conservatively re-evaluated on every state change.
+- **Circular dependencies between computed state variables are a compile error** (SEM001 / STATE003). For example, if `fullName` references `displayName` and `displayName` references `fullName`, compilation fails.
+- The return type of the computed body must match the declared type of the computed variable (STATE003).
 
 ### State Guards
 
-Validate state before mutation. Guards run before assignment and reject invalid values.
+**Guards validate a proposed new value before it is written to a state variable.** If the guard condition is false, the assignment is rejected and the state variable retains its current value.
 
 ```clean
 state:
-    integer count = 0
-        guard value >= 0 else "Count cannot be negative"
+	integer count = 0
+		guard value >= 0 else "Count cannot be negative"
 
-    string email = ""
-        guard isValidEmail(value) else "Invalid email format"
+	string email = ""
+		guard isValidEmail(value) else "Invalid email format"
 
 functions:
-    void decrement()
-        count = count - 1    // Throws error if result < 0
+	void decrement()
+		count = count - 1    // Throws error if result < 0 (STATE001)
 ```
 
-**Rules:**
-- `guard` runs before the assignment happens
-- `value` refers to the proposed new value
-- Invalid assignments throw a runtime error with the provided message
+**Rules (STATE001):**
+- Guards are evaluated **before** the state variable is updated.
+- If the guard condition is `false`, the update is rejected — the state variable stays unchanged.
+- If the guard condition is `true`, the new value is written.
+- `value` inside the guard expression refers to the **proposed new value**, not the current value.
+- Guard conditions must be **pure boolean expressions** — side effects in guard conditions are not allowed.
+- The `else` clause is a **string literal** containing the error message shown on rejection. It is not a statement.
 
 ### State Reset
 
@@ -4115,21 +3891,25 @@ functions:
 
 ### State with Background Tasks
 
-Background functions can update state when they complete. Updates remain sequential.
+**Background functions can update state when they complete. Updates remain sequential, preventing race conditions.**
+
+Errors in background tasks do not propagate to the caller — always attach an `onError` handler when updating state in a background function, so cleanup happens even on failure:
 
 ```clean
 state:
-    string username = ""
-    boolean isLoggedIn = false
-    boolean loading = false
+	string username = ""
+	boolean isLoggedIn = false
+	boolean loading = false
 
 functions:
-    void fetchUser(integer id) background
-        loading = true
-        any user = start api.getUser(id)
-        username = user.name
-        isLoggedIn = true
-        loading = false
+	void fetchUser(integer id) background
+		loading = true
+		any user = start api.getUser(id) onError:
+			loading = false
+			error("Failed to fetch user")
+		username = user.name
+		isLoggedIn = true
+		loading = false
 ```
 
 ### State in Screens

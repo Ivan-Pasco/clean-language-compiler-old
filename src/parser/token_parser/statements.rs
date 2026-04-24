@@ -27,16 +27,16 @@ impl TokenParser {
             TokenKind::Later => self.parse_later_assignment(),
             TokenKind::Background => self.parse_background(),
             TokenKind::Print => {
-                // Check if this is a print apply block: print:
+                // Check if this is a print block: print:
                 let saved_cursor = self.cursor;
                 self.bump(); // consume print
                 self.skip_whitespace();
                 if self.check(&TokenKind::Colon) {
-                    // This is a print apply block
-                    self.cursor = saved_cursor; // restore to print token
-                    return self.parse_function_apply_block();
+                    // Restore to the print token and parse as a PrintBlock.
+                    self.cursor = saved_cursor;
+                    return self.parse_print_block();
                 }
-                // Not an apply block, restore and parse as regular print
+                // Not a block — restore and parse as a regular print statement.
                 self.cursor = saved_cursor;
                 self.parse_print()
             }
