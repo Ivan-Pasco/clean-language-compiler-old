@@ -495,6 +495,13 @@ pub enum ConcreteType {
     /// Used for generic type erasure and dynamic typing scenarios
     /// At runtime: boxed value with [tag:i32][value1:i32][value2:i32] layout
     Any,
+
+    /// Optional type — inferred when a function has any `return none` path alongside
+    /// non-none return paths.  At the WASM level the representation is identical to
+    /// the inner type; `none` maps to 0/null pointer.  The wrapper is purely a
+    /// compile-time safety annotation that forces the caller to guard the value with
+    /// `or` or `if … == none` before using it in a non-optional context.
+    Optional(Box<ConcreteType>),
 }
 
 /// Generic type parameter
@@ -618,11 +625,19 @@ impl ConcreteType {
             (ConcreteType::IntegerSized { .. }, ConcreteType::Number) => true,
             (ConcreteType::Integer, ConcreteType::IntegerSized { .. }) => true,
 
-            // Sized integers assignable to wider sized integers
+            // Sized integers assignable to wider sized integers of the same signedness.
+            // spec/type-system.md §5: "integer:N → integer:M (M >= N, same signedness) YES"
+            // spec/type-system.md §5 Disallowed: "integer:8 signed → integer:8u unsigned — Signedness mismatch"
             (
-                ConcreteType::IntegerSized { bits: b1, .. },
-                ConcreteType::IntegerSized { bits: b2, .. },
-            ) if b1 <= b2 => true,
+                ConcreteType::IntegerSized {
+                    bits: b1,
+                    unsigned: u1,
+                },
+                ConcreteType::IntegerSized {
+                    bits: b2,
+                    unsigned: u2,
+                },
+            ) if b1 <= b2 && u1 == u2 => true,
 
             // Sized numbers assignable to base Number
             (ConcreteType::NumberSized { .. }, ConcreteType::Number) => true,
@@ -678,6 +693,15 @@ impl ConcreteType {
 
             // Unknown type is assignable to anything (for error recovery)
             (ConcreteType::Unknown, _) | (_, ConcreteType::Unknown) => true,
+
+            // Optional(T) is assignable to Optional(U) if T is assignable to U
+            (ConcreteType::Optional(a), ConcreteType::Optional(b)) => a.is_assignable_to(b),
+
+            // A definite value T satisfies an Optional(T) slot (subtype relation)
+            (t, ConcreteType::Optional(inner)) => t.is_assignable_to(inner),
+
+            // Optional(T) is not assignable to a non-optional T (guarded access required)
+            (ConcreteType::Optional(_), _) => false,
 
             // Nothing else is assignable
             _ => false,
@@ -744,6 +768,16 @@ impl ConcreteType {
                 ConcreteType::Matrix(Box::new(a.common_supertype(b)))
             }
 
+            // Optional + Optional -> Optional of common supertype
+            (ConcreteType::Optional(a), ConcreteType::Optional(b)) => {
+                ConcreteType::Optional(Box::new(a.common_supertype(b)))
+            }
+
+            // T + Optional(T) or Optional(T) + T -> Optional(T)
+            (t, ConcreteType::Optional(inner)) | (ConcreteType::Optional(inner), t) => {
+                ConcreteType::Optional(Box::new(t.common_supertype(inner)))
+            }
+
             // Different types -> Union
             _ => ConcreteType::Union(vec![self.clone(), other.clone()]),
         }
@@ -751,24 +785,41 @@ impl ConcreteType {
 
     /// Check if this is a numeric type
     pub fn is_numeric(&self) -> bool {
-        matches!(
-            self,
+        match self {
             ConcreteType::Integer
-                | ConcreteType::Number
-                | ConcreteType::IntegerSized { .. }
-                | ConcreteType::NumberSized { .. }
-        )
+            | ConcreteType::Number
+            | ConcreteType::IntegerSized { .. }
+            | ConcreteType::NumberSized { .. } => true,
+            // Delegate into Optional so Optional(integer) is still numeric
+            ConcreteType::Optional(inner) => inner.is_numeric(),
+            _ => false,
+        }
     }
 
     /// Check if this is a primitive type
     pub fn is_primitive(&self) -> bool {
-        matches!(
-            self,
+        match self {
             ConcreteType::Integer
-                | ConcreteType::Number
-                | ConcreteType::String
-                | ConcreteType::Boolean
-        )
+            | ConcreteType::Number
+            | ConcreteType::String
+            | ConcreteType::Boolean => true,
+            ConcreteType::Optional(inner) => inner.is_primitive(),
+            _ => false,
+        }
+    }
+
+    /// If this type is Optional(T), return T.  Otherwise return self unchanged.
+    /// Used by codegen to strip the compile-time Optional wrapper before emitting WASM.
+    pub fn unwrap_optional(&self) -> &ConcreteType {
+        match self {
+            ConcreteType::Optional(inner) => inner.unwrap_optional(),
+            other => other,
+        }
+    }
+
+    /// Returns true iff this type is Optional(_).
+    pub fn is_optional(&self) -> bool {
+        matches!(self, ConcreteType::Optional(_))
     }
 
     /// Get the default value for this type
@@ -778,6 +829,8 @@ impl ConcreteType {
             ConcreteType::Number => TastLiteral::Number(0.0),
             ConcreteType::String => TastLiteral::String(String::new()),
             ConcreteType::Boolean => TastLiteral::Boolean(false),
+            // Optional default is none (represented as null/0)
+            ConcreteType::Optional(_) => TastLiteral::Null,
             _ => TastLiteral::Null,
         }
     }
@@ -888,6 +941,7 @@ impl std::fmt::Display for ConcreteType {
             ConcreteType::Never => write!(f, "!"),
             ConcreteType::Namespace => write!(f, "namespace"),
             ConcreteType::Any => write!(f, "any"),
+            ConcreteType::Optional(inner) => write!(f, "{}?", inner),
         }
     }
 }

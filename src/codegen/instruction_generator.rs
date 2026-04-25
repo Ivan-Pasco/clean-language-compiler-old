@@ -195,12 +195,6 @@ impl InstructionGenerator {
         right: &Expression,
         instructions: &mut Vec<Instruction>,
     ) -> Result<WasmType, CompilerError> {
-        // BOOK: null-coalescing - Default operator is handled in higher-level codegen
-        // Should never reach this function - panic if it does
-        if matches!(op, BinaryOperator::Default) {
-            panic!("BUG: Default operator should be handled in expression_generator, not instruction_generator");
-        }
-
         let left_type = self.generate_expression(left, instructions)?;
         let right_type = self.generate_expression(right, instructions)?;
 
@@ -366,10 +360,6 @@ impl InstructionGenerator {
                         instructions.push(Instruction::I32Ne);
                         Ok(WasmType::I32)
                     }
-                    // BOOK: null-coalescing - Default is handled before this match
-                    ast::BinaryOperator::Default => {
-                        unreachable!("Default handled in expression_generator")
-                    }
                 }
             }
             // Handle F64 operations
@@ -463,10 +453,6 @@ impl InstructionGenerator {
                         instructions.push(Instruction::F64Ne);
                         Ok(WasmType::I32)
                     }
-                    // BOOK: null-coalescing - Default is handled before this match
-                    ast::BinaryOperator::Default => {
-                        unreachable!("Default handled in expression_generator")
-                    }
                 }
             }
             (WasmType::I32, WasmType::F64) => {
@@ -557,10 +543,6 @@ impl InstructionGenerator {
                         instructions.push(Instruction::F64Ne);
                         Ok(WasmType::I32)
                     }
-                    // BOOK: null-coalescing - Default is handled before this match
-                    ast::BinaryOperator::Default => {
-                        unreachable!("Default handled in expression_generator")
-                    }
                 }
             }
             (WasmType::F64, WasmType::I32) => {
@@ -650,10 +632,6 @@ impl InstructionGenerator {
                     ast::BinaryOperator::Not => {
                         instructions.push(Instruction::F64Ne);
                         Ok(WasmType::I32)
-                    }
-                    // BOOK: null-coalescing - Default is handled before this match
-                    ast::BinaryOperator::Default => {
-                        unreachable!("Default handled in expression_generator")
                     }
                 }
             }
@@ -1181,8 +1159,8 @@ impl InstructionGenerator {
                 instructions.push(Instruction::I32Const(0));
                 Ok(WasmType::I32)
             }
-            Value::Null => {
-                // Null represents a null value - push 0 as null pointer
+            Value::None => {
+                // None represents absence of value - push 0 as null pointer
                 instructions.push(Instruction::I32Const(0));
                 Ok(WasmType::I32)
             }

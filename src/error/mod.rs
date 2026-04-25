@@ -453,6 +453,22 @@ impl CompilerError {
         }
     }
 
+    /// Semantic error: a well-formed program that violates a language semantic rule
+    /// (type mismatches, undeclared variables, FUNC008–FUNC011, etc.).
+    /// Maps to the `Syntax` variant with error type `Semantic` and code `E003`.
+    pub fn semantic_error<T: Into<String>>(
+        message: T,
+        help: Option<String>,
+        location: Option<SourceLocation>,
+    ) -> Self {
+        CompilerError::Syntax {
+            context: Box::new(
+                ErrorContext::new(message, help, ErrorType::Semantic, location)
+                    .with_error_code("E003"),
+            ),
+        }
+    }
+
     pub fn type_error<T: Into<String>>(
         message: T,
         help: Option<String>,

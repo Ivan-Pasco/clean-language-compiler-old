@@ -3,8 +3,8 @@
 
 use super::instruction_generator::LocalVarInfo;
 use crate::ast::{
-    self, AssignmentTarget, BinaryOperator, Expression, Function as AstFunction, PostfixOperator,
-    SourceLocation, Statement, Type, UnaryOperator, Value,
+    self, AssignmentTarget, BinaryOperator, Expression, Function as AstFunction, SourceLocation,
+    Statement, Type, UnaryOperator, Value,
 };
 use crate::error::CompilerError;
 use crate::types::WasmType;
@@ -2709,18 +2709,6 @@ impl super::CodeGenerator {
 
             Expression::Unary(op, expr) => self.generate_unary_operation(op, expr, instructions),
 
-            // Postfix `!` (Required assertion).
-            // foundation/spec/grammar.ebnf: `postfix_primary = primary , [ required_op ]`
-            // Asserts the operand is not null; traps at runtime if it is.
-            Expression::Postfix {
-                operand,
-                operator: PostfixOperator::Required,
-                ..
-            } => {
-                let operand_type = self.generate_expression(operand, instructions)?;
-                self.generate_required_assertion(operand_type, instructions)
-            }
-
             // ChainedMethodCall — foundation/spec/grammar.ebnf `chained_method_call`.
             // Left-to-right chain: evaluate receiver, then apply each segment.
             Expression::ChainedMethodCall {
@@ -3026,11 +3014,6 @@ impl super::CodeGenerator {
         right: &Expression,
         instructions: &mut Vec<Instruction>,
     ) -> Result<WasmType, CompilerError> {
-        // BOOK: null-coalescing - Handle default operator specially
-        if let BinaryOperator::Default = op {
-            return self.generate_default_operation(left, right, instructions);
-        }
-
         // Special handling for string concatenation
         if let BinaryOperator::Add = op {
             if self.is_string_type(left) && self.is_string_type(right) {
@@ -3144,8 +3127,6 @@ impl super::CodeGenerator {
                     ast::BinaryOperator::Or => { instructions.push(Instruction::I32Or); Ok(WasmType::I32) },
                     ast::BinaryOperator::Is => { instructions.push(Instruction::I32Eq); Ok(WasmType::I32) },
                     ast::BinaryOperator::Not => { instructions.push(Instruction::I32Ne); Ok(WasmType::I32) },
-                    // BOOK: null-coalescing - Default is handled before this match
-                    ast::BinaryOperator::Default => unreachable!("Default handled in generate_binary_expression"),
                 }
             },
 
@@ -3188,8 +3169,6 @@ impl super::CodeGenerator {
                     ast::BinaryOperator::Or => { instructions.push(Instruction::I64Or); Ok(WasmType::I64) },
                     ast::BinaryOperator::Is => { instructions.push(Instruction::I64Eq); Ok(WasmType::I32) },
                     ast::BinaryOperator::Not => { instructions.push(Instruction::I64Ne); Ok(WasmType::I32) },
-                    // BOOK: null-coalescing - Default is handled before this match
-                    ast::BinaryOperator::Default => unreachable!("Default handled in generate_binary_expression"),
                 }
             },
 
@@ -3270,8 +3249,6 @@ impl super::CodeGenerator {
                         instructions.push(Instruction::F64Ne);
                         Ok(WasmType::I32)
                     },
-                    // BOOK: null-coalescing - Default is handled before this match
-                    ast::BinaryOperator::Default => unreachable!("Default handled in generate_binary_expression"),
                 }
             },
 
@@ -3401,8 +3378,6 @@ impl super::CodeGenerator {
                         instructions.push(Instruction::F32Ne);
                         Ok(WasmType::I32)
                     },
-                    // BOOK: null-coalescing - Default is handled before this match
-                    ast::BinaryOperator::Default => unreachable!("Default handled in generate_binary_expression"),
                 }
             },
 
@@ -3558,47 +3533,6 @@ impl super::CodeGenerator {
         }
     }
 
-    // BOOK: null-coalescing - Generate code for default operator (null coalescing)
-    // Semantics: `a default b` returns a if a is not null (not 0), otherwise returns b
-    pub(crate) fn generate_default_operation(
-        &mut self,
-        left: &Expression,
-        right: &Expression,
-        instructions: &mut Vec<Instruction>,
-    ) -> Result<WasmType, CompilerError> {
-        // Generate left expression and store in temp local
-        let left_type = self.generate_expression(left, instructions)?;
-        let left_local = self.add_local(left_type);
-        instructions.push(Instruction::LocalSet(left_local));
-
-        // Generate right expression (fallback value)
-        let _right_type = self.generate_expression(right, instructions)?;
-
-        // Now stack has: [right_value]
-        // We need to push: left_value, condition, then select
-        // select(val1, val2, cond) returns val1 if cond != 0, else val2
-        // Stack order for select: [val2, val1, cond]
-        // We want: return left if (left != 0), else return right
-        // So: val1 = left, val2 = right, cond = (left != 0)
-
-        // Stack currently: [right_value]
-        // Push left_value (this is val1)
-        instructions.push(Instruction::LocalGet(left_local));
-
-        // Push condition (left != 0)
-        instructions.push(Instruction::LocalGet(left_local));
-        instructions.push(Instruction::I32Const(0));
-        instructions.push(Instruction::I32Ne);
-
-        // Stack now: [right_value, left_value, condition]
-        // select will return left_value if condition != 0, else right_value
-        instructions.push(Instruction::Select);
-
-        // Return type is the type of the values (they should match)
-        // For now, we return the left type; type checking should ensure compatibility
-        Ok(left_type)
-    }
-
     pub(crate) fn is_string_type(&self, expr: &Expression) -> bool {
         match expr {
             // String literals
@@ -3711,47 +3645,6 @@ impl super::CodeGenerator {
                         None,
                     )),
                 }
-            }
-        }
-    }
-
-    /// Emit WASM instructions that assert the top-of-stack value is not null
-    /// and trap if it is.  Called by both the legacy `UnaryOperator`-based path
-    /// and the new `Expression::Postfix { Required }` path.
-    ///
-    /// foundation/spec/grammar.ebnf: `required_op = "!"`
-    pub(crate) fn generate_required_assertion(
-        &mut self,
-        operand_type: WasmType,
-        instructions: &mut Vec<Instruction>,
-    ) -> Result<WasmType, CompilerError> {
-        match operand_type {
-            WasmType::I32 => {
-                let temp_local = self.add_local(WasmType::I32);
-                instructions.push(Instruction::LocalSet(temp_local));
-                instructions.push(Instruction::LocalGet(temp_local));
-                instructions.push(Instruction::I32Eqz);
-                instructions.push(Instruction::If(wasm_encoder::BlockType::Empty));
-                instructions.push(Instruction::Unreachable);
-                instructions.push(Instruction::End);
-                instructions.push(Instruction::LocalGet(temp_local));
-                Ok(WasmType::I32)
-            }
-            WasmType::F64 => {
-                let temp_local = self.add_local(WasmType::F64);
-                instructions.push(Instruction::LocalSet(temp_local));
-                instructions.push(Instruction::LocalGet(temp_local));
-                instructions.push(Instruction::F64Const(0.0));
-                instructions.push(Instruction::F64Eq);
-                instructions.push(Instruction::If(wasm_encoder::BlockType::Empty));
-                instructions.push(Instruction::Unreachable);
-                instructions.push(Instruction::End);
-                instructions.push(Instruction::LocalGet(temp_local));
-                Ok(WasmType::F64)
-            }
-            _ => {
-                // Non-nullable types pass through unchanged.
-                Ok(operand_type)
             }
         }
     }

@@ -70,8 +70,7 @@ pub enum TokenKind {
     Guard,       // guard - State validation constraint
     Reset,       // reset - Reset state to initial value
     Screen,      // screen - Screen-level state scope
-    Null,        // null  // BOOK: null-support - Null literal keyword
-    Default,     // default  // BOOK: null-coalescing - Null coalescing operator keyword
+    None,        // none  // null-support - None literal keyword
     Break,       // break - Loop control flow
     Continue,    // continue - Loop control flow
     Require,     // require - Contract precondition
@@ -111,8 +110,8 @@ pub enum TokenKind {
     Dot,          // .
     Colon,        // :
     Semicolon,    // ;
-    // BOOK: required-operator - Postfix ! assertion for null check
-    Bang, // ! (required assertion)
+    Bang,         // ! (used in != operator context)
+    At,           // @ (framework attribute prefix)
 
     // Range operators (§9.2 - Range expressions)
     Range,          // .. for ranges like 1..10
@@ -201,8 +200,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Guard => write!(f, "guard"),
             TokenKind::Reset => write!(f, "reset"),
             TokenKind::Screen => write!(f, "screen"),
-            TokenKind::Null => write!(f, "null"),
-            TokenKind::Default => write!(f, "default"),
+            TokenKind::None => write!(f, "none"),
             TokenKind::Break => write!(f, "break"),
             TokenKind::Continue => write!(f, "continue"),
             TokenKind::Require => write!(f, "require"),
@@ -239,6 +237,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Colon => write!(f, ":"),
             TokenKind::Semicolon => write!(f, ";"),
             TokenKind::Bang => write!(f, "!"),
+            TokenKind::At => write!(f, "@"),
             TokenKind::Range => write!(f, ".."),
             TokenKind::RangeInclusive => write!(f, "..="),
 
@@ -425,8 +424,7 @@ impl Keywords {
             "guard" => Some(TokenKind::Guard),
             "reset" => Some(TokenKind::Reset),
             "screen" => Some(TokenKind::Screen),
-            "null" => Some(TokenKind::Null), // BOOK: null-support
-            "default" => Some(TokenKind::Default), // BOOK: null-coalescing
+            "none" => Some(TokenKind::None), // null-support
             "break" => Some(TokenKind::Break),
             "continue" => Some(TokenKind::Continue),
             "require" => Some(TokenKind::Require),
@@ -474,8 +472,7 @@ impl TokenKind {
             TokenKind::Guard => "guard".to_string(),
             TokenKind::Reset => "reset".to_string(),
             TokenKind::Screen => "screen".to_string(),
-            TokenKind::Null => "null".to_string(),
-            TokenKind::Default => "default".to_string(),
+            TokenKind::None => "none".to_string(),
             TokenKind::Break => "break".to_string(),
             TokenKind::Continue => "continue".to_string(),
             TokenKind::Require => "require".to_string(),

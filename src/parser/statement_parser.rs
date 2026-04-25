@@ -440,6 +440,7 @@ fn parse_range_iterate_statement(
         start,
         end,
         step,
+        inclusive: true, // pest parser grammar doesn't expose inclusive; default true
         body,
         location: Some(ast_location),
     })
@@ -784,7 +785,7 @@ fn parse_print_newline_statement(
     pair: Pair<Rule>,
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
-    use super::expression_parser::parse_argument_expression;
+    use super::expression_parser::parse_argument_item;
 
     let mut expressions = Vec::new();
 
@@ -792,8 +793,11 @@ fn parse_print_newline_statement(
     for inner in pair.into_inner() {
         if inner.as_rule() == Rule::argument_list {
             for arg_expr in inner.into_inner() {
-                if arg_expr.as_rule() == Rule::argument_expression {
-                    expressions.push(parse_argument_expression(arg_expr)?);
+                if matches!(
+                    arg_expr.as_rule(),
+                    Rule::argument_item | Rule::argument_expression
+                ) {
+                    expressions.push(parse_argument_item(arg_expr)?);
                 }
             }
         }
@@ -834,7 +838,7 @@ fn parse_print_parenthesized_statement(
     pair: Pair<Rule>,
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
-    use super::expression_parser::parse_argument_expression;
+    use super::expression_parser::parse_argument_item;
 
     let mut expressions = Vec::new();
 
@@ -842,8 +846,11 @@ fn parse_print_parenthesized_statement(
     for inner in pair.into_inner() {
         if inner.as_rule() == Rule::argument_list {
             for arg_expr in inner.into_inner() {
-                if arg_expr.as_rule() == Rule::argument_expression {
-                    expressions.push(parse_argument_expression(arg_expr)?);
+                if matches!(
+                    arg_expr.as_rule(),
+                    Rule::argument_item | Rule::argument_expression
+                ) {
+                    expressions.push(parse_argument_item(arg_expr)?);
                 }
             }
         }

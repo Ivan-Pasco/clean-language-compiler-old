@@ -783,6 +783,9 @@ impl MirType {
                 }
             }
             ConcreteType::Any => MirType::Any, // Boxed any type with runtime type tag
+            // Optional<T> has identical WASM representation to T; none = 0/null.
+            // Strip the Optional wrapper and delegate to the inner type.
+            ConcreteType::Optional(inner) => Self::from_concrete_type(inner),
             _ => MirType::Any, // Fallback for complex types → Any (avoids Ptr(Void) ambiguity)
         }
     }

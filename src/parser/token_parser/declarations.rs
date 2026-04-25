@@ -908,7 +908,9 @@ impl TokenParser {
             "void" => Type::Void,
             "any" => Type::Any,
             "list" => {
-                // Expect list<Type>
+                // Expect list<Type> [ list_behavior ]
+                // spec/grammar.ebnf: list_type = "list" , "<" , type , ">" , [ list_behavior ] ;
+                // list_behavior = "." , ( "line" | "pile" | "unique" | combinations )
                 self.skip_whitespace();
                 if matches!(self.current_kind(), TokenKind::Less) {
                     self.bump(); // consume '<'
@@ -916,6 +918,26 @@ impl TokenParser {
                     let inner_type = self.parse_type()?;
                     self.skip_whitespace();
                     self.expect(&TokenKind::Greater)?; // expect '>'
+                                                       // Consume optional list_behavior suffix: .line .pile .unique (and combos)
+                                                       // The behavior is parsed and discarded here — full codegen wiring is in TASKS.md.
+                    let behavior_keywords = ["line", "pile", "unique"];
+                    while matches!(self.current_kind(), TokenKind::Dot) {
+                        // Peek at the identifier after the dot
+                        let saved = self.cursor;
+                        self.bump(); // consume '.'
+                        if let TokenKind::Identifier(kw) = self.current_kind() {
+                            if behavior_keywords.contains(&kw.as_str()) {
+                                self.bump(); // consume the behavior keyword
+                            } else {
+                                // Not a behavior keyword — restore cursor (method call follows)
+                                self.cursor = saved;
+                                break;
+                            }
+                        } else {
+                            self.cursor = saved;
+                            break;
+                        }
+                    }
                     Type::List(Box::new(inner_type))
                 } else {
                     // list without generic parameter - treat as Object
@@ -1117,8 +1139,7 @@ impl TokenParser {
             | TokenKind::Source
             | TokenKind::Build
             | TokenKind::Spec
-            | TokenKind::Intent
-            | TokenKind::Default => Ok(self.bump()),
+            | TokenKind::Intent => Ok(self.bump()),
             _ => {
                 let token = self.current();
                 Err(CompilerError::parse_error(

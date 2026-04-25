@@ -1,0 +1,31 @@
+// Test: language/classes/constructor_named_args
+// Grammar: named_argument = identifier ":" expression
+// Semantic: FUNC008, FUNC009, FUNC010, FUNC011
+// Expected output:
+//   name: Fluffy age: 5
+//   name: Fluffy age: 5
+// (Both canonical and reversed named-arg construction produce identical objects.)
+
+start:
+	// Named args in canonical parameter order
+	Animal a1 = Animal(name: "Fluffy", age: 5)
+	print("name: " + a1.getName() + " age: " + a1.getAge().toString()) +
+
+	// Named args in REVERSE order — HIR reorders to canonical before codegen
+	Animal a2 = Animal(age: 5, name: "Fluffy")
+	print("name: " + a2.getName() + " age: " + a2.getAge().toString())
+
+class Animal
+	string name
+	integer age
+
+	constructor(string name, integer age)
+		name = name
+		age = age
+
+	functions:
+		string getName()
+			return name
+
+		integer getAge()
+			return age

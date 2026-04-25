@@ -48,7 +48,7 @@ pub enum Value {
     Boolean(bool),
     String(String),
     Matrix(Vec<Vec<Value>>),
-    Null,
+    None,
     Void,
     // Advanced sized types
     Integer8(i8),
@@ -87,8 +87,8 @@ pub enum Type {
     Number,  // Default number (floating point)
     String,
     Void,
-    // BOOK: null-support - Null type for representing absence of value
-    Null,
+    // null-support - None type for representing absence of value
+    None,
 
     // Advanced sized types
     IntegerSized { bits: u8, unsigned: bool },
@@ -137,24 +137,12 @@ pub enum BinaryOperator {
     // Logical
     And,
     Or,
-
-    // BOOK: null-coalescing - Default operator for null handling
-    // Usage: value default fallback (returns fallback if value is null)
-    Default,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum UnaryOperator {
     Negate,
     Not,
-}
-
-/// Postfix operators applied after a primary expression.
-/// Defined by `postfix_primary = primary , [ required_op ]` in foundation/spec/grammar.ebnf.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
-pub enum PostfixOperator {
-    /// `expr!` — asserts the value is not null; traps at runtime if null.
-    Required,
 }
 
 /// Assignment target variants as defined by `assignment_target` in foundation/spec/grammar.ebnf:
@@ -205,13 +193,6 @@ pub enum Expression {
     Variable(String),
     Binary(Box<Expression>, BinaryOperator, Box<Expression>),
     Unary(UnaryOperator, Box<Expression>),
-    /// Postfix operator applied after a primary expression.
-    /// Covers `postfix_primary = primary , [ required_op ]` from foundation/spec/grammar.ebnf.
-    Postfix {
-        operand: Box<Expression>,
-        operator: PostfixOperator,
-        location: SourceLocation,
-    },
     Call(String, Vec<Expression>),
 
     // Namespace calls (math.sqrt(), string.length(), etc.)
@@ -378,6 +359,24 @@ pub enum Expression {
         inclusive: bool,
         location: SourceLocation,
     },
+
+    /// Named argument binding — appears ONLY as an element of a call argument list.
+    ///
+    /// `label: value` inside any function/method/constructor call.
+    ///
+    /// Semantic rules (foundation/spec/semantic-rules.md FUNC008–FUNC011):
+    /// - FUNC008: `label` must match a declared parameter name of the callee.
+    /// - FUNC009: No duplicate `label` within the same call.
+    /// - FUNC010: All positional arguments must precede named arguments in the same call.
+    /// - FUNC011: Every parameter must be covered exactly once across positional + named args.
+    ///
+    /// This variant is consumed and erased by the HIR builder during lowering.
+    /// It MUST NOT reach codegen or any stage after HIR construction.
+    NamedArgBinding {
+        label: String,
+        value: Box<Expression>,
+        location: SourceLocation,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -503,6 +502,7 @@ pub enum Statement {
         start: Expression,
         end: Expression,
         step: Option<Expression>,
+        inclusive: bool,
         body: Vec<Statement>,
         location: Option<SourceLocation>,
     },
@@ -1168,8 +1168,8 @@ impl fmt::Display for Type {
             Type::Number => f.write_str("number"),
             Type::String => f.write_str("string"),
             Type::Void => f.write_str("void"),
-            // BOOK: null-support - Display null type
-            Type::Null => f.write_str("null"),
+            // null-support - Display none type
+            Type::None => f.write_str("none"),
             Type::IntegerSized { bits, unsigned } => {
                 if *unsigned {
                     write!(f, "integer:{bits}u")
@@ -1258,7 +1258,7 @@ impl fmt::Display for Value {
                 }
                 write!(f, "]")
             }
-            Value::Null => write!(f, "null"),
+            Value::None => write!(f, "none"),
             Value::Void => write!(f, "()"),
             Value::Integer8(i) => write!(f, "{i}:8"),
             Value::Integer8u(u) => write!(f, "{u}:8u"),

@@ -902,6 +902,25 @@ impl BuiltinRegistry {
                 BuiltinType::String,
                 BuiltinCategory::List,
             ),
+            // push: appends an element and returns the updated list (Layer 2 — Host Bridge)
+            // spec/stdlib-reference.md §5: ".push(item) | element type | list | 2"
+            BuiltinFunction::new(
+                "push",
+                vec![
+                    BuiltinType::List(Box::new(BuiltinType::Any)),
+                    BuiltinType::Any,
+                ],
+                BuiltinType::List(Box::new(BuiltinType::Any)),
+                BuiltinCategory::List,
+            ),
+            // pop: removes and returns the last element (Layer 1 — WASM native)
+            // spec/stdlib-reference.md §5: ".pop() | — | element type | 1"
+            BuiltinFunction::new(
+                "pop",
+                vec![BuiltinType::List(Box::new(BuiltinType::Any))],
+                BuiltinType::Any,
+                BuiltinCategory::List,
+            ),
         ]);
 
         self.namespaces.insert("list".to_string(), list_ns);

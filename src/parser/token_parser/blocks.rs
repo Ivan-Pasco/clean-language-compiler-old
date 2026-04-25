@@ -711,6 +711,65 @@ impl TokenParser {
     pub(super) fn parse_framework_block(&mut self) -> Result<Statement, CompilerError> {
         let start_location = self.current().location.clone();
 
+        // Collect zero or more @attribute prefixes before the block name.
+        // spec/grammar.ebnf: framework_block = { framework_attribute , NEWLINE } , NOT keyword , ...
+        // framework_attribute = "@" , identifier , [ "(" , attribute_arg_list , ")" ] ;
+        let mut prefix_attrs: Vec<FrameworkAttribute> = Vec::new();
+        while matches!(self.current_kind(), TokenKind::At) {
+            let attr_location = self.current().location.clone();
+            self.bump(); // consume @
+                         // Expect an identifier immediately after @
+            let attr_name = if let TokenKind::Identifier(name) = self.current_kind() {
+                let n = name.clone();
+                self.bump();
+                n
+            } else {
+                return Err(CompilerError::parse_error(
+                    "Expected identifier after '@' in framework attribute".to_string(),
+                    Some(attr_location),
+                    None,
+                ));
+            };
+            // Consume optional argument list: ( arg , arg , ... )
+            let attr_value = if matches!(self.current_kind(), TokenKind::LeftParen) {
+                self.bump(); // consume (
+                             // Collect raw argument text up to the matching )
+                let mut depth = 1i32;
+                let mut arg_text = String::new();
+                while depth > 0 {
+                    match self.current_kind() {
+                        TokenKind::LeftParen => {
+                            depth += 1;
+                            arg_text.push('(');
+                            self.bump();
+                        }
+                        TokenKind::RightParen => {
+                            depth -= 1;
+                            if depth > 0 {
+                                arg_text.push(')');
+                            }
+                            self.bump();
+                        }
+                        TokenKind::Eof => break,
+                        _ => {
+                            let tok_text = format!("{}", self.current_kind());
+                            arg_text.push_str(&tok_text);
+                            self.bump();
+                        }
+                    }
+                }
+                Some(arg_text)
+            } else {
+                None
+            };
+            prefix_attrs.push(FrameworkAttribute {
+                name: attr_name,
+                value: attr_value,
+                location: Some(attr_location),
+            });
+            self.skip_whitespace();
+        }
+
         // Get the block name (first identifier)
         let block_name = if let TokenKind::Identifier(name) = self.current_kind() {
             name.clone()
@@ -743,16 +802,16 @@ impl TokenParser {
             _ => None,
         };
 
-        // Keep block_name as name, put block_arg in attributes if present
-        // This allows plugins to check "block_name == 'data'" properly
-        let attributes = match block_arg {
-            Some(arg) => vec![FrameworkAttribute {
+        // Merge prefix @attributes with the optional block_arg attribute.
+        // prefix_attrs come first, then the block_arg (if any).
+        let mut attributes = prefix_attrs;
+        if let Some(arg) = block_arg {
+            attributes.push(FrameworkAttribute {
                 name: arg,
                 value: None,
                 location: Some(start_location.clone()),
-            }],
-            None => vec![],
-        };
+            });
+        }
 
         // Expect colon
         self.expect(&TokenKind::Colon)?;
