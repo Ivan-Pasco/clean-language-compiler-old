@@ -12,7 +12,8 @@
       "Bash(mkdir -p /tmp/mock-install/bin)",
       "Bash(cp \"/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/target/release/cln\" /tmp/mock-install/bin/cln)",
       "Bash(unset CLEEN_TELEMETRY_FORCE)",
-      "Bash(/tmp/mock-install/bin/cln report *)"
+      "Bash(/tmp/mock-install/bin/cln report *)",
+      "Bash(git rebase *)"
     ],
     "additionalDirectories": [
       "/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"
