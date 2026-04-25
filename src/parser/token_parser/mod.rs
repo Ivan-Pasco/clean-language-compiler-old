@@ -134,8 +134,7 @@ impl TokenParser {
             | TokenKind::Unit
             | TokenKind::Step
             | TokenKind::Test
-            | TokenKind::Error
-            | TokenKind::Default => Some(self.current().text.clone()),
+            | TokenKind::Error => Some(self.current().text.clone()),
             _ => None,
         }
     }

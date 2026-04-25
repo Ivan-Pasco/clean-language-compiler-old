@@ -7,7 +7,7 @@
 //! - String interpolation
 
 use super::TokenParser;
-use crate::ast::{BinaryOperator, Expression, PostfixOperator, StringPart, Value};
+use crate::ast::{BinaryOperator, Expression, SourceLocation, StringPart, Value};
 use crate::error::CompilerError;
 use crate::lexer::specification_token::TokenKind;
 
@@ -20,7 +20,7 @@ impl TokenParser {
     // OnError has lowest precedence (below logical OR)
     // Supports chaining: a onError b onError c = (a onError b) onError c (left-associative)
     pub(super) fn parse_on_error(&mut self) -> Result<Expression, CompilerError> {
-        let mut expr = self.parse_default()?;
+        let mut expr = self.parse_logical_or()?;
 
         // Support chained onError expressions with a while loop
         while self.check(&TokenKind::OnError) {
@@ -37,7 +37,7 @@ impl TokenParser {
             }
 
             // Otherwise, parse fallback expression
-            let fallback = self.parse_default()?;
+            let fallback = self.parse_logical_or()?;
             let location = self.current().location.clone();
 
             expr = Expression::OnError {
@@ -45,22 +45,6 @@ impl TokenParser {
                 fallback: Box::new(fallback),
                 location,
             };
-        }
-
-        Ok(expr)
-    }
-
-    // BOOK: null-coalescing - Parse default expressions: expr default fallback
-    // Default has precedence below onError but above logical OR
-    // Usage: value default fallback (returns fallback if value is null)
-    pub(super) fn parse_default(&mut self) -> Result<Expression, CompilerError> {
-        let mut expr = self.parse_logical_or()?;
-
-        while self.check(&TokenKind::Default) {
-            let _op_token = self.bump();
-            self.skip_whitespace();
-            let right = self.parse_logical_or()?;
-            expr = Expression::Binary(Box::new(expr), BinaryOperator::Default, Box::new(right));
         }
 
         Ok(expr)
@@ -232,6 +216,72 @@ impl TokenParser {
         }
     }
 
+    /// Check whether the current position looks like the start of a named argument:
+    /// `identifier ":"` where the colon is NOT followed by another colon (`::` is a
+    /// different construct).  Must only be called while inside call parentheses
+    /// (`paren_depth > 0`).
+    fn is_named_arg_start(&self) -> bool {
+        // Current token must be an identifier or a contextual keyword that is allowed
+        // as a parameter name.
+        let is_name = matches!(
+            self.current_kind(),
+            TokenKind::Identifier(_)
+                | TokenKind::Rules
+                | TokenKind::Computed
+                | TokenKind::State
+                | TokenKind::Guard
+                | TokenKind::Watch
+                | TokenKind::Reset
+                | TokenKind::Screen
+                | TokenKind::Source
+                | TokenKind::Build
+                | TokenKind::Spec
+                | TokenKind::Intent
+                | TokenKind::Description
+                | TokenKind::Input
+                | TokenKind::Unit
+                | TokenKind::Step
+                | TokenKind::Test
+                | TokenKind::Error
+        );
+        if !is_name {
+            return false;
+        }
+
+        // The very next token (no whitespace between `name` and `:`) must be Colon.
+        // We use look_ahead(1) because the lexer does not emit whitespace tokens on
+        // a single line — there is nothing between `name` and `:`.
+        let next = self.look_ahead(1);
+        matches!(next.kind, TokenKind::Colon)
+    }
+
+    /// Parse a single call argument, producing either a plain expression or a
+    /// `NamedArgBinding { label, value }` when the argument uses the `label: expr`
+    /// syntax (grammar.ebnf: `named_argument`).
+    fn parse_call_argument(&mut self) -> Result<Expression, CompilerError> {
+        if self.is_named_arg_start() {
+            // Consume the label identifier.
+            let label_token = self.bump();
+            let label = label_token.text.clone();
+            let location: SourceLocation = label_token.location.clone();
+
+            // Consume the colon.
+            self.expect(&TokenKind::Colon)?;
+            self.skip_whitespace();
+
+            // Parse the argument value expression.
+            let value = self.parse_expression()?;
+
+            Ok(Expression::NamedArgBinding {
+                label,
+                value: Box::new(value),
+                location,
+            })
+        } else {
+            self.parse_expression()
+        }
+    }
+
     pub(super) fn parse_postfix(&mut self) -> Result<Expression, CompilerError> {
         let mut expr = self.parse_primary()?;
 
@@ -250,7 +300,7 @@ impl TokenParser {
                     let mut arguments = Vec::new();
                     if !self.check(&TokenKind::RightParen) {
                         loop {
-                            arguments.push(self.parse_expression()?);
+                            arguments.push(self.parse_call_argument()?);
                             self.skip_whitespace();
 
                             if !self.eat(&TokenKind::Comma) {
@@ -329,17 +379,7 @@ impl TokenParser {
 
                     expr = Expression::ListAccess(Box::new(expr), Box::new(index));
                 }
-                // Postfix `!` — `postfix_primary = primary , [ required_op ]`
-                // foundation/spec/grammar.ebnf: required_op = "!"
-                TokenKind::Bang => {
-                    let location = self.current().location.clone();
-                    self.bump(); // consume !
-                    expr = Expression::Postfix {
-                        operand: Box::new(expr),
-                        operator: PostfixOperator::Required,
-                        location,
-                    };
-                }
+                // Bang (!) is no longer a postfix operator; stop parsing postfix chain
                 _ => break,
             }
         }
@@ -381,10 +421,10 @@ impl TokenParser {
                 self.bump();
                 Ok(Expression::Literal(Value::Boolean(false)))
             }
-            // BOOK: null-support - Null literal parsing
-            TokenKind::Null => {
+            // null-support - None literal parsing
+            TokenKind::None => {
                 self.bump();
-                Ok(Expression::Literal(Value::Null))
+                Ok(Expression::Literal(Value::None))
             }
             TokenKind::Identifier(_) => {
                 let name_token = self.expect_identifier()?;
@@ -428,8 +468,7 @@ impl TokenParser {
             | TokenKind::Source
             | TokenKind::Build
             | TokenKind::Spec
-            | TokenKind::Intent
-            | TokenKind::Default => {
+            | TokenKind::Intent => {
                 let token = self.bump();
                 // Use the actual token text to preserve the exact identifier (e.g., "Test", not "test")
                 let name = token.text.clone();

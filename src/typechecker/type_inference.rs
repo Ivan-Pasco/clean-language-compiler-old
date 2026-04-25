@@ -1162,6 +1162,53 @@ impl<'a> TypeInference<'a> {
         &mut self,
         watch: &ResolvedHirWatchBlock,
     ) -> Result<TastWatchBlock, CompilerError> {
+        // SCOPE004: Watch block target must reference a state variable.
+        // spec/semantic-rules.md SCOPE004: "Watch block target identifiers must reference
+        // variables declared in a `state:` block."
+        for (target_name, &symbol_id) in watch.targets.iter().zip(watch.target_symbol_ids.iter()) {
+            match self.symbol_table.get_symbol(symbol_id) {
+                None => {
+                    self.errors.push(CompilerError::Validation {
+                        context: Box::new(
+                            crate::error::ErrorContext::new(
+                                format!("Watch target '{}' is not defined", target_name),
+                                Some(
+                                    "Watch targets must reference declared state variables"
+                                        .to_string(),
+                                ),
+                                crate::error::ErrorType::Validation,
+                                Some(watch.location.clone()),
+                            )
+                            .with_severity(crate::error::ErrorSeverity::Error)
+                            .with_error_code("SCOPE004"),
+                        ),
+                    });
+                }
+                Some(symbol) => {
+                    if !matches!(symbol.kind, SymbolKind::StateVariable { .. }) {
+                        self.errors.push(CompilerError::Validation {
+                            context: Box::new(
+                                crate::error::ErrorContext::new(
+                                    format!(
+                                        "Watch target '{}' does not reference a state variable",
+                                        target_name
+                                    ),
+                                    Some(
+                                        "Only variables declared in a state: block can be watched"
+                                            .to_string(),
+                                    ),
+                                    crate::error::ErrorType::Validation,
+                                    Some(watch.location.clone()),
+                                )
+                                .with_severity(crate::error::ErrorSeverity::Error)
+                                .with_error_code("SCOPE004"),
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+
         let tast_body = self.infer_block(&watch.body)?;
 
         Ok(TastWatchBlock {
@@ -1360,23 +1407,46 @@ impl<'a> TypeInference<'a> {
             }
         }
 
+        // Optional return type inference (spec Step 3):
+        // If the body has any `return none` path AND any non-none return path, the
+        // effective return type is Optional(T) — regardless of what was explicitly declared.
+        // If the function explicitly declared a non-null/non-void return type and the body
+        // has `return none` paths, we wrap in Optional.
+        let has_none_return = Self::block_has_none_return(&tast_body);
+        let has_non_none_return = Self::block_has_non_none_return(&tast_body);
+        let final_return_type = if has_none_return && has_non_none_return {
+            // Mixed paths: return type is Optional(T) where T is the non-none type
+            let inner = match &declared_return_type {
+                // If already Optional, keep it
+                ConcreteType::Optional(_) => declared_return_type.clone(),
+                // If declared as Null/Undefined/Unknown, treat inner as Unknown
+                ConcreteType::Null | ConcreteType::Undefined | ConcreteType::Unknown => {
+                    ConcreteType::Optional(Box::new(ConcreteType::Unknown))
+                }
+                other => ConcreteType::Optional(Box::new(other.clone())),
+            };
+            inner
+        } else {
+            declared_return_type
+        };
+
         self.current_function = None;
         self.current_return_type = None;
 
-        let return_debug = format!("{:?}", declared_return_type);
+        let return_debug = format!("{:?}", final_return_type);
         if return_debug.contains("Pairs") || return_debug.contains("Matrix") {
             tracing::trace!(
                 "[DEBUG infer_function END] Function '{}' final TastFunction.return_type:",
                 function.name
             );
-            tracing::trace!("  {:?}", declared_return_type);
+            tracing::trace!("  {:?}", final_return_type);
         }
 
         Ok(TastFunction {
             symbol_id: function.symbol_id,
             name: function.name.clone(),
             parameters: tast_parameters,
-            return_type: declared_return_type,
+            return_type: final_return_type,
             body: tast_body,
             generic_params: Vec::new(), // Would handle generics here
             constraints: Vec::new(),
@@ -1625,20 +1695,25 @@ impl<'a> TypeInference<'a> {
 
                 let guard_condition = self.infer_expression(&resolved_guard.condition)?;
 
-                // Guard condition must be boolean (STATE001 warning)
-                if guard_condition.expr_type != ConcreteType::Boolean {
-                    self.warnings.push(CompilerError::Validation {
+                // STATE001: Guard condition must be a pure boolean expression.
+                // spec/semantic-rules.md STATE001: "The expression after `guard` must be
+                // a pure boolean expression." This is a compile-time error.
+                if guard_condition.expr_type != ConcreteType::Boolean
+                    && guard_condition.expr_type != ConcreteType::Unknown
+                    && guard_condition.expr_type != ConcreteType::Any
+                {
+                    self.errors.push(CompilerError::Validation {
                         context: Box::new(
                             crate::error::ErrorContext::new(
                                 format!(
-                                    "Guard condition for state variable '{}' should be boolean, found {}",
+                                    "Guard condition for state variable '{}' must be boolean, found {}",
                                     decl.name, guard_condition.expr_type
                                 ),
                                 Some("Guard conditions must evaluate to true or false".to_string()),
                                 crate::error::ErrorType::Validation,
                                 Some(resolved_guard.location.clone()),
                             )
-                            .with_severity(crate::error::ErrorSeverity::Warning)
+                            .with_severity(crate::error::ErrorSeverity::Error)
                             .with_error_code("STATE001"),
                         ),
                     });
@@ -1664,15 +1739,244 @@ impl<'a> TypeInference<'a> {
             });
         }
 
+        // STATE003 — Circular dependency detection (spec/semantic-rules.md STATE003).
+        // Build a dependency graph: computed symbol_id → set of computed symbol_ids
+        // referenced in its body. Then run DFS cycle detection.
+        {
+            use std::collections::{HashMap, HashSet};
+
+            // Map computed symbol_id → name (for error messages)
+            let id_to_name: HashMap<SymbolId, &str> = state_block
+                .computed
+                .iter()
+                .map(|c| (c.symbol_id, c.name.as_str()))
+                .collect();
+
+            let computed_ids: HashSet<SymbolId> =
+                state_block.computed.iter().map(|c| c.symbol_id).collect();
+
+            // Collect all symbol IDs referenced in a block (recursive helper via closure)
+            fn collect_refs_expr(
+                expr: &crate::resolver::ResolvedHirExpression,
+                out: &mut std::collections::HashSet<SymbolId>,
+            ) {
+                use crate::resolver::ResolvedHirExpression::*;
+                match expr {
+                    Variable { symbol_id, .. } => {
+                        out.insert(*symbol_id);
+                    }
+                    BinaryOp { left, right, .. } => {
+                        collect_refs_expr(left, out);
+                        collect_refs_expr(right, out);
+                    }
+                    UnaryOp { operand, .. } => {
+                        collect_refs_expr(operand, out);
+                    }
+                    Call { arguments, .. } => {
+                        for a in arguments {
+                            collect_refs_expr(a, out);
+                        }
+                    }
+                    MethodCall {
+                        receiver,
+                        arguments,
+                        ..
+                    } => {
+                        collect_refs_expr(receiver, out);
+                        for a in arguments {
+                            collect_refs_expr(a, out);
+                        }
+                    }
+                    StaticMethodCall { arguments, .. } => {
+                        for a in arguments {
+                            collect_refs_expr(a, out);
+                        }
+                    }
+                    FieldAccess { object, .. } => {
+                        collect_refs_expr(object, out);
+                    }
+                    Index { array, index, .. } => {
+                        collect_refs_expr(array, out);
+                        collect_refs_expr(index, out);
+                    }
+                    Conditional {
+                        condition,
+                        then_expr,
+                        else_expr,
+                        ..
+                    } => {
+                        collect_refs_expr(condition, out);
+                        collect_refs_expr(then_expr, out);
+                        collect_refs_expr(else_expr, out);
+                    }
+                    Array { elements, .. } => {
+                        for e in elements {
+                            collect_refs_expr(e, out);
+                        }
+                    }
+                    Constructor { arguments, .. } => {
+                        for a in arguments {
+                            collect_refs_expr(a, out);
+                        }
+                    }
+                    OnError {
+                        expression,
+                        fallback,
+                        ..
+                    } => {
+                        collect_refs_expr(expression, out);
+                        collect_refs_expr(fallback, out);
+                    }
+                    Cast { expression, .. } => collect_refs_expr(expression, out),
+                    Assignment { value, .. } => collect_refs_expr(value, out),
+                    Range {
+                        start, end, step, ..
+                    } => {
+                        collect_refs_expr(start, out);
+                        collect_refs_expr(end, out);
+                        if let Some(s) = step {
+                            collect_refs_expr(s, out);
+                        }
+                    }
+                    BaseCall { arguments, .. } => {
+                        for a in arguments {
+                            collect_refs_expr(a, out);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            fn collect_refs_block(
+                block: &crate::resolver::ResolvedHirBlock,
+                out: &mut std::collections::HashSet<SymbolId>,
+            ) {
+                use crate::resolver::ResolvedHirStatement::*;
+                for stmt in &block.statements {
+                    match stmt {
+                        Expression { expression, .. } => collect_refs_expr(expression, out),
+                        Assignment { value, .. } => collect_refs_expr(value, out),
+                        Return { value, .. } => {
+                            if let Some(v) = value {
+                                collect_refs_expr(v, out);
+                            }
+                        }
+                        If {
+                            condition,
+                            then_branch,
+                            else_branch,
+                            ..
+                        } => {
+                            collect_refs_expr(condition, out);
+                            collect_refs_block(then_branch, out);
+                            if let Some(b) = else_branch {
+                                collect_refs_block(b, out);
+                            }
+                        }
+                        For { iterable, body, .. } => {
+                            collect_refs_expr(iterable, out);
+                            collect_refs_block(body, out);
+                        }
+                        While {
+                            condition, body, ..
+                        } => {
+                            collect_refs_expr(condition, out);
+                            collect_refs_block(body, out);
+                        }
+                        Print { expression, .. } => collect_refs_expr(expression, out),
+                        VariableDeclaration {
+                            initializer: Some(init),
+                            ..
+                        } => collect_refs_expr(init, out),
+                        LaterAssignment { expression, .. } => collect_refs_expr(expression, out),
+                        Require { condition, .. } => collect_refs_expr(condition, out),
+                        _ => {}
+                    }
+                }
+            }
+
+            // Build dependency edges: only edges to other computed state symbols
+            let mut deps: HashMap<SymbolId, HashSet<SymbolId>> = HashMap::new();
+            for comp in &state_block.computed {
+                let mut refs = HashSet::new();
+                collect_refs_block(&comp.body, &mut refs);
+                let computed_deps: HashSet<SymbolId> =
+                    refs.intersection(&computed_ids).cloned().collect();
+                deps.insert(comp.symbol_id, computed_deps);
+            }
+
+            // DFS cycle detection (3-color: white=0, grey=1, black=2)
+            let mut color: HashMap<SymbolId, u8> = HashMap::new();
+            let mut cycle_found: Option<(SymbolId, SymbolId)> = None;
+
+            fn dfs(
+                node: SymbolId,
+                deps: &HashMap<SymbolId, HashSet<SymbolId>>,
+                color: &mut HashMap<SymbolId, u8>,
+                cycle_found: &mut Option<(SymbolId, SymbolId)>,
+            ) {
+                if color.get(&node) == Some(&2) {
+                    return;
+                }
+                if color.get(&node) == Some(&1) {
+                    // Back-edge — cycle
+                    if cycle_found.is_none() {
+                        *cycle_found = Some((node, node));
+                    }
+                    return;
+                }
+                color.insert(node, 1);
+                if let Some(children) = deps.get(&node) {
+                    for &child in children {
+                        if color.get(&child) == Some(&1) && cycle_found.is_none() {
+                            *cycle_found = Some((node, child));
+                        } else {
+                            dfs(child, deps, color, cycle_found);
+                        }
+                    }
+                }
+                color.insert(node, 2);
+            }
+
+            for comp in &state_block.computed {
+                if color.get(&comp.symbol_id) != Some(&2) {
+                    dfs(comp.symbol_id, &deps, &mut color, &mut cycle_found);
+                }
+            }
+
+            if let Some((a, _b)) = cycle_found {
+                let name = id_to_name.get(&a).copied().unwrap_or("unknown");
+                let location = state_block
+                    .computed
+                    .iter()
+                    .find(|c| c.symbol_id == a)
+                    .map(|c| c.location.clone());
+                self.errors.push(CompilerError::Validation {
+                    context: Box::new(
+                        crate::error::ErrorContext::new(
+                            format!(
+                                "Circular dependency in computed state: '{}' depends on itself",
+                                name
+                            ),
+                            Some(
+                                "Computed state variables cannot form dependency cycles"
+                                    .to_string(),
+                            ),
+                            crate::error::ErrorType::Validation,
+                            location,
+                        )
+                        .with_severity(crate::error::ErrorSeverity::Error)
+                        .with_error_code("STATE003"),
+                    ),
+                });
+            }
+        }
+
         // Type-check computed state declarations.
         //
         // For each computed declaration we open a fresh block scope, infer the
         // body statements, and then verify that the final return statement (if
         // explicitly present) matches the declared computed type.
-        //
-        // Runtime dependency tracking (i.e. which mutable state variables are
-        // read during body execution) is not performed at compile time — that is
-        // a runtime concern.
         let mut tast_computed: Vec<TastComputedDeclaration> = Vec::new();
         for comp in &state_block.computed {
             let computed_type = self.hir_type_to_concrete(&comp.computed_type);
@@ -1702,24 +2006,29 @@ impl<'a> TypeInference<'a> {
         for rule_expr in &state_block.rules {
             let rule = self.infer_expression(rule_expr)?;
 
-            // Each rule must be a boolean expression (STATE002 warning)
-            if rule.expr_type != ConcreteType::Boolean {
-                self.warnings.push(CompilerError::Validation {
+            // Each rule must be a boolean expression.
+            // spec/semantic-rules.md STATE005: "The expression in a `rules:` block must have
+            // type `boolean`. Non-boolean expressions are a compile-time error."
+            if rule.expr_type != ConcreteType::Boolean
+                && rule.expr_type != ConcreteType::Unknown
+                && rule.expr_type != ConcreteType::Any
+            {
+                self.errors.push(CompilerError::Validation {
                     context: Box::new(
                         crate::error::ErrorContext::new(
                             format!(
-                                "State rule should be a boolean expression, found {}",
+                                "State rule expression must be a boolean expression, got {}",
                                 rule.expr_type
                             ),
                             Some(
-                                "State rules are invariants that must evaluate to true or false"
+                                "Each expression in a rules: block must evaluate to boolean"
                                     .to_string(),
                             ),
                             crate::error::ErrorType::Validation,
                             Some(rule.location.clone()),
                         )
-                        .with_severity(crate::error::ErrorSeverity::Warning)
-                        .with_error_code("STATE002"),
+                        .with_severity(crate::error::ErrorSeverity::Error)
+                        .with_error_code("STATE005"),
                     ),
                 });
             }
@@ -1908,11 +2217,18 @@ impl<'a> TypeInference<'a> {
         // return upward.
         if let Some(expected_ty) = expected {
             let actual = &tast_block.return_type;
-            // Undefined means the block has no return statement at all — warn
-            // rather than hard-error so the rest of the pipeline proceeds.
-            // STATE003: Computed state return type mismatch.
-            if *actual != ConcreteType::Undefined && !actual.is_assignable_to(expected_ty) {
-                self.warnings.push(CompilerError::Validation {
+            // Undefined means the block has no return statement at all — skip check
+            // so the rest of the pipeline proceeds.
+            // STATE003: Computed state return type must match declared type.
+            // spec/semantic-rules.md STATE003: "The last expression (or explicit return)
+            // in a computed state body must be assignable to the computed variable's
+            // declared type." This is a compile-time error.
+            if *actual != ConcreteType::Undefined
+                && *actual != ConcreteType::Unknown
+                && *actual != ConcreteType::Any
+                && !actual.is_assignable_to(expected_ty)
+            {
+                self.errors.push(CompilerError::Validation {
                     context: Box::new(
                         crate::error::ErrorContext::new(
                             format!(
@@ -1926,7 +2242,7 @@ impl<'a> TypeInference<'a> {
                             crate::error::ErrorType::Validation,
                             Some(block.location.clone()),
                         )
-                        .with_severity(crate::error::ErrorSeverity::Warning)
+                        .with_severity(crate::error::ErrorSeverity::Error)
                         .with_error_code("STATE003"),
                     ),
                 });
@@ -1973,6 +2289,30 @@ impl<'a> TypeInference<'a> {
                 let declared_type = self.hir_type_to_concrete(var_type);
 
                 let tast_initializer = if let Some(init_expr) = initializer {
+                    // Reject `none` as a direct variable initializer.
+                    // The spec only allows `none` in:
+                    //   1. `return none` — handled in the Return branch
+                    //   2. `if x == none` — handled as a comparison expression
+                    // `string x = none` is a compile error; optionality comes from function
+                    // return types, not from explicit assignment of none.
+                    if matches!(
+                        init_expr,
+                        ResolvedHirExpression::Literal {
+                            value: crate::ast::Value::None,
+                            ..
+                        }
+                    ) {
+                        return Err(CompilerError::type_error(
+                            &format!(
+                                "none cannot be used in a variable declaration for '{}'; \
+                                 optionality comes from function return types",
+                                name
+                            ),
+                            None,
+                            Some(location.clone()),
+                        ));
+                    }
+
                     // Special handling for empty literals with explicit type annotations
                     // Check if this is an empty array [] or empty pairs {} literal
                     let is_empty_literal = match init_expr {
@@ -2025,13 +2365,31 @@ impl<'a> TypeInference<'a> {
                     None
                 };
 
+                // Optional propagation (spec Step 4):
+                // If the initializer comes from a function that returns Optional(T), the
+                // variable must also be Optional(T) so that guarded-use enforcement works.
+                // We only upgrade when the declared type is NOT already Optional.
+                let effective_type = if let Some(ref init_expr) = tast_initializer {
+                    match (&init_expr.expr_type, &declared_type) {
+                        // Initializer is Optional(T) and declaration is a plain T — promote
+                        (ConcreteType::Optional(_), non_optional)
+                            if !matches!(non_optional, ConcreteType::Optional(_)) =>
+                        {
+                            init_expr.expr_type.clone()
+                        }
+                        _ => declared_type.clone(),
+                    }
+                } else {
+                    declared_type
+                };
+
                 // Add variable to type environment
-                self.type_env.insert(*symbol_id, declared_type.clone());
+                self.type_env.insert(*symbol_id, effective_type.clone());
 
                 Ok(TastStatement::VariableDeclaration {
                     symbol_id: *symbol_id,
                     name: name.clone(),
-                    var_type: declared_type,
+                    var_type: effective_type,
                     initializer: tast_initializer,
                     is_mutable: false, // ResolvedHirStatement doesn't track mutability
                     location: location.clone(),
@@ -2277,6 +2635,35 @@ impl<'a> TypeInference<'a> {
                         symbol_id,
                         location: var_location,
                     } => {
+                        // STATE004: Assignment to a computed state variable is a compile error.
+                        // spec/semantic-rules.md STATE004: "Computed state is read-only. Any
+                        // assignment statement whose left-hand side is a computed state variable
+                        // is rejected at compile time."
+                        if let Some(symbol) = self.symbol_table.get_symbol(*symbol_id) {
+                            if let SymbolKind::StateVariable {
+                                is_computed: true, ..
+                            } = &symbol.kind
+                            {
+                                self.errors.push(CompilerError::Validation {
+                                    context: Box::new(
+                                        crate::error::ErrorContext::new(
+                                            format!(
+                                                "Cannot assign to computed state variable '{}': it is read-only",
+                                                name
+                                            ),
+                                            Some(
+                                                "Computed state variables are derived values; they cannot be assigned directly".to_string(),
+                                            ),
+                                            crate::error::ErrorType::Validation,
+                                            Some(var_location.clone()),
+                                        )
+                                        .with_severity(crate::error::ErrorSeverity::Error)
+                                        .with_error_code("STATE004"),
+                                    ),
+                                });
+                            }
+                        }
+
                         // Only add constraint if not an empty literal (already handled)
                         if !is_empty_literal {
                             // Add constraint that value type matches target type
@@ -3234,6 +3621,10 @@ impl<'a> TypeInference<'a> {
                 (TastLiteral::Boolean(*value), ConcreteType::Boolean)
             }
             crate::ast::Value::Void => (TastLiteral::Null, ConcreteType::Null),
+            // `none` literal — typed as Null at the expression level.
+            // The function-level return-type analysis in `infer_function` will later wrap
+            // the function's declared return type in Optional(T) when it sees a Null return.
+            crate::ast::Value::None => (TastLiteral::Null, ConcreteType::Null),
             crate::ast::Value::List(elements) => {
                 // Infer list type from elements
                 if elements.is_empty() {
@@ -3258,6 +3649,57 @@ impl<'a> TypeInference<'a> {
         right_type: &ConcreteType,
         location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
+        // Optional guarded-use enforcement (spec Step 5):
+        // When an Optional(T) value appears in a context that requires T, the compiler must
+        // emit an error.  The following operators are "safe" contexts for Optional:
+        //   - Equal / NotEqual / Is / IsNot  →  comparison against none  (`x == none`)
+        //   - Or                             →  optional fallback         (`x or fallback`)
+        //   - NullCoalesce                   →  null coalescing           (`x default fallback`)
+        // All other operators (arithmetic, string concatenation, logical AND, ordering)
+        // require the operand to be unwrapped first.
+        let operator_allows_optional = matches!(
+            operator,
+            HirBinaryOp::Equal
+                | HirBinaryOp::NotEqual
+                | HirBinaryOp::Is
+                | HirBinaryOp::IsNot
+                | HirBinaryOp::Or
+                | HirBinaryOp::NullCoalesce
+        );
+
+        if !operator_allows_optional {
+            // Check left operand
+            if let ConcreteType::Optional(inner) = left_type {
+                return Err(CompilerError::type_error(
+                    &format!(
+                        "value of type '{}?' might be none — use 'or' for a fallback or \
+                         'if' to check before using it",
+                        inner
+                    ),
+                    Some(
+                        "Wrap with: value or defaultValue, or guard with: if value == none"
+                            .to_string(),
+                    ),
+                    Some(location.clone()),
+                ));
+            }
+            // Check right operand (only if not a none-literal comparison, which is fine)
+            if let ConcreteType::Optional(inner) = right_type {
+                return Err(CompilerError::type_error(
+                    &format!(
+                        "value of type '{}?' might be none — use 'or' for a fallback or \
+                         'if' to check before using it",
+                        inner
+                    ),
+                    Some(
+                        "Wrap with: value or defaultValue, or guard with: if value == none"
+                            .to_string(),
+                    ),
+                    Some(location.clone()),
+                ));
+            }
+        }
+
         match operator {
             HirBinaryOp::Add => {
                 // Addition is overloaded: numeric addition OR string concatenation
@@ -3380,8 +3822,8 @@ impl<'a> TypeInference<'a> {
                 Ok(ConcreteType::Boolean)
             }
 
-            HirBinaryOp::And | HirBinaryOp::Or => {
-                // Logical operations require boolean types
+            HirBinaryOp::And => {
+                // Logical AND requires boolean types on both sides
                 self.add_constraint(TypeConstraint::Equality {
                     left: left_type.clone(),
                     right: ConcreteType::Boolean,
@@ -3395,6 +3837,59 @@ impl<'a> TypeInference<'a> {
                 });
 
                 Ok(ConcreteType::Boolean)
+            }
+
+            HirBinaryOp::Or => {
+                // `or` is overloaded in Clean Language:
+                //
+                //   1. Optional fallback: `optionalVar or fallback`
+                //      — left is Optional(T), right is T → result is T (safe unwrap)
+                //
+                //   2. Boolean logical OR: `boolA or boolB`
+                //      — both sides are boolean → result is boolean
+                match (left_type, right_type) {
+                    // Optional<T> or T → T  (the safe-handling path)
+                    (ConcreteType::Optional(inner), right)
+                        if right == inner.as_ref()
+                            || right.is_assignable_to(inner)
+                            || inner.is_assignable_to(right) =>
+                    {
+                        Ok((**inner).clone())
+                    }
+
+                    // Optional<T> or Optional<T> → T  (two optionals coalesced)
+                    (ConcreteType::Optional(inner_l), ConcreteType::Optional(_inner_r)) => {
+                        Ok((**inner_l).clone())
+                    }
+
+                    // Optional<Unknown> or T → T  (type variable not yet resolved)
+                    (ConcreteType::Optional(_), right)
+                        if !matches!(right, ConcreteType::Optional(_)) =>
+                    {
+                        Ok(right.clone())
+                    }
+
+                    // boolean or boolean → boolean (plain logical OR)
+                    (ConcreteType::Boolean, ConcreteType::Boolean) => Ok(ConcreteType::Boolean),
+
+                    // Fallback: treat both sides as boolean (preserves existing behaviour for
+                    // boolean expressions involving Unknown / Generic types)
+                    _ => {
+                        self.add_constraint(TypeConstraint::Equality {
+                            left: left_type.clone(),
+                            right: ConcreteType::Boolean,
+                            location: location.clone(),
+                        });
+
+                        self.add_constraint(TypeConstraint::Equality {
+                            left: right_type.clone(),
+                            right: ConcreteType::Boolean,
+                            location: location.clone(),
+                        });
+
+                        Ok(ConcreteType::Boolean)
+                    }
+                }
             }
 
             // BOOK: null-coalescing - NullCoalesce operator (a default b)
@@ -4693,6 +5188,153 @@ impl<'a> TypeInference<'a> {
     ///   - All other cases are considered *not* definitively returning.
     ///
     /// This keeps the implementation simple and avoids rejecting valid code.
+    /// Returns true if the block contains any `return none` path (a return statement
+    /// where the value's type is ConcreteType::Null coming from a `none` literal).
+    /// Recurses into if/else branches and try/catch blocks.
+    fn block_has_none_return(block: &TastBlock) -> bool {
+        for stmt in &block.statements {
+            match stmt {
+                TastStatement::Return {
+                    value, return_type, ..
+                } => {
+                    // A return is a "none return" when the value is a Null literal
+                    // (i.e., the source was `return none`) OR return_type is Null and value is None.
+                    let is_none_return = match value {
+                        Some(expr) => matches!(
+                            expr.kind,
+                            TastExpressionKind::Literal {
+                                value: TastLiteral::Null
+                            }
+                        ),
+                        None => false,
+                    };
+                    // Also accept explicit return_type == Null with a literal null value
+                    let is_null_typed_return = *return_type == ConcreteType::Null
+                        && value
+                            .as_ref()
+                            .map(|e| {
+                                matches!(
+                                    e.kind,
+                                    TastExpressionKind::Literal {
+                                        value: TastLiteral::Null
+                                    }
+                                )
+                            })
+                            .unwrap_or(false);
+
+                    if is_none_return || is_null_typed_return {
+                        return true;
+                    }
+                }
+                TastStatement::If {
+                    then_block,
+                    else_block,
+                    ..
+                } => {
+                    if Self::block_has_none_return(then_block) {
+                        return true;
+                    }
+                    if let Some(else_b) = else_block {
+                        if Self::block_has_none_return(else_b) {
+                            return true;
+                        }
+                    }
+                }
+                TastStatement::Try {
+                    body,
+                    catch_clause,
+                    finally_clause,
+                    ..
+                } => {
+                    if Self::block_has_none_return(body) {
+                        return true;
+                    }
+                    if let Some(catch) = catch_clause {
+                        if Self::block_has_none_return(&catch.body) {
+                            return true;
+                        }
+                    }
+                    if let Some(finally) = finally_clause {
+                        if Self::block_has_none_return(finally) {
+                            return true;
+                        }
+                    }
+                }
+                TastStatement::While { body, .. } | TastStatement::For { body, .. } => {
+                    if Self::block_has_none_return(body) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Returns true if the block contains any non-none return (i.e., a return whose
+    /// value is NOT a Null literal).
+    fn block_has_non_none_return(block: &TastBlock) -> bool {
+        for stmt in &block.statements {
+            match stmt {
+                TastStatement::Return { value, .. } => {
+                    let is_none_return = match value {
+                        Some(expr) => matches!(
+                            expr.kind,
+                            TastExpressionKind::Literal {
+                                value: TastLiteral::Null
+                            }
+                        ),
+                        None => false,
+                    };
+                    if !is_none_return {
+                        return true;
+                    }
+                }
+                TastStatement::If {
+                    then_block,
+                    else_block,
+                    ..
+                } => {
+                    if Self::block_has_non_none_return(then_block) {
+                        return true;
+                    }
+                    if let Some(else_b) = else_block {
+                        if Self::block_has_non_none_return(else_b) {
+                            return true;
+                        }
+                    }
+                }
+                TastStatement::Try {
+                    body,
+                    catch_clause,
+                    finally_clause,
+                    ..
+                } => {
+                    if Self::block_has_non_none_return(body) {
+                        return true;
+                    }
+                    if let Some(catch) = catch_clause {
+                        if Self::block_has_non_none_return(&catch.body) {
+                            return true;
+                        }
+                    }
+                    if let Some(finally) = finally_clause {
+                        if Self::block_has_non_none_return(finally) {
+                            return true;
+                        }
+                    }
+                }
+                TastStatement::While { body, .. } | TastStatement::For { body, .. } => {
+                    if Self::block_has_non_none_return(body) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     fn block_definitely_returns(block: &TastBlock) -> bool {
         match block.statements.last() {
             None => false,

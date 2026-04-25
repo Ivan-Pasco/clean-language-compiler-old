@@ -398,6 +398,17 @@ impl<'a> ConstraintSolver<'a> {
             (ConcreteType::Function { .. }, ConcreteType::Integer)
             | (ConcreteType::Integer, ConcreteType::Function { .. }) => Ok(()),
 
+            // Optional unification: Optional(A) unifies with Optional(B) if A unifies with B
+            (ConcreteType::Optional(a), ConcreteType::Optional(b)) => self.unify(a, b, location),
+
+            // Optional(T) unifies with T and vice-versa (T is a subtype of Optional(T))
+            (ConcreteType::Optional(inner), other) | (other, ConcreteType::Optional(inner)) => {
+                // Allow the inner type to unify with the concrete type — the Optional wrapper
+                // is a compile-time annotation, not a runtime wrapper, so both representations
+                // are compatible at the WASM level.
+                self.unify(inner, other, location)
+            }
+
             // Types cannot be unified
             _ => Err(CompilerError::type_error(
                 &format!("Cannot unify types: {} and {}", left, right),
@@ -604,6 +615,10 @@ impl<'a> ConstraintSolver<'a> {
                 types.iter().map(|t| self.apply_substitution(t)).collect(),
             ),
 
+            ConcreteType::Optional(inner) => {
+                ConcreteType::Optional(Box::new(self.apply_substitution(inner)))
+            }
+
             // Primitive types don't need substitution
             _ => type_.clone(),
         }
@@ -640,6 +655,8 @@ impl<'a> ConstraintSolver<'a> {
             ConcreteType::Tuple(types)
             | ConcreteType::Union(types)
             | ConcreteType::Intersection(types) => types.iter().any(|t| self.occurs_check(var, t)),
+
+            ConcreteType::Optional(inner) => self.occurs_check(var, inner),
 
             _ => false,
         }

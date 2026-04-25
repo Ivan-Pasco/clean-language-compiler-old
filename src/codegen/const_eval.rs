@@ -100,7 +100,7 @@ fn eval_literal(value: &Value) -> ConstValue {
         Value::Integer64(n) => ConstValue::Integer(*n),
         Value::Number32(f) => ConstValue::Float(*f as f64),
         Value::Number64(f) => ConstValue::Float(*f),
-        Value::Null | Value::Void | Value::Matrix(_) | Value::List(_) | Value::Pairs(_) => {
+        Value::None | Value::Void | Value::Matrix(_) | Value::List(_) | Value::Pairs(_) => {
             ConstValue::NotConst
         }
     }

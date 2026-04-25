@@ -62,6 +62,9 @@ pub enum SymbolKind {
         var_type: HirType,
         scope: crate::hir::HirStateScope, // App or Screen scope
         has_guard: bool,                  // Whether the state has a guard clause
+        /// true when declared inside `computed:` — read-only, assignment is STATE004 error.
+        /// spec/semantic-rules.md STATE004: "Cannot assign to computed state variable"
+        is_computed: bool,
     },
 }
 

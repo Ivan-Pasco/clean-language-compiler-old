@@ -215,6 +215,13 @@ impl<'a> SpecificationLexer<'a> {
                 '>' => self.handle_greater_than(),
                 '.' => self.handle_dot(),
 
+                // Framework attribute prefix (spec/grammar.ebnf framework_attribute)
+                '@' => {
+                    let loc = self.current_location();
+                    self.advance();
+                    Ok(Token::simple(TokenKind::At, loc))
+                }
+
                 // Hash-style comments
                 '#' => self.handle_hash_comment(),
 
@@ -450,6 +457,13 @@ impl<'a> SpecificationLexer<'a> {
                 '>' => self.handle_greater_than(),
                 '!' => self.handle_exclamation(),
 
+                // Framework attribute prefix (spec/grammar.ebnf framework_attribute)
+                '@' => {
+                    let loc = self.current_location();
+                    self.advance();
+                    Ok(Token::simple(TokenKind::At, loc))
+                }
+
                 // Hash-style comments
                 '#' => self.handle_hash_comment(),
 
@@ -511,8 +525,8 @@ impl<'a> SpecificationLexer<'a> {
                     self.skip_whitespace();
 
                     if let Some(&next_ch) = self.peek() {
-                        // Valid interpolation starts with letter, underscore, or is a sub-expression
-                        if next_ch.is_alphabetic() || next_ch == '_' || next_ch == '(' {
+                        // Valid interpolation starts with letter or underscore; expressions are allowed directly
+                        if next_ch.is_alphabetic() || next_ch == '_' {
                             has_interpolation = true;
                             break;
                         } else {

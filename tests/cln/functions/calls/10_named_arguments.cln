@@ -1,0 +1,42 @@
+// Test: functions/calls/named_arguments
+// Grammar: argument_list = argument_item ("," argument_item)*
+//          named_argument = identifier ":" expression
+// Semantic: FUNC008, FUNC009, FUNC010, FUNC011
+// Expected output:
+//   greet result: Hello, Alice!
+//   add result: 30
+//   add reordered: 30
+//   mixed: 100
+//   circle area: 78
+
+start:
+	// All named args — canonical order
+	string r1 = greet(name: "Alice", greeting: "Hello")
+	print("greet result: " + r1) +
+
+	// All named args — same result
+	integer r2 = add(a: 10, b: 20)
+	print("add result: " + r2.toString()) +
+
+	// All named args — reverse order (order-independent)
+	integer r3 = add(b: 20, a: 10)
+	print("add reordered: " + r3.toString()) +
+
+	// Mixed: positional first, then named
+	integer r4 = multiply(100, factor: 1)
+	print("mixed: " + r4.toString()) +
+
+	// Named args in reverse order
+	integer r5 = multiply(value: 26, factor: 3)
+	print("circle area: " + r5.toString())
+
+functions:
+	// Simple two-parameter function — used to test named and mixed calls
+	string greet(string name, string greeting)
+		return greeting + ", " + name + "!"
+
+	integer add(integer a, integer b)
+		return a + b
+
+	integer multiply(integer value, integer factor)
+		return value * factor

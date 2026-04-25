@@ -249,6 +249,7 @@ impl NameResolver {
                             var_type: state_decl.state_type.clone(),
                             scope: state_block.scope,
                             has_guard: state_decl.guard.is_some(),
+                            is_computed: false,
                         },
                         self.symbol_table.current_scope_id(),
                         state_decl.location.clone(),
@@ -275,7 +276,8 @@ impl NameResolver {
                         SymbolKind::StateVariable {
                             var_type: computed_decl.computed_type.clone(),
                             scope: state_block.scope,
-                            has_guard: false, // Computed state doesn't have guards
+                            has_guard: false,  // Computed state doesn't have guards
+                            is_computed: true, // Computed state is read-only (STATE004)
                         },
                         self.symbol_table.current_scope_id(),
                         computed_decl.location.clone(),

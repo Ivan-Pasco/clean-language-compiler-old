@@ -582,8 +582,8 @@ impl HirType {
             Value::Number(_) => HirType::Number,
             Value::String(_) => HirType::String,
             Value::Boolean(_) => HirType::Boolean,
-            // BOOK: null-support - Null value maps to Null type
-            Value::Null => HirType::Null,
+            // null-support - None value maps to Null type
+            Value::None => HirType::Null,
             Value::Void => HirType::Void,
             Value::Integer8(_) => HirType::Integer8,
             Value::Integer8u(_) => HirType::Integer8u,

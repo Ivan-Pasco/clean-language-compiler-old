@@ -1812,7 +1812,7 @@ fn parse_type_from_str(type_str: &str) -> Result<crate::ast::Type, CompilerError
         "boolean" => Ok(Type::Boolean),
         "any" => Ok(Type::Any),
         "void" => Ok(Type::Void),
-        "null" => Ok(Type::Null),
+        "none" => Ok(Type::None),
         _other => {
             // Could be a class type or complex type
             // For now, treat unknown types as any (generic external types)
@@ -1891,7 +1891,7 @@ fn parse_state_declaration(
     let location = Some(convert_to_ast_location(&get_location(&pair)));
     let mut type_ = crate::ast::Type::Any;
     let mut name = String::new();
-    let mut initializer = crate::ast::Expression::Literal(crate::ast::Value::Null);
+    let mut initializer = crate::ast::Expression::Literal(crate::ast::Value::None);
     let mut guard = None;
 
     for inner in pair.into_inner() {

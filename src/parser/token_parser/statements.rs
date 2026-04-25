@@ -817,12 +817,29 @@ impl TokenParser {
         let is_range = self.check(&TokenKind::To);
 
         if is_range {
-            // Range iteration: iterate i in start to end [step stepValue]
+            // Range iteration: iterate i in start to end [inclusive] [step stepValue]
             self.bump(); // consume "to"
             self.skip_whitespace();
 
             let end = self.parse_expression()?;
             self.skip_whitespace();
+
+            // Check for optional "inclusive" contextual keyword (spec §grammar.ebnf range_expression)
+            // Check for optional "inclusive" contextual keyword.
+            // spec/grammar.ebnf: range_expression = ... , "to" , ... , [ "inclusive" ] ;
+            // "inclusive" is not a reserved keyword — lexed as Identifier("inclusive").
+            // Both forms are treated as inclusive; the keyword exists for readability.
+            let inclusive = if let Some(tok) = self.tokens.get(self.cursor) {
+                if matches!(&tok.kind, TokenKind::Identifier(s) if s == "inclusive") {
+                    self.bump();
+                    self.skip_whitespace();
+                    true
+                } else {
+                    true // default: range is inclusive
+                }
+            } else {
+                true
+            };
 
             // Check for optional "step" clause
             let step = if self.check(&TokenKind::Step) {
@@ -841,6 +858,7 @@ impl TokenParser {
                 start: start_or_collection,
                 end,
                 step,
+                inclusive,
                 body,
                 location: Some(iterate_token.location),
             })

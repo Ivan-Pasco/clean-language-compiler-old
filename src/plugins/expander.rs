@@ -283,6 +283,7 @@ impl<'a> PluginExpander<'a> {
                     start,
                     end,
                     step,
+                    inclusive,
                     body,
                     location,
                 } => {
@@ -292,6 +293,7 @@ impl<'a> PluginExpander<'a> {
                         start,
                         end,
                         step,
+                        inclusive,
                         body: expanded_body,
                         location,
                     });
