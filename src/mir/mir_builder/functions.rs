@@ -52,6 +52,11 @@ impl MirBuilder {
             location: tast_function.location.clone(),
         };
 
+        // Seed ensure_conditions with any class invariants collected by build_class.
+        // These are treated identically to `ensure` statements in the method body:
+        // they are checked before every `return`.
+        let initial_ensure_conditions = self.pending_class_invariants.clone();
+
         // Create function build context
         let mut context = FunctionBuildContext {
             function: mir_function,
@@ -61,6 +66,9 @@ impl MirBuilder {
             class_context: class_context.cloned(),
             all_classes: self.all_classes.clone(),
             all_functions: self.all_functions.clone(),
+            // ensure_conditions: starts with any class invariants, then grows as
+            // Ensure statements are encountered in the function body.
+            ensure_conditions: initial_ensure_conditions,
         };
 
         // For class methods and constructors, add implicit 'this' parameter as the first parameter
@@ -192,7 +200,9 @@ impl MirBuilder {
         Ok(context.function)
     }
 
-    /// Build MIR class functions (constructor and methods)
+    /// Build MIR class functions (constructor and methods).
+    /// Class invariants from `invariant:` blocks are injected after each public method's
+    /// return value is computed (debug / `--contracts` builds only).
     pub(super) fn build_class(
         &mut self,
         tast_class: TastClass,
@@ -202,6 +212,7 @@ impl MirBuilder {
 
         // Clone class for passing to methods (needed to avoid borrow checker issues)
         let class_for_methods = tast_class.clone();
+        let class_invariants = tast_class.invariants.clone();
 
         // Build all constructors with class context (constructors can use 'this')
         for constructor in tast_class.constructors {
@@ -211,12 +222,19 @@ impl MirBuilder {
             }
         }
 
-        // Build all methods with class context
+        // Build all methods with class context.
+        // After each method body is built, inject class-invariant checks immediately
+        // before every Return terminator (debug / --contracts builds).
         for method in tast_class.methods {
+            // Seed the context with the class invariants as pre-return ensure conditions.
+            // `build_function_with_class_context` picks them up from `ensure_conditions`.
+            // We store them on the builder and thread them into the context there.
+            self.pending_class_invariants = class_invariants.clone();
             match self.build_function_with_class_context(method, Some(&class_for_methods)) {
                 Ok(method_function) => functions.push(method_function),
                 Err(method_errors) => errors.extend(method_errors),
             }
+            self.pending_class_invariants.clear();
         }
 
         if errors.is_empty() {

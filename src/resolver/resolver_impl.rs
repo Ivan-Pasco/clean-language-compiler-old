@@ -604,6 +604,17 @@ impl NameResolver {
             }
         }
 
+        // Resolve invariant expressions in class scope (fields are visible here)
+        let mut resolved_invariants = Vec::new();
+        for invariant_expr in &class.invariants {
+            match self.resolve_expression(invariant_expr) {
+                Ok(resolved) => resolved_invariants.push(resolved),
+                Err(()) => {
+                    // Error already logged by resolve_expression; skip this invariant
+                }
+            }
+        }
+
         // Exit class scope
         self.symbol_table.exit_scope();
         self.current_class = None;
@@ -615,6 +626,7 @@ impl NameResolver {
             fields: resolved_fields,
             constructor: resolved_constructor,
             methods: resolved_methods,
+            invariants: resolved_invariants,
             location: class.location,
         })
     }
@@ -1198,6 +1210,20 @@ impl NameResolver {
             } => {
                 let resolved_condition = self.resolve_expression(condition)?;
                 Ok(ResolvedHirStatement::Require {
+                    condition: resolved_condition,
+                    location: location.clone(),
+                })
+            }
+
+            HirStatement::Ensure {
+                condition,
+                location,
+            } => {
+                // `result` in ensure conditions is resolved as a regular variable reference.
+                // The MIR builder is responsible for introducing the `result` local that
+                // captures the function's return value before evaluating this condition.
+                let resolved_condition = self.resolve_expression(condition)?;
+                Ok(ResolvedHirStatement::Ensure {
                     condition: resolved_condition,
                     location: location.clone(),
                 })

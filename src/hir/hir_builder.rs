@@ -627,12 +627,20 @@ impl HirBuilder {
             .map(|method| self.build_method(method))
             .collect::<Result<Vec<_>, _>>()?;
 
+        // Build class invariant expressions
+        let invariants = class
+            .invariants
+            .iter()
+            .map(|expr| self.build_expression(expr))
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(HirClass {
             name: class.name.clone(),
             parent: class.base_class.clone(),
             fields,
             constructor,
             methods,
+            invariants,
             location: class.location.clone().unwrap_or_default(),
         })
     }
@@ -1150,6 +1158,17 @@ impl HirBuilder {
             } => {
                 let hir_condition = self.build_expression(condition)?;
                 Ok(HirStatement::Require {
+                    condition: hir_condition,
+                    location: location.clone().unwrap_or_default(),
+                })
+            }
+
+            Statement::Ensure {
+                condition,
+                location,
+            } => {
+                let hir_condition = self.build_expression(condition)?;
+                Ok(HirStatement::Ensure {
                     condition: hir_condition,
                     location: location.clone().unwrap_or_default(),
                 })

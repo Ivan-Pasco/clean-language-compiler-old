@@ -124,6 +124,10 @@ pub struct HirClass {
     pub fields: Vec<HirField>,
     pub constructor: Option<HirConstructor>,
     pub methods: Vec<HirMethod>,
+    /// Invariant conditions from the `invariant:` block.
+    /// Each expression must evaluate to boolean.
+    /// Checked after every public method call on the class (debug/contracts builds).
+    pub invariants: Vec<HirExpression>,
     pub location: SourceLocation,
 }
 
@@ -310,6 +314,14 @@ pub enum HirStatement {
     /// Require statement - contract precondition that must be true
     /// Traps at runtime if condition is false
     Require {
+        condition: HirExpression,
+        location: SourceLocation,
+    },
+
+    /// Ensure statement - contract postcondition on the return value.
+    /// `result` in the condition is a placeholder for the function's return value.
+    /// Debug builds emit a WASM trap if the condition is false; release builds strip it.
+    Ensure {
         condition: HirExpression,
         location: SourceLocation,
     },

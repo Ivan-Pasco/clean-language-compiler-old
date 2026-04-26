@@ -138,6 +138,11 @@ pub struct MirBuilder {
 
     /// Counter for allocating synthetic SymbolIds for computed getter functions.
     pub(super) next_computed_symbol_id: usize,
+
+    /// Class invariant expressions to be injected before every return in the
+    /// currently-being-built class method.  Set by `build_class` before calling
+    /// `build_function_with_class_context` and cleared afterwards.
+    pub(super) pending_class_invariants: Vec<TastExpression>,
 }
 
 /// Context for building a single function
@@ -163,6 +168,15 @@ pub(super) struct FunctionBuildContext {
 
     /// All functions in the program for default parameter lookups
     pub(super) all_functions: Vec<TastFunction>,
+
+    /// Pending ensure postcondition expressions collected during statement lowering.
+    /// These are evaluated just before every `return` in the function body:
+    ///   1. The return value is stored in a `result` local.
+    ///   2. Each ensure condition is evaluated (with `result` in scope).
+    ///   3. If any condition is false the function traps.
+    ///   4. The stored `result` value is returned.
+    /// Only populated in debug / `--contracts` builds; empty in release builds.
+    pub(super) ensure_conditions: Vec<TastExpression>,
 }
 
 /// Pending phi node that needs to be resolved
@@ -240,6 +254,7 @@ impl MirBuilder {
             next_watch_symbol_id: 2000,
             computed_properties: HashMap::new(),
             next_computed_symbol_id: 3000,
+            pending_class_invariants: Vec::new(),
         }
     }
 

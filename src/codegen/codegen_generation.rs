@@ -566,6 +566,12 @@ impl super::CodeGenerator {
                 // Evaluate condition, trap if false
                 self.generate_require_statement(condition, location, instructions)?;
             }
+            Statement::Ensure { .. } => {
+                // Ensure postcondition statements are handled at the function level by the MIR
+                // builder (which injects checks before every return).  In the legacy codegen
+                // path these statements are silently skipped because ensure rewriting requires
+                // knowledge of the return value that is only available at function-body scope.
+            }
             // AI metadata statements — compile-time only, no code generation
             Statement::Spec { .. }
             | Statement::Intent { .. }

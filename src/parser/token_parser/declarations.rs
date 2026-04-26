@@ -11,8 +11,8 @@
 
 use super::TokenParser;
 use crate::ast::{
-    Class, Constructor, Field, Function, FunctionModifier, FunctionSyntax, ImportItem, Parameter,
-    Statement, Type, Visibility,
+    Class, Constructor, Expression, Field, Function, FunctionModifier, FunctionSyntax, ImportItem,
+    Parameter, Statement, Type, Visibility,
 };
 use crate::error::CompilerError;
 use crate::lexer::specification_token::TokenKind;
@@ -397,7 +397,7 @@ impl TokenParser {
         // DON'T skip indentation here - let parse_class_body handle it
 
         // Class body
-        let (fields, methods, constructor) = self.parse_class_body()?;
+        let (fields, methods, constructor, invariants) = self.parse_class_body()?;
 
         Ok(Class {
             name,
@@ -408,16 +408,26 @@ impl TokenParser {
             fields,
             methods,
             constructor,
+            invariants,
             location: Some(location),
         })
     }
 
     pub(super) fn parse_class_body(
         &mut self,
-    ) -> Result<(Vec<Field>, Vec<Function>, Option<Constructor>), CompilerError> {
+    ) -> Result<
+        (
+            Vec<Field>,
+            Vec<Function>,
+            Option<Constructor>,
+            Vec<Expression>,
+        ),
+        CompilerError,
+    > {
         let mut fields = Vec::new();
         let mut methods = Vec::new();
         let mut constructor = None;
+        let mut invariants: Vec<Expression> = Vec::new();
 
         while !self.is_at_end()
             && !matches!(
@@ -511,6 +521,82 @@ impl TokenParser {
                         }
                     }
                 }
+                TokenKind::Invariant => {
+                    // Parse invariant: block
+                    // invariant:
+                    //     balance >= 0.0
+                    //     balance <= 1000000.0
+                    let parsed = self.parse_invariant_block()?;
+                    invariants.extend(parsed);
+                }
+                TokenKind::Private => {
+                    // private: block may contain fields
+                    self.bump(); // consume 'private'
+                    self.skip_whitespace();
+                    self.expect(&TokenKind::Colon)?;
+                    self.skip_whitespace();
+                    // Parse indented field declarations
+                    if let TokenKind::Newline = self.current_kind() {
+                        self.bump();
+                    }
+                    // Consume the indent that opens the private block
+                    let private_indent_level =
+                        if matches!(self.current_kind(), TokenKind::Indent(_)) {
+                            if let TokenKind::Indent(level) = self.current_kind() {
+                                let level = *level;
+                                self.bump();
+                                level
+                            } else {
+                                1
+                            }
+                        } else {
+                            1
+                        };
+
+                    loop {
+                        self.skip_whitespace();
+                        if self.is_at_end() {
+                            break;
+                        }
+                        // Dedent exits private block
+                        if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                            if *dedent_level < private_indent_level {
+                                break;
+                            }
+                            self.bump();
+                            self.skip_whitespace();
+                            continue;
+                        }
+                        // Skip continuation indent tokens
+                        if let TokenKind::Indent(indent_level) = self.current_kind() {
+                            if *indent_level < private_indent_level {
+                                break;
+                            }
+                            self.bump();
+                        }
+                        self.skip_whitespace();
+                        if self.is_at_end() {
+                            break;
+                        }
+                        // Stop at any class-level section keyword
+                        if matches!(
+                            self.current_kind(),
+                            TokenKind::Functions
+                                | TokenKind::Constructor
+                                | TokenKind::Invariant
+                                | TokenKind::Class
+                                | TokenKind::Start
+                                | TokenKind::Dedent(_)
+                        ) {
+                            break;
+                        }
+                        if matches!(self.current_kind(), TokenKind::Identifier(_)) {
+                            fields.push(self.parse_field()?);
+                        } else {
+                            break;
+                        }
+                    }
+                }
                 TokenKind::Identifier(_) => {
                     // Could be a field (type name) - parse it
                     fields.push(self.parse_field()?);
@@ -531,7 +617,93 @@ impl TokenParser {
             }
         }
 
-        Ok((fields, methods, constructor))
+        Ok((fields, methods, constructor, invariants))
+    }
+
+    /// Parse invariant: block — returns a list of boolean expressions.
+    ///
+    /// Grammar:
+    ///   invariant_block = "invariant" ":" newline indent { expression newline } dedent
+    pub(super) fn parse_invariant_block(&mut self) -> Result<Vec<Expression>, CompilerError> {
+        self.expect(&TokenKind::Invariant)?;
+        self.skip_whitespace();
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Consume optional leading newline
+        if let TokenKind::Newline = self.current_kind() {
+            self.bump();
+        }
+
+        // Consume opening indent
+        let invariant_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
+            if let TokenKind::Indent(level) = self.current_kind() {
+                let level = *level;
+                self.bump();
+                level
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+
+        let mut conditions: Vec<Expression> = Vec::new();
+
+        loop {
+            self.skip_whitespace();
+            if self.is_at_end() {
+                break;
+            }
+
+            // A dedent at or below our level means we leave the block
+            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                if *dedent_level < invariant_indent_level {
+                    break;
+                }
+                self.bump();
+                continue;
+            }
+
+            // Continuation indent token at our level
+            if let TokenKind::Indent(indent_level) = self.current_kind() {
+                if *indent_level < invariant_indent_level {
+                    break;
+                }
+                self.bump();
+            }
+
+            self.skip_whitespace();
+            if self.is_at_end() {
+                break;
+            }
+
+            // Stop at class-section keywords or EOF
+            if matches!(
+                self.current_kind(),
+                TokenKind::Functions
+                    | TokenKind::Constructor
+                    | TokenKind::Private
+                    | TokenKind::Invariant
+                    | TokenKind::Class
+                    | TokenKind::Start
+                    | TokenKind::Dedent(_)
+                    | TokenKind::Eof
+            ) {
+                break;
+            }
+
+            // Parse the invariant condition expression
+            let condition = self.parse_expression()?;
+            conditions.push(condition);
+
+            // Consume trailing newline after expression
+            if let TokenKind::Newline = self.current_kind() {
+                self.bump();
+            }
+        }
+
+        Ok(conditions)
     }
 
     pub(super) fn parse_field(&mut self) -> Result<Field, CompilerError> {

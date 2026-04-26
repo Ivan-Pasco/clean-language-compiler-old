@@ -578,6 +578,14 @@ impl HirValidator {
                 // Validate the condition expression
                 Self::validate_expression(context, condition);
             }
+
+            HirStatement::Ensure { condition, .. } => {
+                // Validate the postcondition expression.
+                // `result` is a special identifier in postconditions that refers to the
+                // function's return value. It is resolved during MIR lowering and does not
+                // need to be in the current variable scope for HIR validation.
+                Self::validate_expression(context, condition);
+            }
         }
     }
 
@@ -998,6 +1006,7 @@ mod tests {
                     fields: vec![],
                     constructor: None,
                     methods: vec![],
+                    invariants: vec![],
                     location: test_location(),
                 },
                 HirClass {
@@ -1006,6 +1015,7 @@ mod tests {
                     fields: vec![],
                     constructor: None,
                     methods: vec![],
+                    invariants: vec![],
                     location: test_location(),
                 },
             ],
@@ -1033,6 +1043,7 @@ mod tests {
                     fields: vec![],
                     constructor: None,
                     methods: vec![],
+                    invariants: vec![],
                     location: test_location(),
                 },
                 HirClass {
@@ -1041,6 +1052,7 @@ mod tests {
                     fields: vec![],
                     constructor: None,
                     methods: vec![],
+                    invariants: vec![],
                     location: test_location(),
                 },
             ],

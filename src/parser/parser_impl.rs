@@ -624,6 +624,7 @@ impl ErrorRecoveringParser {
                     fields: Vec::new(),
                     methods: Vec::new(),
                     constructor: None,
+                    invariants: Vec::new(),
                     location: self.calculate_location_from_segment(segment),
                 }));
             }
