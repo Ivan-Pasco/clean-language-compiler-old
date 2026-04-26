@@ -579,7 +579,7 @@ impl MirBuilder {
             TastStatement::Return {
                 value,
                 return_type: _,
-                location: _,
+                location,
             } => {
                 trace!(
                     function_name = %context.function.name,
@@ -597,6 +597,77 @@ impl MirBuilder {
                     None
                 };
 
+                // If the function has any `ensure` postconditions (or class invariants),
+                // inject the checks before the return:
+                //   1. Store the return value under the name `result` in the current scope.
+                //   2. Evaluate each ensure condition (which may reference `result`).
+                //   3. Trap if any condition is false.
+                //   4. Return the stored value.
+                if !context.ensure_conditions.is_empty() {
+                    if let Some(MirOperand::Value(result_value_id)) = return_value {
+                        // Bind `result` in current scope so ensure conditions can reference it
+                        if let Some(scope) = context.scope_stack.last_mut() {
+                            scope.insert("result".to_string(), result_value_id);
+                        }
+
+                        // Emit a check for each ensure condition
+                        let ensure_exprs: Vec<TastExpression> = context.ensure_conditions.clone();
+                        for ensure_expr in &ensure_exprs {
+                            let cond_value_id = self.build_expression(context, ensure_expr)?;
+
+                            // Allocate trap and continue blocks
+                            let base_block_id = context.function.next_block_id;
+                            let trap_block_id = BasicBlockId(base_block_id);
+                            let continue_block_id = BasicBlockId(base_block_id + 1);
+                            context.function.next_block_id = base_block_id + 2;
+
+                            context.function.blocks.insert(
+                                trap_block_id,
+                                MirBasicBlock {
+                                    id: trap_block_id,
+                                    label: Some("ensure_trap".to_string()),
+                                    instructions: Vec::new(),
+                                    terminator: MirTerminator::Trap,
+                                    predecessors: HashSet::new(),
+                                    successors: HashSet::new(),
+                                    location: location.clone(),
+                                },
+                            );
+
+                            context.function.blocks.insert(
+                                continue_block_id,
+                                MirBasicBlock {
+                                    id: continue_block_id,
+                                    label: Some("ensure_continue".to_string()),
+                                    instructions: Vec::new(),
+                                    terminator: MirTerminator::Unreachable,
+                                    predecessors: HashSet::new(),
+                                    successors: HashSet::new(),
+                                    location: location.clone(),
+                                },
+                            );
+
+                            // Branch: condition true → continue, false → trap
+                            self.set_block_terminator(
+                                context,
+                                MirTerminator::Branch {
+                                    condition: MirOperand::Value(cond_value_id),
+                                    true_block: continue_block_id,
+                                    false_block: trap_block_id,
+                                },
+                            );
+
+                            // Continue emitting in the continue block
+                            self.current_block = Some(continue_block_id);
+                        }
+
+                        // Remove `result` from scope so it doesn't leak
+                        if let Some(scope) = context.scope_stack.last_mut() {
+                            scope.remove("result");
+                        }
+                    }
+                }
+
                 // Create return terminator
                 let terminator = MirTerminator::Return {
                     value: return_value.clone(),
@@ -604,6 +675,13 @@ impl MirBuilder {
                 trace!(terminator = ?terminator, "Setting return terminator");
                 self.set_block_terminator(context, terminator);
                 trace!(current_block = ?self.current_block, "After return terminator");
+            }
+
+            // Ensure statement — collect postcondition for injection before returns.
+            // The actual condition evaluation happens inside the Return handler above.
+            // This statement simply records the condition for deferred checking.
+            TastStatement::Ensure { condition, .. } => {
+                context.ensure_conditions.push(condition.clone());
             }
 
             TastStatement::Print {

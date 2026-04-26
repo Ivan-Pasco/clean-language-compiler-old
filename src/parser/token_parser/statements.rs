@@ -42,6 +42,7 @@ impl TokenParser {
             }
             TokenKind::Error => self.parse_error_statement(),
             TokenKind::Require => self.parse_require(),
+            TokenKind::Ensure => self.parse_ensure(),
             TokenKind::Spec => self.parse_spec(),
             TokenKind::Intent => self.parse_intent(),
             TokenKind::Constant => self.parse_constant_apply_block(),
@@ -657,6 +658,23 @@ impl TokenParser {
         Ok(Statement::Require {
             condition,
             location: Some(require_token.location),
+        })
+    }
+
+    /// Parse ensure statement: ensure <condition>
+    /// Declares a postcondition on the return value.
+    /// Within the condition, `result` refers to the function's return value.
+    /// Debug builds emit a WASM trap if the condition is false; release builds strip it.
+    pub(super) fn parse_ensure(&mut self) -> Result<Statement, CompilerError> {
+        let ensure_token = self.expect(&TokenKind::Ensure)?;
+        self.skip_whitespace();
+
+        // Parse the condition expression — `result` is a special identifier in this context
+        let condition = self.parse_expression()?;
+
+        Ok(Statement::Ensure {
+            condition,
+            location: Some(ensure_token.location),
         })
     }
 

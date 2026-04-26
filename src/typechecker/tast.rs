@@ -78,6 +78,9 @@ pub struct TastClass {
     pub generic_params: Vec<TypeParameter>,
     pub is_abstract: bool,
     pub visibility: Visibility,
+    /// Type-checked invariant conditions from the `invariant:` block.
+    /// Each expression has been verified to be of boolean type.
+    pub invariants: Vec<TastExpression>,
     pub location: SourceLocation,
 }
 
@@ -177,6 +180,14 @@ pub enum TastStatement {
     /// Require statement - contract precondition that must be true
     /// Traps at runtime if condition is false
     Require {
+        condition: TastExpression,
+        location: SourceLocation,
+    },
+
+    /// Ensure statement - contract postcondition on the return value.
+    /// `result` in the condition refers to the function's return value.
+    /// Debug builds emit a WASM trap if the condition is false; release builds strip it.
+    Ensure {
         condition: TastExpression,
         location: SourceLocation,
     },

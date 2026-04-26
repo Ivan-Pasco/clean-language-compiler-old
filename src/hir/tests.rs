@@ -212,6 +212,7 @@ mod hir_builder_tests {
                 }],
                 location: Some(test_location()),
             }),
+            invariants: vec![],
             location: Some(test_location()),
         };
 
@@ -283,6 +284,7 @@ mod hir_builder_tests {
             fields: vec![],
             methods: vec![],
             constructor: None,
+            invariants: vec![],
             location: Some(test_location()),
         };
 
@@ -295,6 +297,7 @@ mod hir_builder_tests {
             fields: vec![],
             methods: vec![],
             constructor: None,
+            invariants: vec![],
             location: Some(test_location()),
         };
 
@@ -537,6 +540,7 @@ mod integration_tests {
                 location: Some(test_location()),
             }],
             constructor: None,
+            invariants: vec![],
             location: Some(test_location()),
         };
 
@@ -555,6 +559,7 @@ mod integration_tests {
             }],
             methods: vec![],
             constructor: None,
+            invariants: vec![],
             location: Some(test_location()),
         };
 

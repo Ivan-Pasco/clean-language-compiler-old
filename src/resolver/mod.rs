@@ -89,6 +89,8 @@ pub struct ResolvedHirClass {
     pub fields: Vec<ResolvedHirField>,
     pub constructor: Option<ResolvedHirConstructor>,
     pub methods: Vec<ResolvedHirMethod>,
+    /// Resolved invariant conditions from the `invariant:` block.
+    pub invariants: Vec<ResolvedHirExpression>,
     pub location: SourceLocation,
 }
 
@@ -289,6 +291,14 @@ pub enum ResolvedHirStatement {
     /// Require statement - contract precondition that must be true
     /// Traps at runtime if condition is false
     Require {
+        condition: ResolvedHirExpression,
+        location: SourceLocation,
+    },
+
+    /// Ensure statement - contract postcondition on the return value.
+    /// `result` in the condition refers to the function's return value.
+    /// Debug builds emit a WASM trap if the condition is false; release builds strip it.
+    Ensure {
         condition: ResolvedHirExpression,
         location: SourceLocation,
     },

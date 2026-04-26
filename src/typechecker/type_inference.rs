@@ -1637,6 +1637,31 @@ impl<'a> TypeInference<'a> {
             }
         }
 
+        // Type-check invariant expressions — each must be boolean.
+        // Re-enter the class scope so field names are visible.
+        self.current_class = Some(class.symbol_id);
+        let mut tast_invariants: Vec<TastExpression> = Vec::new();
+        for invariant_expr in &class.invariants {
+            match self.infer_expression(invariant_expr) {
+                Ok(tast_expr) => {
+                    if tast_expr.expr_type != ConcreteType::Boolean
+                        && tast_expr.expr_type != ConcreteType::Unknown
+                    {
+                        return Err(CompilerError::type_error(
+                            format!(
+                                "invariant condition must be boolean, found {:?}",
+                                tast_expr.expr_type
+                            ),
+                            None,
+                            Some(class.location.clone()),
+                        ));
+                    }
+                    tast_invariants.push(tast_expr);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
         self.current_class = None;
 
         Ok(TastClass {
@@ -1650,6 +1675,7 @@ impl<'a> TypeInference<'a> {
             generic_params: Vec::new(),     // Would handle generics
             is_abstract: false,             // Would get from HIR
             visibility: Visibility::Public, // Would get from HIR
+            invariants: tast_invariants,
             location: class.location.clone(),
         })
     }
@@ -2799,6 +2825,36 @@ impl<'a> TypeInference<'a> {
                 }
 
                 Ok(TastStatement::Require {
+                    condition: tast_condition,
+                    location: location.clone(),
+                })
+            }
+
+            ResolvedHirStatement::Ensure {
+                condition,
+                location,
+            } => {
+                // `result` in an ensure condition may reference the return variable which
+                // is introduced by the MIR builder.  At this point in the pipeline it
+                // resolves as an Unknown-typed variable.  We infer the condition and
+                // only enforce the boolean requirement when the type is definitely known
+                // (i.e., not Unknown).
+                let tast_condition = self.infer_expression(condition)?;
+
+                if tast_condition.expr_type != ConcreteType::Boolean
+                    && tast_condition.expr_type != ConcreteType::Unknown
+                {
+                    return Err(CompilerError::type_error(
+                        format!(
+                            "ensure condition must be boolean, found {:?}",
+                            tast_condition.expr_type
+                        ),
+                        None,
+                        Some(location.clone()),
+                    ));
+                }
+
+                Ok(TastStatement::Ensure {
                     condition: tast_condition,
                     location: location.clone(),
                 })
@@ -5429,6 +5485,7 @@ impl StatementLocation for ResolvedHirStatement {
             ResolvedHirStatement::Print { location, .. } => location,
             ResolvedHirStatement::LaterAssignment { location, .. } => location,
             ResolvedHirStatement::Require { location, .. } => location,
+            ResolvedHirStatement::Ensure { location, .. } => location,
         }
     }
 }

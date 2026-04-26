@@ -159,6 +159,9 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
         fields,
         methods,
         constructor,
+        // The legacy Pest-based class parser does not handle invariant: blocks yet;
+        // invariant support is only available through the token parser path.
+        invariants: Vec::new(),
         location: Some(ast_location),
     })
 }

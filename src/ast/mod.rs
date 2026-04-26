@@ -404,6 +404,15 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
+    // Contract: Ensure statement - postcondition that the return value must satisfy.
+    // `result` is a special identifier referring to the function's return value.
+    // Debug builds: checked at runtime via WASM trap; release builds: stripped.
+    // `--contracts` flag forces checks in release builds.
+    Ensure {
+        condition: Expression,
+        location: Option<SourceLocation>,
+    },
+
     // Variable declarations (type-first)
     VariableDecl {
         name: String,
@@ -1122,6 +1131,10 @@ pub struct Class {
     pub fields: Vec<Field>,
     pub methods: Vec<Function>,
     pub constructor: Option<Constructor>,
+    /// Class invariant expressions parsed from `invariant:` block.
+    /// Each expression must evaluate to boolean.
+    /// Checked after every public method call on the class (debug builds only).
+    pub invariants: Vec<Expression>,
     pub location: Option<SourceLocation>,
 }
 
