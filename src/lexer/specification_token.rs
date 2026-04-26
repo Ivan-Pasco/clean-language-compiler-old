@@ -75,7 +75,7 @@ pub enum TokenKind {
     Continue,    // continue - Loop control flow
     Require,     // require - Contract precondition
     Ensure,      // ensure - Contract postcondition
-    Invariant,   // invariant - Class invariant block keyword
+    Always,      // always - Class invariant block keyword
     Rules,       // rules - State invariants
     Spec,        // spec - AI metadata: links function to specification
     Intent,      // intent - AI metadata: describes function purpose
@@ -207,7 +207,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Continue => write!(f, "continue"),
             TokenKind::Require => write!(f, "require"),
             TokenKind::Ensure => write!(f, "ensure"),
-            TokenKind::Invariant => write!(f, "invariant"),
+            TokenKind::Always => write!(f, "always"),
             TokenKind::Rules => write!(f, "rules"),
             TokenKind::Spec => write!(f, "spec"),
             TokenKind::Intent => write!(f, "intent"),
@@ -433,7 +433,7 @@ impl Keywords {
             "continue" => Some(TokenKind::Continue),
             "require" => Some(TokenKind::Require),
             "ensure" => Some(TokenKind::Ensure),
-            "invariant" => Some(TokenKind::Invariant),
+            "always" => Some(TokenKind::Always),
             "rules" => Some(TokenKind::Rules),
             "spec" => Some(TokenKind::Spec),
             "intent" => Some(TokenKind::Intent),
@@ -483,7 +483,7 @@ impl TokenKind {
             TokenKind::Continue => "continue".to_string(),
             TokenKind::Require => "require".to_string(),
             TokenKind::Ensure => "ensure".to_string(),
-            TokenKind::Invariant => "invariant".to_string(),
+            TokenKind::Always => "always".to_string(),
             TokenKind::Rules => "rules".to_string(),
             TokenKind::Spec => "spec".to_string(),
             TokenKind::Intent => "intent".to_string(),

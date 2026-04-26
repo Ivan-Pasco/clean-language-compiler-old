@@ -89,7 +89,7 @@ pub struct ResolvedHirClass {
     pub fields: Vec<ResolvedHirField>,
     pub constructor: Option<ResolvedHirConstructor>,
     pub methods: Vec<ResolvedHirMethod>,
-    /// Resolved invariant conditions from the `invariant:` block.
+    /// Resolved invariant conditions from the `always:` block.
     pub invariants: Vec<ResolvedHirExpression>,
     pub location: SourceLocation,
 }

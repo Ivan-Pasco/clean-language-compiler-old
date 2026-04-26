@@ -1637,7 +1637,7 @@ impl<'a> TypeInference<'a> {
             }
         }
 
-        // Type-check invariant expressions — each must be boolean.
+        // Type-check always: block expressions — each must be boolean.
         // Re-enter the class scope so field names are visible.
         self.current_class = Some(class.symbol_id);
         let mut tast_invariants: Vec<TastExpression> = Vec::new();
@@ -1649,7 +1649,7 @@ impl<'a> TypeInference<'a> {
                     {
                         return Err(CompilerError::type_error(
                             format!(
-                                "invariant condition must be boolean, found {:?}",
+                                "always: condition must be boolean, found {:?}",
                                 tast_expr.expr_type
                             ),
                             None,

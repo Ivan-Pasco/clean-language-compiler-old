@@ -78,7 +78,7 @@ pub struct TastClass {
     pub generic_params: Vec<TypeParameter>,
     pub is_abstract: bool,
     pub visibility: Visibility,
-    /// Type-checked invariant conditions from the `invariant:` block.
+    /// Type-checked invariant conditions from the `always:` block.
     /// Each expression has been verified to be of boolean type.
     pub invariants: Vec<TastExpression>,
     pub location: SourceLocation,

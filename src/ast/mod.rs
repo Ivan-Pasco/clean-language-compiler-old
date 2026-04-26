@@ -1135,7 +1135,7 @@ pub struct Class {
     pub fields: Vec<Field>,
     pub methods: Vec<Function>,
     pub constructor: Option<Constructor>,
-    /// Class invariant expressions parsed from `invariant:` block.
+    /// Class invariant expressions parsed from `always:` block.
     /// Each expression must evaluate to boolean.
     /// Checked after every public method call on the class (debug builds only).
     pub invariants: Vec<Expression>,

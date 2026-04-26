@@ -1324,6 +1324,67 @@ fn get_available_tools() -> Vec<Tool> {
                 required: vec![],
             },
         },
+        // ====================================================================
+        // Doc-Code Synchronization Tools
+        // ====================================================================
+        Tool {
+            name: "validate_docs".to_string(),
+            description: "Validate feature spec doc: references against compiler-visible symbols in a .cln file or directory. Detects broken references (symbol not found) and stale signatures (symbol changed since the spec was last updated). Optionally writes updated signatures back to spec files.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "source": {
+                        "type": "string",
+                        "description": "Path to a .cln file or directory containing .cln files"
+                    },
+                    "docs_dir": {
+                        "type": "string",
+                        "description": "Path to docs/features directory. Defaults to docs/features relative to the source directory."
+                    },
+                    "update_signatures": {
+                        "type": "boolean",
+                        "description": "If true, write updated signatures back to spec files. Default: false."
+                    }
+                }),
+                required: vec!["source".to_string()],
+            },
+        },
+        Tool {
+            name: "doc_coverage".to_string(),
+            description: "Compute documentation coverage: which compiler-visible symbols (functions, classes, state vars) are referenced by at least one feature spec, and which are undocumented. Returns a percentage and lists of covered/uncovered symbols.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "source": {
+                        "type": "string",
+                        "description": "Path to a .cln file or directory containing .cln files"
+                    },
+                    "docs_dir": {
+                        "type": "string",
+                        "description": "Path to docs/features directory. Defaults to docs/features relative to the source directory."
+                    }
+                }),
+                required: vec!["source".to_string()],
+            },
+        },
+        Tool {
+            name: "get_feature_spec".to_string(),
+            description: "Retrieve the full content of a feature spec document. Look up by doc: ref string (e.g., 'functions/transfer') or by feature name substring. Returns the raw Markdown including frontmatter.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({
+                    "ref": {
+                        "type": "string",
+                        "description": "A doc: ref string (e.g., 'functions/transfer') or a feature name substring to search for"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Direct file path to a feature spec Markdown file"
+                    }
+                }),
+                required: vec![],
+            },
+        },
     ]
 }
 
@@ -1394,6 +1455,9 @@ fn handle_tools_call(id: serde_json::Value, params: Option<serde_json::Value>) -
         "run" => tool_run(id.clone(), arguments),
         "list_examples" => tool_list_examples(id.clone(), arguments),
         "get_changelog" => tool_get_changelog(id.clone(), arguments),
+        "validate_docs" => tool_validate_docs(id.clone(), arguments),
+        "doc_coverage" => tool_doc_coverage(id.clone(), arguments),
+        "get_feature_spec" => tool_get_feature_spec(id.clone(), arguments),
         _ => {
             return JsonRpcResponse::error(
                 id,
@@ -5244,5 +5308,393 @@ fn version_is_newer(candidate: &str, baseline: &str) -> bool {
     match (parse_parts(candidate), parse_parts(baseline)) {
         (Some(c), Some(b)) => c > b,
         _ => candidate > baseline,
+    }
+}
+
+// ============================================================================
+// Doc-Code Synchronization Tool Handlers
+// ============================================================================
+
+/// Resolve a source argument (path to .cln file or directory) into the list of
+/// .cln file paths it represents, and infer the docs directory.
+///
+/// Returns `(cln_paths, docs_dir)`.  `docs_dir` is either the caller-supplied
+/// value or `docs/features` relative to the directory that contains the source.
+fn resolve_source_and_docs(
+    source: &str,
+    docs_dir_arg: Option<&str>,
+) -> (Vec<std::path::PathBuf>, std::path::PathBuf) {
+    use std::path::PathBuf;
+
+    let source_path = PathBuf::from(source);
+
+    let (cln_files, parent_dir) = if source_path.is_dir() {
+        let files = collect_cln_files(&source_path);
+        (files, source_path.clone())
+    } else if source_path.is_file() {
+        let parent = source_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        (vec![source_path], parent)
+    } else {
+        // Path doesn't exist — return empty list; callers handle this gracefully
+        (vec![], PathBuf::from("."))
+    };
+
+    let docs_dir = docs_dir_arg
+        .map(PathBuf::from)
+        .unwrap_or_else(|| parent_dir.join("docs").join("features"));
+
+    (cln_files, docs_dir)
+}
+
+/// Recursively collect all `.cln` files under a directory.
+fn collect_cln_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut result = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                result.extend(collect_cln_files(&p));
+            } else if p.extension().and_then(|e| e.to_str()) == Some("cln") {
+                result.push(p);
+            }
+        }
+    }
+    result
+}
+
+/// Read all `.cln` files in the list, extract symbols from each, and merge
+/// them into a single [`AvailableSymbols`].
+fn extract_symbols_from_paths(paths: &[std::path::PathBuf]) -> crate::docs::AvailableSymbols {
+    use crate::docs::{extract_symbols_from_source, AvailableSymbols, FunctionSig};
+    use std::collections::HashSet;
+
+    let mut merged = AvailableSymbols::default();
+    let mut seen_fns: HashSet<String> = HashSet::new();
+    let mut seen_classes: HashSet<String> = HashSet::new();
+    let mut seen_state: HashSet<String> = HashSet::new();
+
+    for path in paths {
+        let source = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[DocSync] Cannot read {:?}: {}", path, e);
+                continue;
+            }
+        };
+
+        let syms = extract_symbols_from_source(&source);
+
+        for f in syms.functions {
+            if seen_fns.insert(f.name.clone()) {
+                merged.functions.push(FunctionSig {
+                    name: f.name,
+                    signature: f.signature,
+                });
+            }
+        }
+        for c in syms.classes {
+            if seen_classes.insert(c.clone()) {
+                merged.classes.push(c);
+            }
+        }
+        for s in syms.state_vars {
+            if seen_state.insert(s.clone()) {
+                merged.state_vars.push(s);
+            }
+        }
+    }
+
+    merged
+}
+
+/// Tool: validate_docs — Validate feature spec doc: refs against compiler symbols
+fn tool_validate_docs(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    use crate::docs::DocSyncEngine;
+
+    let source = match args.get("source").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Missing required parameter: source".to_string(),
+            )
+        }
+    };
+
+    let docs_dir_arg = args.get("docs_dir").and_then(|v| v.as_str());
+    let update_signatures = args
+        .get("update_signatures")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let (cln_files, docs_dir) = resolve_source_and_docs(source, docs_dir_arg);
+
+    if cln_files.is_empty() {
+        return JsonRpcResponse::success(
+            id,
+            json!({
+                "success": false,
+                "error": format!("No .cln files found at '{}'", source),
+                "results": []
+            }),
+        );
+    }
+
+    let symbols = extract_symbols_from_paths(&cln_files);
+    let engine = DocSyncEngine::new(docs_dir.clone());
+    let specs = engine.scan_specs();
+
+    if specs.is_empty() {
+        return JsonRpcResponse::success(
+            id,
+            json!({
+                "success": true,
+                "docs_dir": docs_dir.display().to_string(),
+                "message": "No feature spec files found in docs_dir",
+                "results": []
+            }),
+        );
+    }
+
+    let mut results: Vec<serde_json::Value> = Vec::new();
+
+    for spec in &specs {
+        let validation = engine.validate(spec, &symbols);
+
+        // Optionally update signatures for functions that are present and have
+        // different (or missing) stored signatures.
+        if update_signatures {
+            let mut new_sigs: std::collections::HashMap<String, String> =
+                spec.stored_signatures.clone();
+            for func in &symbols.functions {
+                for doc_ref in &spec.doc_refs {
+                    if let crate::docs::DocRef::Function(name) = doc_ref {
+                        if name.eq_ignore_ascii_case(&func.name) {
+                            new_sigs.insert(func.name.clone(), func.signature.clone());
+                        }
+                    }
+                }
+            }
+            if let Err(e) = DocSyncEngine::update_signatures_in_file(&spec.path, &new_sigs) {
+                eprintln!(
+                    "[DocSync] Failed to update signatures in {:?}: {}",
+                    spec.path, e
+                );
+            }
+        }
+
+        let broken: Vec<serde_json::Value> = validation
+            .broken_refs
+            .iter()
+            .map(|b| json!({ "ref": b.ref_str, "reason": b.reason }))
+            .collect();
+
+        let stale: Vec<serde_json::Value> = validation
+            .stale_refs
+            .iter()
+            .map(|s| {
+                json!({
+                    "symbol": s.symbol_name,
+                    "stored_signature": s.stored_sig,
+                    "current_signature": s.current_sig
+                })
+            })
+            .collect();
+
+        results.push(json!({
+            "spec_path": spec.path.display().to_string(),
+            "feature": spec.feature,
+            "clean": validation.is_clean(),
+            "broken_refs": broken,
+            "stale_refs": stale
+        }));
+    }
+
+    let total = results.len();
+    let clean_count = results
+        .iter()
+        .filter(|r| r.get("clean").and_then(|v| v.as_bool()).unwrap_or(false))
+        .count();
+
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": true,
+            "docs_dir": docs_dir.display().to_string(),
+            "cln_files_scanned": cln_files.len(),
+            "specs_validated": total,
+            "clean_count": clean_count,
+            "issue_count": total - clean_count,
+            "signatures_updated": update_signatures,
+            "results": results
+        }),
+    )
+}
+
+/// Tool: doc_coverage — Compute documentation coverage for compiler-visible symbols
+fn tool_doc_coverage(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    use crate::docs::coverage::compute_coverage;
+    use crate::docs::DocSyncEngine;
+
+    let source = match args.get("source").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Missing required parameter: source".to_string(),
+            )
+        }
+    };
+
+    let docs_dir_arg = args.get("docs_dir").and_then(|v| v.as_str());
+    let (cln_files, docs_dir) = resolve_source_and_docs(source, docs_dir_arg);
+
+    if cln_files.is_empty() {
+        return JsonRpcResponse::success(
+            id,
+            json!({
+                "success": false,
+                "error": format!("No .cln files found at '{}'", source),
+                "coverage_pct": 0.0,
+                "covered": [],
+                "uncovered": []
+            }),
+        );
+    }
+
+    let symbols = extract_symbols_from_paths(&cln_files);
+    let engine = DocSyncEngine::new(docs_dir.clone());
+    let specs = engine.scan_specs();
+    let report = compute_coverage(&symbols, &specs);
+
+    let uncovered: Vec<serde_json::Value> = report
+        .uncovered
+        .iter()
+        .map(|u| json!({ "kind": u.kind, "name": u.name }))
+        .collect();
+
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": true,
+            "docs_dir": docs_dir.display().to_string(),
+            "cln_files_scanned": cln_files.len(),
+            "specs_loaded": specs.len(),
+            "coverage_pct": report.coverage_pct,
+            "covered_count": report.covered.len(),
+            "uncovered_count": report.uncovered.len(),
+            "covered": report.covered,
+            "uncovered": uncovered
+        }),
+    )
+}
+
+/// Tool: get_feature_spec — Retrieve the content of a feature spec by ref or path
+fn tool_get_feature_spec(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    use crate::docs::DocSyncEngine;
+
+    let ref_arg = args.get("ref").and_then(|v| v.as_str());
+    let path_arg = args.get("path").and_then(|v| v.as_str());
+
+    if ref_arg.is_none() && path_arg.is_none() {
+        return JsonRpcResponse::error(
+            id,
+            error_codes::INVALID_PARAMS,
+            "Provide either 'ref' or 'path' parameter".to_string(),
+        );
+    }
+
+    // Direct path lookup
+    if let Some(path_str) = path_arg {
+        let path = std::path::PathBuf::from(path_str);
+        return match std::fs::read_to_string(&path) {
+            Ok(content) => JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": true,
+                    "path": path.display().to_string(),
+                    "content": content
+                }),
+            ),
+            Err(e) => JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": false,
+                    "error": format!("Cannot read file '{}': {}", path_str, e)
+                }),
+            ),
+        };
+    }
+
+    // Ref-based lookup: scan a docs directory
+    let ref_str = ref_arg.unwrap(); // safe: we checked above
+
+    // Try to find a docs/features directory from the current working directory
+    let candidate_dirs = [
+        std::path::PathBuf::from("docs/features"),
+        std::path::PathBuf::from("../docs/features"),
+    ];
+
+    let docs_dir = candidate_dirs
+        .iter()
+        .find(|d| d.exists() && d.is_dir())
+        .cloned()
+        .unwrap_or_else(|| std::path::PathBuf::from("docs/features"));
+
+    let engine = DocSyncEngine::new(docs_dir);
+    let specs = engine.scan_specs();
+
+    if specs.is_empty() {
+        return JsonRpcResponse::success(
+            id,
+            json!({
+                "success": false,
+                "error": "No feature spec files found. Provide a 'path' argument to read a specific file."
+            }),
+        );
+    }
+
+    // Search: a spec matches if any of its doc_refs contains the ref_str (case-insensitive),
+    // or if the feature name contains the ref_str substring.
+    let ref_lower = ref_str.to_lowercase();
+
+    let found = specs.iter().find(|spec| {
+        spec.doc_refs
+            .iter()
+            .any(|r| r.as_ref_str().to_lowercase().contains(&ref_lower))
+            || spec.feature.to_lowercase().contains(&ref_lower)
+    });
+
+    match found {
+        Some(spec) => match std::fs::read_to_string(&spec.path) {
+            Ok(content) => JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": true,
+                    "path": spec.path.display().to_string(),
+                    "feature": spec.feature,
+                    "content": content
+                }),
+            ),
+            Err(e) => JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": false,
+                    "error": format!("Found spec at {:?} but cannot read it: {}", spec.path, e)
+                }),
+            ),
+        },
+        None => JsonRpcResponse::success(
+            id,
+            json!({
+                "success": false,
+                "error": format!("No feature spec found matching ref or feature name: '{}'", ref_str)
+            }),
+        ),
     }
 }

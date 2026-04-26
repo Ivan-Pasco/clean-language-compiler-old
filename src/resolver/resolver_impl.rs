@@ -624,13 +624,13 @@ impl NameResolver {
             }
         }
 
-        // Resolve invariant expressions in class scope (fields are visible here)
+        // Resolve always: block expressions in class scope (fields are visible here)
         let mut resolved_invariants = Vec::new();
         for invariant_expr in &class.invariants {
             match self.resolve_expression(invariant_expr) {
                 Ok(resolved) => resolved_invariants.push(resolved),
                 Err(()) => {
-                    // Error already logged by resolve_expression; skip this invariant
+                    // Error already logged by resolve_expression; skip this condition
                 }
             }
         }

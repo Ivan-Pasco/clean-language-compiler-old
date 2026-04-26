@@ -139,7 +139,7 @@ pub struct MirBuilder {
     /// Counter for allocating synthetic SymbolIds for computed getter functions.
     pub(super) next_computed_symbol_id: usize,
 
-    /// Class invariant expressions to be injected before every return in the
+    /// Class always: condition expressions to be injected before every return in the
     /// currently-being-built class method.  Set by `build_class` before calling
     /// `build_function_with_class_context` and cleared afterwards.
     pub(super) pending_class_invariants: Vec<TastExpression>,

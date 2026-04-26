@@ -52,7 +52,7 @@ impl MirBuilder {
             location: tast_function.location.clone(),
         };
 
-        // Seed ensure_conditions with any class invariants collected by build_class.
+        // Seed ensure_conditions with any class always: conditions collected by build_class.
         // These are treated identically to `ensure` statements in the method body:
         // they are checked before every `return`.
         let initial_ensure_conditions = self.pending_class_invariants.clone();
@@ -66,7 +66,7 @@ impl MirBuilder {
             class_context: class_context.cloned(),
             all_classes: self.all_classes.clone(),
             all_functions: self.all_functions.clone(),
-            // ensure_conditions: starts with any class invariants, then grows as
+            // ensure_conditions: starts with any class always: conditions, then grows as
             // Ensure statements are encountered in the function body.
             ensure_conditions: initial_ensure_conditions,
         };
@@ -201,7 +201,7 @@ impl MirBuilder {
     }
 
     /// Build MIR class functions (constructor and methods).
-    /// Class invariants from `invariant:` blocks are injected after each public method's
+    /// Class invariants from `always:` blocks are injected after each public method's
     /// return value is computed (debug / `--contracts` builds only).
     pub(super) fn build_class(
         &mut self,
@@ -223,10 +223,10 @@ impl MirBuilder {
         }
 
         // Build all methods with class context.
-        // After each method body is built, inject class-invariant checks immediately
+        // After each method body is built, inject class always: condition checks immediately
         // before every Return terminator (debug / --contracts builds).
         for method in tast_class.methods {
-            // Seed the context with the class invariants as pre-return ensure conditions.
+            // Seed the context with the class always: conditions as pre-return ensure conditions.
             // `build_function_with_class_context` picks them up from `ensure_conditions`.
             // We store them on the builder and thread them into the context there.
             self.pending_class_invariants = class_invariants.clone();

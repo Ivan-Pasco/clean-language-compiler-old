@@ -646,9 +646,9 @@ impl TokenParser {
                         }
                     }
                 }
-                TokenKind::Invariant => {
-                    // Parse invariant: block
-                    // invariant:
+                TokenKind::Always => {
+                    // Parse always: block
+                    // always:
                     //     balance >= 0.0
                     //     balance <= 1000000.0
                     let parsed = self.parse_invariant_block()?;
@@ -711,7 +711,7 @@ impl TokenParser {
                             self.current_kind(),
                             TokenKind::Functions
                                 | TokenKind::Constructor
-                                | TokenKind::Invariant
+                                | TokenKind::Always
                                 | TokenKind::Class
                                 | TokenKind::Start
                                 | TokenKind::Dedent(_)
@@ -751,12 +751,12 @@ impl TokenParser {
         Ok((fields, methods, constructor, invariants))
     }
 
-    /// Parse invariant: block — returns a list of boolean expressions.
+    /// Parse always: block — returns a list of boolean expressions.
     ///
     /// Grammar:
-    ///   invariant_block = "invariant" ":" newline indent { expression newline } dedent
+    ///   always_block = "always" ":" newline indent { expression newline } dedent
     pub(super) fn parse_invariant_block(&mut self) -> Result<Vec<Expression>, CompilerError> {
-        self.expect(&TokenKind::Invariant)?;
+        self.expect(&TokenKind::Always)?;
         self.skip_whitespace();
         self.expect(&TokenKind::Colon)?;
         self.skip_whitespace();
@@ -815,7 +815,7 @@ impl TokenParser {
                 TokenKind::Functions
                     | TokenKind::Constructor
                     | TokenKind::Private
-                    | TokenKind::Invariant
+                    | TokenKind::Always
                     | TokenKind::Class
                     | TokenKind::Start
                     | TokenKind::Dedent(_)
@@ -824,7 +824,7 @@ impl TokenParser {
                 break;
             }
 
-            // Parse the invariant condition expression
+            // Parse the always: condition expression
             let condition = self.parse_expression()?;
             conditions.push(condition);
 

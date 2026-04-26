@@ -628,7 +628,7 @@ impl HirBuilder {
             .map(|method| self.build_method(method))
             .collect::<Result<Vec<_>, _>>()?;
 
-        // Build class invariant expressions
+        // Build class always: block expressions
         let invariants = class
             .invariants
             .iter()

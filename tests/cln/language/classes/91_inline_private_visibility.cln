@@ -1,0 +1,36 @@
+// Test: language/classes/91_inline_private_visibility
+// Grammar: private_class_fields_section, private_class_methods_section (foundation/spec/grammar.ebnf §6.4)
+// Semantic: SEM005 — private members only accessible within the owning class
+// Expected output:
+//   Account created
+//   Balance: 100.0
+//   After deposit: 150.0
+
+class Account
+    string owner
+
+    private:
+        number balance = 0.0
+
+    constructor(string ownerParam, number startBalance)
+        owner = ownerParam
+        balance = startBalance
+
+    functions:
+        void deposit(number amount)
+            if checkAmount(amount)
+                balance = balance + amount
+
+        number getBalance()
+            return balance
+
+        private:
+            boolean checkAmount(number amount)
+                return amount > 0
+
+start:
+    Account acc = Account("Alice", 100.0)
+    print("Account created")
+    print("Balance: " + acc.getBalance().toString())
+    acc.deposit(50.0)
+    print("After deposit: " + acc.getBalance().toString())

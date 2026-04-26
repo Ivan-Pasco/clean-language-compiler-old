@@ -77,6 +77,8 @@ pub mod codegen;
 pub mod compilation;
 /// Debug utilities — AST/MIR/WASM inspection tools
 pub mod debug;
+/// Doc-code synchronization — validates feature spec frontmatter against compiler symbols
+pub mod docs;
 /// Error types and reporting — compiler diagnostics with spec error codes
 pub mod error;
 /// High-level Intermediate Representation — Stage 3 (AST to HIR)

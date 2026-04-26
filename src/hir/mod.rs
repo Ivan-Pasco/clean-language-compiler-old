@@ -127,7 +127,7 @@ pub struct HirClass {
     pub fields: Vec<HirField>,
     pub constructor: Option<HirConstructor>,
     pub methods: Vec<HirMethod>,
-    /// Invariant conditions from the `invariant:` block.
+    /// Invariant conditions from the `always:` block.
     /// Each expression must evaluate to boolean.
     /// Checked after every public method call on the class (debug/contracts builds).
     pub invariants: Vec<HirExpression>,
