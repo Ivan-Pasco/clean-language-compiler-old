@@ -1419,6 +1419,7 @@ impl TokenParser {
                         type_,
                         initializer,
                         guard,
+                        is_private: false,
                         location: Some(location),
                     });
 
@@ -1462,6 +1463,16 @@ impl TokenParser {
                         location: None,
                     });
                 }
+                TokenKind::Private => {
+                    // Inline private: sub-section inside a state: block.
+                    // Grammar (foundation/spec/grammar.ebnf §6.8):
+                    //   private_state_section = "private" ":" NEWLINE
+                    //                           INDENT+ state_declaration
+                    //                           { NEWLINE { empty_line } INDENT+ state_declaration }
+                    // All state declarations inside this sub-section are private (SEM005).
+                    let private_decls = self.parse_private_state_section(block_level)?;
+                    declarations.extend(private_decls);
+                }
                 _ => {
                     // Unknown token, skip and continue
                     break;
@@ -1476,6 +1487,162 @@ impl TokenParser {
             scope: StateScope::App, // Default to App scope for top-level state
             location: None,
         })
+    }
+
+    /// Parse an inline `private:` sub-section inside a `state:` block.
+    ///
+    /// Called when `TokenKind::Private` is encountered while parsing state declarations.
+    /// Parses `private` `:` NEWLINE then each state declaration within it, marking
+    /// all declarations `is_private: true` (SEM005).
+    ///
+    /// Grammar (foundation/spec/grammar.ebnf §6.8):
+    ///   private_state_section = "private" ":" NEWLINE
+    ///                           INDENT+ state_declaration
+    ///                           { NEWLINE { empty_line } INDENT+ state_declaration }
+    fn parse_private_state_section(
+        &mut self,
+        parent_block_level: usize,
+    ) -> Result<Vec<crate::ast::StateDeclaration>, CompilerError> {
+        use crate::ast::{StateDeclaration, Type};
+
+        // Consume "private"
+        self.expect(&TokenKind::Private)?;
+        self.skip_whitespace();
+
+        // Consume ":"
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Consume trailing newline
+        if matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump();
+        }
+
+        let mut private_decls: Vec<StateDeclaration> = Vec::new();
+
+        loop {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // A dedent at or below the parent block level ends the private section.
+            if let TokenKind::Dedent(level) = self.current_kind() {
+                if *level <= parent_block_level {
+                    break;
+                }
+                self.bump();
+                continue;
+            }
+
+            // Top-level keywords exit the private section.
+            if matches!(
+                self.current_kind(),
+                TokenKind::Functions
+                    | TokenKind::Class
+                    | TokenKind::Start
+                    | TokenKind::Tests
+                    | TokenKind::Import
+                    | TokenKind::State
+                    | TokenKind::Computed
+                    | TokenKind::Rules
+            ) {
+                break;
+            }
+
+            // An indent at or below parent level signals the private section is over.
+            if let TokenKind::Indent(level) = self.current_kind() {
+                let lvl = *level;
+                if lvl <= parent_block_level {
+                    break;
+                }
+                self.bump(); // consume deeper indent
+                self.skip_whitespace();
+            }
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Parse a state declaration: type name = value [guard]
+            match self.current_kind() {
+                TokenKind::Identifier(type_name) => {
+                    let location = self.current().location.clone();
+                    let type_str = type_name.clone();
+                    self.bump(); // consume type
+
+                    self.skip_whitespace();
+
+                    let var_name = if let TokenKind::Identifier(name) = self.current_kind() {
+                        let name = name.clone();
+                        self.bump();
+                        name
+                    } else {
+                        return Err(CompilerError::parse_error(
+                            "Expected variable name in private state declaration".to_string(),
+                            Some(self.current().location.clone()),
+                            Some(
+                                "State declarations must have format: type name = value"
+                                    .to_string(),
+                            ),
+                        ));
+                    };
+
+                    self.skip_whitespace();
+                    self.expect(&TokenKind::Assign)?;
+                    self.skip_whitespace();
+
+                    let initializer = self.parse_expression()?;
+
+                    let type_ = match type_str.as_str() {
+                        "integer" => Type::Integer,
+                        "number" => Type::Number,
+                        "string" => Type::String,
+                        "boolean" => Type::Boolean,
+                        other => Type::Object(other.to_string()),
+                    };
+
+                    let guard = self.try_parse_guard_clause(parent_block_level + 1)?;
+
+                    private_decls.push(StateDeclaration {
+                        name: var_name,
+                        type_,
+                        initializer,
+                        guard,
+                        is_private: true,
+                        location: Some(location),
+                    });
+
+                    // Consume trailing newline and check next indent.
+                    if matches!(self.current_kind(), TokenKind::Newline) {
+                        self.bump();
+                    }
+
+                    if let TokenKind::Indent(level) = self.current_kind() {
+                        let lvl = *level;
+                        if lvl <= parent_block_level {
+                            break;
+                        }
+                        // Stay in the loop — next iteration consumes the indent.
+                    }
+                }
+                TokenKind::Newline => {
+                    self.bump();
+                }
+                TokenKind::Indent(_) => {
+                    self.bump();
+                }
+                TokenKind::Dedent(_) => {
+                    break;
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+
+        Ok(private_decls)
     }
 
     /// Parse a rules: block containing state invariant expressions

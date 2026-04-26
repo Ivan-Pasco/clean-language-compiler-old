@@ -194,6 +194,15 @@ impl TokenParser {
                     // Still in the block, parse the next function
                     self.skip_indentation();
 
+                    // Check for inline private: sub-section
+                    // Grammar: private_functions_section = INDENT+ "private" ":" NEWLINE function_declaration_line+
+                    if matches!(self.current_kind(), TokenKind::Private) {
+                        let private_funcs =
+                            self.parse_private_functions_section(functions_block_level)?;
+                        functions.extend(private_funcs);
+                        continue;
+                    }
+
                     // Check if this line starts a function signature
                     // Functions can optionally start with a return type or keyword that can be used as a name
                     match self.current_kind() {
@@ -238,6 +247,111 @@ impl TokenParser {
 
         // DON'T consume trailing Dedents - let parse_program handle them
         Ok(functions)
+    }
+
+    /// Parse an inline `private:` sub-section inside a `functions:` block.
+    ///
+    /// Called after the leading indent and the `private` keyword have been detected.
+    /// Consumes `private` `:` NEWLINE then parses each function inside the section,
+    /// setting `visibility: Visibility::Private` on each one before returning them.
+    ///
+    /// Grammar (foundation/spec/grammar.ebnf §6.2):
+    ///   private_functions_section = INDENT+ "private" ":" NEWLINE
+    ///                               function_declaration_line
+    ///                               { NEWLINE { empty_line } function_declaration_line }
+    fn parse_private_functions_section(
+        &mut self,
+        parent_block_level: usize,
+    ) -> Result<Vec<Function>, CompilerError> {
+        // Consume "private"
+        self.expect(&TokenKind::Private)?;
+        self.skip_whitespace();
+
+        // Consume ":"
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Consume trailing newline
+        self.eat(&TokenKind::Newline);
+        self.skip_whitespace();
+
+        let mut private_functions: Vec<Function> = Vec::new();
+
+        // The private functions are indented one level deeper than the parent block.
+        // We parse them in the same manner as regular functions in a functions: block,
+        // but mark each one private after parsing.
+        loop {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // A dedent at or below the parent block level exits the private section.
+            if let TokenKind::Dedent(level) = self.current_kind() {
+                if *level <= parent_block_level {
+                    break;
+                }
+                self.bump();
+                continue;
+            }
+
+            // Top-level keywords exit the private section.
+            if matches!(
+                self.current_kind(),
+                TokenKind::Class
+                    | TokenKind::Functions
+                    | TokenKind::Tests
+                    | TokenKind::Import
+                    | TokenKind::State
+                    | TokenKind::Start
+            ) {
+                break;
+            }
+
+            // An indent token that brings us to the functions block level or higher:
+            // the private sub-section ends when indentation drops back to parent level.
+            if let TokenKind::Indent(level) = self.current_kind() {
+                let lvl = *level;
+                if lvl <= parent_block_level {
+                    // Back to parent level - private section is over.
+                    break;
+                }
+                // Consume the deeper indent and continue parsing.
+                self.bump();
+                self.skip_whitespace();
+            }
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Check if we're still inside the private section by peeking at what follows.
+            match self.current_kind() {
+                TokenKind::Identifier(_)
+                | TokenKind::Test
+                | TokenKind::Unit
+                | TokenKind::Error
+                | TokenKind::Input
+                | TokenKind::Step
+                | TokenKind::Description => match self.parse_function_in_block() {
+                    Ok(mut func) => {
+                        func.visibility = Visibility::Private;
+                        private_functions.push(func);
+                    }
+                    Err(e) => return Err(e),
+                },
+                TokenKind::Newline => {
+                    self.bump();
+                }
+                _ => {
+                    // Nothing more belongs to this private section.
+                    break;
+                }
+            }
+        }
+
+        Ok(private_functions)
     }
 
     /// Parse a single function within a functions: block
@@ -504,6 +618,17 @@ impl TokenParser {
                             break;
                         }
 
+                        // Check for inline private: sub-section inside class functions: block
+                        // Grammar (foundation/spec/grammar.ebnf §6.4):
+                        //   private_class_methods_section = INDENT+ "private" ":" NEWLINE
+                        //                                   { class_function_line | empty_line }
+                        if matches!(self.current_kind(), TokenKind::Private) {
+                            let private_methods =
+                                self.parse_private_functions_section(functions_indent_level)?;
+                            methods.extend(private_methods);
+                            continue;
+                        }
+
                         // Parse method (return_type name(params))
                         if matches!(self.current_kind(), TokenKind::Identifier(_)) {
                             match self.parse_function_in_block() {
@@ -530,7 +655,10 @@ impl TokenParser {
                     invariants.extend(parsed);
                 }
                 TokenKind::Private => {
-                    // private: block may contain fields
+                    // Inline private: sub-section inside a class body.
+                    // Handles private class fields (grammar §6.4 private_class_fields_section).
+                    // A private: sub-section at the top of the class body (not inside functions:)
+                    // contains field declarations.
                     self.bump(); // consume 'private'
                     self.skip_whitespace();
                     self.expect(&TokenKind::Colon)?;
@@ -591,7 +719,10 @@ impl TokenParser {
                             break;
                         }
                         if matches!(self.current_kind(), TokenKind::Identifier(_)) {
-                            fields.push(self.parse_field()?);
+                            let mut field = self.parse_field()?;
+                            // Fields in a private: sub-section are private (SEM005).
+                            field.visibility = Visibility::Private;
+                            fields.push(field);
                         } else {
                             break;
                         }

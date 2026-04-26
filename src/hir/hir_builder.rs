@@ -581,6 +581,7 @@ impl HirBuilder {
             return_type,
             body,
             is_start: func.name == "start",
+            is_private: func.visibility == crate::ast::Visibility::Private,
             location: func.location.clone().unwrap_or_default(),
         })
     }
@@ -658,6 +659,7 @@ impl HirBuilder {
             name: field.name.clone(),
             field_type,
             initializer,
+            is_private: field.visibility == crate::ast::Visibility::Private,
             location: SourceLocation::default(),
         })
     }
@@ -727,6 +729,7 @@ impl HirBuilder {
             parameters,
             return_type,
             body,
+            is_private: method.visibility == crate::ast::Visibility::Private,
             location: method.location.clone().unwrap_or_default(),
         })
     }
@@ -1785,6 +1788,7 @@ impl HirBuilder {
             state_type,
             initializer,
             guard,
+            is_private: decl.is_private,
             location: decl.location.clone().unwrap_or_default(),
         })
     }

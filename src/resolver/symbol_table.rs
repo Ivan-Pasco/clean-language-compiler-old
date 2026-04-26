@@ -79,6 +79,19 @@ pub struct Symbol {
     pub is_exported: bool,
     pub is_imported: bool,
     pub module_id: Option<ModuleId>,
+    /// True when the symbol was declared inside a `private:` sub-section.
+    ///
+    /// A private symbol may only be accessed from within its owning scope:
+    /// - Private module function: callable only within the same module.
+    /// - Private class field/method: accessible only within the class body.
+    /// - Private state variable: accessible only within the same module.
+    ///
+    /// Violations are reported as SEM005 errors by the resolver.
+    pub is_private: bool,
+    /// The name of the class (or module) that owns this private symbol.
+    /// Used by the resolver to determine whether access is permitted.
+    /// `None` for public symbols (the field is irrelevant in that case).
+    pub owner_scope_name: Option<String>,
 }
 
 /// Scope information for nested scoping
@@ -369,6 +382,8 @@ impl GlobalSymbolTable {
             is_exported: false,
             is_imported: false,
             module_id: self.current_module,
+            is_private: false,
+            owner_scope_name: None,
         };
 
         self.symbols.insert(symbol_id, symbol);
@@ -483,6 +498,39 @@ impl GlobalSymbolTable {
     /// Mark a symbol as builtin
     pub fn mark_as_builtin(&mut self, symbol_id: SymbolId) {
         self.builtins.insert(symbol_id);
+    }
+
+    /// Mark a symbol as private and record the name of its owning scope
+    /// (the class name for class members, or `"<module>"` for module-level private items).
+    ///
+    /// Called by the resolver after creating a symbol that belongs to a `private:` sub-section.
+    pub fn mark_as_private(&mut self, symbol_id: SymbolId, owner_scope_name: String) {
+        if let Some(symbol) = self.symbols.get_mut(&symbol_id) {
+            symbol.is_private = true;
+            symbol.owner_scope_name = Some(owner_scope_name);
+        }
+    }
+
+    /// Return `true` if the symbol is private and the access is from outside `owner_scope_name`.
+    ///
+    /// `access_context_name` is the name of the current class or `"<module>"` for module scope.
+    /// Returns `false` (no violation) when the symbol is public or when the context matches the owner.
+    pub fn is_private_access_violation(
+        &self,
+        symbol_id: SymbolId,
+        access_context_name: &str,
+    ) -> bool {
+        if let Some(symbol) = self.symbols.get(&symbol_id) {
+            if !symbol.is_private {
+                return false;
+            }
+            match &symbol.owner_scope_name {
+                Some(owner) => owner != access_context_name,
+                None => false, // No owner stored — treat as non-private for safety.
+            }
+        } else {
+            false
+        }
     }
 
     /// Create a new module

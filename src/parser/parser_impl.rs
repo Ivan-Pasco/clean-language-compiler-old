@@ -1918,6 +1918,7 @@ fn parse_state_declaration(
         type_,
         initializer,
         guard,
+        is_private: false, // pest-based parser does not handle inline private: sections
         location,
     })
 }

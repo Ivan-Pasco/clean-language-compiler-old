@@ -3244,6 +3244,52 @@ impl<'a> TypeInference<'a> {
                     })
                     .unwrap_or(crate::resolver::symbol_table::SymbolId(0)); // SymbolId(0) for built-in methods
 
+                // SEM005: Private method access check.
+                // If the method is private, it may only be called from within the class that
+                // owns it.  We know the receiver's class (from resolved_receiver_type) and the
+                // current class (from self.current_class).  A violation is when:
+                //   - the method symbol is known (not the SymbolId(0) placeholder),
+                //   - the method is private,
+                //   - and the receiver's class differs from the currently executing class.
+                if resolved_method_symbol.0 != 0 {
+                    if let Some(method_sym) = self.symbol_table.get_symbol(resolved_method_symbol) {
+                        if method_sym.is_private {
+                            if let Some(owner) = &method_sym.owner_scope_name {
+                                // Determine the receiver's class name via its symbol.
+                                let receiver_class_name = match &resolved_receiver_type {
+                                    ConcreteType::Class { symbol_id, .. } => self
+                                        .symbol_table
+                                        .get_symbol(*symbol_id)
+                                        .map(|s| s.name.clone()),
+                                    _ => None,
+                                };
+                                // Determine the current execution class name.
+                                let current_class_name = self.current_class.and_then(|cid| {
+                                    self.symbol_table.get_symbol(cid).map(|s| s.name.clone())
+                                });
+                                // Violation: receiver class matches owner AND we're not inside that class.
+                                let inside_owner = current_class_name
+                                    .as_deref()
+                                    .map(|cn| cn == owner)
+                                    .unwrap_or(false);
+                                if !inside_owner {
+                                    if let Some(rcn) = &receiver_class_name {
+                                        if rcn == owner {
+                                            self.errors.push(CompilerError::validation_error(
+                                                &format!(
+                                                    "'{}' is private and cannot be accessed from outside '{}'",
+                                                    method, owner
+                                                ),
+                                                location.clone(),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 (
                     TastExpressionKind::MethodCall {
                         receiver: Box::new(tast_receiver),
@@ -3352,6 +3398,36 @@ impl<'a> TypeInference<'a> {
                 // This enables inherited field access - we look up the field in the object's class hierarchy
                 let (field_type, resolved_field_symbol_id) =
                     self.infer_field_type_and_symbol(&tast_object.expr_type, field)?;
+
+                // SEM005: Private field access check.
+                // A private class field may only be read/written from within the class that
+                // owns it.  resolved_field_symbol_id (when != SymbolId(0)) is the actual
+                // field symbol, which carries is_private and owner_scope_name.
+                if resolved_field_symbol_id.0 != 0 {
+                    if let Some(field_sym) = self.symbol_table.get_symbol(resolved_field_symbol_id)
+                    {
+                        if field_sym.is_private {
+                            if let Some(owner) = &field_sym.owner_scope_name {
+                                let current_class_name = self.current_class.and_then(|cid| {
+                                    self.symbol_table.get_symbol(cid).map(|s| s.name.clone())
+                                });
+                                let inside_owner = current_class_name
+                                    .as_deref()
+                                    .map(|cn| cn == owner)
+                                    .unwrap_or(false);
+                                if !inside_owner {
+                                    self.errors.push(CompilerError::validation_error(
+                                        &format!(
+                                            "'{}' is private and cannot be accessed from outside '{}'",
+                                            field, owner
+                                        ),
+                                        location.clone(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
 
                 (
                     TastExpressionKind::PropertyAccess {

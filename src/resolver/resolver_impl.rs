@@ -139,7 +139,7 @@ impl NameResolver {
                     function.location.clone(),
                 );
             } else {
-                let _symbol_id = self.symbol_table.create_symbol(
+                let symbol_id = self.symbol_table.create_symbol(
                     function.name.clone(),
                     SymbolKind::Function {
                         parameters: function
@@ -152,6 +152,11 @@ impl NameResolver {
                     self.symbol_table.current_scope_id(),
                     function.location.clone(),
                 );
+                // Propagate inline private: visibility (SEM005).
+                if function.is_private {
+                    self.symbol_table
+                        .mark_as_private(symbol_id, "<module>".to_string());
+                }
             }
         }
 
@@ -243,7 +248,7 @@ impl NameResolver {
                         state_decl.location.clone(),
                     );
                 } else {
-                    let _symbol_id = self.symbol_table.create_symbol(
+                    let symbol_id = self.symbol_table.create_symbol(
                         state_decl.name.clone(),
                         SymbolKind::StateVariable {
                             var_type: state_decl.state_type.clone(),
@@ -254,6 +259,11 @@ impl NameResolver {
                         self.symbol_table.current_scope_id(),
                         state_decl.location.clone(),
                     );
+                    // Propagate inline private: visibility (SEM005).
+                    if state_decl.is_private {
+                        self.symbol_table
+                            .mark_as_private(symbol_id, "<module>".to_string());
+                    }
                 }
             }
 
@@ -520,6 +530,11 @@ impl NameResolver {
                 class_scope,
                 field.location.clone(),
             );
+            // Propagate inline private: visibility (SEM005).
+            if field.is_private {
+                self.symbol_table
+                    .mark_as_private(field_symbol_id, class.name.clone());
+            }
 
             field_symbol_ids.push(field_symbol_id);
 
@@ -582,6 +597,11 @@ impl NameResolver {
                 class_scope,
                 method.location.clone(),
             );
+            // Propagate inline private: visibility (SEM005).
+            if method.is_private {
+                self.symbol_table
+                    .mark_as_private(method_symbol_id, class.name.clone());
+            }
 
             method_symbol_ids.push(method_symbol_id);
 
@@ -2355,6 +2375,22 @@ impl NameResolver {
     fn warning(&mut self, message: &str, location: SourceLocation) {
         self.warnings
             .push(CompilerError::validation_warning(message, location));
+    }
+
+    /// Return the name of the current access context for SEM005 checks.
+    ///
+    /// - When inside a class body, returns the class name.
+    /// - When at module scope (no current class), returns `"<module>"`.
+    ///
+    /// This value is compared against `Symbol::owner_scope_name` to decide
+    /// whether a private-symbol access is permitted.
+    fn current_class_name(&self) -> String {
+        if let Some(class_id) = self.current_class {
+            if let Some(symbol) = self.symbol_table.get_symbol(class_id) {
+                return symbol.name.clone();
+            }
+        }
+        "<module>".to_string()
     }
 
     /// Register builtin functions in the symbol table to allow validation

@@ -955,6 +955,10 @@ pub struct StateDeclaration {
     pub type_: Type,
     pub initializer: Expression,
     pub guard: Option<GuardClause>,
+    /// True when declared inside a `private:` sub-section of a `state:` block.
+    /// Private state variables may not be read or written from importing modules.
+    /// See SEM005 in foundation/spec/semantic-rules.md.
+    pub is_private: bool,
     pub location: Option<SourceLocation>,
 }
 

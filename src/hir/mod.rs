@@ -58,6 +58,9 @@ pub struct HirFunction {
     pub return_type: Option<HirType>,
     pub body: HirBlock,
     pub is_start: bool,
+    /// True when declared inside a `private:` sub-section of a `functions:` block.
+    /// Private functions may not be called from importing modules (SEM005).
+    pub is_private: bool,
     pub location: SourceLocation,
 }
 
@@ -137,6 +140,8 @@ pub struct HirField {
     pub name: String,
     pub field_type: HirType,
     pub initializer: Option<HirExpression>,
+    /// True when declared inside a `private:` sub-section of a class body (SEM005).
+    pub is_private: bool,
     pub location: SourceLocation,
 }
 
@@ -155,6 +160,8 @@ pub struct HirMethod {
     pub parameters: Vec<HirParameter>,
     pub return_type: HirType,
     pub body: HirBlock,
+    /// True when declared inside a `private:` sub-section of a class `functions:` block (SEM005).
+    pub is_private: bool,
     pub location: SourceLocation,
 }
 
@@ -202,6 +209,8 @@ pub struct HirStateDeclaration {
     pub state_type: HirType,
     pub initializer: HirExpression,
     pub guard: Option<HirGuardClause>,
+    /// True when declared inside a `private:` sub-section of a `state:` block (SEM005).
+    pub is_private: bool,
     pub location: SourceLocation,
 }
 
