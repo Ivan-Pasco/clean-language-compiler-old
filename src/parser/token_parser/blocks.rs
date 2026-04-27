@@ -2404,4 +2404,515 @@ impl TokenParser {
             default_value: None,
         })
     }
+
+    // =========================================================================
+    // VALIDATE BLOCK PARSING — Token-driven implementation
+    //
+    // Parses `validate schemaName:` top-level declarations and desugars them
+    // into `Statement::ValidateDeclaration` nodes for the HIR to lower.
+    // =========================================================================
+
+    /// Parse a top-level `validate schemaName:` block.
+    ///
+    /// ```text
+    /// validate userSchema:
+    ///     name: string required length: 1 to 50
+    ///     email: string required match: email
+    ///     age: integer required min: 13 max: 120
+    ///
+    ///     messages:
+    ///         default: "Invalid"
+    ///         email: "Bad email"
+    /// ```
+    pub(super) fn parse_validate_block(&mut self) -> Result<Statement, CompilerError> {
+        use crate::ast::{ValidateBlock, ValidateMessages};
+
+        let location = Some(self.current().location.clone());
+
+        // Consume "validate" keyword (Identifier token)
+        self.bump();
+        self.skip_whitespace();
+
+        // Schema name
+        let name_tok = self.expect_identifier()?;
+        let schema_name = name_tok.text.clone();
+
+        self.skip_whitespace();
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+        self.eat(&TokenKind::Newline);
+
+        // Parse fields (indented lines until de-indent or messages:)
+        let mut fields: Vec<crate::ast::ValidateField> = Vec::new();
+        let mut messages: Option<ValidateMessages> = None;
+
+        // Determine indentation level of the first field
+        let indent_level = if let TokenKind::Indent(level) = self.current_kind() {
+            *level
+        } else {
+            1
+        };
+
+        loop {
+            self.skip_whitespace();
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Consume indentation tokens at the start of each line
+            if let TokenKind::Indent(_) = self.current_kind() {
+                self.bump();
+                self.skip_whitespace();
+            }
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // Exit if we've de-dented below the block level
+            if let TokenKind::Dedent(level) = self.current_kind() {
+                if *level < indent_level {
+                    self.bump();
+                    break;
+                }
+                self.bump();
+                self.skip_whitespace();
+                continue;
+            }
+
+            // Check if this is the `messages:` sub-block (identifier "messages" followed by colon)
+            if let TokenKind::Identifier(name) = self.current_kind() {
+                let name_clone = name.clone();
+                if name_clone == "messages" {
+                    // Peek to check for colon
+                    if matches!(self.peek_kind(), Some(TokenKind::Colon)) {
+                        messages = Some(self.parse_validate_messages_block()?);
+                        break;
+                    }
+                }
+
+                // Otherwise parse a field declaration
+                match self.parse_validate_field() {
+                    Ok(field) => fields.push(field),
+                    Err(e) => {
+                        // Skip the bad line and continue
+                        trace!(error = ?e, "Skipping bad validate field");
+                        while !self.is_at_end()
+                            && !matches!(self.current_kind(), TokenKind::Newline)
+                        {
+                            self.bump();
+                        }
+                        self.eat(&TokenKind::Newline);
+                    }
+                }
+            } else if matches!(self.current_kind(), TokenKind::Newline) {
+                self.bump();
+            } else {
+                // Unknown token — stop parsing validate block
+                break;
+            }
+        }
+
+        Ok(Statement::ValidateDeclaration {
+            schema: ValidateBlock {
+                name: schema_name,
+                fields,
+                messages,
+            },
+            location,
+        })
+    }
+
+    /// Parse a single `fieldName: type constraint...` line inside a validate block.
+    fn parse_validate_field(&mut self) -> Result<crate::ast::ValidateField, CompilerError> {
+        use crate::ast::{ValidateConstraint, ValidateField, ValidateFieldType};
+
+        let loc = Some(self.current().location.clone());
+
+        // Field name
+        let name_tok = self.expect_identifier()?;
+        let field_name = name_tok.text.clone();
+
+        self.skip_whitespace();
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Field type keyword
+        let type_tok = self.expect_identifier()?;
+        let field_type = match type_tok.text.as_str() {
+            "string" => ValidateFieldType::String,
+            "integer" => ValidateFieldType::Integer,
+            "number" => ValidateFieldType::Number,
+            "boolean" => ValidateFieldType::Boolean,
+            other => return Err(CompilerError::parse_error(
+                format!(
+                    "unknown validate field type '{}'; expected string, integer, number, or boolean",
+                    other
+                ),
+                loc,
+                None,
+            )),
+        };
+
+        // Constraints (zero or more, inline on the same line)
+        let mut constraints: Vec<ValidateConstraint> = Vec::new();
+
+        loop {
+            self.skip_whitespace();
+
+            // Stop at end of line or end of file
+            if self.is_at_end()
+                || matches!(
+                    self.current_kind(),
+                    TokenKind::Newline | TokenKind::Dedent(_)
+                )
+            {
+                if matches!(self.current_kind(), TokenKind::Newline) {
+                    self.bump();
+                }
+                break;
+            }
+
+            // Each constraint starts with a keyword identifier
+            match self.current_kind() {
+                TokenKind::Identifier(kw) => {
+                    let kw_clone = kw.clone();
+                    match kw_clone.as_str() {
+                        "required" => {
+                            self.bump();
+                            constraints.push(ValidateConstraint::Required);
+                        }
+                        "trim" => {
+                            self.bump();
+                            constraints.push(ValidateConstraint::Trim);
+                        }
+                        "length" => {
+                            self.bump();
+                            self.skip_whitespace();
+                            self.expect(&TokenKind::Colon)?;
+                            self.skip_whitespace();
+                            let min_expr = self.parse_expression()?;
+                            self.skip_whitespace();
+                            // Consume `to` keyword
+                            match self.current_kind() {
+                                TokenKind::To | TokenKind::Identifier(_) => {
+                                    self.bump();
+                                }
+                                _ => {}
+                            }
+                            self.skip_whitespace();
+                            let max_expr = self.parse_expression()?;
+                            constraints.push(ValidateConstraint::Length {
+                                min: Box::new(min_expr),
+                                max: Box::new(max_expr),
+                            });
+                        }
+                        "min" => {
+                            self.bump();
+                            self.skip_whitespace();
+                            self.expect(&TokenKind::Colon)?;
+                            self.skip_whitespace();
+                            let expr = self.parse_expression()?;
+                            constraints.push(ValidateConstraint::Min(Box::new(expr)));
+                        }
+                        "max" => {
+                            self.bump();
+                            self.skip_whitespace();
+                            self.expect(&TokenKind::Colon)?;
+                            self.skip_whitespace();
+                            let expr = self.parse_expression()?;
+                            constraints.push(ValidateConstraint::Max(Box::new(expr)));
+                        }
+                        "match" => {
+                            self.bump();
+                            self.skip_whitespace();
+                            self.expect(&TokenKind::Colon)?;
+                            self.skip_whitespace();
+                            let pattern_tok = self.expect_identifier()?;
+                            constraints.push(ValidateConstraint::Match(pattern_tok.text.clone()));
+                        }
+                        "oneOf" => {
+                            self.bump();
+                            self.skip_whitespace();
+                            self.expect(&TokenKind::Colon)?;
+                            self.skip_whitespace();
+                            let mut values = Vec::new();
+                            loop {
+                                self.skip_whitespace();
+                                let val_expr = self.parse_expression()?;
+                                values.push(val_expr);
+                                self.skip_whitespace();
+                                if self.eat(&TokenKind::Comma) {
+                                    // continue to next value
+                                } else {
+                                    break;
+                                }
+                            }
+                            constraints.push(ValidateConstraint::OneOf(values));
+                        }
+                        "custom" => {
+                            self.bump();
+                            self.skip_whitespace();
+                            self.expect(&TokenKind::Colon)?;
+                            self.skip_whitespace();
+                            let fn_tok = self.expect_identifier()?;
+                            constraints.push(ValidateConstraint::Custom(fn_tok.text.clone()));
+                        }
+                        _ => {
+                            // Unknown constraint keyword — stop processing constraints on this line
+                            break;
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        Ok(ValidateField {
+            name: field_name,
+            field_type,
+            constraints,
+        })
+    }
+
+    /// Parse the `messages:` sub-block inside a validate block.
+    ///
+    /// ```text
+    ///     messages:
+    ///         default: "Invalid"
+    ///         email: "Bad email"
+    /// ```
+    fn parse_validate_messages_block(
+        &mut self,
+    ) -> Result<crate::ast::ValidateMessages, CompilerError> {
+        use crate::ast::ValidateMessages;
+
+        // Consume "messages"
+        self.bump();
+        self.skip_whitespace();
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+        self.eat(&TokenKind::Newline);
+
+        let mut default_message: Option<String> = None;
+        let mut field_messages: Vec<(String, String)> = Vec::new();
+
+        // Determine indentation level of the message entries
+        let indent_level = if let TokenKind::Indent(level) = self.current_kind() {
+            *level
+        } else {
+            2
+        };
+
+        loop {
+            self.skip_whitespace();
+            if self.is_at_end() {
+                break;
+            }
+
+            // Consume indentation tokens at the start of each message line
+            if let TokenKind::Indent(_) = self.current_kind() {
+                self.bump();
+                self.skip_whitespace();
+            }
+
+            if self.is_at_end() {
+                break;
+            }
+
+            if let TokenKind::Dedent(level) = self.current_kind() {
+                if *level < indent_level {
+                    self.bump();
+                    break;
+                }
+                self.bump();
+                self.skip_whitespace();
+                continue;
+            }
+
+            if matches!(self.current_kind(), TokenKind::Newline) {
+                self.bump();
+                continue;
+            }
+
+            // Key: either "default" or an identifier
+            let key = match self.current_kind() {
+                TokenKind::Identifier(k) => k.clone(),
+                // "default" might also tokenize as Identifier
+                _ => break,
+            };
+            self.bump();
+            self.skip_whitespace();
+            self.expect(&TokenKind::Colon)?;
+            self.skip_whitespace();
+
+            // Value: string literal
+            let msg_text = match self.current_kind() {
+                TokenKind::StringLiteral(s) => {
+                    let text = s.clone();
+                    self.bump();
+                    text
+                }
+                _ => {
+                    let loc = Some(self.current().location.clone());
+                    return Err(CompilerError::parse_error(
+                        format!(
+                            "expected string literal for validate message '{}': key",
+                            key
+                        ),
+                        loc,
+                        None,
+                    ));
+                }
+            };
+
+            self.skip_whitespace();
+            self.eat(&TokenKind::Newline);
+
+            if key == "default" {
+                default_message = Some(msg_text);
+            } else {
+                field_messages.push((key, msg_text));
+            }
+        }
+
+        Ok(ValidateMessages {
+            default_message,
+            field_messages,
+        })
+    }
+
+    /// Parse a `schemaName.check expr:` statement inside a function body.
+    ///
+    /// ```text
+    /// userSchema.check formData:
+    ///     ok: print "valid"
+    ///     error: print errors[0]
+    /// ```
+    ///
+    /// Called from statement parsing when `identifier ~ "." ~ Identifier("check")` is detected.
+    pub(super) fn parse_validate_check_stmt(
+        &mut self,
+        schema_name: String,
+        location: crate::ast::SourceLocation,
+    ) -> Result<Statement, CompilerError> {
+        use crate::ast::ValidateCheckBlock;
+
+        // "check" has already been identified as the next identifier after ".".
+        // Consume the "check" identifier.
+        self.bump();
+        self.skip_whitespace();
+
+        // Parse the input expression (everything up to the colon)
+        let input = self.parse_expression()?;
+        self.skip_whitespace();
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+        self.eat(&TokenKind::Newline);
+
+        // Parse the ok: branch
+        let ok_branch = self.parse_validate_check_branch("ok")?;
+
+        // Parse the error: branch
+        let error_branch = self.parse_validate_check_branch("error")?;
+
+        Ok(Statement::ValidateCheck {
+            check: ValidateCheckBlock {
+                schema_name,
+                input: Box::new(input),
+                ok_branch,
+                error_branch,
+            },
+            location: Some(location),
+        })
+    }
+
+    /// Parse a single labelled branch (`ok:` or `error:`) inside a `.check` block.
+    ///
+    /// Supports both inline style:  `ok: print "valid"`
+    /// and block style:
+    ///   ```text
+    ///   ok:
+    ///       print "valid"
+    ///       print "done"
+    ///   ```
+    fn parse_validate_check_branch(
+        &mut self,
+        branch_name: &str,
+    ) -> Result<Vec<Statement>, CompilerError> {
+        // Consume indentation before the branch label
+        self.skip_whitespace();
+        while let TokenKind::Indent(_) = self.current_kind() {
+            self.bump();
+            self.skip_whitespace();
+        }
+
+        // Expect the branch label identifier ("ok" or "error").
+        // "error" lexes as TokenKind::Error (a keyword), so accept both Identifier and Error tokens.
+        let label_tok = match self.current_kind() {
+            TokenKind::Identifier(_) => self.bump(),
+            TokenKind::Error => self.bump(),
+            _ => {
+                let token = self.current();
+                return Err(CompilerError::parse_error(
+                    format!(
+                        "expected '{}:' in validate check block, found {:?}",
+                        branch_name, token.kind
+                    ),
+                    Some(token.location.clone()),
+                    None,
+                ));
+            }
+        };
+        // Normalise the text for the Error keyword token
+        let label_text = match &label_tok.kind {
+            TokenKind::Error => "error".to_string(),
+            _ => label_tok.text.clone(),
+        };
+        if label_text != branch_name {
+            return Err(CompilerError::parse_error(
+                format!(
+                    "expected '{}:' in validate check block, found '{}'",
+                    branch_name, label_text
+                ),
+                Some(label_tok.location.clone()),
+                None,
+            ));
+        }
+        self.skip_whitespace();
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        let mut body: Vec<Statement> = Vec::new();
+
+        // If the next token is a Newline, this is a block-style branch (body on subsequent lines)
+        if matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump(); // consume the newline
+            body = self.parse_block()?;
+        } else {
+            // Inline style: parse statements until end of line
+            while !self.is_at_end()
+                && !matches!(
+                    self.current_kind(),
+                    TokenKind::Newline | TokenKind::Indent(_) | TokenKind::Dedent(_)
+                )
+            {
+                match self.parse_statement() {
+                    Ok(stmt) => body.push(stmt),
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
+                self.skip_whitespace();
+                // If we hit a newline after the inline statement, consume it and stop
+                if matches!(self.current_kind(), TokenKind::Newline) {
+                    self.bump();
+                    break;
+                }
+            }
+        }
+
+        Ok(body)
+    }
 }

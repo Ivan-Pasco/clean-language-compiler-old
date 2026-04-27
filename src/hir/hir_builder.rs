@@ -9,7 +9,7 @@
 use crate::ast::SourceLocation;
 use crate::ast::{
     AssignmentTarget, BinaryOperator, Class, Constructor, Expression, Function, Parameter, Program,
-    Statement, Type, UnaryOperator, Value,
+    Statement, Type, UnaryOperator, ValidateConstraint, Value,
 };
 use crate::error::CompilerError;
 use crate::hir::*;
@@ -426,6 +426,9 @@ impl HirBuilder {
         let mut start_function = None;
         let mut imports = Vec::new();
         let tests = Vec::new();
+        // Top-level `validate name:` blocks are desugared into HIR statements that must be
+        // prepended to the start function's body (schemas are initialized before first use).
+        let mut validate_preamble: Vec<HirStatement> = Vec::new();
 
         // Process top-level statements
         for statement in &program.statements {
@@ -475,6 +478,14 @@ impl HirBuilder {
                             location: SourceLocation::default(),
                         });
                     }
+                }
+                Statement::ValidateDeclaration { schema, location } => {
+                    // Top-level `validate name:` blocks desugar into validator.* builder calls.
+                    // These are prepended to the start function's body so that the schema
+                    // variable is in scope when `.check` is used later in start:.
+                    let loc = location.clone().unwrap_or_default();
+                    let mut expanded = self.desugar_validate_declaration(schema, &loc)?;
+                    validate_preamble.append(&mut expanded);
                 }
                 _ => {
                     // Handle other top-level statements if needed
@@ -539,6 +550,16 @@ impl HirBuilder {
             .iter()
             .map(|ext| self.build_external_function(ext))
             .collect::<Result<Vec<_>, _>>()?;
+
+        // Prepend top-level validate schema initializations to the start function body.
+        // This ensures schema variables are declared and initialized before any `.check` usage.
+        if !validate_preamble.is_empty() {
+            if let Some(ref mut start_fn) = start_function {
+                let mut new_stmts = validate_preamble;
+                new_stmts.append(&mut start_fn.body.statements);
+                start_fn.body.statements = new_stmts;
+            }
+        }
 
         let hir_program = HirProgram {
             functions,
@@ -915,6 +936,17 @@ impl HirBuilder {
                         location: location.clone().unwrap_or_default(),
                     });
                 }
+            } else if let Statement::ValidateDeclaration { schema, location } = stmt {
+                // Desugar `validate name:` into a sequence of validator.* calls that build
+                // the ValidationRules object and store it as a local variable.
+                let loc = location.clone().unwrap_or_default();
+                let mut expanded = self.desugar_validate_declaration(schema, &loc)?;
+                hir_statements.append(&mut expanded);
+            } else if let Statement::ValidateCheck { check, location } = stmt {
+                // Desugar `schemaName.check expr:` into a validator.run + isOk branch.
+                let loc = location.clone().unwrap_or_default();
+                let mut expanded = self.desugar_validate_check(check, &loc)?;
+                hir_statements.append(&mut expanded);
             } else {
                 // Regular statement processing
                 hir_statements.push(self.build_statement(stmt)?);
@@ -1821,6 +1853,477 @@ impl HirBuilder {
             body,
             location: watch.location.clone().unwrap_or_default(),
         })
+    }
+
+    // =========================================================================
+    // Validate block desugaring
+    //
+    // `validate name:` is syntactic sugar for a sequence of `validator.*` calls
+    // that build up a ValidationRules object. We desugar directly in the HIR
+    // builder so that the rest of the pipeline sees only ordinary Call nodes.
+    //
+    // The desugaring for a schema named `foo` with two fields looks like:
+    //
+    //   foo = validator.createWithName("foo")
+    //   foo = validator.field(foo, "name")
+    //   foo = validator.required(foo, 1)
+    //   foo = validator.minLength(foo, 1)
+    //   foo = validator.maxLength(foo, 50)
+    //   foo = validator.field(foo, "email")
+    //   foo = validator.required(foo, 1)
+    //   foo = validator.match(foo, "email")
+    //   foo = validator.message(foo, "Please enter a valid email address")
+    //   foo = validator.message(foo, "Please check this field")   // default
+    //
+    // `schemaName.check expr:` desugars to:
+    //
+    //   __result = validator.run(schemaName, expr)
+    //   if validator.isOk(__result):
+    //       value = validator.getValue(__result)
+    //       <ok_branch>
+    //   else:
+    //       errors = validator.getErrors(__result)
+    //       <error_branch>
+    // =========================================================================
+
+    /// Desugar a `validate name:` block into a list of HIR statements.
+    fn desugar_validate_declaration(
+        &mut self,
+        schema: &crate::ast::ValidateBlock,
+        loc: &SourceLocation,
+    ) -> Result<Vec<HirStatement>, CompilerError> {
+        let mut stmts: Vec<HirStatement> = Vec::new();
+        let schema_name = schema.name.clone();
+
+        // Helper: emit `schemaName = expr` as a VariableDeclaration (first time) or Assignment.
+        // We use VariableDeclaration for the first statement and assignments for subsequent ones.
+        // Since HIR doesn't distinguish "first use", we use VariableDeclaration with `is_mutable: true`
+        // for the create call and Assignment for all subsequent calls that update the same variable.
+
+        // --- Step 1: validator.createWithName(schema_name) ---
+        let create_call = HirExpression::Call {
+            function: "validator.createWithName".to_string(),
+            arguments: vec![HirExpression::Literal {
+                value: Value::String(schema_name.clone()),
+                location: loc.clone(),
+            }],
+            location: loc.clone(),
+        };
+        stmts.push(HirStatement::VariableDeclaration {
+            name: schema_name.clone(),
+            var_type: HirType::Integer, // rules pointer is i32
+            initializer: Some(create_call),
+            is_mutable: true,
+            location: loc.clone(),
+        });
+
+        // --- Step 2: for each field, emit field + constraint calls ---
+        let assign_schema = |expr: HirExpression| -> HirStatement {
+            HirStatement::Assignment {
+                target: HirLValue::Variable {
+                    name: schema_name.clone(),
+                    location: loc.clone(),
+                },
+                value: expr,
+                location: loc.clone(),
+            }
+        };
+
+        for field in &schema.fields {
+            // validator.field(schema, "fieldName")
+            let field_call = HirExpression::Call {
+                function: "validator.field".to_string(),
+                arguments: vec![
+                    HirExpression::Variable {
+                        name: schema_name.clone(),
+                        location: loc.clone(),
+                    },
+                    HirExpression::Literal {
+                        value: Value::String(field.name.clone()),
+                        location: loc.clone(),
+                    },
+                ],
+                location: loc.clone(),
+            };
+            stmts.push(assign_schema(field_call));
+
+            // validator.type(schema, "typeName") — set the field's expected type name
+            let type_name = match field.field_type {
+                crate::ast::ValidateFieldType::String => "string",
+                crate::ast::ValidateFieldType::Integer => "integer",
+                crate::ast::ValidateFieldType::Number => "number",
+                crate::ast::ValidateFieldType::Boolean => "boolean",
+            };
+            let type_call = HirExpression::Call {
+                function: "validator.type".to_string(),
+                arguments: vec![
+                    HirExpression::Variable {
+                        name: schema_name.clone(),
+                        location: loc.clone(),
+                    },
+                    HirExpression::Literal {
+                        value: Value::String(type_name.to_string()),
+                        location: loc.clone(),
+                    },
+                ],
+                location: loc.clone(),
+            };
+            stmts.push(assign_schema(type_call));
+
+            // Each constraint
+            for constraint in &field.constraints {
+                let constraint_call = match constraint {
+                    ValidateConstraint::Required => HirExpression::Call {
+                        function: "validator.required".to_string(),
+                        arguments: vec![
+                            HirExpression::Variable {
+                                name: schema_name.clone(),
+                                location: loc.clone(),
+                            },
+                            HirExpression::Literal {
+                                value: Value::Integer(1),
+                                location: loc.clone(),
+                            },
+                        ],
+                        location: loc.clone(),
+                    },
+                    ValidateConstraint::Trim => HirExpression::Call {
+                        function: "validator.trim".to_string(),
+                        arguments: vec![HirExpression::Variable {
+                            name: schema_name.clone(),
+                            location: loc.clone(),
+                        }],
+                        location: loc.clone(),
+                    },
+                    ValidateConstraint::Length { min, max } => {
+                        // Emit minLength and maxLength as two separate calls.
+                        let min_hir = self.build_expression(min)?;
+                        let max_hir = self.build_expression(max)?;
+                        // First emit minLength
+                        let min_call = HirExpression::Call {
+                            function: "validator.minLength".to_string(),
+                            arguments: vec![
+                                HirExpression::Variable {
+                                    name: schema_name.clone(),
+                                    location: loc.clone(),
+                                },
+                                min_hir,
+                            ],
+                            location: loc.clone(),
+                        };
+                        stmts.push(assign_schema(min_call));
+                        // Then emit maxLength (we'll emit via the regular path below)
+                        HirExpression::Call {
+                            function: "validator.maxLength".to_string(),
+                            arguments: vec![
+                                HirExpression::Variable {
+                                    name: schema_name.clone(),
+                                    location: loc.clone(),
+                                },
+                                max_hir,
+                            ],
+                            location: loc.clone(),
+                        }
+                    }
+                    ValidateConstraint::Min(expr) => {
+                        let hir_expr = self.build_expression(expr)?;
+                        HirExpression::Call {
+                            function: "validator.range".to_string(),
+                            arguments: vec![
+                                HirExpression::Variable {
+                                    name: schema_name.clone(),
+                                    location: loc.clone(),
+                                },
+                                hir_expr,
+                                HirExpression::Literal {
+                                    value: Value::Integer(i64::MAX),
+                                    location: loc.clone(),
+                                },
+                            ],
+                            location: loc.clone(),
+                        }
+                    }
+                    ValidateConstraint::Max(expr) => {
+                        let hir_expr = self.build_expression(expr)?;
+                        HirExpression::Call {
+                            function: "validator.range".to_string(),
+                            arguments: vec![
+                                HirExpression::Variable {
+                                    name: schema_name.clone(),
+                                    location: loc.clone(),
+                                },
+                                HirExpression::Literal {
+                                    value: Value::Integer(i64::MIN),
+                                    location: loc.clone(),
+                                },
+                                hir_expr,
+                            ],
+                            location: loc.clone(),
+                        }
+                    }
+                    ValidateConstraint::Match(pattern) => HirExpression::Call {
+                        function: "validator.match".to_string(),
+                        arguments: vec![
+                            HirExpression::Variable {
+                                name: schema_name.clone(),
+                                location: loc.clone(),
+                            },
+                            HirExpression::Literal {
+                                value: Value::String(pattern.clone()),
+                                location: loc.clone(),
+                            },
+                        ],
+                        location: loc.clone(),
+                    },
+                    ValidateConstraint::OneOf(values) => {
+                        // Build a list literal expression containing the oneOf values
+                        let hir_values: Result<Vec<HirExpression>, CompilerError> =
+                            values.iter().map(|v| self.build_expression(v)).collect();
+                        let hir_values = hir_values?;
+                        let list_expr = HirExpression::Array {
+                            elements: hir_values,
+                            element_type: HirType::String, // oneOf values are strings or integers; treat as Any
+                            location: loc.clone(),
+                        };
+                        HirExpression::Call {
+                            function: "validator.allowedValues".to_string(),
+                            arguments: vec![
+                                HirExpression::Variable {
+                                    name: schema_name.clone(),
+                                    location: loc.clone(),
+                                },
+                                list_expr,
+                            ],
+                            location: loc.clone(),
+                        }
+                    }
+                    ValidateConstraint::Custom(fn_name) => HirExpression::Call {
+                        function: "validator.custom".to_string(),
+                        arguments: vec![
+                            HirExpression::Variable {
+                                name: schema_name.clone(),
+                                location: loc.clone(),
+                            },
+                            HirExpression::Variable {
+                                name: fn_name.clone(),
+                                location: loc.clone(),
+                            },
+                        ],
+                        location: loc.clone(),
+                    },
+                };
+                stmts.push(assign_schema(constraint_call));
+            }
+        }
+
+        // --- Step 3: messages ---
+        if let Some(messages) = &schema.messages {
+            // Emit per-field message overrides first
+            for (field_name, msg_text) in &messages.field_messages {
+                // To set a per-field message we need to:
+                // 1. Re-select the field: validator.field(schema, fieldName) updates the "current field" pointer
+                // 2. Call validator.message(schema, "text")
+                let re_field_call = HirExpression::Call {
+                    function: "validator.field".to_string(),
+                    arguments: vec![
+                        HirExpression::Variable {
+                            name: schema_name.clone(),
+                            location: loc.clone(),
+                        },
+                        HirExpression::Literal {
+                            value: Value::String(field_name.clone()),
+                            location: loc.clone(),
+                        },
+                    ],
+                    location: loc.clone(),
+                };
+                stmts.push(assign_schema(re_field_call));
+
+                let msg_call = HirExpression::Call {
+                    function: "validator.message".to_string(),
+                    arguments: vec![
+                        HirExpression::Variable {
+                            name: schema_name.clone(),
+                            location: loc.clone(),
+                        },
+                        HirExpression::Literal {
+                            value: Value::String(msg_text.clone()),
+                            location: loc.clone(),
+                        },
+                    ],
+                    location: loc.clone(),
+                };
+                stmts.push(assign_schema(msg_call));
+            }
+
+            // Emit default message if present.
+            // `validator.message` on the schema level (without a preceding `validator.field`)
+            // is treated as the default. We use `validator.createWithName` already set the name,
+            // so we call `validator.message` with a special "default" field sentinel handled
+            // by the runtime, or we use `validator.field("__default__")` + `validator.message`.
+            // The validator runtime's `message` call applies the message to the *last active field*
+            // in the current call chain. There is no dedicated "set default" call in the runtime.
+            // We emit `validator.field(schema, "__default__") + validator.message(schema, text)`
+            // and the runtime silently ignores the unknown "__default__" field name when setting
+            // the message, storing it as the schema-level default.
+            // Alternatively, we add a dedicated `validator.defaultMessage` call.
+            // Looking at the runtime more carefully (generate_validator_message):
+            // the runtime stores message per-field in the field_entry. For a true default we
+            // need to store it separately. We'll use the approach of adding a field entry named
+            // "" (empty string) which the runtime won't find for any real field, and rely on
+            // the runtime's fallback logic.
+            // The simplest correct approach: just call validator.message with the schema ptr
+            // directly — the last field in the schema will receive it. Instead, we emit
+            // a dedicated "default" message by calling validator.field("") then validator.message.
+            if let Some(default_msg) = &messages.default_message {
+                // Use an empty field name as sentinel for the default message.
+                // The validator runtime stores this per-field; if none of the real fields
+                // have a message set, the runtime returns this as the fallback.
+                let default_field_call = HirExpression::Call {
+                    function: "validator.field".to_string(),
+                    arguments: vec![
+                        HirExpression::Variable {
+                            name: schema_name.clone(),
+                            location: loc.clone(),
+                        },
+                        HirExpression::Literal {
+                            value: Value::String(String::new()),
+                            location: loc.clone(),
+                        },
+                    ],
+                    location: loc.clone(),
+                };
+                stmts.push(assign_schema(default_field_call));
+
+                let default_msg_call = HirExpression::Call {
+                    function: "validator.message".to_string(),
+                    arguments: vec![
+                        HirExpression::Variable {
+                            name: schema_name.clone(),
+                            location: loc.clone(),
+                        },
+                        HirExpression::Literal {
+                            value: Value::String(default_msg.clone()),
+                            location: loc.clone(),
+                        },
+                    ],
+                    location: loc.clone(),
+                };
+                stmts.push(assign_schema(default_msg_call));
+            }
+        }
+
+        Ok(stmts)
+    }
+
+    /// Desugar a `schemaName.check expr:` block into a list of HIR statements.
+    fn desugar_validate_check(
+        &mut self,
+        check: &crate::ast::ValidateCheckBlock,
+        loc: &SourceLocation,
+    ) -> Result<Vec<HirStatement>, CompilerError> {
+        let schema_name = &check.schema_name;
+
+        // Internal temporary name for the ValidationResult pointer.
+        // Use a mangled name to avoid shadowing user variables.
+        let result_var = format!("__validate_result_{}__", schema_name);
+
+        // 1. __validate_result_foo__ = validator.run(foo, inputExpr)
+        let input_hir = self.build_expression(&check.input)?;
+        let run_call = HirExpression::Call {
+            function: "validator.run".to_string(),
+            arguments: vec![
+                HirExpression::Variable {
+                    name: schema_name.clone(),
+                    location: loc.clone(),
+                },
+                input_hir,
+            ],
+            location: loc.clone(),
+        };
+        let result_decl = HirStatement::VariableDeclaration {
+            name: result_var.clone(),
+            var_type: HirType::Integer, // ValidationResult pointer is i32
+            initializer: Some(run_call),
+            is_mutable: false,
+            location: loc.clone(),
+        };
+
+        // 2. if validator.isOk(__validate_result_foo__):
+        //        value = validator.getValue(__validate_result_foo__)
+        //        <ok_branch>
+        //    else:
+        //        errors = validator.getErrors(__validate_result_foo__)
+        //        <error_branch>
+
+        // is_ok condition
+        let is_ok_cond = HirExpression::Call {
+            function: "validator.isOk".to_string(),
+            arguments: vec![HirExpression::Variable {
+                name: result_var.clone(),
+                location: loc.clone(),
+            }],
+            location: loc.clone(),
+        };
+
+        // ok branch: bind `value` then run ok statements
+        let get_value_call = HirExpression::Call {
+            function: "validator.getValue".to_string(),
+            arguments: vec![HirExpression::Variable {
+                name: result_var.clone(),
+                location: loc.clone(),
+            }],
+            location: loc.clone(),
+        };
+        let value_decl = HirStatement::VariableDeclaration {
+            name: "value".to_string(),
+            var_type: HirType::Any,
+            initializer: Some(get_value_call),
+            is_mutable: false,
+            location: loc.clone(),
+        };
+        let mut ok_hir_stmts = vec![value_decl];
+        for stmt in &check.ok_branch {
+            ok_hir_stmts.push(self.build_statement(stmt)?);
+        }
+        let ok_block = HirBlock {
+            statements: ok_hir_stmts,
+            location: loc.clone(),
+        };
+
+        // error branch: bind `errors` then run error statements
+        let get_errors_call = HirExpression::Call {
+            function: "validator.getErrors".to_string(),
+            arguments: vec![HirExpression::Variable {
+                name: result_var.clone(),
+                location: loc.clone(),
+            }],
+            location: loc.clone(),
+        };
+        let errors_decl = HirStatement::VariableDeclaration {
+            name: "errors".to_string(),
+            var_type: HirType::List(Box::new(HirType::String)),
+            initializer: Some(get_errors_call),
+            is_mutable: false,
+            location: loc.clone(),
+        };
+        let mut error_hir_stmts = vec![errors_decl];
+        for stmt in &check.error_branch {
+            error_hir_stmts.push(self.build_statement(stmt)?);
+        }
+        let error_block = HirBlock {
+            statements: error_hir_stmts,
+            location: loc.clone(),
+        };
+
+        let if_stmt = HirStatement::If {
+            condition: is_ok_cond,
+            then_branch: ok_block,
+            else_branch: Some(error_block),
+            location: loc.clone(),
+        };
+
+        Ok(vec![result_decl, if_stmt])
     }
 }
 

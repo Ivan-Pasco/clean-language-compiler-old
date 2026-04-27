@@ -975,6 +975,92 @@ impl GlobalSymbolTable {
                 vec![HirType::String, HirType::Integer],
                 HirType::Integer,
             ),
+            // Validator namespace functions
+            ("validator.create", vec![], HirType::Integer),
+            (
+                "validator.createWithName",
+                vec![HirType::String],
+                HirType::Integer,
+            ),
+            (
+                "validator.run",
+                vec![HirType::Integer, HirType::Integer],
+                HirType::Integer,
+            ),
+            (
+                "validator.runField",
+                vec![HirType::Integer, HirType::String, HirType::Any],
+                HirType::Integer,
+            ),
+            (
+                "validator.validate",
+                vec![HirType::Integer, HirType::Integer],
+                HirType::Integer,
+            ),
+            ("validator.ok", vec![HirType::Integer], HirType::Integer),
+            ("validator.error", vec![HirType::Integer], HirType::Integer),
+            ("validator.isOk", vec![HirType::Integer], HirType::Boolean),
+            (
+                "validator.isError",
+                vec![HirType::Integer],
+                HirType::Boolean,
+            ),
+            ("validator.getValue", vec![HirType::Integer], HirType::Any),
+            (
+                "validator.getErrors",
+                vec![HirType::Integer],
+                HirType::List(Box::new(HirType::String)),
+            ),
+            (
+                "validator.getFirstError",
+                vec![HirType::Integer],
+                HirType::String,
+            ),
+            (
+                "validator.field",
+                vec![HirType::Integer, HirType::String, HirType::String],
+                HirType::Integer,
+            ),
+            (
+                "validator.required",
+                vec![HirType::Integer],
+                HirType::Integer,
+            ),
+            (
+                "validator.optional",
+                vec![HirType::Integer],
+                HirType::Integer,
+            ),
+            (
+                "validator.match",
+                vec![HirType::Integer, HirType::String],
+                HirType::Integer,
+            ),
+            (
+                "validator.range",
+                vec![HirType::Integer, HirType::Number, HirType::Number],
+                HirType::Integer,
+            ),
+            (
+                "validator.minLength",
+                vec![HirType::Integer, HirType::Integer],
+                HirType::Integer,
+            ),
+            (
+                "validator.maxLength",
+                vec![HirType::Integer, HirType::Integer],
+                HirType::Integer,
+            ),
+            (
+                "validator.custom",
+                vec![HirType::Integer, HirType::Integer],
+                HirType::Integer,
+            ),
+            (
+                "validator.message",
+                vec![HirType::Integer, HirType::String],
+                HirType::Integer,
+            ),
         ];
 
         for (name, params, return_type) in namespace_functions {

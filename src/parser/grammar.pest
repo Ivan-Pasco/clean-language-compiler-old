@@ -804,6 +804,95 @@ external_return_type = {
 // Always checked at runtime (cannot be disabled)
 require_stmt = { "require" ~ WHITESPACE+ ~ expression }
 
+// ============================================================================
+// VALIDATE BLOCK — Named, immutable validation schema declaration
+// validate name:
+//     fieldName: type constraint constraint ...
+//     messages:
+//         fieldName: "message"
+//         default: "message"
+// ============================================================================
+
+// Top-level validate block declaration
+validate_block = {
+    "validate" ~ WHITESPACE+ ~ identifier ~ ":" ~ NEWLINE
+    ~ validate_fields
+    ~ validate_messages_block?
+}
+
+// One or more field declarations, each on its own indented line
+validate_fields = {
+    (INDENT+ ~ validate_field_declaration ~ NEWLINE? ~ (empty_line)*)+
+}
+
+// fieldName: type [constraint ...]
+validate_field_declaration = {
+    identifier ~ ":" ~ WHITESPACE* ~ validate_field_type
+    ~ (WHITESPACE+ ~ validate_constraint)*
+}
+
+// Supported field types
+validate_field_type = { "string" | "integer" | "number" | "boolean" }
+
+// A single constraint (order-independent, zero or more per field)
+validate_constraint = {
+    validate_length |
+    validate_min |
+    validate_max |
+    validate_match |
+    validate_one_of |
+    validate_custom |
+    validate_required |
+    validate_trim
+}
+
+// Bare keyword flags
+validate_required     = { "required" ~ !(ASCII_ALPHANUMERIC | "_") }
+validate_trim         = { "trim" ~ !(ASCII_ALPHANUMERIC | "_") }
+
+// Bounded constraints with expressions
+validate_length       = { "length" ~ ":" ~ WHITESPACE* ~ single_line_expression ~ WHITESPACE* ~ "to" ~ WHITESPACE* ~ single_line_expression }
+validate_min          = { "min" ~ ":" ~ WHITESPACE* ~ single_line_expression }
+validate_max          = { "max" ~ ":" ~ WHITESPACE* ~ single_line_expression }
+
+// Pattern matching constraint
+validate_match        = { "match" ~ ":" ~ WHITESPACE* ~ validate_pattern_name }
+validate_pattern_name = @{ "email" | "url" | "uuid" | "slug" | "numeric" | "alpha" | "phone" | "date" | identifier }
+
+// Allowed-values constraint (oneOf: "a", "b", 1, 2)
+validate_one_of       = { "oneOf" ~ ":" ~ WHITESPACE* ~ validate_one_of_value ~ (WHITESPACE* ~ "," ~ WHITESPACE* ~ validate_one_of_value)* }
+validate_one_of_value = { string | decimal_integer }
+
+// Custom validator function name
+validate_custom       = { "custom" ~ ":" ~ WHITESPACE* ~ identifier }
+
+// Optional messages sub-block (after a blank line inside the validate block)
+validate_messages_block = {
+    (empty_line)*
+    ~ INDENT+ ~ "messages" ~ ":" ~ NEWLINE
+    ~ validate_message_entry+
+}
+
+// A single message entry: fieldName: "text"  OR  default: "text"
+validate_message_entry = {
+    INDENT+ ~ validate_message_key ~ ":" ~ WHITESPACE* ~ string ~ NEWLINE?
+}
+validate_message_key = { "default" | identifier }
+
+// .check statement — runs a schema against a value inside start: / function bodies
+// schemaName.check inputExpr:
+//     ok: statements
+//     error: statements
+validate_check_stmt = {
+    identifier ~ "." ~ "check" ~ WHITESPACE+ ~ expression ~ ":" ~ NEWLINE
+    ~ INDENT+ ~ "ok" ~ ":" ~ simple_indented_block
+    ~ NEWLINE? ~ (empty_line)* ~ INDENT+ ~ "error" ~ ":" ~ simple_indented_block
+}
+
+// ============================================================================
+// END VALIDATE BLOCK
+// ============================================================================
+
 // Update statements to include async features, imports, and state management
 // Critical fix: Add function_call before expression to prevent parameter parsing confusion
 // Method calls must come before assignment to avoid grammar ambiguity with property_access
@@ -817,6 +906,7 @@ statement = {
     standalone_on_error |
     on_error_block |
     reset_stmt |
+    validate_check_stmt |
     function_call |
     method_call |
     assignment |
@@ -840,7 +930,7 @@ statement = {
 // Program with proper newline handling
 // State management blocks: state_block (app-level), watch_block (top-level observers), screen_block (UI screens)
 // External blocks: external_block for WASM host-provided functions
-program_item = { import_block | import_stmt | private_block | external_block | state_block | watch_block | screen_block | framework_block | start_block | functions_block | tests_block | class_decl | apply_block }
+program_item = { import_block | import_stmt | private_block | external_block | state_block | watch_block | screen_block | framework_block | validate_block | start_block | functions_block | tests_block | class_decl | apply_block }
 program = { SOI ~ (empty_line)* ~ (program_item ~ (empty_line)*)* ~ EOI }
 
 // Start block - the entry point of a Clean Language program

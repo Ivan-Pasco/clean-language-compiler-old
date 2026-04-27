@@ -329,6 +329,17 @@ impl TokenParser {
                         continue;
                     }
 
+                    // "validate schemaName:" is a named validation schema declaration.
+                    // Pattern: Identifier("validate") ~ Identifier(name) ~ Colon ~ NEWLINE ~ fields
+                    if name == "validate" {
+                        debug!("Parsing validate: block");
+                        match self.parse_validate_block() {
+                            Ok(stmt) => statements.push(stmt),
+                            Err(e) => self.errors.push(e),
+                        }
+                        continue;
+                    }
+
                     // Check if this is a plugin keyword (e.g., "data" from frame.data plugin)
                     let is_plugin_keyword = self.plugin_keywords.contains(name);
 

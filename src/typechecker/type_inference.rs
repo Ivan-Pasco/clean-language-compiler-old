@@ -873,6 +873,7 @@ impl<'a> TypeInference<'a> {
         }
 
         // validator.getErrors - gets errors from failed result
+        // Returns a list<string> pointer (matches resolver registration and HIR desugaring)
         if let Some(symbol_id) = self
             .symbol_table
             .lookup_symbol_in_scope("validator.getErrors", crate::resolver::ScopeId(0))
@@ -881,7 +882,7 @@ impl<'a> TypeInference<'a> {
                 symbol_id,
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::Integer], // ValidationResult pointer
-                    return_type: Box::new(ConcreteType::Integer), // Returns errors list pointer
+                    return_type: Box::new(ConcreteType::Array(Box::new(ConcreteType::String))), // Returns list<string>
                     is_background: false,
                 },
             );

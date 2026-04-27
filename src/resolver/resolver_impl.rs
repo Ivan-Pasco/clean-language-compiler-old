@@ -2853,18 +2853,126 @@ impl NameResolver {
             builtin_location.clone(),
         );
 
-        // validator.getValue(result: Integer) -> Integer
+        // validator.getValue(result: Integer) -> Any (the validated input data)
         self.register_builtin_fn(
             "validator.getValue",
+            vec![HirType::Integer],
+            Some(HirType::Any),
+            builtin_location.clone(),
+        );
+
+        // validator.getErrors(result: Integer) -> List<String> (error messages)
+        self.register_builtin_fn(
+            "validator.getErrors",
+            vec![HirType::Integer],
+            Some(HirType::List(Box::new(HirType::String))),
+            builtin_location.clone(),
+        );
+
+        // --- Schema builder functions (used by validate block desugaring) ---
+
+        // validator.createWithName(name: String) -> Integer (rules pointer)
+        self.register_builtin_fn(
+            "validator.createWithName",
+            vec![HirType::String],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.run(rules: Integer, input: Any) -> Integer (result pointer)
+        // The input can be any data structure (pairs, list, etc.)
+        self.register_builtin_fn(
+            "validator.run",
+            vec![HirType::Integer, HirType::Any],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.field(rules: Integer, fieldName: String) -> Integer
+        self.register_builtin_fn(
+            "validator.field",
+            vec![HirType::Integer, HirType::String],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.type(rules: Integer, typeName: String) -> Integer
+        self.register_builtin_fn(
+            "validator.type",
+            vec![HirType::Integer, HirType::String],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.required(rules: Integer, flag: Integer) -> Integer
+        self.register_builtin_fn(
+            "validator.required",
+            vec![HirType::Integer, HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.trim(rules: Integer) -> Integer
+        self.register_builtin_fn(
+            "validator.trim",
             vec![HirType::Integer],
             Some(HirType::Integer),
             builtin_location.clone(),
         );
 
-        // validator.getErrors(result: Integer) -> Integer (errors list pointer)
+        // validator.minLength(rules: Integer, min: Integer) -> Integer
         self.register_builtin_fn(
-            "validator.getErrors",
-            vec![HirType::Integer],
+            "validator.minLength",
+            vec![HirType::Integer, HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.maxLength(rules: Integer, max: Integer) -> Integer
+        self.register_builtin_fn(
+            "validator.maxLength",
+            vec![HirType::Integer, HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.range(rules: Integer, min: Integer, max: Integer) -> Integer
+        self.register_builtin_fn(
+            "validator.range",
+            vec![HirType::Integer, HirType::Integer, HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.match(rules: Integer, pattern: String) -> Integer
+        self.register_builtin_fn(
+            "validator.match",
+            vec![HirType::Integer, HirType::String],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.allowedValues(rules: Integer, values: Integer) -> Integer
+        self.register_builtin_fn(
+            "validator.allowedValues",
+            vec![HirType::Integer, HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.custom(rules: Integer, fn: Any) -> Integer
+        // The custom function reference can be any callable (function reference)
+        self.register_builtin_fn(
+            "validator.custom",
+            vec![HirType::Integer, HirType::Any],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
+        // validator.message(rules: Integer, text: String) -> Integer
+        self.register_builtin_fn(
+            "validator.message",
+            vec![HirType::Integer, HirType::String],
             Some(HirType::Integer),
             builtin_location.clone(),
         );

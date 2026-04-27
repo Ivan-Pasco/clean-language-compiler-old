@@ -1,4 +1,5 @@
 use super::expression_parser::{parse_expression, parse_start_expression};
+use super::parser_impl::parse_validate_check_stmt;
 use super::type_parser::parse_type;
 use super::Rule;
 use super::{convert_to_ast_location, get_location};
@@ -38,6 +39,7 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
         Rule::method_apply_block => parse_method_apply_block_statement(inner, ast_location),
         Rule::constant_apply_block => parse_constant_apply_block_statement(inner, ast_location),
         Rule::framework_block => parse_framework_block_statement(inner, ast_location),
+        Rule::validate_check_stmt => parse_validate_check_stmt(inner),
         Rule::reset_stmt => parse_reset_statement(inner, ast_location),
         Rule::background_stmt => parse_background_statement(inner, ast_location),
         Rule::later_assignment => parse_later_assignment_statement(inner, ast_location),

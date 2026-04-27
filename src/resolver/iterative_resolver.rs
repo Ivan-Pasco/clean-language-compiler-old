@@ -563,6 +563,43 @@ impl IterativeNameResolver {
 
                 self.set_result(result_slot, ResolverResult::Statement(resolved_statement));
             }
+            HirStatement::VariableDeclaration { name, var_type, initializer, is_mutable, location } => {
+                let initializer_resolved = if let Some(init) = initializer {
+                    let expr_slot = self.allocate_slot();
+                    self.work_queue.push_back(ResolverWorkItem::ResolveExpression {
+                        expression: init,
+                        result_slot: expr_slot,
+                    });
+                    self.process_work_queue()?;
+                    if let ResolverResult::Expression(expr) = self.get_result(expr_slot) {
+                        Some(expr.clone())
+                    } else {
+                        panic!("Expected expression result in slot {}", expr_slot);
+                    }
+                } else {
+                    None
+                };
+
+                let symbol_id = self.symbol_table.create_symbol(
+                    name.clone(),
+                    SymbolKind::Variable {
+                        var_type: var_type.clone(),
+                        is_mutable,
+                    },
+                    self.symbol_table.current_scope_id(),
+                    location.clone(),
+                );
+
+                let resolved_statement = ResolvedHirStatement::VariableDeclaration {
+                    name,
+                    symbol_id,
+                    var_type,
+                    initializer: initializer_resolved,
+                    location,
+                };
+
+                self.set_result(result_slot, ResolverResult::Statement(resolved_statement));
+            }
             _ => {
                 // For now, create a minimal resolved statement
                 let resolved_statement = ResolvedHirStatement::Expression {

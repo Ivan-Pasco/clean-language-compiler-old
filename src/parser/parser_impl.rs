@@ -748,6 +748,12 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
                                     let external_fns = parse_external_block(program_item_inner)?;
                                     externals.extend(external_fns);
                                 }
+                                Rule::validate_block => {
+                                    // Parse validate schema declaration — stored as a top-level statement
+                                    // that gets lowered in the HIR to a series of validator.* calls.
+                                    let stmt = parse_validate_block_stmt(program_item_inner)?;
+                                    top_level_statements.push(stmt);
+                                }
                                 Rule::statement => {
                                     let stmt = parse_statement(program_item_inner)?;
                                     // Handle top-level statements - these should be added to the start function
@@ -2217,4 +2223,398 @@ mod tests {
             print_pair(&inner, indent + 1);
         }
     }
+}
+
+// ============================================================================
+// VALIDATE BLOCK PARSERS
+// ============================================================================
+
+/// Parse a top-level `validate name:` block into a `Statement::ValidateDeclaration`.
+pub fn parse_validate_block_stmt(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
+    use crate::ast::{ValidateBlock, ValidateField, ValidateMessages};
+
+    let location = Some(convert_to_ast_location(&get_location(&pair)));
+    let mut inner = pair.into_inner();
+
+    // First child: the schema name (identifier)
+    let name_pair = inner.next().ok_or_else(|| {
+        CompilerError::parse_error(
+            "validate block missing schema name".to_string(),
+            location.clone(),
+            None,
+        )
+    })?;
+    let name = name_pair.as_str().to_string();
+
+    let mut fields: Vec<ValidateField> = Vec::new();
+    let mut messages: Option<ValidateMessages> = None;
+
+    for child in inner {
+        match child.as_rule() {
+            Rule::validate_fields => {
+                fields = parse_validate_fields(child, &location)?;
+            }
+            Rule::validate_messages_block => {
+                messages = Some(parse_validate_messages_block(child, &location)?);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Statement::ValidateDeclaration {
+        schema: ValidateBlock {
+            name,
+            fields,
+            messages,
+        },
+        location,
+    })
+}
+
+/// Parse a `validate_fields` rule into a list of `ValidateField`.
+fn parse_validate_fields(
+    pair: Pair<Rule>,
+    location: &Option<crate::ast::SourceLocation>,
+) -> Result<Vec<crate::ast::ValidateField>, CompilerError> {
+    let mut fields = Vec::new();
+
+    for child in pair.into_inner() {
+        if child.as_rule() == Rule::validate_field_declaration {
+            let field = parse_validate_field_declaration(child, location)?;
+            fields.push(field);
+        }
+    }
+
+    Ok(fields)
+}
+
+/// Parse a single `validate_field_declaration` rule into a `ValidateField`.
+fn parse_validate_field_declaration(
+    pair: Pair<Rule>,
+    location: &Option<crate::ast::SourceLocation>,
+) -> Result<crate::ast::ValidateField, CompilerError> {
+    use crate::ast::{ValidateField, ValidateFieldType};
+
+    let mut inner = pair.into_inner();
+
+    let name_pair = inner.next().ok_or_else(|| {
+        CompilerError::parse_error(
+            "validate field declaration missing field name".to_string(),
+            location.clone(),
+            None,
+        )
+    })?;
+    let name = name_pair.as_str().to_string();
+
+    let type_pair = inner.next().ok_or_else(|| {
+        CompilerError::parse_error(
+            format!("validate field '{}' missing type", name),
+            location.clone(),
+            None,
+        )
+    })?;
+    let field_type = match type_pair.as_str() {
+        "string" => ValidateFieldType::String,
+        "integer" => ValidateFieldType::Integer,
+        "number" => ValidateFieldType::Number,
+        "boolean" => ValidateFieldType::Boolean,
+        other => {
+            return Err(CompilerError::parse_error(
+                format!(
+                "unknown validate field type '{}'; expected string, integer, number, or boolean",
+                other
+            ),
+                location.clone(),
+                None,
+            ))
+        }
+    };
+
+    let mut constraints = Vec::new();
+    for constraint_pair in inner {
+        if constraint_pair.as_rule() == Rule::validate_constraint {
+            let constraint = parse_validate_constraint(constraint_pair, location)?;
+            constraints.push(constraint);
+        }
+    }
+
+    Ok(ValidateField {
+        name,
+        field_type,
+        constraints,
+    })
+}
+
+/// Parse a single `validate_constraint` rule into a `ValidateConstraint`.
+fn parse_validate_constraint(
+    pair: Pair<Rule>,
+    location: &Option<crate::ast::SourceLocation>,
+) -> Result<crate::ast::ValidateConstraint, CompilerError> {
+    use super::expression_parser::parse_expression;
+    use crate::ast::ValidateConstraint;
+
+    let inner = pair.into_inner().next().ok_or_else(|| {
+        CompilerError::parse_error(
+            "empty validate constraint".to_string(),
+            location.clone(),
+            None,
+        )
+    })?;
+
+    match inner.as_rule() {
+        Rule::validate_required => Ok(ValidateConstraint::Required),
+        Rule::validate_trim => Ok(ValidateConstraint::Trim),
+
+        Rule::validate_length => {
+            let mut parts = inner.into_inner();
+            let min_pair = parts.next().ok_or_else(|| {
+                CompilerError::parse_error(
+                    "length constraint missing min expression".to_string(),
+                    location.clone(),
+                    None,
+                )
+            })?;
+            let max_pair = parts.next().ok_or_else(|| {
+                CompilerError::parse_error(
+                    "length constraint missing max expression".to_string(),
+                    location.clone(),
+                    None,
+                )
+            })?;
+            let min_expr = parse_expression(min_pair)?;
+            let max_expr = parse_expression(max_pair)?;
+            Ok(ValidateConstraint::Length {
+                min: Box::new(min_expr),
+                max: Box::new(max_expr),
+            })
+        }
+
+        Rule::validate_min => {
+            let expr_pair = inner.into_inner().next().ok_or_else(|| {
+                CompilerError::parse_error(
+                    "min constraint missing expression".to_string(),
+                    location.clone(),
+                    None,
+                )
+            })?;
+            let expr = parse_expression(expr_pair)?;
+            Ok(ValidateConstraint::Min(Box::new(expr)))
+        }
+
+        Rule::validate_max => {
+            let expr_pair = inner.into_inner().next().ok_or_else(|| {
+                CompilerError::parse_error(
+                    "max constraint missing expression".to_string(),
+                    location.clone(),
+                    None,
+                )
+            })?;
+            let expr = parse_expression(expr_pair)?;
+            Ok(ValidateConstraint::Max(Box::new(expr)))
+        }
+
+        Rule::validate_match => {
+            let pattern_pair = inner.into_inner().next().ok_or_else(|| {
+                CompilerError::parse_error(
+                    "match constraint missing pattern name".to_string(),
+                    location.clone(),
+                    None,
+                )
+            })?;
+            Ok(ValidateConstraint::Match(pattern_pair.as_str().to_string()))
+        }
+
+        Rule::validate_one_of => {
+            let mut values = Vec::new();
+            for value_pair in inner.into_inner() {
+                if value_pair.as_rule() == Rule::validate_one_of_value {
+                    let val_inner = value_pair.into_inner().next().ok_or_else(|| {
+                        CompilerError::parse_error(
+                            "oneOf value is empty".to_string(),
+                            location.clone(),
+                            None,
+                        )
+                    })?;
+                    let expr = parse_expression(val_inner)?;
+                    values.push(expr);
+                }
+            }
+            Ok(ValidateConstraint::OneOf(values))
+        }
+
+        Rule::validate_custom => {
+            let fn_pair = inner.into_inner().next().ok_or_else(|| {
+                CompilerError::parse_error(
+                    "custom constraint missing function name".to_string(),
+                    location.clone(),
+                    None,
+                )
+            })?;
+            Ok(ValidateConstraint::Custom(fn_pair.as_str().to_string()))
+        }
+
+        other => Err(CompilerError::parse_error(
+            format!("unexpected validate constraint rule: {:?}", other),
+            location.clone(),
+            None,
+        )),
+    }
+}
+
+/// Parse a `validate_messages_block` rule into a `ValidateMessages`.
+fn parse_validate_messages_block(
+    pair: Pair<Rule>,
+    location: &Option<crate::ast::SourceLocation>,
+) -> Result<crate::ast::ValidateMessages, CompilerError> {
+    use crate::ast::ValidateMessages;
+
+    let mut default_message: Option<String> = None;
+    let mut field_messages: Vec<(String, String)> = Vec::new();
+
+    for entry in pair.into_inner() {
+        if entry.as_rule() == Rule::validate_message_entry {
+            let mut entry_inner = entry.into_inner();
+
+            let key_pair = entry_inner.next().ok_or_else(|| {
+                CompilerError::parse_error(
+                    "validate message entry missing key".to_string(),
+                    location.clone(),
+                    None,
+                )
+            })?;
+            let key = key_pair.as_str().to_string();
+
+            let msg_pair = entry_inner.next().ok_or_else(|| {
+                CompilerError::parse_error(
+                    format!("validate message entry '{}' missing string value", key),
+                    location.clone(),
+                    None,
+                )
+            })?;
+            // The string rule contains string_part children; extract raw text content.
+            let msg_text = extract_string_literal_text(msg_pair);
+
+            if key == "default" {
+                default_message = Some(msg_text);
+            } else {
+                field_messages.push((key, msg_text));
+            }
+        }
+    }
+
+    Ok(ValidateMessages {
+        default_message,
+        field_messages,
+    })
+}
+
+/// Extract the plain text content from a pest `string` rule pair.
+///
+/// The `string` rule has the form `"..."`, with optional interpolation segments.
+/// For validate messages we only need the literal text (no interpolation).
+fn extract_string_literal_text(pair: Pair<Rule>) -> String {
+    let mut result = String::new();
+    for part in pair.into_inner() {
+        match part.as_rule() {
+            Rule::string_content => result.push_str(part.as_str()),
+            Rule::escaped_char => {
+                // Unescape common sequences
+                let raw = part.as_str();
+                match raw {
+                    "\\n" => result.push('\n'),
+                    "\\t" => result.push('\t'),
+                    "\\r" => result.push('\r'),
+                    "\\\"" => result.push('"'),
+                    "\\\\" => result.push('\\'),
+                    other if other.len() == 2 => result.push(other.chars().nth(1).unwrap_or(' ')),
+                    other => result.push_str(other),
+                }
+            }
+            _ => {} // skip interpolation segments in message strings
+        }
+    }
+    result
+}
+
+/// Parse a `validate_check_stmt` rule into a `Statement::ValidateCheck`.
+///
+/// Grammar:
+///   validate_check_stmt = {
+///       identifier ~ "." ~ "check" ~ WHITESPACE+ ~ expression ~ ":" ~ NEWLINE
+///       ~ INDENT+ ~ "ok" ~ ":" ~ simple_indented_block
+///       ~ NEWLINE? ~ (empty_line)* ~ INDENT+ ~ "error" ~ ":" ~ simple_indented_block
+///   }
+pub fn parse_validate_check_stmt(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
+    use super::expression_parser::parse_expression;
+    use crate::ast::ValidateCheckBlock;
+
+    let location = Some(convert_to_ast_location(&get_location(&pair)));
+    let mut inner = pair.into_inner();
+
+    // First child: the schema name identifier
+    let schema_name_pair = inner.next().ok_or_else(|| {
+        CompilerError::parse_error(
+            "validate check statement missing schema name".to_string(),
+            location.clone(),
+            None,
+        )
+    })?;
+    let schema_name = schema_name_pair.as_str().to_string();
+
+    // Second child: the input expression
+    let input_pair = inner.next().ok_or_else(|| {
+        CompilerError::parse_error(
+            format!(
+                "validate check on '{}' missing input expression",
+                schema_name
+            ),
+            location.clone(),
+            None,
+        )
+    })?;
+    let input = Box::new(parse_expression(input_pair)?);
+
+    // Third child: the ok branch (simple_indented_block)
+    let ok_block_pair = inner.next().ok_or_else(|| {
+        CompilerError::parse_error(
+            format!("validate check on '{}' missing ok: branch", schema_name),
+            location.clone(),
+            None,
+        )
+    })?;
+    let ok_branch = parse_simple_indented_block_statements(ok_block_pair)?;
+
+    // Fourth child: the error branch (simple_indented_block)
+    let error_block_pair = inner.next().ok_or_else(|| {
+        CompilerError::parse_error(
+            format!("validate check on '{}' missing error: branch", schema_name),
+            location.clone(),
+            None,
+        )
+    })?;
+    let error_branch = parse_simple_indented_block_statements(error_block_pair)?;
+
+    Ok(Statement::ValidateCheck {
+        check: ValidateCheckBlock {
+            schema_name,
+            input,
+            ok_branch,
+            error_branch,
+        },
+        location,
+    })
+}
+
+/// Parse all statements from a `simple_indented_block` rule pair.
+fn parse_simple_indented_block_statements(
+    pair: Pair<Rule>,
+) -> Result<Vec<Statement>, CompilerError> {
+    let mut statements = Vec::new();
+    for stmt_pair in pair.into_inner() {
+        if stmt_pair.as_rule() == Rule::statement {
+            let stmt = parse_statement(stmt_pair)?;
+            statements.push(stmt);
+        }
+    }
+    Ok(statements)
 }

@@ -577,6 +577,10 @@ impl super::CodeGenerator {
             | Statement::Intent { .. }
             | Statement::SourceBlock { .. }
             | Statement::BuildBlock { .. } => {}
+
+            // Validate blocks are desugared in the HIR builder to validator.* function calls.
+            // The legacy codegen path never receives these nodes.
+            Statement::ValidateDeclaration { .. } | Statement::ValidateCheck { .. } => {}
         }
         Ok(())
     }

@@ -426,6 +426,14 @@ impl TokenParser {
                             value,
                             location: Some(first_location),
                         });
+                    } else if path.len() == 1 && path[0] == "check" {
+                        // Validate check statement: `schemaName.check expr:\n\tok: ...\n\terror: ...`
+                        // Rewind to the dot, consume it, then call parse_validate_check_stmt
+                        // which will consume the "check" identifier itself.
+                        self.cursor = save_cursor;
+                        self.bump(); // consume the "."
+                        self.skip_whitespace();
+                        return self.parse_validate_check_stmt(first_name, first_location);
                     } else {
                         // Not an assignment — backtrack and parse as expression.
                         self.cursor = save_cursor;

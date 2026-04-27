@@ -680,7 +680,110 @@ pub enum Statement {
         functions: Vec<Function>,
         location: Option<SourceLocation>,
     },
+
+    // ========================================================================
+    // VALIDATE BLOCK — Named, immutable validation schema declaration
+    // validate userSchema:
+    //     name: string required length: 1 to 50
+    //     ...
+    //     messages:
+    //         default: "Invalid"
+    // ========================================================================
+    /// Top-level validate block: declares a named, immutable validation schema.
+    ValidateDeclaration {
+        schema: ValidateBlock,
+        location: Option<SourceLocation>,
+    },
+
+    /// validate_check_stmt: runs a schema against an input and branches on result.
+    /// schemaName.check inputExpr:
+    ///     ok: ...
+    ///     error: ...
+    ValidateCheck {
+        check: ValidateCheckBlock,
+        location: Option<SourceLocation>,
+    },
 }
+
+// ============================================================================
+// Validate block supporting types
+// ============================================================================
+
+/// A named validation schema declaration (`validate name:`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ValidateBlock {
+    /// The name bound to this schema (e.g. `userSchema`).
+    pub name: String,
+    /// Ordered list of field rules.
+    pub fields: Vec<ValidateField>,
+    /// Optional `messages:` sub-block for per-field and default error messages.
+    pub messages: Option<ValidateMessages>,
+}
+
+/// A single field entry inside a `validate` block.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ValidateField {
+    pub name: String,
+    pub field_type: ValidateFieldType,
+    pub constraints: Vec<ValidateConstraint>,
+}
+
+/// The declared type of a validate field.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub enum ValidateFieldType {
+    String,
+    Integer,
+    Number,
+    Boolean,
+}
+
+/// A single constraint on a validate field.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub enum ValidateConstraint {
+    /// `required` — field must be present and non-empty.
+    Required,
+    /// `trim` — strip whitespace before other constraints are checked.
+    Trim,
+    /// `length: min to max` — string character count bounds.
+    Length {
+        min: Box<Expression>,
+        max: Box<Expression>,
+    },
+    /// `min: expr` — numeric lower bound.
+    Min(Box<Expression>),
+    /// `max: expr` — numeric upper bound.
+    Max(Box<Expression>),
+    /// `match: patternName` — named or user-defined regex pattern.
+    Match(String),
+    /// `oneOf: val, val, ...` — string or integer literal enumeration.
+    OneOf(Vec<Expression>),
+    /// `custom: functionName` — user-defined boolean validator function.
+    Custom(String),
+}
+
+/// Optional `messages:` sub-block inside a `validate` block.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ValidateMessages {
+    /// `default: "text"` — fallback message for any field not specifically listed.
+    pub default_message: Option<String>,
+    /// `fieldName: "text"` — per-field overrides.
+    pub field_messages: Vec<(String, String)>,
+}
+
+/// A `schemaName.check expr:` statement.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ValidateCheckBlock {
+    /// The name of the schema variable to call `.check` on.
+    pub schema_name: String,
+    /// The input expression to validate.
+    pub input: Box<Expression>,
+    /// Body executed when validation passes; `value` (pairs) is implicitly bound.
+    pub ok_branch: Vec<Statement>,
+    /// Body executed when validation fails; `errors` (list<string>) is implicitly bound.
+    pub error_branch: Vec<Statement>,
+}
+
+// ============================================================================
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct VariableAssignment {

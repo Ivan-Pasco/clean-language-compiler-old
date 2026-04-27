@@ -1,0 +1,21 @@
+// Test: validator/basic_validate
+// Grammar: validate_block, validate_check_stmt
+// Semantic: SEM-VAL-001 (validate block declares a named schema)
+// Expected output:
+//   valid
+
+validate userSchema:
+	name: string required length: 1 to 50
+	email: string required match: email
+	age: integer required min: 13 max: 120
+
+	messages:
+		default: "Invalid"
+		email: "Bad email"
+
+start:
+	pairs formData = {"name": "Alice", "email": "alice@example.com", "age": 25}
+
+	userSchema.check formData:
+		ok: print "valid"
+		error: print errors[0]
