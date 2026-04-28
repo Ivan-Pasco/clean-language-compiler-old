@@ -2235,6 +2235,26 @@ impl WasmPluginAdapter {
             |_: Caller<'_, PluginState>, _: i32, _: i32| -> i32 { 0 },
         )?;
 
+        // Response manipulation stubs (Layer 3 — runtime-only, no-op during compilation)
+        // _res_set_header: (name_ptr: i32, name_len: i32, value_ptr: i32, value_len: i32) -> i32
+        linker.func_wrap(
+            "env",
+            "_res_set_header",
+            |_: Caller<'_, PluginState>, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        )?;
+        // _res_redirect: (url_ptr: i32, url_len: i32, status_code: i32) -> i32
+        linker.func_wrap(
+            "env",
+            "_res_redirect",
+            |_: Caller<'_, PluginState>, _: i32, _: i32, _: i32| -> i32 { 0 },
+        )?;
+        // _res_status: (code: i32) -> void
+        linker.func_wrap(
+            "env",
+            "_res_status",
+            |_: Caller<'_, PluginState>, _: i32| {},
+        )?;
+
         // Auth stubs - Raw imports use (ptr, len) pairs for strings
         linker.func_wrap(
             "env",
