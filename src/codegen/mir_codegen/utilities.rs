@@ -946,12 +946,19 @@ impl MirCodeGenerator<'_> {
                 );
                 continue;
             }
+            // Export rule:
+            //   - Route handlers (double-underscore __route_handler_N) — exported by this path
+            //     so the host can dispatch to them by stable index.
+            //   - Single-underscore callbacks (_frame_callback, _on_pointer_down, _on_pointer_move,
+            //     _on_pointer_up, and any future plugin-defined callbacks): starts with "_" but NOT
+            //     with "__".  These are the plugin-facing ABI surface; the host calls them directly
+            //     by name so they must all be exported.
+            //   - Regular user functions (no leading underscore): always exported.
+            //   - Internal compiler helpers (double underscore, not __route_handler_): NOT exported.
             let is_route_handler = name.starts_with("__route_handler_");
-            let is_frame_callback = name == "_frame_callback";
-            if is_route_handler
-                || is_frame_callback
-                || (!name.starts_with("__") && !name.starts_with("_"))
-            {
+            let is_single_underscore_callback = name.starts_with('_') && !name.starts_with("__");
+            let is_regular_function = !name.starts_with('_');
+            if is_route_handler || is_single_underscore_callback || is_regular_function {
                 self.wasm_generator.export_section.export(
                     name,
                     wasm_encoder::ExportKind::Func,

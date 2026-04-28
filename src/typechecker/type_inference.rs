@@ -2835,11 +2835,18 @@ impl<'a> TypeInference<'a> {
                 condition,
                 location,
             } => {
-                // `result` in an ensure condition may reference the return variable which
-                // is introduced by the MIR builder.  At this point in the pipeline it
-                // resolves as an Unknown-typed variable.  We infer the condition and
-                // only enforce the boolean requirement when the type is definitely known
-                // (i.e., not Unknown).
+                // `result` in an ensure condition is a synthetic variable whose SymbolId
+                // was injected by the resolver but whose type was never added to `type_env`
+                // (because the MIR builder, not the type checker, introduces it at runtime).
+                //
+                // Before type-checking the condition we scan for any `Variable { name: "result" }`
+                // nodes and populate their entries in `type_env` using the enclosing function's
+                // known return type.  This lets the type checker resolve `result > 0` correctly
+                // without treating `result` as Unknown.
+                if let Some(result_type) = self.current_return_type.clone() {
+                    self.inject_result_symbol_type(condition, &result_type);
+                }
+
                 let tast_condition = self.infer_expression(condition)?;
 
                 if tast_condition.expr_type != ConcreteType::Boolean
@@ -2863,6 +2870,52 @@ impl<'a> TypeInference<'a> {
         };
         self.recursion_depth -= 1;
         result
+    }
+
+    /// Walk a resolved expression and, for every `Variable { name: "result" }` node found,
+    /// inject the given type into `type_env`.  Used to pre-populate the synthetic `result`
+    /// variable that the MIR builder introduces for `ensure` postcondition checking.
+    fn inject_result_symbol_type(
+        &mut self,
+        expression: &ResolvedHirExpression,
+        result_type: &ConcreteType,
+    ) {
+        match expression {
+            ResolvedHirExpression::Variable {
+                name, symbol_id, ..
+            } if name == "result" => {
+                self.type_env.insert(*symbol_id, result_type.clone());
+            }
+            ResolvedHirExpression::BinaryOp { left, right, .. } => {
+                self.inject_result_symbol_type(left, result_type);
+                self.inject_result_symbol_type(right, result_type);
+            }
+            ResolvedHirExpression::UnaryOp { operand, .. } => {
+                self.inject_result_symbol_type(operand, result_type);
+            }
+            ResolvedHirExpression::MethodCall {
+                receiver,
+                arguments,
+                ..
+            } => {
+                self.inject_result_symbol_type(receiver, result_type);
+                for arg in arguments {
+                    self.inject_result_symbol_type(arg, result_type);
+                }
+            }
+            ResolvedHirExpression::Call { arguments, .. } => {
+                for arg in arguments {
+                    self.inject_result_symbol_type(arg, result_type);
+                }
+            }
+            ResolvedHirExpression::Index { array, index, .. } => {
+                self.inject_result_symbol_type(array, result_type);
+                self.inject_result_symbol_type(index, result_type);
+            }
+            // Other expression kinds (Literal, This, Constructor, Cast, etc.) do not
+            // typically contain `result` references in postconditions.
+            _ => {}
+        }
     }
 
     /// Infer types for an expression

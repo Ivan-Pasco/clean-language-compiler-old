@@ -71,6 +71,7 @@ pub enum TokenKind {
     Reset,       // reset - Reset state to initial value
     Screen,      // screen - Screen-level state scope
     None,        // none  // null-support - None literal keyword
+    Default,     // default - Null-coalescing binary operator (spec grammar.ebnf line 232)
     Break,       // break - Loop control flow
     Continue,    // continue - Loop control flow
     Require,     // require - Contract precondition
@@ -203,6 +204,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Reset => write!(f, "reset"),
             TokenKind::Screen => write!(f, "screen"),
             TokenKind::None => write!(f, "none"),
+            TokenKind::Default => write!(f, "default"),
             TokenKind::Break => write!(f, "break"),
             TokenKind::Continue => write!(f, "continue"),
             TokenKind::Require => write!(f, "require"),
@@ -428,7 +430,8 @@ impl Keywords {
             "guard" => Some(TokenKind::Guard),
             "reset" => Some(TokenKind::Reset),
             "screen" => Some(TokenKind::Screen),
-            "none" => Some(TokenKind::None), // null-support
+            "none" | "null" => Some(TokenKind::None), // null-support — spec uses "null", implementation also accepts "none"
+            "default" => Some(TokenKind::Default), // null-coalescing operator (spec grammar.ebnf line 232)
             "break" => Some(TokenKind::Break),
             "continue" => Some(TokenKind::Continue),
             "require" => Some(TokenKind::Require),
@@ -479,6 +482,7 @@ impl TokenKind {
             TokenKind::Reset => "reset".to_string(),
             TokenKind::Screen => "screen".to_string(),
             TokenKind::None => "none".to_string(),
+            TokenKind::Default => "default".to_string(),
             TokenKind::Break => "break".to_string(),
             TokenKind::Continue => "continue".to_string(),
             TokenKind::Require => "require".to_string(),

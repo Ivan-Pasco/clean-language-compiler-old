@@ -1,0 +1,24 @@
+// Test: codegen/canvas_exports
+// Grammar: function_decl
+// Expected: _frame_callback, _on_pointer_down, _on_pointer_move all exported from WASM binary
+//
+// Regression test for CODEGEN_MISSING_EXPORT (fingerprint 6297530a81ad):
+// canvas callback functions with single leading underscore must be exported.
+
+plugins:
+	frame.canvas
+
+functions:
+	void start()
+		integer canvas = _canvas_init(800, 600, "main")
+		integer fr = _canvas_request_frame(canvas)
+
+	void _frame_callback(integer canvas)
+		integer cl = _canvas_clear_color(canvas, "#000000")
+		integer fr = _canvas_request_frame(canvas)
+
+	void _on_pointer_down(integer canvas, number mx, number my)
+		integer s = _canvas_var_set("clicked", 1.0)
+
+	void _on_pointer_move(integer canvas, number mx, number my)
+		integer s = _canvas_var_set("mx", mx)

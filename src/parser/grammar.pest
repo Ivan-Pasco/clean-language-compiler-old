@@ -13,7 +13,7 @@ EMPTY_LINE_TRIVIA = _{ INDENT* ~ NEWLINE }
 TRIVIA = _{ LINE_TRIVIA | BLOCK_TRIVIA | EMPTY_LINE_TRIVIA }
 
 // Keywords and identifiers
-keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "none" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print" | "break" | "continue" | "while" | "state" | "watch" | "computed" | "screen" | "guard" | "reset" | "require" | "rules" | "spec" | "intent" | "source" | "build") ~ !(ASCII_ALPHANUMERIC | "_") }
+keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "none" | "null" | "default" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print" | "break" | "continue" | "while" | "state" | "watch" | "computed" | "screen" | "guard" | "reset" | "require" | "rules" | "spec" | "intent" | "source" | "build") ~ !(ASCII_ALPHANUMERIC | "_") }
 // Identifiers can start with letter or underscore (underscore prefix for internal/bridge functions)
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
@@ -32,8 +32,9 @@ float = @{ "-"? ~ ASCII_DIGIT+ ~ (
 number = _{ float | integer }
 boolean = { "true" | "false" }
 
-// null-support - None literal for representing absence of value
-none_literal = { "none" }
+// null-support - None/null literal for representing absence of value
+// Spec uses "null" (grammar.ebnf line 128); "none" is also accepted for backward compatibility
+none_literal = { "null" | "none" }
 
 // Advanced size specifiers for types
 size_specifier = { ":" ~ ASCII_DIGIT+ ~ ("u")? }

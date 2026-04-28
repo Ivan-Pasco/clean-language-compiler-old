@@ -17,10 +17,10 @@ impl TokenParser {
     }
 
     // Parse onError expressions: expr onError fallback
-    // OnError has lowest precedence (below logical OR)
+    // OnError has lowest precedence (below default/null-coalescing)
     // Supports chaining: a onError b onError c = (a onError b) onError c (left-associative)
     pub(super) fn parse_on_error(&mut self) -> Result<Expression, CompilerError> {
-        let mut expr = self.parse_logical_or()?;
+        let mut expr = self.parse_default()?;
 
         // Support chained onError expressions with a while loop
         while self.check(&TokenKind::OnError) {
@@ -37,7 +37,7 @@ impl TokenParser {
             }
 
             // Otherwise, parse fallback expression
-            let fallback = self.parse_logical_or()?;
+            let fallback = self.parse_default()?;
             let location = self.current().location.clone();
 
             expr = Expression::OnError {
@@ -45,6 +45,23 @@ impl TokenParser {
                 fallback: Box::new(fallback),
                 location,
             };
+        }
+
+        Ok(expr)
+    }
+
+    // Parse default (null-coalescing) expressions: lhs default rhs
+    // Priority: level 1 (spec grammar.ebnf line 214)
+    // Sits between onError (lowest) and logical_or.
+    // Left-associative: a default b default c = (a default b) default c
+    pub(super) fn parse_default(&mut self) -> Result<Expression, CompilerError> {
+        let mut expr = self.parse_logical_or()?;
+
+        while self.check(&TokenKind::Default) {
+            self.bump(); // consume "default"
+            self.skip_whitespace();
+            let right = self.parse_logical_or()?;
+            expr = Expression::Binary(Box::new(expr), BinaryOperator::Default, Box::new(right));
         }
 
         Ok(expr)

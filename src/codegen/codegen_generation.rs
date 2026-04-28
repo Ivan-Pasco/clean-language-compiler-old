@@ -3137,6 +3137,9 @@ impl super::CodeGenerator {
                     ast::BinaryOperator::Or => { instructions.push(Instruction::I32Or); Ok(WasmType::I32) },
                     ast::BinaryOperator::Is => { instructions.push(Instruction::I32Eq); Ok(WasmType::I32) },
                     ast::BinaryOperator::Not => { instructions.push(Instruction::I32Ne); Ok(WasmType::I32) },
+                    ast::BinaryOperator::Default => {
+                        Err(CompilerError::type_error("BUG: `default` null-coalescing operator reached legacy codegen".to_string(), None, None))
+                    },
                 }
             },
 
@@ -3179,6 +3182,9 @@ impl super::CodeGenerator {
                     ast::BinaryOperator::Or => { instructions.push(Instruction::I64Or); Ok(WasmType::I64) },
                     ast::BinaryOperator::Is => { instructions.push(Instruction::I64Eq); Ok(WasmType::I32) },
                     ast::BinaryOperator::Not => { instructions.push(Instruction::I64Ne); Ok(WasmType::I32) },
+                    ast::BinaryOperator::Default => {
+                        Err(CompilerError::type_error("BUG: `default` null-coalescing operator reached legacy codegen".to_string(), None, None))
+                    },
                 }
             },
 
@@ -3258,6 +3264,9 @@ impl super::CodeGenerator {
                     ast::BinaryOperator::Not => {
                         instructions.push(Instruction::F64Ne);
                         Ok(WasmType::I32)
+                    },
+                    ast::BinaryOperator::Default => {
+                        Err(CompilerError::type_error("BUG: `default` null-coalescing operator reached legacy codegen".to_string(), None, None))
                     },
                 }
             },
@@ -3387,6 +3396,9 @@ impl super::CodeGenerator {
                     ast::BinaryOperator::Not => {
                         instructions.push(Instruction::F32Ne);
                         Ok(WasmType::I32)
+                    },
+                    ast::BinaryOperator::Default => {
+                        Err(CompilerError::type_error("BUG: `default` null-coalescing operator reached legacy codegen".to_string(), None, None))
                     },
                 }
             },

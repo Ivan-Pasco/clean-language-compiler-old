@@ -360,6 +360,15 @@ impl InstructionGenerator {
                         instructions.push(Instruction::I32Ne);
                         Ok(WasmType::I32)
                     }
+                    ast::BinaryOperator::Default => {
+                        // The `default` null-coalescing operator is handled in the MIR codegen path.
+                        // It should not reach the legacy instruction generator.
+                        Err(CompilerError::type_error(
+                            "BUG: `default` null-coalescing operator reached legacy instruction generator (should go through MIR path)".to_string(),
+                            None,
+                            None,
+                        ))
+                    }
                 }
             }
             // Handle F64 operations
@@ -453,6 +462,13 @@ impl InstructionGenerator {
                         instructions.push(Instruction::F64Ne);
                         Ok(WasmType::I32)
                     }
+                    ast::BinaryOperator::Default => {
+                        Err(CompilerError::type_error(
+                            "BUG: `default` null-coalescing operator reached legacy instruction generator".to_string(),
+                            None,
+                            None,
+                        ))
+                    }
                 }
             }
             (WasmType::I32, WasmType::F64) => {
@@ -543,6 +559,13 @@ impl InstructionGenerator {
                         instructions.push(Instruction::F64Ne);
                         Ok(WasmType::I32)
                     }
+                    ast::BinaryOperator::Default => {
+                        Err(CompilerError::type_error(
+                            "BUG: `default` null-coalescing operator reached legacy instruction generator".to_string(),
+                            None,
+                            None,
+                        ))
+                    }
                 }
             }
             (WasmType::F64, WasmType::I32) => {
@@ -632,6 +655,13 @@ impl InstructionGenerator {
                     ast::BinaryOperator::Not => {
                         instructions.push(Instruction::F64Ne);
                         Ok(WasmType::I32)
+                    }
+                    ast::BinaryOperator::Default => {
+                        Err(CompilerError::type_error(
+                            "BUG: `default` null-coalescing operator reached legacy instruction generator".to_string(),
+                            None,
+                            None,
+                        ))
                     }
                 }
             }

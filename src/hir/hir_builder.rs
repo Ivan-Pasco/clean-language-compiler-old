@@ -857,18 +857,10 @@ impl HirBuilder {
         let mut hir_statements = Vec::new();
 
         for stmt in statements {
-            // Validate that apply blocks and imports do not appear inside nested scopes.
+            // Validate that imports do not appear inside nested scopes.
+            // Apply blocks (type, constant, function, method) are valid inside function bodies per the spec
+            // (grammar.ebnf line ~426: statement includes apply_block).
             match stmt {
-                Statement::TypeApplyBlock { location, .. }
-                | Statement::FunctionApplyBlock { location, .. }
-                | Statement::MethodApplyBlock { location, .. }
-                | Statement::ConstantApplyBlock { location, .. } => {
-                    let loc = location.clone().unwrap_or_default();
-                    return Err(CompilerError::validation_error(
-                        "apply blocks must appear at the top level of a program, not inside a function or block",
-                        loc,
-                    ));
-                }
                 Statement::Import { location, .. } => {
                     let loc = location.clone().unwrap_or_default();
                     return Err(CompilerError::validation_error(
@@ -1709,6 +1701,7 @@ impl HirBuilder {
             BinaryOperator::Not => HirBinaryOp::IsNot,
             BinaryOperator::And => HirBinaryOp::And,
             BinaryOperator::Or => HirBinaryOp::Or,
+            BinaryOperator::Default => HirBinaryOp::NullCoalesce,
         }
     }
 

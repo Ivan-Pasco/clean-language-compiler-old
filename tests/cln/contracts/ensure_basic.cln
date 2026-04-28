@@ -1,0 +1,16 @@
+// Test: contracts/ensure_basic
+// Grammar: function_decl, ensure_stmt
+// Semantic: postcondition checking
+// Expected output:
+//   result is 42
+//
+// Regression test for E007 stack imbalance from ensure postconditions
+
+start:
+	integer answer = getAnswer()
+	print("result is " + answer.toString())
+
+functions:
+	integer getAnswer()
+		ensure result > 0
+		return 42

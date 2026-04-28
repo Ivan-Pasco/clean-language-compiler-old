@@ -11,6 +11,9 @@ pub struct NameResolver {
     symbol_table: GlobalSymbolTable,
     current_class: Option<SymbolId>,
     current_function: Option<SymbolId>,
+    /// Return type of the function currently being resolved. Used to inject
+    /// the synthetic `result` variable when resolving `ensure` postconditions.
+    current_function_return_type: Option<HirType>,
     errors: Vec<CompilerError>,
     warnings: Vec<CompilerError>,
     expression_recursion_depth: usize,
@@ -24,6 +27,7 @@ impl NameResolver {
             symbol_table: GlobalSymbolTable::new(),
             current_class: None,
             current_function: None,
+            current_function_return_type: None,
             errors: Vec::new(),
             warnings: Vec::new(),
             expression_recursion_depth: 0,
@@ -404,6 +408,8 @@ impl NameResolver {
         );
         self.symbol_table.enter_scope(function_scope);
         self.current_function = Some(function_symbol_id);
+        let previous_return_type = self.current_function_return_type.clone();
+        self.current_function_return_type = function.return_type.clone();
 
         // Resolve parameters
         let mut resolved_parameters = Vec::new();
@@ -440,6 +446,7 @@ impl NameResolver {
         // Exit function scope
         self.symbol_table.exit_scope();
         self.current_function = None;
+        self.current_function_return_type = previous_return_type;
 
         Ok(ResolvedHirFunction {
             name: function.name,
@@ -733,6 +740,8 @@ impl NameResolver {
         // Set current class for implicit field access
         let previous_class = self.current_class;
         self.current_class = Some(class_id);
+        let previous_return_type = self.current_function_return_type.clone();
+        self.current_function_return_type = Some(method.return_type.clone());
 
         // Resolve parameters
         let mut resolved_parameters = Vec::new();
@@ -770,6 +779,7 @@ impl NameResolver {
         self.symbol_table.exit_scope();
         self.current_function = None;
         self.current_class = previous_class;
+        self.current_function_return_type = previous_return_type;
 
         Ok(ResolvedHirMethod {
             name: method.name,
@@ -1239,12 +1249,39 @@ impl NameResolver {
                 condition,
                 location,
             } => {
-                // `result` in ensure conditions is resolved as a regular variable reference.
-                // The MIR builder is responsible for introducing the `result` local that
-                // captures the function's return value before evaluating this condition.
-                let resolved_condition = self.resolve_expression(condition)?;
+                // `result` in ensure conditions is a synthetic variable that refers to the
+                // function's return value. It does not appear in the source — the MIR builder
+                // captures the actual return value under this name just before evaluating
+                // postconditions.
+                //
+                // To let the resolver accept `result` references without errors, we create a
+                // temporary block scope and inject a `result` symbol with the enclosing
+                // function's return type. The scope is exited immediately after the condition
+                // is resolved, so `result` does not leak into the surrounding function scope.
+                let ensure_scope = self.symbol_table.create_scope(None, ScopeType::Block);
+                self.symbol_table.enter_scope(ensure_scope);
+
+                if let Some(return_type) = &self.current_function_return_type.clone() {
+                    // Only inject `result` for non-void functions (ensure is a no-op for void).
+                    if !matches!(return_type, HirType::Void) {
+                        self.symbol_table.create_symbol(
+                            "result".to_string(),
+                            SymbolKind::Variable {
+                                var_type: return_type.clone(),
+                                is_mutable: false,
+                            },
+                            ensure_scope,
+                            location.clone(),
+                        );
+                    }
+                }
+
+                let resolved_condition = self.resolve_expression(condition);
+
+                self.symbol_table.exit_scope();
+
                 Ok(ResolvedHirStatement::Ensure {
-                    condition: resolved_condition,
+                    condition: resolved_condition?,
                     location: location.clone(),
                 })
             }

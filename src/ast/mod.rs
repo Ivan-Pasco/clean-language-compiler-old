@@ -137,6 +137,10 @@ pub enum BinaryOperator {
     // Logical
     And,
     Or,
+
+    // Null-coalescing (spec grammar.ebnf line 232: default_op)
+    // Usage: value default fallback — returns lhs if not null, else rhs
+    Default,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]

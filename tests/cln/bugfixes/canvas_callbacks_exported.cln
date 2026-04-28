@@ -1,0 +1,25 @@
+// Test: codegen/CODEGEN_MISSING_EXPORT — single-underscore callback functions must be exported
+// Bug: Only _frame_callback was exported; _on_pointer_down, _on_pointer_move, _on_pointer_up were not.
+// Fix: Any function whose name starts with a single '_' (but not '__') is exported.
+// Grammar: function_declaration
+// Expected output:
+//   started
+
+plugins:
+	frame.canvas
+
+start:
+	print("started")
+
+functions:
+	void _frame_callback(integer canvas)
+		integer fr = _canvas_request_frame(canvas)
+
+	void _on_pointer_down(integer canvas, number mx, number my)
+		integer s = _canvas_var_set("clicked", 1.0)
+
+	void _on_pointer_move(integer canvas, number mx, number my)
+		integer s = _canvas_var_set("mx", mx)
+
+	void _on_pointer_up(integer canvas, number mx, number my)
+		integer s = _canvas_var_set("clicked", 0.0)
