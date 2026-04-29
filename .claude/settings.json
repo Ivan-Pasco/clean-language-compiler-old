@@ -13,7 +13,9 @@
       "Bash(cp \"/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/target/release/cln\" /tmp/mock-install/bin/cln)",
       "Bash(unset CLEEN_TELEMETRY_FORCE)",
       "Bash(/tmp/mock-install/bin/cln report *)",
-      "Bash(git rebase *)"
+      "Bash(git rebase *)",
+      "Bash(\"/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/target/debug/cln\" check /tmp/bridge_test.cln)",
+      "Bash(/Users/earcandy/.cleen/versions/0.30.90/cln check *)"
     ],
     "additionalDirectories": [
       "/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"

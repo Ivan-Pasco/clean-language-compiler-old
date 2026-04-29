@@ -871,7 +871,7 @@ async fn handle_watch(
         };
 
         let start = std::time::Instant::now();
-        match clean_language_compiler::type_check(&source, &file_str) {
+        match clean_language_compiler::type_check_with_external_plugins(&source, &file_str) {
             Ok(result) => {
                 let duration_ms = start.elapsed().as_millis() as u64;
                 if json_stream {
@@ -965,7 +965,7 @@ async fn handle_check(
 
     let start_time = std::time::Instant::now();
 
-    match clean_language_compiler::type_check(&source, &input) {
+    match clean_language_compiler::type_check_with_external_plugins(&source, &input) {
         Ok(result) => {
             let duration = start_time.elapsed();
 

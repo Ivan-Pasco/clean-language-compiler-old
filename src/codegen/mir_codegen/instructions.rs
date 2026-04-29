@@ -827,6 +827,39 @@ impl MirCodeGenerator<'_> {
                         // Since ConcreteType::String now maps to MirType::I32, strings are single i32 pointers
                         // No expansion needed - just load the operand directly
                         self.load_operand(return_value)?;
+
+                        // Coerce the return value type to match the function's declared return type.
+                        // This prevents WASM validation errors when an integer value (i32) is returned
+                        // from a function declared to return number (f64), or vice-versa.
+                        //
+                        // NOTE: value_to_type covers both parameters and locals.
+                        // get_operand_mir_type only covers func.locals, missing parameters.
+                        let func_return_type = self
+                            .current_function
+                            .as_ref()
+                            .map(|f| f.return_type.clone());
+                        let value_type = match return_value {
+                            MirOperand::Value(vid) => self.value_to_type.get(vid).cloned(),
+                            _ => self.get_operand_mir_type(return_value),
+                        };
+                        match (&func_return_type, &value_type) {
+                            (Some(MirType::F64), Some(MirType::I32))
+                            | (Some(MirType::F64), Some(MirType::I8))
+                            | (Some(MirType::F64), Some(MirType::I16))
+                            | (Some(MirType::F64), Some(MirType::U8))
+                            | (Some(MirType::F64), Some(MirType::U16))
+                            | (Some(MirType::F64), Some(MirType::U32)) => {
+                                // Return value is integer but function declares number (f64) return.
+                                // Insert signed integer-to-float conversion (E007 fix).
+                                self.current_instructions.push(Instruction::F64ConvertI32S);
+                            }
+                            (Some(MirType::I32), Some(MirType::F64)) => {
+                                // Return value is float but function declares integer (i32) return.
+                                // Truncate to integer (saturating behaviour via TruncF64S).
+                                self.current_instructions.push(Instruction::I32TruncF64S);
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 self.current_instructions.push(Instruction::Return);

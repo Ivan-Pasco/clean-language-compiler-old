@@ -501,6 +501,62 @@ pub fn type_check_with_plugins(
     })
 }
 
+/// Performs fast type-checking with external WASM plugins loaded from ~/.cleen/plugins/
+///
+/// Mirrors `compile_with_external_plugins` but stops at stage 5 (type checking), skipping
+/// MIR lowering and WASM code generation.  Plugins declared in the source `plugins:` block
+/// are loaded automatically, including their bridge function declarations, so that calls to
+/// plugin bridge functions (e.g. `_canvas_init`, `_canvas_get_delta_time`) are recognised as
+/// valid external functions during name resolution and type checking.
+///
+/// # Arguments
+/// * `source`    - The Clean Language source code (may contain a `plugins:` block)
+/// * `file_path` - Path for error reporting
+///
+/// # Returns
+/// * `Ok(TypeCheckResult)` - Type-checking succeeded with metadata
+/// * `Err(Vec<CompilerError>)` - Type-checking errors
+pub fn type_check_with_external_plugins(
+    source: &str,
+    file_path: &str,
+) -> Result<TypeCheckResult, Vec<CompilerError>> {
+    // Extract plugin names from the plugins: block in source
+    let plugin_names = extract_plugins(source);
+
+    if plugin_names.is_empty() {
+        // No plugins declared — fall back to the plain type-check path
+        return type_check(source, file_path);
+    }
+
+    tracing::info!(
+        plugins = ?plugin_names,
+        "Loading external plugins for type-check"
+    );
+
+    // Load plugins using WasmPluginLoader (same as the compile path)
+    let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
+        vec![CompilerError::PluginError {
+            message: format!("Failed to create plugin loader: {}", e),
+            location: None,
+        }]
+    })?;
+
+    let registry = loader.load_plugins(&plugin_names).map_err(|e| {
+        vec![CompilerError::PluginError {
+            message: format!("Failed to load plugins: {}", e),
+            location: None,
+        }]
+    })?;
+
+    tracing::info!(
+        plugins = ?registry.registered_plugins(),
+        "External plugins loaded for type-check"
+    );
+
+    // Delegate to the plugin-aware type-check path
+    type_check_with_plugins(source, file_path, &registry)
+}
+
 /// Compiles Clean Language source code with NO plugins (pure language)
 ///
 /// This is for compiling pure Clean Language code without framework extensions.

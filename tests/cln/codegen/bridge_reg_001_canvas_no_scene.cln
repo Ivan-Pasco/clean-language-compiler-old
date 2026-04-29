@@ -1,0 +1,21 @@
+// Test: codegen/bridge_reg_001_canvas_no_scene
+// Grammar: function_decl, plugins_decl
+// Semantic: bridge functions from plugin.toml [bridge] must be available when plugin is declared
+// Expected: compiles and type-checks without "Function '_canvas_*' not found" errors
+//
+// Regression test for BRIDGE_REG_001:
+// canvas bridge functions must be registered whenever `plugins: frame.canvas` is declared,
+// regardless of whether a canvasScene: DSL block is present.
+
+plugins:
+	frame.canvas
+
+functions:
+	void start()
+		integer cv = _canvas_init(800, 600, "main")
+		integer fr = _canvas_request_frame(cv)
+
+	void _frame_callback(integer cv)
+		number dt = _canvas_get_delta_time()
+		integer c = _canvas_clear_color(cv, "#000000")
+		integer fr = _canvas_request_frame(cv)

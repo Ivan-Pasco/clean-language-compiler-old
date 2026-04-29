@@ -364,6 +364,32 @@ impl MirCodeGenerator<'_> {
                 if let Some(return_value) = value {
                     if !matches!(return_value, MirOperand::Constant(MirConstant::Undefined)) {
                         self.load_operand(return_value)?;
+
+                        // Coerce return value to the function's declared return type (E007 fix).
+                        // value_to_type covers both parameters and locals; get_operand_mir_type
+                        // only covers locals, so we use value_to_type for Value operands.
+                        let func_return_type = self
+                            .current_function
+                            .as_ref()
+                            .map(|f| f.return_type.clone());
+                        let value_type = match return_value {
+                            MirOperand::Value(vid) => self.value_to_type.get(vid).cloned(),
+                            _ => self.get_operand_mir_type(return_value),
+                        };
+                        match (&func_return_type, &value_type) {
+                            (Some(MirType::F64), Some(MirType::I32))
+                            | (Some(MirType::F64), Some(MirType::I8))
+                            | (Some(MirType::F64), Some(MirType::I16))
+                            | (Some(MirType::F64), Some(MirType::U8))
+                            | (Some(MirType::F64), Some(MirType::U16))
+                            | (Some(MirType::F64), Some(MirType::U32)) => {
+                                self.current_instructions.push(Instruction::F64ConvertI32S);
+                            }
+                            (Some(MirType::I32), Some(MirType::F64)) => {
+                                self.current_instructions.push(Instruction::I32TruncF64S);
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 self.current_instructions.push(Instruction::Return);
@@ -633,6 +659,36 @@ impl MirCodeGenerator<'_> {
                 if let Some(return_value) = value {
                     if !matches!(return_value, MirOperand::Constant(MirConstant::Undefined)) {
                         self.load_operand(return_value)?;
+
+                        // Coerce the return value to match the function's declared return type.
+                        // Without this, returning an integer (i32) from a number (f64) function
+                        // produces a WASM validation error E007 (expected f64, found i32).
+                        //
+                        // NOTE: get_operand_mir_type only searches func.locals, which does NOT
+                        // include parameters. Parameters are tracked in value_to_type instead.
+                        // Use value_to_type as the authoritative type lookup for this check.
+                        let func_return_type = self
+                            .current_function
+                            .as_ref()
+                            .map(|f| f.return_type.clone());
+                        let value_type = match return_value {
+                            MirOperand::Value(vid) => self.value_to_type.get(vid).cloned(),
+                            _ => self.get_operand_mir_type(return_value),
+                        };
+                        match (&func_return_type, &value_type) {
+                            (Some(MirType::F64), Some(MirType::I32))
+                            | (Some(MirType::F64), Some(MirType::I8))
+                            | (Some(MirType::F64), Some(MirType::I16))
+                            | (Some(MirType::F64), Some(MirType::U8))
+                            | (Some(MirType::F64), Some(MirType::U16))
+                            | (Some(MirType::F64), Some(MirType::U32)) => {
+                                self.current_instructions.push(Instruction::F64ConvertI32S);
+                            }
+                            (Some(MirType::I32), Some(MirType::F64)) => {
+                                self.current_instructions.push(Instruction::I32TruncF64S);
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 self.current_instructions.push(Instruction::Return);

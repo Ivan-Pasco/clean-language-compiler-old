@@ -1025,35 +1025,45 @@ fn check_file(input_file: &str) -> Result<(), CompilerError> {
 
     let source = read_source_file(input_file)?;
 
-    // Use the modern 7-stage pipeline for type checking
-    // Stage 1-2: Lexing and Parsing
-    let program = parse_source(&source, input_file)?;
-
-    // Stage 3: AST to HIR
-    use clean_language_compiler::hir::hir_builder::HirBuilder;
-    let mut hir_builder = HirBuilder::new();
-    let hir_result = hir_builder.build_hir(program).map_err(|e| {
-        display_error(&e, &source, input_file);
-        e
-    })?;
-
-    // Stage 4: Name Resolution
-    use clean_language_compiler::resolver::Resolver;
-    let resolution_result = Resolver::resolve(hir_result.hir).map_err(|errors| {
-        for error in &errors {
-            display_error(error, &source, input_file);
-        }
-        errors.into_iter().next().unwrap()
-    })?;
-
-    // Stage 5: Type Checking
-    use clean_language_compiler::typechecker::TypeChecker;
-    let _type_result = TypeChecker::check(resolution_result.resolved_hir).map_err(|errors| {
-        for error in &errors {
-            display_error(error, &source, input_file);
-        }
-        errors.into_iter().next().unwrap()
-    })?;
+    // Use the plugin-aware type-check path so that bridge functions declared in any
+    // `plugins:` block (e.g. `frame.canvas`) are registered before name resolution.
+    // This matches the full compile pipeline and ensures calls like `_canvas_init`
+    // or `_canvas_get_delta_time` are recognised as valid external functions.
+    clean_language_compiler::type_check_with_external_plugins(&source, input_file).map_err(
+        |errors| {
+            for error in &errors {
+                display_error(error, &source, input_file);
+            }
+            // Display a summary line that matches the format users expect
+            let error_count = errors.len();
+            let mut category_counts: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            for e in &errors {
+                let category = match e {
+                    clean_language_compiler::error::CompilerError::ValidationError { .. } => {
+                        "validation"
+                    }
+                    clean_language_compiler::error::CompilerError::TypeError { .. } => "type",
+                    clean_language_compiler::error::CompilerError::ParseError { .. } => "parse",
+                    clean_language_compiler::error::CompilerError::LexError(_) => "lex",
+                    clean_language_compiler::error::CompilerError::PluginError { .. } => "plugin",
+                    _ => "other",
+                };
+                *category_counts.entry(category.to_string()).or_insert(0) += 1;
+            }
+            let summary_parts: Vec<String> = category_counts
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, v))
+                .collect();
+            eprintln!(
+                "\nSummary: {} error{} found\n    {}",
+                error_count,
+                if error_count == 1 { "" } else { "s" },
+                summary_parts.join("\n    ")
+            );
+            errors.into_iter().next().unwrap()
+        },
+    )?;
 
     println!("✅ Type checking successful! All types are valid.");
     Ok(())

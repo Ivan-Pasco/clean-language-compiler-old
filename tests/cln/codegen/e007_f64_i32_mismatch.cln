@@ -1,0 +1,29 @@
+// Test: codegen/e007_f64_i32_mismatch
+// Grammar: function_declaration, return_statement
+// Semantic: SEM-TYPE-001
+// Expected output:
+//   5
+//   result: 10.5
+//
+// Regression test for E007: WASM type mismatch when an integer value (i32) is
+// returned from a function declared to return number (f64). The WASM validator
+// rejects such code because the function signature says (result f64) but the
+// return instruction has i32 on the stack.
+
+start:
+	// Returning a parameter of type integer from a number function
+	number result1 = intToNumber(5)
+	print(result1.toString())
+
+	// Returning integer + number expression from a number function
+	number result2 = addIntToFloat(10, 0.5)
+	print("result: " + result2.toString())
+
+functions:
+	// integer parameter returned as number - triggers i32/f64 mismatch without the fix
+	number intToNumber(integer x)
+		return x
+
+	// integer + number arithmetic returned as number
+	number addIntToFloat(integer a, number b)
+		return a + b

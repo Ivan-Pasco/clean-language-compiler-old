@@ -1,5 +1,31 @@
 # Clean Language Compiler - Implementation Tasks
 
+## ✅ RESOLVED: BRIDGE_REG_001 — Canvas bridge functions not registered in `cln check`
+
+**Priority**: HIGH — `cln check` (type-check command) rejected all `_canvas_*` calls when using `plugins: frame.canvas` without a `canvasScene:` DSL block
+**Error code**: BRIDGE_REG_001
+**Discovered**: April 29, 2026
+**Resolved**: April 29, 2026
+**Status**: ✅ COMPLETE
+
+### Root Cause
+
+`handle_check` in `src/main.rs` called `clean_language_compiler::type_check()` (the no-plugin path that creates an empty registry) instead of `type_check_with_external_plugins()`. Bridge functions from `plugin.toml [bridge]` were never registered, so the resolver reported every `_canvas_*` call as "Function not found".
+
+The `compile` path was unaffected because `handle_compile` uses `compile_multi_file_with_memory_tier` which already loads plugins correctly.
+
+### Fix
+
+- `src/main.rs` `handle_check` (line ~968): changed `type_check()` → `type_check_with_external_plugins()`
+- `src/main.rs` `check_file` closure in watch mode (line ~874): changed `type_check()` → `type_check_with_external_plugins()`
+- `src/lib.rs`: removed stale debug `eprintln!` left in `type_check_with_external_plugins`
+
+### Test
+
+`tests/cln/codegen/bridge_reg_001_canvas_no_scene.cln` — uses `plugins: frame.canvas` with direct `_canvas_*` calls and no `canvasScene:` block. Must compile and type-check without errors.
+
+---
+
 ## ✅ RESOLVED: Precision Modifiers Lost During Type Inference
 
 **Priority**: CRITICAL - Silent data loss
@@ -894,6 +920,44 @@ See `src/stdlib/http_class.rs` v0.30.71 for the pattern.
 ### Verification
 `tests/cln/stdlib/io/74_file_module_comprehensive.cln` must compile cleanly.
 Also add a narrower regression test that uses only a subset of file methods.
+
+---
+
+## ✅ RESOLVED: E007 — Return terminator i32/f64 type mismatch
+
+**Priority**: CRITICAL — WASM validation failure
+**Discovered**: April 28, 2026
+**Resolved**: April 28, 2026
+**Status**: ✅ COMPLETE
+
+### Root cause
+When a function declares return type `number` (MIR: `F64`), the WASM function
+signature includes `(result f64)`. If the returned expression evaluated to an
+integer type (`I32`) — e.g. `return x` where `x` is an `integer` parameter —
+the codegen emitted `local.get 0` followed by `return`, leaving an `i32` on the
+stack where `f64` was expected. WASM validation rejected this.
+
+The three Return terminator handlers in the structured-control-flow path
+(`generate_structured_blocks`, `generate_branch_block`, and the legacy
+`generate_terminator`) all lacked the coercion step. Additionally,
+`get_operand_mir_type` looks up `func.locals` but NOT `func.parameters`, so
+parameter ValueIds silently returned `None` and bypassed any conversion guard.
+
+### Fix
+All three Return handlers in `src/codegen/mir_codegen/blocks.rs` (two handlers)
+and `src/codegen/mir_codegen/instructions.rs` (one handler) now perform a
+post-load type coercion:
+- If function return type is `F64` but value type is any integer variant → emit
+  `F64ConvertI32S`
+- If function return type is `I32` but value type is `F64` → emit `I32TruncF64S`
+
+The type lookup uses `self.value_to_type` (populated from both parameters and
+locals) rather than `get_operand_mir_type` (which misses parameters).
+
+### Verification
+New test: `tests/cln/codegen/e007_f64_i32_mismatch.cln` — compiles and runs
+correctly (`intToNumber(5)` → `5`, `addIntToFloat(10, 0.5)` → `result: 10.5`).
+All 473 existing tests continue to pass.
 
 ---
 
