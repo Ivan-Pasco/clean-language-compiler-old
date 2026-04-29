@@ -799,7 +799,7 @@ fn handle_initialize(id: serde_json::Value, params: Option<&serde_json::Value>) 
             "name": "cln",
             "version": VERSION
         },
-        "instructions": "You are working with the Clean Language compiler MCP server. Clean Language is a type-safe language that compiles to WebAssembly.\n\n## GETTING STARTED (call these tools in order)\n1. `get_quick_reference` — Learn syntax, types, patterns (CALL FIRST)\n2. `get_stack_recommendation` — Get recommended plugins for your project type\n3. `list_plugins` — See installed plugins with full DSL syntax\n4. `get_plugin_examples` — Read real example files from plugins\n\n## BEST PRACTICES FOR AI ASSISTANTS\n- ALWAYS call `get_quick_reference` at the start of a session before writing any Clean Language code\n- ALWAYS call `list_plugins` before using framework features (data:, endpoints:, component:, etc.)\n- Use `check` for fast type-checking during development (no WASM generation)\n- Use `get_specification` to look up detailed language rules\n- Use `get_architecture` to understand the execution model and host bridge\n- Clean Language applications use Clean for ALL layers — server, database, UI, graphics. NEVER use JavaScript when a Clean plugin exists.\n- Use `report_error` when you encounter what appears to be a compiler bug\n- If the user reports a server runtime failure or WASM load error, call `list_server_diagnostics` BEFORE asking for reproduction details — the clean-server auto-captures structured diagnostics\n- Use `list_server_diagnostics` to surface pending compiler bugs the user may not realize are on disk\n\n## KEY RULES\n- File extension: .cln\n- Indentation: tabs only (not spaces)\n- Entry point: `start:` block\n- Types: integer, number, string, boolean, list<T>, matrix<T>, pairs\n- Functions declared in `functions:` block with return type first\n- No semicolons, no curly braces\n- `return value` (no parentheses)\n- One way to do things — follow the spec exactly\n\n## REPORTING RUNTIME_WASM_PARSE BUGS\n1. `list_server_diagnostics` → identify pending reports\n2. `show_server_diagnostic(sha)` → load the full payload\n3. `report_error` with the payload's fields mapped into the standard error-report schema\n4. Tell the user to run `clean-server errors publish <sha>` to mark it as forwarded"
+        "instructions": "You are working with the Clean Language compiler MCP server. Clean Language is a type-safe language that compiles to WebAssembly.\n\n## GETTING STARTED (call these tools in order)\n1. `get_quick_reference` — Learn syntax, types, patterns (CALL FIRST)\n2. `get_stack_recommendation` — Get recommended plugins for your project type\n3. `list_plugins` — See installed plugins with full DSL syntax\n4. `get_plugin_examples` — Read real example files from plugins\n\n## BEST PRACTICES FOR AI ASSISTANTS\n- ALWAYS call `get_quick_reference` at the start of a session before writing any Clean Language code\n- ALWAYS call `list_plugins` before using framework features (data:, endpoints:, component:, etc.)\n- Use `check` for fast type-checking during development (no WASM generation)\n- Use `get_specification` to look up detailed language rules\n- Use `get_architecture` to understand the execution model and host bridge\n- Clean Language applications use Clean for ALL layers — server, database, UI, graphics. NEVER use JavaScript when a Clean plugin exists.\n- Use `report_error` when you encounter what appears to be a compiler bug\n- If the user reports a server runtime failure or WASM load error, call `list_server_diagnostics` BEFORE asking for reproduction details — the clean-server auto-captures structured diagnostics\n- Use `list_server_diagnostics` to surface pending compiler bugs the user may not realize are on disk\n\n## REPORT_ERROR — CRITICAL RULES\n- The `component` field MUST identify WHERE the bug lives (the component containing the buggy code), NOT the name of the task you were running (e.g. never use 'validation', 'testing', 'docs'). Invalid component names are rejected with an error.\n- Valid components: compiler, server, node-server, framework, extension, manager, website, canvas, ui, mcp, unknown. If unsure, use 'unknown'.\n- Use `discovered_during` (optional) to record the context in which you found the bug (e.g. 'solving E0042', 'doc_coverage run') — this does not affect routing.\n- Before calling `report_error` during doc/spec validation or example checking: verify the error also reproduces when compiling the file normally with the correct plugin loaded. If the error disappears in that context, it is a false positive from missing plugin context — do NOT report it.\n- Errors discovered while solving another bug are independent reports. Report them under their correct component. Do NOT attach them to the original bug.\n\n## KEY RULES\n- File extension: .cln\n- Indentation: tabs only (not spaces)\n- Entry point: `start:` block\n- Types: integer, number, string, boolean, list<T>, matrix<T>, pairs\n- Functions declared in `functions:` block with return type first\n- No semicolons, no curly braces\n- `return value` (no parentheses)\n- One way to do things — follow the spec exactly\n\n## REPORTING RUNTIME_WASM_PARSE BUGS\n1. `list_server_diagnostics` → identify pending reports\n2. `show_server_diagnostic(sha)` → load the full payload\n3. `report_error` with the payload's fields mapped into the standard error-report schema\n4. Tell the user to run `clean-server errors publish <sha>` to mark it as forwarded"
     });
     JsonRpcResponse::success(id, result)
 }
@@ -1127,6 +1127,10 @@ fn get_available_tools() -> Vec<Tool> {
                     "user_contact": {
                         "type": "string",
                         "description": "Optional contact info if the user wants follow-up. Only include if explicitly provided by the user."
+                    },
+                    "discovered_during": {
+                        "type": "string",
+                        "description": "Optional: the task or context in which this error was found (e.g., 'solving E0042', 'doc_coverage run', 'canvas example validation'). Records lineage without affecting component routing. Do NOT use this as a substitute for a correct component value."
                     }
                 }),
                 required: vec![
@@ -3574,6 +3578,10 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         .get("subsystem")
         .and_then(|v| v.as_str())
         .map(String::from);
+    let discovered_during = args
+        .get("discovered_during")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     // Determine error category from code prefix
     let category = if error_code.starts_with("SYN") {
@@ -3608,12 +3616,41 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         Some(auto.to_string())
     });
 
-    // Normalize legacy component names to unified taxonomy
+    // Normalize legacy component names to unified taxonomy, then validate.
+    // The wildcard must never pass through arbitrary strings — that's how "validation"
+    // ended up as a component name when an AI used the task name instead of the buggy component.
+    const VALID_COMPONENTS: &[&str] = &[
+        "compiler",
+        "server",
+        "node-server",
+        "framework",
+        "extension",
+        "manager",
+        "website",
+        "canvas",
+        "ui",
+        "mcp",
+        "unknown",
+    ];
     let component = match component.as_str() {
         "parser" | "semantic" | "codegen" | "cli" | "syntax" | "system" => "compiler".to_string(),
         "runtime" => "server".to_string(),
         "plugin" => "framework".to_string(),
-        _ => component,
+        c if VALID_COMPONENTS.contains(&c) => c.to_string(),
+        _ => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                format!(
+                    "Invalid component '{}'. Must be one of: {}. \
+                     Use the component that CONTAINS the buggy code — not the name \
+                     of the task or tool you were running when you found the bug. \
+                     If unsure, use 'unknown'.",
+                    component,
+                    VALID_COMPONENTS.join(", ")
+                ),
+            );
+        }
     };
 
     // Generate report ID
@@ -3671,15 +3708,32 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
 
     // Add AI context (only at "full" consent)
     if consent_level == "full" {
-        report.ai_context = Some(ReportAiContext {
-            analysis: args
+        // Prepend discovered_during to analysis so the lineage is visible in the dashboard.
+        let analysis = {
+            let base = args
                 .get("ai_analysis")
                 .and_then(|v| v.as_str())
-                .map(String::from),
+                .map(String::from);
+            match (&discovered_during, &base) {
+                (Some(ctx), Some(a)) => Some(format!("Discovered during: {ctx}\n\n{a}")),
+                (Some(ctx), None) => Some(format!("Discovered during: {ctx}")),
+                (None, b) => b.clone(),
+            }
+        };
+        report.ai_context = Some(ReportAiContext {
+            analysis,
             suggested_component: args
                 .get("suggested_component_file")
                 .and_then(|v| v.as_str())
                 .map(String::from),
+            suggested_fix: None,
+            confidence: None,
+        });
+    } else if let Some(ctx) = &discovered_during {
+        // Even at lower consent levels, attach the lineage note.
+        report.ai_context = Some(ReportAiContext {
+            analysis: Some(format!("Discovered during: {ctx}")),
+            suggested_component: None,
             suggested_fix: None,
             confidence: None,
         });
