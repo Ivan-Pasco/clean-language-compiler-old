@@ -2403,44 +2403,33 @@ impl WasmPluginAdapter {
         let stripped_body = strip_common_indent(&actual_body);
         let body_ptr = self.find_or_write_string(&mut store, &memory, &stripped_body)?;
 
-        // For html: blocks, bypass expand_block and call html_block_to_code directly.
-        // The plugin's strip_block_indent returns empty due to a WASM codegen bug,
-        // so we pre-strip indentation in Rust (strip_common_indent) and pass the
-        // cleaned body directly to html_block_to_code.
+        // For html: blocks, use the Rust html_block_to_code_rust implementation.
+        // The compiled WASM plugin's html_block_to_code has two known bugs:
+        //   1. Returns empty string for HTML elements
+        //   2. Generates _html_escape() with no arguments for {!expr} raw interpolations
+        // The Rust implementation correctly handles all interpolation patterns.
         let result_ptr = if block_name == "html" {
-            if let Ok(html_fn) =
-                instance.get_typed_func::<i32, i32>(&mut store, "html_block_to_code")
-            {
-                let code_ptr = html_fn.call(&mut store, body_ptr)?;
-                let code_bytes = self.read_result(&store, &memory, code_ptr)?;
-                let code_str = std::str::from_utf8(&code_bytes).unwrap_or("");
+            let code_str = html_block_to_code_rust(&stripped_body);
 
-                // Check for var="name" attribute to determine mode
-                let var_name = if attributes_str.contains("\"var\"") {
-                    attributes_str
-                        .split("\"var\":\"")
-                        .nth(1)
-                        .and_then(|s| s.split('"').next())
-                        .unwrap_or("")
-                } else {
-                    ""
-                };
-
-                let generated = if var_name.is_empty() {
-                    format!("string __html = \"\"\n{}return __html\n", code_str)
-                } else {
-                    let remapped = code_str.replace("__html", var_name);
-                    format!("string {} = \"\"\n{}", var_name, remapped)
-                };
-
-                self.write_clean_string(&mut store, &memory, &generated)?
+            // Check for var="name" attribute to determine mode
+            let var_name = if attributes_str.contains("\"var\"") {
+                attributes_str
+                    .split("\"var\":\"")
+                    .nth(1)
+                    .and_then(|s| s.split('"').next())
+                    .unwrap_or("")
             } else {
-                // Fallback: call expand_block normally
-                let expand_fn_name = &self.manifest.exports.expand;
-                let expand: TypedFunc<(i32, i32, i32), i32> =
-                    instance.get_typed_func(&mut store, expand_fn_name)?;
-                expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?
-            }
+                ""
+            };
+
+            let generated = if var_name.is_empty() {
+                format!("string __html = \"\"\n{}return __html\n", code_str)
+            } else {
+                let remapped = code_str.replace("__html", var_name);
+                format!("string {} = \"\"\n{}", var_name, remapped)
+            };
+
+            self.write_clean_string(&mut store, &memory, &generated)?
         } else {
             // For all other block types, call expand_block normally
             let expand_fn_name = &self.manifest.exports.expand;
@@ -3215,6 +3204,72 @@ fn extract_inline_attrs(content: &str) -> (Vec<String>, String) {
     } else {
         (pairs, rest.to_string())
     }
+}
+
+/// Rust reimplementation of the frame.ui plugin's html_block_to_code WASM function.
+///
+/// The compiled WASM has bugs: empty output for HTML elements, and generating
+/// `_html_escape()` with no arguments for `{!expr}` raw interpolations.
+///
+/// This implementation correctly handles:
+/// - `{!expr}` → raw variable (no HTML escaping) — one statement per interpolation
+/// - `{expr}` → `_html_escape(expr)` call — one statement per interpolation
+/// - Literal HTML (tags, attributes, text) — one statement per chunk
+///
+/// Each segment becomes its own `__html = __html + ...` statement to avoid
+/// deep expression trees that exceed the compiler's recursion limit.
+fn html_block_to_code_rust(html: &str) -> String {
+    if html.trim().is_empty() {
+        return String::new();
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut literal = String::new();
+    let mut i = 0;
+
+    let flush_literal = |literal: &mut String, lines: &mut Vec<String>| {
+        if !literal.is_empty() {
+            let escaped = literal.replace('\\', "\\\\").replace('"', "\\\"");
+            lines.push(format!("__html = __html + \"{}\"\n", escaped));
+            literal.clear();
+        }
+    };
+
+    while i < html.len() {
+        if html.as_bytes().get(i) == Some(&b'{') {
+            let is_raw = html.as_bytes().get(i + 1) == Some(&b'!');
+            let expr_start = if is_raw { i + 2 } else { i + 1 };
+
+            if let Some(rel_close) = html[expr_start..].find('}') {
+                let close = expr_start + rel_close;
+                let expr = html[expr_start..close].trim();
+
+                if !expr.is_empty() {
+                    flush_literal(&mut literal, &mut lines);
+
+                    if is_raw {
+                        lines.push(format!("__html = __html + {}\n", expr));
+                    } else {
+                        lines.push(format!("__html = __html + _html_escape({})\n", expr));
+                    }
+
+                    i = close + 1;
+                    continue;
+                }
+            }
+
+            literal.push('{');
+            i += 1;
+        } else {
+            let ch = html[i..].chars().next().unwrap_or('\0');
+            literal.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+
+    flush_literal(&mut literal, &mut lines);
+
+    lines.concat()
 }
 
 /// Strip common leading indentation from block body content.
