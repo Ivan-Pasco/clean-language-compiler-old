@@ -1,0 +1,28 @@
+// Test: bugfixes/e002_namespace_called_as_function
+// Grammar: function_declaration, function_call
+// Semantic: FUNC001, TYPE001
+// Bug: E002 "Cannot call non-function type: namespace"
+//      When a namespace identifier (math, string, etc.) is used as a function call
+//      directly (e.g., math(5)), the resolver was passing the namespace's SymbolId
+//      to the type checker. The type checker had that ID mapped to ConcreteType::Namespace
+//      and called infer_function_call with it, which hit the _ => Err(...) arm and
+//      produced E002 with the confusing message "Cannot call non-function type: namespace".
+//
+// Fix: In resolver HirExpression::Call handler, check if the resolved symbol is a
+//      Namespace kind before creating a Call node. If so, emit a helpful error:
+//      "'X' is a namespace, not a function — use 'X.function_name()' syntax".
+//      Also added a defensive guard in type_inference.rs for the same case.
+//
+// This test verifies that valid namespace function calls (math.sqrt, string.length)
+// still compile correctly after the fix.
+//
+// Expected output:
+//   1.4142135623730951
+//   5
+
+start:
+	number sqrtResult = math.sqrt(2.0)
+	print(sqrtResult.toString())
+	string s = "hello"
+	integer len = string.length(s)
+	print(len.toString())

@@ -1527,6 +1527,20 @@ impl NameResolver {
                     resolved_arguments.push(self.resolve_expression(arg)?);
                 }
 
+                // Check if this is actually a namespace (cannot be called directly)
+                if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
+                    if matches!(symbol.kind, SymbolKind::Namespace { .. }) {
+                        self.error(
+                            &format!(
+                                "'{}' is a namespace, not a function — use '{}.function_name()' syntax",
+                                function, function
+                            ),
+                            location.clone(),
+                        );
+                        return Err(());
+                    }
+                }
+
                 // Check if this is actually a constructor call (call to a class)
                 if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
                     if matches!(symbol.kind, SymbolKind::Class { .. }) {

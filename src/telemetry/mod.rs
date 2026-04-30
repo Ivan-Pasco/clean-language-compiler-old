@@ -225,6 +225,21 @@ pub fn report_compile_failure(errors: &[crate::error::CompilerError], source_fil
         return;
     }
 
+    // Client-side dedup: skip if the same (error_code, message) was already
+    // submitted within the last 60 seconds. Prevents a test-suite run from
+    // flooding the dashboard with N identical reports when N files trigger the
+    // same compiler bug simultaneously.
+    {
+        let store = ReportStore::load();
+        if store.has_recent_duplicate(&code, &message) {
+            tracing::debug!(
+                error_code = %code,
+                "Skipping duplicate error report (within 60s dedup window)"
+            );
+            return;
+        }
+    }
+
     let report_id = generate_report_id();
     let mut report = ErrorReport::new(
         report_id,
@@ -323,23 +338,37 @@ pub fn flush_pending_telemetry(verbose: bool) {
 
     // 1) Flush the offline queue: reports that failed to POST are saved as full
     //    ErrorReport JSON under ~/.cleen/telemetry/pending_reports/.
+    //    Capped at 10 per cycle with a 200ms gap between submissions to avoid
+    //    hitting the dashboard with a sudden burst when a long backlog drains.
     let mut queue_sent = 0usize;
     if let Some(queue) = PendingQueue::new() {
         if queue.count() > 0 {
             let mut store = ReportStore::load();
             let mut store_dirty = false;
+            let mut sent_this_cycle = 0usize;
             let flush_result = queue.flush(|report| {
+                if sent_this_cycle >= 10 {
+                    return false; // leave remainder for next flush cycle
+                }
                 let result = submit_report(report);
                 if let Some(fp) = result.fingerprint() {
                     store.update_fingerprint(&report.report_id, fp);
                     store_dirty = true;
                 }
-                matches!(
+                let ok = matches!(
                     result,
                     SubmitResult::Submitted { .. }
                         | SubmitResult::AlreadyFixed { .. }
                         | SubmitResult::Known { .. }
-                )
+                );
+                if ok {
+                    sent_this_cycle += 1;
+                    // Small gap so the dashboard doesn't see a wall of reports
+                    // arrive at the same timestamp. 200ms is imperceptible to the
+                    // CLI user (flush runs on version change, not hot path).
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                ok
             });
             if store_dirty {
                 let _ = store.save();
@@ -559,7 +588,7 @@ fn extract_error_info(error: &crate::error::CompilerError) -> (String, String, S
                 .unwrap_or("COD000")
                 .to_string(),
             "codegen".to_string(),
-            "codegen".to_string(),
+            "compiler".to_string(),
             context.message.clone(),
         ),
         crate::error::CompilerError::Runtime { context } => (
@@ -583,7 +612,7 @@ fn extract_error_info(error: &crate::error::CompilerError) -> (String, String, S
                 .unwrap_or("SYS000")
                 .to_string(),
             "system".to_string(),
-            format!("{:?}", context.error_type).to_lowercase(),
+            "compiler".to_string(),
             context.message.clone(),
         ),
         crate::error::CompilerError::LexError(lex_err) => (
@@ -595,7 +624,7 @@ fn extract_error_info(error: &crate::error::CompilerError) -> (String, String, S
         crate::error::CompilerError::PluginError { message, .. } => (
             "PLG000".to_string(),
             "plugin".to_string(),
-            "plugin".to_string(),
+            "framework".to_string(),
             message.clone(),
         ),
     }

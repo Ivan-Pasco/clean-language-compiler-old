@@ -3030,9 +3030,20 @@ impl<'a> TypeInference<'a> {
                     tast_arguments.push(self.infer_expression(arg)?);
                 }
 
-                // Get the function type and add parameter type constraints
+                // Get the function type and add parameter type constraints.
+                // Skip constraint check for namespace symbols — these resolve by name
+                // in infer_function_return_type, not by symbol type.
                 if let Some(function_type) = self.type_env.get(function_symbol_id).cloned() {
-                    // Add type constraints between arguments and parameters
+                    if matches!(function_type, ConcreteType::Namespace) {
+                        return Err(CompilerError::type_error(
+                            &format!(
+                                "'{}' is a namespace, not a function — use '{}.function_name()' syntax",
+                                function, function
+                            ),
+                            None,
+                            Some(location.clone()),
+                        ));
+                    }
                     let _constraint_check = self.infer_function_call(
                         &function_type,
                         &tast_arguments,

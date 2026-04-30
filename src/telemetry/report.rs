@@ -287,6 +287,17 @@ impl ReportStore {
             .map(|r| r.report_id.clone())
             .collect()
     }
+
+    /// True if a report with the same error_code and message was already submitted
+    /// within the last 60 seconds. Prevents burst-submission of identical errors
+    /// when a test suite triggers the same compiler failure on many files simultaneously.
+    pub fn has_recent_duplicate(&self, error_code: &str, message: &str) -> bool {
+        let window = chrono::Duration::seconds(60);
+        let now = Utc::now();
+        self.reports.iter().any(|r| {
+            r.error_code == error_code && r.summary == message && (now - r.reported_at) < window
+        })
+    }
 }
 
 #[cfg(test)]
