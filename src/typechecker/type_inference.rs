@@ -2195,8 +2195,14 @@ impl<'a> TypeInference<'a> {
 
                     // If both branches return, use the result_type
                     // If only one branch returns, use that branch's return type
+                    // Null/Undefined/Unknown result_type means one or both branches are void
+                    // (bare return or no value). Fall through to per-branch logic so we don't
+                    // incorrectly infer a non-void return type for a void function.
                     if then_returns || else_returns {
-                        if !matches!(result_type, ConcreteType::Null | ConcreteType::Undefined) {
+                        if !matches!(
+                            result_type,
+                            ConcreteType::Null | ConcreteType::Undefined | ConcreteType::Unknown
+                        ) {
                             block_return_type = result_type.clone();
                         } else if then_returns {
                             block_return_type = then_block.return_type.clone();
@@ -2501,12 +2507,24 @@ impl<'a> TypeInference<'a> {
                     None
                 };
 
-                // Determine result type - if both branches exist, find common type
+                // Determine result type - if both branches exist, find common type.
+                // If either branch is void (Null/Undefined — bare `return` or no-value block),
+                // the if-statement itself doesn't produce a value. Guard against
+                // find_common_type(Null, Integer) = Integer (due to Null.is_assignable_to(Integer))
+                // incorrectly typing a void function as returning Integer.
                 let result_type = if let Some(else_tast) = &tast_else_block {
-                    // Both branches exist, find common type
-                    self.find_common_type(&tast_then_block.return_type, &else_tast.return_type)
+                    if matches!(
+                        tast_then_block.return_type,
+                        ConcreteType::Null | ConcreteType::Undefined
+                    ) || matches!(
+                        else_tast.return_type,
+                        ConcreteType::Null | ConcreteType::Undefined
+                    ) {
+                        ConcreteType::Null
+                    } else {
+                        self.find_common_type(&tast_then_block.return_type, &else_tast.return_type)
+                    }
                 } else {
-                    // Only then branch, result is unit (void)
                     ConcreteType::Null
                 };
 

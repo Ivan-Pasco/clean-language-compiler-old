@@ -1,0 +1,33 @@
+// Test: bugfixes/e007_void_function_if_else_bridge_type
+// Grammar: function_declaration, if_statement
+// Semantic: FUNC001, TYPE001
+// Bug: E007 WASM validation "values remaining on stack at end of block"
+//      When a void function has an if/else where:
+//        - the then-branch has an explicit bare `return` -> ConcreteType::Null
+//        - the else-branch has a non-void expression as its last statement
+//      infer_block computed find_common_type(Null, Integer) = Unknown,
+//      then Unknown -> MirType::Any -> i32, causing the void function to be
+//      declared as returning i32 in WASM -- producing E007.
+//
+// Fix: In infer_block TastStatement::If handling, treat result_type == Unknown
+//      (type conflict) like Null/Undefined -- fall through to per-branch logic
+//      so the void return (Null) path wins and the function stays void.
+//
+// Expected output:
+//   result: 42
+//   done
+
+start:
+	processValue(50)
+	print("done")
+
+functions:
+	integer getNumber()
+		return 42
+
+	void processValue(integer value)
+		if value > 100
+			return
+		else
+			integer result = getNumber()
+			print("result: " + result.toString())
