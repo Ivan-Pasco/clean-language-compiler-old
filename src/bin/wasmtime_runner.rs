@@ -714,7 +714,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    // string_compare - Compare two strings, return 1 if equal, 0 if not
+    // string_compare - Compare two strings, return 0 if equal, 1 if not (C/strcmp convention; codegen uses i32.eqz)
     linker.func_wrap(
         "env",
         "string_compare",
@@ -749,7 +749,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let start2 = ptr2 as usize + 4;
                     let string2 = std::str::from_utf8(&data[start2..start2 + len2]).unwrap_or("");
 
-                    return if string1 == string2 { 1 } else { 0 };
+                    return if string1 == string2 { 0 } else { 1 };
                 }
             }
             0

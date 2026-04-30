@@ -556,7 +556,7 @@ impl WasmPluginAdapter {
         )?;
 
         // env.string_compare - Compare two strings
-        // Returns 1 if equal, 0 if not equal
+        // Returns 0 if equal, 1 if not equal (C/strcmp convention; codegen uses i32.eqz to test equality)
         linker.func_wrap(
             "env",
             "string_compare",
@@ -587,9 +587,9 @@ impl WasmPluginAdapter {
                     (s1, s2)
                 };
                 if string1 == string2 {
-                    1
-                } else {
                     0
+                } else {
+                    1
                 }
             },
         )?;

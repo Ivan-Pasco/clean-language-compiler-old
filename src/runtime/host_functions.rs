@@ -2188,7 +2188,7 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
         })?;
 
     // string_compare(ptr1: i32, ptr2: i32) -> i32 - Compare two strings
-    // Returns 1 if equal, 0 if not equal
+    // Returns 0 if equal, 1 if not equal (C/strcmp convention; codegen uses i32.eqz to test equality)
     linker
         .func_wrap(
             "env",
@@ -2197,9 +2197,9 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
                 let string1 = extract_length_prefixed_string(&mut caller, ptr1);
                 let string2 = extract_length_prefixed_string(&mut caller, ptr2);
                 if string1 == string2 {
-                    1
-                } else {
                     0
+                } else {
+                    1
                 }
             },
         )
