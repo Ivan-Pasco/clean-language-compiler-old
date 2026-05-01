@@ -1045,3 +1045,39 @@ Compile `html_block_to_code` from frame.ui plugin with compiler 0.30.51. Call it
 - `src/codegen/mir_codegen.rs` — local variable allocation efficiency (89 vs 77 locals for same source)
 - Check if extra temporaries cause local index conflicts in deeply nested control flow
 - Compare WAT output between 0.30.48 (works) and 0.30.49 (broken) for the same source function
+
+---
+
+## 🔴 CRITICAL: Architecture Violation — Remove Rust shims html_block_to_code_rust and strip_common_indent from wasm_adapter.rs
+
+**Priority**: CRITICAL — Active architecture boundary violation (Principle 26)
+**Discovered**: May 1, 2026
+**Status**: ACTIVE VIOLATION — blocked on codegen bug below
+
+### Description
+
+`src/plugins/wasm_adapter.rs` contains two Rust reimplementations of frame.ui plugin functions:
+
+- `html_block_to_code_rust()` (~60 lines, starting ~line 3221) — reimplements the plugin's `html_block_to_code` WASM function: parses `{!expr}` and `{expr}` interpolations, builds `__html = __html + ...` statements
+- `strip_common_indent()` (~30 lines, starting ~line 3290) — reimplements the plugin's `strip_block_indent` WASM function: strips leading tabs from block body
+
+Both are violations of Principle 26 and the "No Plugin Logic in the Compiler" rule in `compiler-work.md`. Both were added in April 2026 as workarounds for a codegen bug that caused the plugin's own WASM to produce wrong output.
+
+### Prerequisite
+
+Fix the codegen bug documented in "🔴 CRITICAL: Codegen Bug — Complex Function Returns Empty (0.30.49+)" above. Once `html_block_to_code` in the frame.ui plugin executes correctly from its own WASM:
+
+### Removal Steps
+
+1. Delete `html_block_to_code_rust()` from `wasm_adapter.rs`
+2. Delete `strip_common_indent()` from `wasm_adapter.rs`
+3. Remove all call sites (search for `html_block_to_code_rust` and `strip_common_indent` in `wasm_adapter.rs`)
+4. Restore the original path: call the plugin's WASM `html_block_to_code` export directly
+5. Recompile frame.ui with the fixed compiler
+6. Verify the website project compiles with zero E001 errors
+7. Update ARCHITECTURE_BOUNDARIES.md history table — mark violation resolved
+
+### Files
+
+- `src/plugins/wasm_adapter.rs` — delete the two Rust functions and their call sites
+- `foundation/management/ARCHITECTURE_BOUNDARIES.md` — update history table row (currently "ACTIVE VIOLATION")
