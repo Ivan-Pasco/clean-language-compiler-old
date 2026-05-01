@@ -3229,7 +3229,12 @@ fn html_block_to_code_rust(html: &str) -> String {
 
     let flush_literal = |literal: &mut String, lines: &mut Vec<String>| {
         if !literal.is_empty() {
-            let escaped = literal.replace('\\', "\\\\").replace('"', "\\\"");
+            let escaped = literal
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('\t', "\\t");
             lines.push(format!("__html = __html + \"{}\"\n", escaped));
             literal.clear();
         }
