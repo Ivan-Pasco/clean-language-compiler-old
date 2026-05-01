@@ -3293,28 +3293,55 @@ fn strip_common_indent(content: &str) -> String {
         .min()
         .unwrap_or(0);
 
-    // Rebuild with indent stripped, joining non-empty lines with spaces
+    // Strip exactly min_indent tabs from each line, preserving relative indentation
+    // and joining with newlines so plugins can parse line-by-line.
     lines
         .iter()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                None
-            } else if line.len() > min_indent {
-                Some(line.chars().skip(min_indent).collect::<String>())
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else if line.chars().take(min_indent).all(|c| c == '\t') {
+                line.chars().skip(min_indent).collect::<String>()
             } else {
-                Some(trimmed.to_string())
+                line.trim_start_matches('\t').to_string()
             }
         })
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
-        .join(" ")
+        .join("\n")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_strip_common_indent_preserves_structure() {
+        // Multiline block body — common indent stripped, relative indent preserved,
+        // lines joined with newlines so plugins can parse line-by-line.
+        let input = "\t\tGET \"/test\" :\n\t\t\tstring result = \"hello\"\n\t\t\treturn result\n\t\tPOST \"/submit\" :\n\t\t\tstring body = req.body()\n\t\t\treturn body";
+        let result = strip_common_indent(input);
+        assert_eq!(
+            result,
+            "GET \"/test\" :\n\tstring result = \"hello\"\n\treturn result\nPOST \"/submit\" :\n\tstring body = req.body()\n\treturn body"
+        );
+        // Must contain newlines — never a space-joined single line
+        assert!(
+            result.contains('\n'),
+            "strip_common_indent must preserve newlines"
+        );
+        // Relative indentation must be preserved
+        assert!(
+            result.contains("\tstring"),
+            "strip_common_indent must preserve relative indent"
+        );
+    }
+
+    #[test]
+    fn test_strip_common_indent_single_level() {
+        let input = "\tline one\n\tline two\n\tline three";
+        let result = strip_common_indent(input);
+        assert_eq!(result, "line one\nline two\nline three");
+    }
 
     #[test]
     fn test_plugin_state_allocation() {
