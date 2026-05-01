@@ -1127,8 +1127,9 @@ impl MultiFileCompiler {
 
                         // Find the module file based on import type
                         let find_result = if import.is_file_import {
-                            // File import: resolve relative to the importing file's directory
-                            self.find_file_import(&import.name, &file_path)
+                            // File import: resolve relative to the importing file's directory,
+                            // with fallback to search_paths (project root, lib/, etc.)
+                            self.find_file_import(&import.name, &file_path, search_paths)
                         } else {
                             // Module import: search in standard paths
                             self.find_module_file(&import.name, search_paths)
@@ -1191,48 +1192,59 @@ impl MultiFileCompiler {
         }
     }
 
-    /// Find a file import by resolving the path relative to the importing file's directory
+    /// Find a file import by resolving the path relative to the importing file's directory,
+    /// with a fallback to each search path (project root, lib/, etc.)
     fn find_file_import(
         &self,
         import_path: &str,
         importing_file: &Path,
+        search_paths: &[PathBuf],
     ) -> Result<(PathBuf, String), CompilerError> {
-        // Get the directory of the importing file
         let base_dir = importing_file.parent().unwrap_or(Path::new("."));
 
-        // Resolve the import path relative to the base directory
-        let full_path = base_dir.join(import_path);
-
-        // Check if the file exists
-        if full_path.exists() {
-            let source = fs::read_to_string(&full_path).map_err(|e| {
-                CompilerError::io_error(
-                    format!(
-                        "Failed to read imported file '{}': {}",
-                        full_path.display(),
-                        e
-                    ),
-                    None,
-                    Some(SourceLocation {
-                        file: importing_file.to_string_lossy().to_string(),
-                        line: 1,
-                        column: 1,
-                        byte_start: None,
-                        byte_end: None,
-                    }),
-                )
-            })?;
-            return Ok((full_path, source));
+        // Build candidate paths: importing file's directory first, then each search path
+        let mut candidates: Vec<PathBuf> = Vec::with_capacity(search_paths.len() + 1);
+        candidates.push(base_dir.join(import_path));
+        for sp in search_paths {
+            let candidate = sp.join(import_path);
+            // Avoid duplicating the first candidate
+            if candidate != candidates[0] {
+                candidates.push(candidate);
+            }
         }
 
-        // File not found - build helpful error message
+        for full_path in &candidates {
+            if full_path.exists() {
+                let source = fs::read_to_string(full_path).map_err(|e| {
+                    CompilerError::io_error(
+                        format!(
+                            "Failed to read imported file '{}': {}",
+                            full_path.display(),
+                            e
+                        ),
+                        None,
+                        Some(SourceLocation {
+                            file: importing_file.to_string_lossy().to_string(),
+                            line: 1,
+                            column: 1,
+                            byte_start: None,
+                            byte_end: None,
+                        }),
+                    )
+                })?;
+                return Ok((full_path.clone(), source));
+            }
+        }
+
+        let searched = candidates
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+
         Err(CompilerError::module_error(
             format!("Imported file '{}' not found", import_path),
-            Some(format!(
-                "Resolved path: {} (relative to {})",
-                full_path.display(),
-                base_dir.display()
-            )),
+            Some(format!("Searched: {}", searched)),
             Some(SourceLocation {
                 file: importing_file.to_string_lossy().to_string(),
                 line: 1,
@@ -1622,6 +1634,51 @@ start:
         );
         let unit = result.unwrap();
         assert_eq!(unit.module_count(), 1); // Only main, not math
+    }
+
+    #[test]
+    fn test_find_file_import_search_path_fallback() {
+        // E013 regression: find_file_import should search search_paths when the file is not
+        // adjacent to the importing file (e.g. importing file is in a subdirectory but
+        // helpers.cln lives at the project root).
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let project_root = dir.path();
+
+        // Create project structure:
+        //   project_root/helpers.cln
+        //   project_root/sub/main.cln   (imports "helpers.cln")
+        let sub_dir = project_root.join("sub");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+
+        let helpers_path = project_root.join("helpers.cln");
+        std::fs::write(
+            &helpers_path,
+            "functions:\n\tinteger add(integer a, integer b)\n\t\treturn a + b\n",
+        )
+        .unwrap();
+
+        let importing_file = sub_dir.join("main.cln");
+        std::fs::write(&importing_file, "").unwrap();
+
+        let compiler = MultiFileCompiler::new();
+
+        // search_paths includes project_root (mimics build_from_file inserting entry dir)
+        let search_paths = vec![project_root.to_path_buf()];
+
+        // Should find helpers.cln via search_paths fallback (not in sub/ dir)
+        let result = compiler.find_file_import("helpers.cln", &importing_file, &search_paths);
+        assert!(
+            result.is_ok(),
+            "Should find helpers.cln via search_path fallback: {:?}",
+            result.err()
+        );
+        let (found_path, _) = result.unwrap();
+        assert_eq!(
+            found_path.canonicalize().unwrap(),
+            helpers_path.canonicalize().unwrap()
+        );
     }
 
     #[test]
