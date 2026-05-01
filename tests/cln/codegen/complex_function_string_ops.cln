@@ -1,0 +1,49 @@
+// Test: codegen/complex_function_string_ops
+// Grammar: while_stmt, if_stmt, function_call
+// Reproduces the "complex function returns empty" pattern from the frame.ui plugin:
+// nested while/if/else with substring, indexOf, and result accumulation.
+// Bug present in 0.30.49+: function returns "" despite loop executing.
+// Expected output:
+//   __html = __html + "Hello "
+//   __html = __html + head
+//   __html = __html + " World"
+
+start:
+	print(processText("Hello {!head} World"))
+
+functions:
+	string processText(string text)
+		string result = ""
+		string remaining = text
+
+		while remaining.length() > 0
+			integer brace_start = remaining.indexOf("{")
+
+			if brace_start == -1
+				result = result + "__html = __html + \"" + remaining + "\""
+				remaining = ""
+			else
+				if brace_start > 0
+					string before = remaining.substring(0, brace_start)
+					result = result + "__html = __html + \"" + before + "\"\n"
+
+				integer brace_end = remaining.indexOf("}", brace_start + 1)
+
+				if brace_end == -1
+					result = result + "__html = __html + \"" + remaining + "\""
+					remaining = ""
+				else
+					string after_brace = ""
+					if brace_start + 1 < remaining.length()
+						after_brace = remaining.substring(brace_start + 1, brace_start + 2)
+
+					if after_brace == "!"
+						string expr = remaining.substring(brace_start + 2, brace_end)
+						result = result + "__html = __html + " + expr + "\n"
+					else
+						string expr = remaining.substring(brace_start + 1, brace_end)
+						result = result + "__html = __html + _html_escape(" + expr + ")\n"
+
+					remaining = remaining.substring(brace_end + 1, remaining.length())
+
+		return result

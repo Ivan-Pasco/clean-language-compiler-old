@@ -1,0 +1,36 @@
+// Test: codegen/string_compare_ops
+// Grammar: comparison_expr (string equality via string_compare host import)
+// Semantic: SEM-TYPE-STRING
+// Exercises the exact patterns frame.ui plugin uses: string equality branches,
+// string.slice/substring, string concatenation in return values.
+// Expected output:
+//   div
+//   span
+//   other
+//   class container
+//   llo
+//   hel
+//   true
+//   false
+
+start:
+	print(classifyTag("div")) +
+	print(classifyTag("span")) +
+	print(classifyTag("p")) +
+	print(buildAttr("class", "container")) +
+	print(string.substring("hello world", 2, 5)) +
+	print(string.substring("hello world", 0, 3)) +
+	print(string.startsWith("hello", "h")) +
+	print(string.startsWith("hello", "z"))
+
+functions:
+	string classifyTag(string tag)
+		if tag == "div"
+			return "div"
+		else if tag == "span"
+			return "span"
+		else
+			return "other"
+
+	string buildAttr(string name, string value)
+		return name + " " + value

@@ -3508,4 +3508,69 @@ mod tests {
             stmts
         );
     }
+
+    /// Integration test: directly call the plugin's own WASM html_block_to_code function
+    /// via call_expand_full, bypassing the Rust html_block_to_code_rust shim.
+    ///
+    /// call_expand_full calls html_block_to_code on the plugin WASM directly (not the shim).
+    /// If the complex-function-returns-empty bug (0.30.49+) is still present, this test
+    /// will fail because html_block_to_code will return "".
+    ///
+    /// Requires /tmp/test_plugins/frame.ui/2.6.6/plugin.wasm (skipped if absent).
+    #[test]
+    fn test_frame_ui_plugin_html_block_to_code_direct_wasm() {
+        use std::path::PathBuf;
+
+        let plugin_wasm = PathBuf::from("/tmp/test_plugins/frame.ui/2.6.6/plugin.wasm");
+        if !plugin_wasm.exists() {
+            eprintln!("SKIP: /tmp/test_plugins/frame.ui/2.6.6/plugin.wasm not found");
+            return;
+        }
+
+        let loader_result = super::super::wasm_loader::WasmPluginLoader::with_plugins_dir(
+            PathBuf::from("/tmp/test_plugins"),
+        );
+        let mut loader = match loader_result {
+            Ok(l) => l,
+            Err(e) => panic!("Failed to create plugin loader: {}", e),
+        };
+
+        let registry = loader
+            .load_plugins(&["frame.ui".to_string()])
+            .expect("Failed to load frame.ui from /tmp/test_plugins");
+
+        use crate::ast::SourceLocation;
+        use crate::plugins::FrameworkBlock;
+        let block = FrameworkBlock {
+            name: "html".to_string(),
+            content: "<div class=\"container\"><h1>Hello</h1></div>".to_string(),
+            attributes: vec![],
+            location: Some(SourceLocation {
+                file: "test".into(),
+                line: 1,
+                column: 1,
+                byte_start: None,
+                byte_end: None,
+            }),
+        };
+
+        // expand_full routes through call_expand_full which calls html_block_to_code
+        // on the plugin WASM directly — NOT the Rust shim.
+        let expansion = registry
+            .expand_full(&block)
+            .expect("expand_full must not fail");
+
+        // If the complex-function-returns-empty bug is present, statements and
+        // functions will be empty because the plugin's WASM html_block_to_code returns "".
+        let has_content = !expansion.statements.is_empty()
+            || !expansion.functions.is_empty()
+            || expansion.start_function.is_some();
+        assert!(
+            has_content,
+            "Plugin WASM html_block_to_code returned empty — complex-function bug still present in this build. \
+             Consider rebuilding frame.ui with a newer compiler. \
+             Expansion: {:?}",
+            expansion
+        );
+    }
 }
