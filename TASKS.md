@@ -985,10 +985,11 @@ ensure the type-conversion codepath runs.
 
 ## 🟡 MEDIUM-HIGH: Import Minimality — Finish Tree-Shaking Stdlib Layer 2
 
-**Priority**: MEDIUM-HIGH
+**Priority**: HIGH — now blocking browser client WASM instantiation
 **Discovered**: April 17, 2026
 **Status**: PARTIAL — HTTP/file/crypto/db/math gated (0.30.66–0.30.67); input/string/list still emitted.
 **Tracked as**: error report `f4030117-0f04-4f9b-88d3-62835c8cae42` (COD001_FOLLOWUP_STDLIB_LAZY).
+**Related**: frame.ui BRIDGE_REG_001 report `e908fdcb-356d-42bb-8666-6c766943aa21` — loader.js missing stubs for the same functions. Both sides need fixing; frame.ui stubs are the immediate unblock.
 
 ### Description
 `foundation/platform-architecture/EXECUTION_LAYERS.md` §"Import Minimality Rule — Test (planned strengthening)" lists the Layer 2 categories still emitted unconditionally. They need to be reachability-gated at the class-registration call site (same pattern as `register_math_operations` in 0.30.67 and HttpClass/FileClass in 0.30.66) so both the imports and their wrapper functions are removed together.

@@ -93,6 +93,7 @@ impl TokenParser {
 
                 let first_name = name.clone();
                 let first_location = self.current().location.clone();
+                let first_cursor = self.cursor; // saved before consuming first_name
 
                 // Check if this is a type name (for variable declaration)
                 let is_type_keyword = matches!(
@@ -435,8 +436,11 @@ impl TokenParser {
                         self.skip_whitespace();
                         return self.parse_validate_check_stmt(first_name, first_location);
                     } else {
-                        // Not an assignment — backtrack and parse as expression.
-                        self.cursor = save_cursor;
+                        // Not an assignment — backtrack to first_name and parse the
+                        // whole thing as an expression (e.g. `nums.add(4)`, `s.replace(a,b)`).
+                        // Restoring only to save_cursor (the dot) leaves parse_expression()
+                        // facing a bare `.`, which causes "Unexpected token: Dot".
+                        self.cursor = first_cursor;
                         let expr = self.parse_expression()?;
                         return Ok(Statement::Expression {
                             expr,

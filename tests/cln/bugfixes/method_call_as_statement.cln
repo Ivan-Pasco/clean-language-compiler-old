@@ -1,0 +1,18 @@
+// Test: bugfixes/method_call_as_statement
+// Grammar: statement → expression_statement → method_call_expr
+// Semantic: SYN008 — method call expressions on variables must be valid standalone statements
+// Expected output:
+//   4
+//   done
+//   ok
+
+start:
+	list<integer> nums = [1, 2, 3]
+	nums.add(4)
+	printl(nums.length().toString())
+
+	string s = "hello"
+	s.toUpperCase()
+	printl("done")
+
+	printl("ok")
