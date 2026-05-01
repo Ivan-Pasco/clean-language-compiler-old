@@ -139,7 +139,7 @@ impl LanguageServer for Backend {
             },
             server_info: Some(ServerInfo {
                 name: "Clean Language Server".to_string(),
-                version: Some("0.30.10".to_string()),
+                version: Some(env!("CARGO_PKG_VERSION").to_string()),
             }),
         })
     }
@@ -150,7 +150,7 @@ impl LanguageServer for Backend {
         self.client
             .log_message(
                 MessageType::INFO,
-                "Clean Language Server ready - integrated with compiler v0.30.10",
+                &format!("Clean Language Server ready - v{}", env!("CARGO_PKG_VERSION")),
             )
             .await;
     }
@@ -863,16 +863,27 @@ impl Backend {
 
 #[tokio::main]
 async fn main() {
-    // Initialize logging with environment filter support
+    // Parse --log-level <level> and --version args; ignore unknown args (e.g. --stdio)
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--version") {
+        println!("clean-language-server {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+    let log_level = args
+        .windows(2)
+        .find(|w| w[0] == "--log-level")
+        .map(|w| w[1].as_str())
+        .unwrap_or("info");
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level)),
         )
         .with_writer(std::io::stderr)
         .init();
 
-    info!("Starting Clean Language Server v0.30.10");
+    info!("Starting Clean Language Server v{}", env!("CARGO_PKG_VERSION"));
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
