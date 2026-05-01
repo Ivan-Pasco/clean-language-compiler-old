@@ -55,6 +55,12 @@ jobs:
         OPENSSL_STATIC: 1
         OPENSSL_VENDOR: 1
 
+    - name: Build language server binary
+      run: cargo build --release --bin clean-language-server --manifest-path language-server/Cargo.toml --target ${{ matrix.target }}
+      env:
+        OPENSSL_STATIC: 1
+        OPENSSL_VENDOR: 1
+
     - name: Generate compile-options.json (Unix)
       if: matrix.os != 'windows-latest'
       run: ./target/${{ matrix.target }}/release/cln options --export-json
@@ -66,26 +72,34 @@ jobs:
 
     - name: Strip binary (Unix)
       if: matrix.os != 'windows-latest'
-      run: strip target/${{ matrix.target }}/release/cln || true
+      run: |
+        strip target/${{ matrix.target }}/release/cln || true
+        strip target/${{ matrix.target }}/release/clean-language-server || true
 
     - name: Create archive (Unix)
       if: matrix.os != 'windows-latest'
       run: |
         mkdir -p release-package
         cp target/${{ matrix.target }}/release/cln release-package/
+        cp target/${{ matrix.target }}/release/clean-language-server release-package/
         cp compile-options.json release-package/
         tar -czf ${{ matrix.name }}.tar.gz -C release-package .
-        # Also copy direct binary for cleanmanager compatibility
+        # Also copy direct binaries for cleanmanager compatibility
         cp target/${{ matrix.target }}/release/cln ${{ matrix.name }}
+        # Language server: derive name by replacing 'cln-' prefix
+        ls_name=$(echo "${{ matrix.name }}" | sed 's/^cln-/clean-language-server-/')
+        cp target/${{ matrix.target }}/release/clean-language-server "$ls_name"
 
     - name: Create archive (Windows)
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: |
         Set-Location "target/${{ matrix.target }}/release"
-        7z a "../../../${{ matrix.name }}.zip" cln.exe
+        7z a "../../../${{ matrix.name }}.zip" cln.exe clean-language-server.exe
         # Also copy direct binary for cleanmanager compatibility
         Copy-Item cln.exe "../../../${{ matrix.name }}.exe"
+        $lsName = "${{ matrix.name }}" -replace '^cln-', 'clean-language-server-'
+        Copy-Item clean-language-server.exe "../../../${lsName}.exe"
         Set-Location "../../../"
         # Include compile-options.json in the archive
         7z a "${{ matrix.name }}.zip" compile-options.json
@@ -98,6 +112,7 @@ jobs:
           ${{ matrix.name }}.${{ matrix.archive }}
           ${{ matrix.name }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
           compile-options.json
+          clean-language-server-*${{ matrix.os == 'windows-latest' && '.exe' || '' }}
 
   release:
     name: Create Release
@@ -130,12 +145,16 @@ jobs:
         find artifacts -name "cln-windows-*.exe" -type f | while read file; do
           mv "$file" .
         done
+        # Move language server direct binaries
+        find artifacts -name "clean-language-server-*" -type f | while read file; do
+          mv "$file" .
+        done
         # Move compile-options.json (use the first one found, they're all the same)
         find artifacts -name "compile-options.json" -type f | head -1 | while read file; do
           mv "$file" .
         done
         # List what we have
-        ls -la *.tar.gz *.zip cln-* compile-options.json 2>/dev/null || echo "Some files may be missing"
+        ls -la *.tar.gz *.zip cln-* clean-language-server-* compile-options.json 2>/dev/null || echo "Some files may be missing"
 
     - name: Create Release
       uses: softprops/action-gh-release@v2
@@ -148,6 +167,11 @@ jobs:
           cln-macos-x86_64
           cln-macos-aarch64
           cln-windows-x86_64.exe
+          clean-language-server-linux-x86_64
+          clean-language-server-linux-aarch64
+          clean-language-server-macos-x86_64
+          clean-language-server-macos-aarch64
+          clean-language-server-windows-x86_64.exe
           compile-options.json
         body: |
           ## Clean Language Compiler ${{ github.ref_name }}
@@ -162,14 +186,22 @@ jobs:
           Download the appropriate binary for your platform and add it to your PATH.
           
           ### Platforms
-          
+
           Choose between direct binaries (for cleanmanager) or archives:
-          
+
           - **Linux x86_64**: `cln-linux-x86_64` or `cln-linux-x86_64.tar.gz`
           - **Linux ARM64**: `cln-linux-aarch64` or `cln-linux-aarch64.tar.gz`
           - **macOS x86_64**: `cln-macos-x86_64` or `cln-macos-x86_64.tar.gz`
           - **macOS ARM64**: `cln-macos-aarch64` or `cln-macos-aarch64.tar.gz`
           - **Windows x86_64**: `cln-windows-x86_64.exe` or `cln-windows-x86_64.zip`
+
+          ### Language Server (LSP)
+
+          The archive includes `clean-language-server` alongside `cln`. Standalone binaries are also provided:
+
+          - **Linux x86_64**: `clean-language-server-linux-x86_64`
+          - **macOS ARM64**: `clean-language-server-macos-aarch64`
+          - **Windows x86_64**: `clean-language-server-windows-x86_64.exe`
           
           ### Usage
           
