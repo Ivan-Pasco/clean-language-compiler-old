@@ -1048,11 +1048,11 @@ Compile `html_block_to_code` from frame.ui plugin with compiler 0.30.51. Call it
 
 ---
 
-## 🔴 CRITICAL: Architecture Violation — Remove Rust shims html_block_to_code_rust and strip_common_indent from wasm_adapter.rs
+## ✅ RESOLVED: Architecture Violation — Remove Rust shims html_block_to_code_rust and strip_common_indent from wasm_adapter.rs
 
 **Priority**: CRITICAL — Active architecture boundary violation (Principle 26)
 **Discovered**: May 1, 2026
-**Status**: ACTIVE VIOLATION — blocked on codegen bug below
+**Status**: RESOLVED May 1, 2026 — both shims removed from wasm_adapter.rs; plugin WASM verified correct with 0.30.103 compiler (complex-function-returns-empty bug and string comparison bug both absent)
 
 ### Description
 

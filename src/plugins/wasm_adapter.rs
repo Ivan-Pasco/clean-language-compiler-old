@@ -2399,51 +2399,19 @@ impl WasmPluginAdapter {
         };
         let attributes_ptr = self.find_or_write_string(&mut store, &memory, &attributes_str)?;
 
-        // Pre-strip common indentation from block body before passing to plugin.
-        let stripped_body = strip_common_indent(&actual_body);
-        let body_ptr = self.find_or_write_string(&mut store, &memory, &stripped_body)?;
+        let body_ptr = self.find_or_write_string(&mut store, &memory, &actual_body)?;
 
-        // For html: blocks, use the Rust html_block_to_code_rust implementation.
-        // The compiled WASM plugin's html_block_to_code has two known bugs:
-        //   1. Returns empty string for HTML elements
-        //   2. Generates _html_escape() with no arguments for {!expr} raw interpolations
-        // The Rust implementation correctly handles all interpolation patterns.
-        let result_ptr = if block_name == "html" {
-            let code_str = html_block_to_code_rust(&stripped_body);
-
-            // Check for var="name" attribute to determine mode
-            let var_name = if attributes_str.contains("\"var\"") {
-                attributes_str
-                    .split("\"var\":\"")
-                    .nth(1)
-                    .and_then(|s| s.split('"').next())
-                    .unwrap_or("")
-            } else {
-                ""
-            };
-
-            let generated = if var_name.is_empty() {
-                format!("string __html = \"\"\n{}return __html\n", code_str)
-            } else {
-                let remapped = code_str.replace("__html", var_name);
-                format!("string {} = \"\"\n{}", var_name, remapped)
-            };
-
-            self.write_clean_string(&mut store, &memory, &generated)?
-        } else {
-            // For all other block types, call expand_block normally
-            let expand_fn_name = &self.manifest.exports.expand;
-            let expand: TypedFunc<(i32, i32, i32), i32> = instance
-                .get_typed_func(&mut store, expand_fn_name)
-                .map_err(|e| {
-                    anyhow!(
-                        "Plugin does not export '{}' function: {}",
-                        expand_fn_name,
-                        e
-                    )
-                })?;
-            expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?
-        };
+        let expand_fn_name = &self.manifest.exports.expand;
+        let expand: TypedFunc<(i32, i32, i32), i32> = instance
+            .get_typed_func(&mut store, expand_fn_name)
+            .map_err(|e| {
+                anyhow!(
+                    "Plugin does not export '{}' function: {}",
+                    expand_fn_name,
+                    e
+                )
+            })?;
+        let result_ptr = expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?;
 
         // Check for errors
         if let Some(error) = store.data().last_error.clone() {
@@ -2589,57 +2557,19 @@ impl WasmPluginAdapter {
             format!("{{{}}}", pairs.join(","))
         };
         let attributes_ptr = self.find_or_write_string(&mut store, &memory, &attributes_str)?;
-        // Pre-strip common indentation from block body
-        let stripped_body = strip_common_indent(&actual_body);
-        let body_ptr = self.find_or_write_string(&mut store, &memory, &stripped_body)?;
+        let body_ptr = self.find_or_write_string(&mut store, &memory, &actual_body)?;
 
-        // Same html: block handling as call_expand — bypass expand_block,
-        // call html_block_to_code directly with pre-stripped body.
-        let result_ptr = if block_name == "html" {
-            if let Ok(html_fn) =
-                instance.get_typed_func::<i32, i32>(&mut store, "html_block_to_code")
-            {
-                let code_ptr = html_fn.call(&mut store, body_ptr)?;
-                let code_bytes = self.read_result(&store, &memory, code_ptr)?;
-                let code_str = std::str::from_utf8(&code_bytes).unwrap_or("");
-
-                let var_name = if attributes_str.contains("\"var\"") {
-                    attributes_str
-                        .split("\"var\":\"")
-                        .nth(1)
-                        .and_then(|s| s.split('"').next())
-                        .unwrap_or("")
-                } else {
-                    ""
-                };
-
-                let generated = if var_name.is_empty() {
-                    format!("string __html = \"\"\n{}return __html\n", code_str)
-                } else {
-                    let remapped = code_str.replace("__html", var_name);
-                    format!("string {} = \"\"\n{}", var_name, remapped)
-                };
-
-                self.write_clean_string(&mut store, &memory, &generated)?
-            } else {
-                let expand_fn_name = &self.manifest.exports.expand;
-                let expand: TypedFunc<(i32, i32, i32), i32> =
-                    instance.get_typed_func(&mut store, expand_fn_name)?;
-                expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?
-            }
-        } else {
-            let expand_fn_name = &self.manifest.exports.expand;
-            let expand: TypedFunc<(i32, i32, i32), i32> = instance
-                .get_typed_func(&mut store, expand_fn_name)
-                .map_err(|e| {
-                    anyhow!(
-                        "Plugin does not export '{}' function: {}",
-                        expand_fn_name,
-                        e
-                    )
-                })?;
-            expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?
-        };
+        let expand_fn_name = &self.manifest.exports.expand;
+        let expand: TypedFunc<(i32, i32, i32), i32> = instance
+            .get_typed_func(&mut store, expand_fn_name)
+            .map_err(|e| {
+                anyhow!(
+                    "Plugin does not export '{}' function: {}",
+                    expand_fn_name,
+                    e
+                )
+            })?;
+        let result_ptr = expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?;
 
         // Check for errors
         if let Some(error) = store.data().last_error.clone() {
@@ -3206,147 +3136,9 @@ fn extract_inline_attrs(content: &str) -> (Vec<String>, String) {
     }
 }
 
-/// Rust reimplementation of the frame.ui plugin's html_block_to_code WASM function.
-///
-/// The compiled WASM has bugs: empty output for HTML elements, and generating
-/// `_html_escape()` with no arguments for `{!expr}` raw interpolations.
-///
-/// This implementation correctly handles:
-/// - `{!expr}` → raw variable (no HTML escaping) — one statement per interpolation
-/// - `{expr}` → `_html_escape(expr)` call — one statement per interpolation
-/// - Literal HTML (tags, attributes, text) — one statement per chunk
-///
-/// Each segment becomes its own `__html = __html + ...` statement to avoid
-/// deep expression trees that exceed the compiler's recursion limit.
-fn html_block_to_code_rust(html: &str) -> String {
-    if html.trim().is_empty() {
-        return String::new();
-    }
-
-    let mut lines: Vec<String> = Vec::new();
-    let mut literal = String::new();
-    let mut i = 0;
-
-    let flush_literal = |literal: &mut String, lines: &mut Vec<String>| {
-        if !literal.is_empty() {
-            let escaped = literal
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r")
-                .replace('\t', "\\t");
-            lines.push(format!("__html = __html + \"{}\"\n", escaped));
-            literal.clear();
-        }
-    };
-
-    while i < html.len() {
-        if html.as_bytes().get(i) == Some(&b'{') {
-            let is_raw = html.as_bytes().get(i + 1) == Some(&b'!');
-            let expr_start = if is_raw { i + 2 } else { i + 1 };
-
-            if let Some(rel_close) = html[expr_start..].find('}') {
-                let close = expr_start + rel_close;
-                let expr = html[expr_start..close].trim();
-
-                if !expr.is_empty() {
-                    flush_literal(&mut literal, &mut lines);
-
-                    if is_raw {
-                        lines.push(format!("__html = __html + {}\n", expr));
-                    } else {
-                        lines.push(format!("__html = __html + _html_escape({})\n", expr));
-                    }
-
-                    i = close + 1;
-                    continue;
-                }
-            }
-
-            literal.push('{');
-            i += 1;
-        } else {
-            let ch = html[i..].chars().next().unwrap_or('\0');
-            literal.push(ch);
-            i += ch.len_utf8();
-        }
-    }
-
-    flush_literal(&mut literal, &mut lines);
-
-    lines.concat()
-}
-
-/// Strip common leading indentation from block body content.
-///
-/// This replicates the logic that plugins perform in `strip_block_indent`,
-/// working around a WASM codegen bug where the plugin's implementation
-/// returns empty string due to local variable scoping issues in compiled WASM.
-///
-/// The function:
-/// 1. Finds the minimum tab indentation across all non-empty lines
-/// 2. Strips that many leading tabs from each line
-/// 3. Joins non-empty lines with spaces (matching plugin behavior)
-fn strip_common_indent(content: &str) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-
-    // Find minimum indent (number of leading tabs) across non-empty lines
-    let min_indent = lines
-        .iter()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.chars().take_while(|c| *c == '\t').count())
-        .min()
-        .unwrap_or(0);
-
-    // Strip exactly min_indent tabs from each line, preserving relative indentation
-    // and joining with newlines so plugins can parse line-by-line.
-    lines
-        .iter()
-        .map(|line| {
-            if line.trim().is_empty() {
-                String::new()
-            } else if line.chars().take(min_indent).all(|c| c == '\t') {
-                line.chars().skip(min_indent).collect::<String>()
-            } else {
-                line.trim_start_matches('\t').to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_strip_common_indent_preserves_structure() {
-        // Multiline block body — common indent stripped, relative indent preserved,
-        // lines joined with newlines so plugins can parse line-by-line.
-        let input = "\t\tGET \"/test\" :\n\t\t\tstring result = \"hello\"\n\t\t\treturn result\n\t\tPOST \"/submit\" :\n\t\t\tstring body = req.body()\n\t\t\treturn body";
-        let result = strip_common_indent(input);
-        assert_eq!(
-            result,
-            "GET \"/test\" :\n\tstring result = \"hello\"\n\treturn result\nPOST \"/submit\" :\n\tstring body = req.body()\n\treturn body"
-        );
-        // Must contain newlines — never a space-joined single line
-        assert!(
-            result.contains('\n'),
-            "strip_common_indent must preserve newlines"
-        );
-        // Relative indentation must be preserved
-        assert!(
-            result.contains("\tstring"),
-            "strip_common_indent must preserve relative indent"
-        );
-    }
-
-    #[test]
-    fn test_strip_common_indent_single_level() {
-        let input = "\tline one\n\tline two\n\tline three";
-        let result = strip_common_indent(input);
-        assert_eq!(result, "line one\nline two\nline three");
-    }
 
     #[test]
     fn test_plugin_state_allocation() {
@@ -3365,87 +3157,8 @@ mod tests {
         assert_eq!(ptr3, 524592);
     }
 
-    /// Verify html_block_to_code_rust correctly escapes control characters.
-    /// This guards against re-introducing the flush_literal newline bug (fixed v0.30.103):
-    /// raw newlines between {!expr} interpolations must be escaped as \\n, not embedded.
-    #[test]
-    fn test_html_block_to_code_rust_escapes_newlines() {
-        // Input mimics the docs.cln html: block: {!expr} on separate lines with
-        // bare newlines between them — the pattern that produced unterminated strings.
-        let input = "{!head}\n{!nav}\n<div class=\"container\">\n\t<h1>Hello</h1>\n</div>\n{!foot}";
-        let result = html_block_to_code_rust(input);
-
-        // No literal newline may appear inside a string literal in the output
-        // (i.e., between two double-quotes on the same statement)
-        for line in result.lines() {
-            // Count unescaped quotes on this line
-            let mut in_string = false;
-            let mut chars = line.chars().peekable();
-            while let Some(c) = chars.next() {
-                if c == '\\' {
-                    chars.next(); // skip escaped char
-                    continue;
-                }
-                if c == '"' {
-                    in_string = !in_string;
-                }
-            }
-            // If a line opens a string but doesn't close it, the string spans lines → BUG
-            assert!(
-                !in_string,
-                "Unterminated string literal in line: {:?}\nFull output:\n{}",
-                line, result
-            );
-        }
-
-        // {!head} must become a raw concatenation statement (no _html_escape)
-        // html_block_to_code_rust emits: __html = __html + head
-        assert!(
-            result.contains("__html + head"),
-            "raw interpolation must not use _html_escape: {}",
-            result
-        );
-        assert!(
-            result.contains("__html + nav"),
-            "raw interpolation for nav must not use _html_escape: {}",
-            result
-        );
-        assert!(
-            !result.contains("_html_escape(head)"),
-            "raw {{!head}} must not call _html_escape: {}",
-            result
-        );
-        // The literal newlines between elements must be escaped as \\n in string literals
-        assert!(
-            result.contains("\\n"),
-            "newlines between elements must be escaped as \\\\n: {}",
-            result
-        );
-    }
-
-    /// Verify html_block_to_code_rust handles escaped interpolation {expr} (no !)
-    #[test]
-    fn test_html_block_to_code_rust_escaped_interpolation() {
-        let input = "<h1>{title}</h1>";
-        let result = html_block_to_code_rust(input);
-        assert!(
-            result.contains("_html_escape(title)"),
-            "escaped interpolation must use _html_escape: {}",
-            result
-        );
-        assert!(
-            !result.contains("+ title +"),
-            "escaped interpolation must not be raw"
-        );
-    }
-
     /// Integration test: verify the frame.ui plugin compiled with the CURRENT compiler
     /// loads and instantiates cleanly via the full WasmPluginAdapter path.
-    ///
-    /// NOTE: This test exercises the Rust html_block_to_code_rust shim (which intercepts
-    /// all html: blocks). The plugin's own WASM expand_html_block function is NOT called
-    /// here. To verify the plugin's WASM function directly, see the wasmtime-level test
-    /// test_frame_ui_plugin_html_block_to_code_direct below.
     ///
     /// This test requires /tmp/test_plugins/frame.ui/2.6.6/plugin.wasm to exist.
     /// Build it with:
@@ -3510,7 +3223,7 @@ mod tests {
     }
 
     /// Integration test: directly call the plugin's own WASM html_block_to_code function
-    /// via call_expand_full, bypassing the Rust html_block_to_code_rust shim.
+    /// via call_expand_full, calling the plugin WASM's html_block_to_code directly.
     ///
     /// call_expand_full calls html_block_to_code on the plugin WASM directly (not the shim).
     /// If the complex-function-returns-empty bug (0.30.49+) is still present, this test
@@ -3571,6 +3284,26 @@ mod tests {
              Consider rebuilding frame.ui with a newer compiler. \
              Expansion: {:?}",
             expansion
+        );
+
+        // Verify attribute handling: <div class="container"> must produce "class" in output.
+        // Local variable index mismatch bug (0.30.7-era) would drop the attribute name,
+        // producing '="container"' instead of 'class="container"'.
+        // The generated code may be in statements (direct parse) or start_function (fallback).
+        let content_str = if !expansion.statements.is_empty() {
+            format!("{:?}", expansion.statements)
+        } else {
+            format!("{:?}", expansion.start_function)
+        };
+        assert!(
+            content_str.contains("class"),
+            "Attribute name 'class' missing from expansion — local variable index mismatch bug may be present: {}",
+            content_str
+        );
+        assert!(
+            content_str.contains("container"),
+            "Attribute value 'container' missing from expansion: {}",
+            content_str
         );
     }
 }
