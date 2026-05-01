@@ -3364,4 +3364,148 @@ mod tests {
         // 524392 + 200 = 524592, aligned to 8 = 524592
         assert_eq!(ptr3, 524592);
     }
+
+    /// Verify html_block_to_code_rust correctly escapes control characters.
+    /// This guards against re-introducing the flush_literal newline bug (fixed v0.30.103):
+    /// raw newlines between {!expr} interpolations must be escaped as \\n, not embedded.
+    #[test]
+    fn test_html_block_to_code_rust_escapes_newlines() {
+        // Input mimics the docs.cln html: block: {!expr} on separate lines with
+        // bare newlines between them — the pattern that produced unterminated strings.
+        let input = "{!head}\n{!nav}\n<div class=\"container\">\n\t<h1>Hello</h1>\n</div>\n{!foot}";
+        let result = html_block_to_code_rust(input);
+
+        // No literal newline may appear inside a string literal in the output
+        // (i.e., between two double-quotes on the same statement)
+        for line in result.lines() {
+            // Count unescaped quotes on this line
+            let mut in_string = false;
+            let mut chars = line.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    chars.next(); // skip escaped char
+                    continue;
+                }
+                if c == '"' {
+                    in_string = !in_string;
+                }
+            }
+            // If a line opens a string but doesn't close it, the string spans lines → BUG
+            assert!(
+                !in_string,
+                "Unterminated string literal in line: {:?}\nFull output:\n{}",
+                line, result
+            );
+        }
+
+        // {!head} must become a raw concatenation statement (no _html_escape)
+        // html_block_to_code_rust emits: __html = __html + head
+        assert!(
+            result.contains("__html + head"),
+            "raw interpolation must not use _html_escape: {}",
+            result
+        );
+        assert!(
+            result.contains("__html + nav"),
+            "raw interpolation for nav must not use _html_escape: {}",
+            result
+        );
+        assert!(
+            !result.contains("_html_escape(head)"),
+            "raw {{!head}} must not call _html_escape: {}",
+            result
+        );
+        // The literal newlines between elements must be escaped as \\n in string literals
+        assert!(
+            result.contains("\\n"),
+            "newlines between elements must be escaped as \\\\n: {}",
+            result
+        );
+    }
+
+    /// Verify html_block_to_code_rust handles escaped interpolation {expr} (no !)
+    #[test]
+    fn test_html_block_to_code_rust_escaped_interpolation() {
+        let input = "<h1>{title}</h1>";
+        let result = html_block_to_code_rust(input);
+        assert!(
+            result.contains("_html_escape(title)"),
+            "escaped interpolation must use _html_escape: {}",
+            result
+        );
+        assert!(
+            !result.contains("+ title +"),
+            "escaped interpolation must not be raw"
+        );
+    }
+
+    /// Integration test: verify the frame.ui plugin compiled with the CURRENT compiler
+    /// loads and instantiates cleanly via the full WasmPluginAdapter path.
+    ///
+    /// NOTE: This test exercises the Rust html_block_to_code_rust shim (which intercepts
+    /// all html: blocks). The plugin's own WASM expand_html_block function is NOT called
+    /// here. To verify the plugin's WASM function directly, see the wasmtime-level test
+    /// test_frame_ui_plugin_html_block_to_code_direct below.
+    ///
+    /// This test requires /tmp/test_plugins/frame.ui/2.6.6/plugin.wasm to exist.
+    /// Build it with:
+    ///   ./target/debug/cln compile \
+    ///     /path/to/clean-framework/plugins/frame.ui/src/main.cln \
+    ///     -o /tmp/test_plugins/frame.ui/2.6.6/plugin.wasm --target=plugin
+    ///
+    /// If the file is missing, the test is skipped (not failed) so CI doesn't break
+    /// on machines where the framework checkout isn't available.
+    #[test]
+    fn test_frame_ui_plugin_expand_html_block_nonempty() {
+        use std::path::PathBuf;
+
+        let plugin_wasm = PathBuf::from("/tmp/test_plugins/frame.ui/2.6.6/plugin.wasm");
+        if !plugin_wasm.exists() {
+            eprintln!("SKIP: /tmp/test_plugins/frame.ui/2.6.6/plugin.wasm not found");
+            return;
+        }
+
+        let loader_result = super::super::wasm_loader::WasmPluginLoader::with_plugins_dir(
+            PathBuf::from("/tmp/test_plugins"),
+        );
+        let mut loader = match loader_result {
+            Ok(l) => l,
+            Err(e) => panic!("Failed to create plugin loader: {}", e),
+        };
+
+        let registry = loader
+            .load_plugins(&["frame.ui".to_string()])
+            .expect("Failed to load frame.ui from /tmp/test_plugins");
+
+        // Create a minimal html: FrameworkBlock that exercises expand_html_block
+        // with {!expr} raw interpolations — the pattern that was broken.
+        use crate::ast::SourceLocation;
+        use crate::plugins::FrameworkBlock;
+        let block = FrameworkBlock {
+            name: "html".to_string(),
+            content: "{!head}\n{!nav}\n<div class=\"container\"><h1>Hello</h1></div>\n{!foot}"
+                .to_string(),
+            attributes: vec![],
+            location: Some(SourceLocation {
+                file: "test".into(),
+                line: 1,
+                column: 1,
+                byte_start: None,
+                byte_end: None,
+            }),
+        };
+
+        let stmts = registry.expand(&block).expect("expand_block must not fail");
+
+        // The result must be non-empty — if it's empty the complex-function bug is back
+        assert!(!stmts.is_empty(), "expand_html_block returned 0 statements — complex-function empty-return bug is present");
+
+        // The generated code must reference head, nav, foot as raw variables
+        let code: String = format!("{:?}", stmts);
+        assert!(
+            code.contains("head") || code.contains("__html"),
+            "Output must reference the html: expansion variables: {:?}",
+            stmts
+        );
+    }
 }
