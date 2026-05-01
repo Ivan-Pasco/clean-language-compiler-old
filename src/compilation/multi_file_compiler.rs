@@ -1137,23 +1137,28 @@ impl MultiFileCompiler {
 
                         match find_result {
                             Ok((module_path, module_source)) => {
-                                // Derive module name from file path for file imports
+                                // Derive a human-readable module name (basename stem).
+                                // add_module uses the canonical path as the true dedup
+                                // key and disambiguates the name when two different
+                                // files share the same stem.
                                 let module_name = if import.is_file_import {
                                     Self::derive_module_name(&module_path)
                                 } else {
                                     import.name.clone()
                                 };
 
-                                // Add the module if not already present
-                                let dep_id = if !unit.has_module(&module_name) {
-                                    unit.add_module(
-                                        module_name.clone(),
-                                        module_path.clone(),
-                                        module_source,
-                                    )
-                                } else {
-                                    *unit.module_by_name.get(&module_name).unwrap()
-                                };
+                                // Dedup by canonical path first; fall through to
+                                // add_module only for genuinely new files.
+                                let dep_id =
+                                    if let Some(existing) = unit.module_id_for_path(&module_path) {
+                                        existing
+                                    } else {
+                                        unit.add_module(
+                                            module_name.clone(),
+                                            module_path.clone(),
+                                            module_source,
+                                        )
+                                    };
 
                                 // Add to graph
                                 graph.add_dependency(

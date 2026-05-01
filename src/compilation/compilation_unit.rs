@@ -97,6 +97,11 @@ pub struct CompilationUnit {
     /// Module name to ID mapping for quick lookup
     pub module_by_name: HashMap<String, CompilationModuleId>,
 
+    /// Canonical file path to ID mapping — the true dedup key.
+    /// Two imports resolving to the same file on disk are the same module,
+    /// regardless of what basename-derived name they would have gotten.
+    pub module_by_path: HashMap<PathBuf, CompilationModuleId>,
+
     /// The entry module ID (the main file being compiled)
     pub entry_module: CompilationModuleId,
 
@@ -117,8 +122,16 @@ impl CompilationUnit {
     /// Create a new compilation unit with an entry module
     pub fn new(entry_name: String, entry_path: PathBuf, entry_source: String) -> Self {
         let entry_id = CompilationModuleId(0);
-        let entry_module =
-            CompiledModule::new(entry_id, entry_name.clone(), entry_path, entry_source, true);
+        let canonical_entry = entry_path
+            .canonicalize()
+            .unwrap_or_else(|_| entry_path.clone());
+        let entry_module = CompiledModule::new(
+            entry_id,
+            entry_name.clone(),
+            canonical_entry.clone(),
+            entry_source,
+            true,
+        );
 
         let mut modules = HashMap::new();
         modules.insert(entry_id, entry_module);
@@ -126,37 +139,81 @@ impl CompilationUnit {
         let mut module_by_name = HashMap::new();
         module_by_name.insert(entry_name, entry_id);
 
+        let mut module_by_path = HashMap::new();
+        module_by_path.insert(canonical_entry, entry_id);
+
         Self {
             modules,
             module_by_name,
+            module_by_path,
             entry_module: entry_id,
-            compilation_order: vec![entry_id], // Will be recalculated after graph building
+            compilation_order: vec![entry_id],
             global_symbols: None,
             resolved_programs: HashMap::new(),
             next_module_id: 1,
         }
     }
 
-    /// Add a new module to the compilation unit
+    /// Add a new module to the compilation unit.
+    ///
+    /// Deduplication uses the canonical file path — two imports resolving to
+    /// the same file on disk are the same module even if their derived names
+    /// differ. Name collisions between *different* files are resolved by
+    /// appending the parent directory name then a counter.
     pub fn add_module(
         &mut self,
         name: String,
         file_path: PathBuf,
         source: String,
     ) -> CompilationModuleId {
-        // Check if module already exists
-        if let Some(existing_id) = self.module_by_name.get(&name) {
+        let canonical = file_path
+            .canonicalize()
+            .unwrap_or_else(|_| file_path.clone());
+
+        // Primary dedup: same file on disk → same module
+        if let Some(existing_id) = self.module_by_path.get(&canonical) {
             return *existing_id;
         }
+
+        // Resolve name collisions: another file already claimed this name
+        let unique_name = if !self.module_by_name.contains_key(&name) {
+            name
+        } else {
+            // Include parent directory to disambiguate (e.g. "src_utils")
+            let parent_prefix = canonical
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string());
+            let candidate = match parent_prefix {
+                Some(ref dir) if dir != "." => format!("{}_{}", dir, name),
+                _ => format!("{}_1", name),
+            };
+            if !self.module_by_name.contains_key(&candidate) {
+                candidate
+            } else {
+                // Fall back to numeric suffix
+                (2..)
+                    .map(|i| format!("{}_{}", name, i))
+                    .find(|n| !self.module_by_name.contains_key(n))
+                    .unwrap()
+            }
+        };
 
         let id = CompilationModuleId(self.next_module_id);
         self.next_module_id += 1;
 
-        let module = CompiledModule::new(id, name.clone(), file_path, source, false);
+        let module = CompiledModule::new(id, unique_name.clone(), canonical.clone(), source, false);
         self.modules.insert(id, module);
-        self.module_by_name.insert(name, id);
+        self.module_by_name.insert(unique_name, id);
+        self.module_by_path.insert(canonical, id);
 
         id
+    }
+
+    /// Look up a module by its canonical file path.
+    pub fn module_id_for_path(&self, path: &std::path::Path) -> Option<CompilationModuleId> {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        self.module_by_path.get(&canonical).copied()
     }
 
     /// Get a module by its ID
@@ -243,6 +300,7 @@ impl Default for CompilationUnit {
         Self {
             modules: HashMap::new(),
             module_by_name: HashMap::new(),
+            module_by_path: HashMap::new(),
             entry_module: CompilationModuleId(0),
             compilation_order: Vec::new(),
             global_symbols: None,
@@ -293,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn test_duplicate_module_returns_existing_id() {
+    fn test_same_path_returns_existing_id() {
         let mut unit = CompilationUnit::new(
             "main".to_string(),
             PathBuf::from("main.cln"),
@@ -306,6 +364,7 @@ mod tests {
             "// utils".to_string(),
         );
 
+        // Same path — must return the existing module, not create a duplicate
         let id2 = unit.add_module(
             "utils".to_string(),
             PathBuf::from("utils.cln"),
@@ -314,5 +373,37 @@ mod tests {
 
         assert_eq!(id1, id2);
         assert_eq!(unit.module_count(), 2);
+    }
+
+    #[test]
+    fn test_different_paths_same_basename_get_unique_names() {
+        // Regression test for COMPILER_IMPORT_BASENAME_DEDUP:
+        // src/utils.cln and lib/utils.cln must NOT collide even though
+        // both derive the basename "utils".
+        let mut unit = CompilationUnit::new(
+            "main".to_string(),
+            PathBuf::from("main.cln"),
+            "start:\n\tprint(42)".to_string(),
+        );
+
+        let id1 = unit.add_module(
+            "utils".to_string(),
+            PathBuf::from("src/utils.cln"),
+            "// src utils".to_string(),
+        );
+
+        let id2 = unit.add_module(
+            "utils".to_string(),
+            PathBuf::from("lib/utils.cln"),
+            "// lib utils".to_string(),
+        );
+
+        // Different files — must get different IDs
+        assert_ne!(id1, id2);
+        // Both modules present
+        assert_eq!(unit.module_count(), 3); // main + 2 utils
+                                            // Second module got a disambiguated name
+        let m2 = unit.get_module(id2).unwrap();
+        assert_ne!(m2.name, "utils", "second file must not steal 'utils' name");
     }
 }
