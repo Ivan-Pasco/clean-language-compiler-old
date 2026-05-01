@@ -60,6 +60,7 @@ jobs:
       env:
         OPENSSL_STATIC: 1
         OPENSSL_VENDOR: 1
+        CARGO_TARGET_DIR: target
 
     - name: Generate compile-options.json (Unix)
       if: matrix.os != 'windows-latest'
