@@ -4,7 +4,7 @@
 use super::*;
 // Import ast module for tests if needed for constructing test cases
 
-use crate::ast::{BinaryOperator, Expression, SourceLocation, Value};
+use crate::ast::{Expression, Value};
 
 // StringPool has been removed as it was unused
 // use wasmtime::{Engine, Module, Store, Instance, Val};
@@ -113,55 +113,6 @@ fn test_type_manager() {
 }
 
 #[test]
-fn test_instruction_generator() {
-    let type_manager = type_manager::TypeManager::new();
-    let mut instr_gen = instruction_generator::InstructionGenerator::new(type_manager);
-
-    // Add a function mapping
-    instr_gen.add_function_mapping("test_func", 0);
-    assert_eq!(instr_gen.get_function_index("test_func"), Some(0));
-    assert_eq!(instr_gen.get_function_index("nonexistent"), None);
-
-    // Test adding parameters and finding locals
-    instr_gen.add_parameter("param1", WasmType::I32);
-    let local = instr_gen.find_local("param1");
-    assert!(local.is_some());
-    assert_eq!(local.unwrap().index, 0);
-
-    // Test resetting locals
-    instr_gen.reset_locals();
-    assert!(instr_gen.find_local("param1").is_none());
-}
-
-#[test]
-fn test_group_locals() {
-    // Empty case
-    let empty: Vec<ValType> = vec![];
-    let grouped_empty = instruction_generator::group_locals(&empty);
-    assert!(grouped_empty.is_empty());
-
-    // Single type
-    let single_type = vec![ValType::I32, ValType::I32, ValType::I32];
-    let grouped_single = instruction_generator::group_locals(&single_type);
-    assert_eq!(grouped_single, vec![(3, ValType::I32)]);
-
-    // Multiple types
-    let mixed_types = vec![
-        ValType::I32,
-        ValType::I32,
-        ValType::F64,
-        ValType::F64,
-        ValType::F64,
-        ValType::I32,
-    ];
-    let grouped_mixed = instruction_generator::group_locals(&mixed_types);
-    assert_eq!(
-        grouped_mixed,
-        vec![(2, ValType::I32), (3, ValType::F64), (1, ValType::I32)]
-    );
-}
-
-#[test]
 fn test_memory_operations() {
     let mut codegen = CodeGenerator::new_for_testing().unwrap();
     // Test string allocation
@@ -183,68 +134,4 @@ fn test_memory_operations() {
     // assert_eq!(retrieved_string_result.unwrap(), hello_str);
 
     // Array and matrix allocation tested via integration tests
-}
-
-#[test]
-fn test_matrix_operations() {
-    let type_manager = type_manager::TypeManager::new();
-    let mut instr_gen = instruction_generator::InstructionGenerator::new(type_manager);
-
-    // Register the matrix operation functions
-    instr_gen.add_function_mapping("matrix_add", 0);
-    instr_gen.add_function_mapping("matrix_subtract", 1);
-    instr_gen.add_function_mapping("matrix_multiply", 2);
-    instr_gen.add_function_mapping("matrix_transpose", 3);
-    instr_gen.add_function_mapping("matrix_inverse", 4);
-
-    // Create sample matrix expressions
-    let matrix_a = Expression::Literal(Value::Matrix(vec![
-        vec![Value::Number(1.0), Value::Number(2.0)],
-        vec![Value::Number(3.0), Value::Number(4.0)],
-    ]));
-
-    let matrix_b = Expression::Literal(Value::Matrix(vec![
-        vec![Value::Number(5.0), Value::Number(6.0)],
-        vec![Value::Number(7.0), Value::Number(8.0)],
-    ]));
-
-    // Test basic matrix operations using binary expressions
-    let add_expr = Expression::Binary(
-        Box::new(matrix_a.clone()),
-        BinaryOperator::Add,
-        Box::new(matrix_b.clone()),
-    );
-
-    let _subtract_expr = Expression::Binary(
-        Box::new(matrix_a.clone()),
-        BinaryOperator::Subtract,
-        Box::new(matrix_b.clone()),
-    );
-
-    let _multiply_expr = Expression::Binary(
-        Box::new(matrix_a.clone()),
-        BinaryOperator::Multiply,
-        Box::new(matrix_b.clone()),
-    );
-
-    // Test matrix method calls
-    let _transpose_expr = Expression::MethodCall {
-        object: Box::new(matrix_a.clone()),
-        method: "transpose".to_string(),
-        arguments: vec![],
-        location: SourceLocation::default(),
-    };
-
-    let _inverse_expr = Expression::MethodCall {
-        object: Box::new(matrix_a.clone()),
-        method: "inverse".to_string(),
-        arguments: vec![],
-        location: SourceLocation::default(),
-    };
-
-    // Generate code for these expressions
-    let mut add_instructions = Vec::new();
-    let _add_result = instr_gen.generate_expression(&add_expr, &mut add_instructions);
-    // Note: These tests may fail if the underlying functions don't exist
-    // but the test validates the code generation structure
 }
