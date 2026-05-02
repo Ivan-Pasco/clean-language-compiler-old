@@ -734,8 +734,20 @@ impl MirCodeGenerator<'_> {
                 .add_function_type_single(&[], None)?;
             self.wasm_generator.function_section.function(type_index);
 
+            // Determine whether the entry function has a non-void return type.
+            // If so, `_start` (which is void) must drop the return value so the
+            // WASM operand stack is empty at the `end` instruction.
+            let entry_returns_value = self
+                .function_signatures
+                .get(&entry_symbol_id)
+                .map(|sig| !matches!(sig.return_type, MirType::Void))
+                .unwrap_or(false);
+
             let mut instructions = Vec::new();
             instructions.push(Instruction::Call(*entry_function_index));
+            if entry_returns_value {
+                instructions.push(Instruction::Drop);
+            }
             instructions.push(Instruction::End);
 
             let mut start_function = WasmFunction::new(vec![]);

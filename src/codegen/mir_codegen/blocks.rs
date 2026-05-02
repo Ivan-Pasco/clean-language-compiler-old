@@ -689,6 +689,37 @@ impl MirCodeGenerator<'_> {
                             }
                             _ => {}
                         }
+                    } else {
+                        // return_value is MirConstant::Undefined — implicit return for a function
+                        // whose type was inferred as non-void (e.g. start: whose last statement
+                        // is a non-void call in statement position). The WASM function type may
+                        // expect a value on the stack, so push a zero constant of the correct
+                        // type to satisfy the WASM validator.
+                        let func_return_type = self
+                            .current_function
+                            .as_ref()
+                            .map(|f| f.return_type.clone());
+                        match func_return_type {
+                            Some(MirType::F64) => {
+                                self.current_instructions.push(Instruction::F64Const(0.0));
+                            }
+                            Some(
+                                MirType::I32
+                                | MirType::I8
+                                | MirType::I16
+                                | MirType::U8
+                                | MirType::U16
+                                | MirType::U32
+                                | MirType::Ptr(_),
+                            ) => {
+                                self.current_instructions.push(Instruction::I32Const(0));
+                            }
+                            Some(MirType::I64 | MirType::U64) => {
+                                self.current_instructions.push(Instruction::I64Const(0));
+                            }
+                            // Void and other non-returning types need nothing
+                            _ => {}
+                        }
                     }
                 }
                 self.current_instructions.push(Instruction::Return);
