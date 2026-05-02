@@ -737,10 +737,18 @@ impl MirCodeGenerator<'_> {
             // Determine whether the entry function has a non-void return type.
             // If so, `_start` (which is void) must drop the return value so the
             // WASM operand stack is empty at the `end` instruction.
+            //
+            // Both `MirType::Void` and `MirType::Ptr(Void)` map to an empty WASM
+            // result list (see `convert_function_signature`). A `drop` after a call
+            // to such a function would attempt to pop from an empty stack, causing
+            // WASM validation error E007 ("expected a type but nothing on stack").
             let entry_returns_value = self
                 .function_signatures
                 .get(&entry_symbol_id)
-                .map(|sig| !matches!(sig.return_type, MirType::Void))
+                .map(|sig| {
+                    !matches!(sig.return_type, MirType::Void)
+                        && !matches!(&sig.return_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void))
+                })
                 .unwrap_or(false);
 
             let mut instructions = Vec::new();
