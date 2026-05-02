@@ -1150,6 +1150,11 @@ fn get_available_tools() -> Vec<Tool> {
                     "include_all": {
                         "type": "boolean",
                         "description": "If true, returns all tracked reports regardless of status. If false (default), returns only reports with status changes since last check."
+                    },
+                    "component": {
+                        "type": "string",
+                        "description": "Component to fetch open bugs for. Defaults to 'compiler'. Use when working on a different component (e.g. 'server', 'framework', 'extension').",
+                        "enum": ["compiler", "server", "node-server", "framework", "extension", "manager", "website", "canvas", "ui", "mcp", "unknown"]
                     }
                 }),
                 required: vec![],
@@ -4013,7 +4018,11 @@ fn tool_check_reported_fixes(id: serde_json::Value, args: &serde_json::Value) ->
 
     // Also fetch open bugs for this component from the error server
     // so AI instances discover bugs reported by OTHER users/instances
-    let component_bugs = crate::telemetry::submit::fetch_component_bugs("compiler", "reported");
+    let component = args
+        .get("component")
+        .and_then(|v| v.as_str())
+        .unwrap_or("compiler");
+    let component_bugs = crate::telemetry::submit::fetch_component_bugs(component, "reported");
     let open_bugs: Vec<serde_json::Value> = component_bugs
         .iter()
         .take(10) // limit to top 10 to avoid response bloat

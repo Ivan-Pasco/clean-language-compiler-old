@@ -2715,12 +2715,29 @@ impl NameResolver {
             builtin_location.clone(),
         );
 
+        // _http_route(method: string, path: string, handler: integer) -> integer
+        // _http_route_protected(method: string, path: string, handler: integer, role: string) -> integer
+        // When frame.server plugin is loaded, register_plugin_bridge_functions overwrites
+        // these with the same signature (plugin adds expand_strings flag at codegen level only).
+        self.register_builtin_fn(
+            "_http_route",
+            vec![HirType::String, HirType::String, HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "_http_route_protected",
+            vec![
+                HirType::String,
+                HirType::String,
+                HirType::Integer,
+                HirType::String,
+            ],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+
         // _http_listen(port: integer) -> integer
-        // NOTE: _http_route and _http_route_protected are Layer 3 server extension functions.
-        // They are registered exclusively via plugin.toml [bridge] declarations through
-        // register_plugin_bridge_functions(). Hardcoding them here would overwrite the
-        // plugin registration (HashMap::insert clobbers on duplicate key) and produce
-        // wrong signatures. Do NOT add them back here.
         self.register_builtin_fn(
             "_http_listen",
             vec![HirType::Integer],
