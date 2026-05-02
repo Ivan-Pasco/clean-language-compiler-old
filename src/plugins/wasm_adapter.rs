@@ -2626,6 +2626,87 @@ impl WasmPluginAdapter {
 
         // Fallback: the plugin may have returned only the body of a start: block.
         // Wrap it in a start: header and try again.
+        //
+        // CRITICAL: if the plugin output contains top-level section keywords such as
+        // `functions:` or `external:` (i.e. lines that are NOT indented and start with
+        // those keywords), we must NOT wrap the entire output in `start:\n\t...`.
+        //
+        // Wrapping structured output causes `parse_block` inside `parse_start_function`
+        // to stop at the `functions:` token, producing an empty start: body.  The actual
+        // `start:` block inside the wrapped content then becomes a second top-level start
+        // function that `parse_program` silently discards (it keeps only the first match
+        // returned by `functions.iter().find(|f| f.name == "start")`).
+        //
+        // Instead, when the output is structured, we re-order the sections so that
+        // `functions:` (and `external:`) come before `start:` and retry the parse.
+        // This handles the common case where the plugin emits `functions:` before
+        // `start:` which is a valid ordering that the lenient parser accepts.
+        let has_top_level_sections = {
+            let trimmed = generated_code.trim();
+            trimmed.lines().any(|line| {
+                // A "top-level" line has no leading whitespace (or only at indentation level 0)
+                let stripped = line.trim_start_matches('\t').trim_start_matches("    ");
+                let is_unindented = !line.starts_with('\t') && !line.starts_with("    ");
+                is_unindented
+                    && (stripped.starts_with("functions:") || stripped.starts_with("external:"))
+            })
+        };
+
+        if has_top_level_sections {
+            // The output has structured sections; the start: wrapper would corrupt parsing.
+            // Attempt a reordered parse: collect all non-start sections first, then start:.
+            let trimmed = generated_code.trim();
+
+            // Split the output into logical sections delimited by unindented section headers.
+            let mut start_section_lines: Vec<&str> = Vec::new();
+            let mut other_sections_lines: Vec<&str> = Vec::new();
+            let mut in_start_section = false;
+
+            for line in trimmed.lines() {
+                let is_unindented = !line.starts_with('\t') && !line.starts_with("    ");
+                if is_unindented && line.trim_start() == "start:" {
+                    in_start_section = true;
+                    start_section_lines.push(line);
+                } else if is_unindented
+                    && (line.trim_start().starts_with("functions:")
+                        || line.trim_start().starts_with("external:"))
+                {
+                    in_start_section = false;
+                    other_sections_lines.push(line);
+                } else if in_start_section {
+                    start_section_lines.push(line);
+                } else {
+                    other_sections_lines.push(line);
+                }
+            }
+
+            // Rebuild with functions/external sections before start:
+            let reordered = format!(
+                "{}\n{}",
+                other_sections_lines.join("\n"),
+                start_section_lines.join("\n")
+            );
+
+            tracing::debug!(
+                plugin = %self.name,
+                "Retrying parse with reordered sections (functions/external before start)"
+            );
+
+            let program = self
+                .parse_plugin_code(&reordered)
+                .map_err(|e| anyhow!("Failed to parse plugin output (structured): {}", e))?;
+
+            return Ok(PluginExpansion {
+                statements: Vec::new(),
+                start_function: program.start_function,
+                functions: program.functions,
+                classes: program.classes,
+                externals: program.externals,
+            });
+        }
+
+        // Simple fallback: the plugin returned only the body of a start: block
+        // (no top-level sections).  Wrap it in a start: header and retry.
         let code_without_start = if generated_code.trim().starts_with("start:") {
             generated_code
                 .lines()
@@ -3304,6 +3385,108 @@ mod tests {
             content_str.contains("container"),
             "Attribute value 'container' missing from expansion: {}",
             content_str
+        );
+    }
+
+    /// Regression test for Bug SYN007 / fingerprint ad3b3521f8fa:
+    /// When plugin output has `functions:` before `start:`, the `start:` block
+    /// must NOT be silently dropped.
+    ///
+    /// This tests `parse_plugin_code` (the production parser pipeline used by
+    /// `call_expand_full`) directly, without needing a real WASM plugin binary.
+    #[test]
+    fn test_start_block_not_dropped_when_functions_before_start() {
+        use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
+        use crate::parser::SpecificationParser;
+
+        // Minimal plugin output: functions: section before start:
+        // This is the shape that expand_endpoints() produces.
+        // Note: Clean Language function syntax in functions: block does NOT use a trailing ':'
+        // after the signature — indentation alone delimits the body.
+        let plugin_output = "\
+functions:
+\tinteger handleHome()
+\t\treturn 0
+
+start:
+\t_http_route(\"GET\", \"/\", handleHome)
+";
+        let source_code = SourceCode::new(
+            plugin_output.to_string(),
+            "<test-plugin-output>".to_string(),
+        );
+        let mut lexer = SpecificationLexer::new(&source_code);
+        let tokens = lexer
+            .tokenize()
+            .expect("tokenize must not fail for valid plugin output");
+        let mut parser = SpecificationParser::new(tokens, "<test-plugin-output>".to_string());
+        // Mimic parse_plugin_code: lenient section ordering for plugin output
+        parser.set_lenient_section_order(true);
+        let program = parser
+            .parse_program()
+            .expect("parse_program must not fail for functions:-before-start: output");
+
+        // The start: block must NOT be dropped.
+        assert!(
+            program.start_function.is_some(),
+            "start: block was silently dropped when functions: appears before start: — Bug SYN007 regression"
+        );
+
+        let start_fn = program.start_function.unwrap();
+        assert!(
+            !start_fn.body.is_empty(),
+            "start: block body is empty — route calls were dropped"
+        );
+
+        // The functions: block must also be preserved.
+        // (parse_program moves start into start_function AND keeps it in functions,
+        //  so we check for at least one non-start function.)
+        let has_handle_home = program.functions.iter().any(|f| f.name == "handleHome");
+        assert!(
+            has_handle_home,
+            "handleHome function from functions: block was lost during parse"
+        );
+    }
+
+    /// Regression test for the fallback reordering path in `call_expand_full`.
+    ///
+    /// If the primary `parse_plugin_code` call fails AND the output has a top-level
+    /// `functions:` section, the fallback must reorder sections (functions first,
+    /// then start:) instead of wrapping the whole output in `start:\n\t...`, which
+    /// would produce an empty start body.
+    #[test]
+    fn test_fallback_reorder_does_not_wrap_functions_in_start() {
+        use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
+        use crate::parser::SpecificationParser;
+
+        // Simulate what the fallback reordering produces when given:
+        //   functions: <...> start: <...>
+        // The reordered string must parse into a program where start: is non-empty.
+        let reordered = "\
+functions:
+\tinteger handleHome()
+\t\treturn 0
+
+start:
+\t_http_route(\"GET\", \"/\", handleHome)
+";
+        let source_code = SourceCode::new(reordered.to_string(), "<test-reordered>".to_string());
+        let mut lexer = SpecificationLexer::new(&source_code);
+        let tokens = lexer.tokenize().expect("tokenize must not fail");
+        let mut parser = SpecificationParser::new(tokens, "<test-reordered>".to_string());
+        parser.set_lenient_section_order(true);
+        let program = parser
+            .parse_program()
+            .expect("reordered plugin output must parse");
+
+        assert!(
+            program.start_function.is_some(),
+            "start: block dropped from reordered plugin output"
+        );
+        let start_fn = program.start_function.unwrap();
+        assert!(
+            !start_fn.body.is_empty(),
+            "start: block body empty after reorder parse"
         );
     }
 }

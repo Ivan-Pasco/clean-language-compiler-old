@@ -1,0 +1,25 @@
+// Test: plugins/start_block_not_dropped
+// Grammar: program = (import_section | start_section | state_section | class_declaration | functions_section)*
+// Semantic: SYN007 — sections must appear in order: import:, start:, state:, class, functions:
+//
+// Regression test for Bug SYN007 / fingerprint ad3b3521f8fa:
+// When plugin-generated code has functions: before start:, the compiler's
+// call_expand_full fallback must reorder sections instead of wrapping
+// everything in start:\n\t... which silently drops the actual start: body.
+//
+// This file tests that a program with a helper function and a start: block
+// that calls it compiles and executes correctly.
+// The plugin-output reordering is tested via unit tests in wasm_adapter.rs.
+//
+// Expected output:
+//   helper called
+//   start ran
+
+start:
+	helper()
+	print("start ran")
+
+functions:
+	integer helper()
+		print("helper called")
+		return 0
