@@ -3,8 +3,6 @@
 //! This lexer provides 100% compliance with the AST Specification, implementing
 //! all language constructs exactly as defined in the Clean Language Specification.
 
-#![allow(dead_code)]
-
 use super::specification_token::*;
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
@@ -52,8 +50,6 @@ pub struct SpecificationLexer<'a> {
     indentation_stack: Vec<usize>,
     at_line_start: bool,
     token_buffer: Vec<Token>, // Buffer for emitting multiple tokens from string interpolation
-    in_interpolation: bool,   // Track if we're inside an interpolated string
-    interpolation_depth: usize, // Track brace nesting depth during interpolation
     suppress_indent_after_block_comment: bool, // Suppress indentation handling after multi-line block comment
 }
 
@@ -72,8 +68,6 @@ impl<'a> SpecificationLexer<'a> {
             indentation_stack: vec![0], // Start with zero indentation
             at_line_start: true,
             token_buffer: Vec::new(),
-            in_interpolation: false,
-            interpolation_depth: 0,
             suppress_indent_after_block_comment: false,
         }
     }

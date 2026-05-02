@@ -26,9 +26,6 @@ pub use module_resolver::*;
 pub use resolver_impl::*;
 pub use symbol_table::*;
 
-// Type alias for backward compatibility with lib.rs
-pub type Resolver = NameResolver;
-
 /// Resolved HIR - HIR with all symbols resolved to their definitions
 #[derive(Debug, Clone)]
 pub struct ResolvedHirProgram {

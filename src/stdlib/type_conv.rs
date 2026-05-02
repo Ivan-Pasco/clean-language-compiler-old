@@ -132,7 +132,7 @@ impl TypeConvOperations {
         // NOTE: int_to_string is registered as a NATIVE function with alias in mod.rs.
         // Do NOT register it here.
 
-        // NOTE: float_to_string is registered as a HOST IMPORT by builtin_generator.rs.
+        // NOTE: float_to_string is registered as a HOST IMPORT by codegen_registration.rs.
         // Do NOT register a stub here.
 
         // number_to_string: alias to float_to_string (the host import for F64 → string).
@@ -142,7 +142,7 @@ impl TypeConvOperations {
         if let Some(float_to_string_idx) = codegen.get_function_index("float_to_string") {
             codegen.add_function_alias("number_to_string", float_to_string_idx);
         }
-        // Fallback: also try number.toString (registered by builtin_generator.rs)
+        // Fallback: also try number.toString (registered by codegen_registration.rs)
         else if let Some(num_tostring_idx) = codegen.get_function_index("number.toString") {
             codegen.add_function_alias("number_to_string", num_tostring_idx);
         }
@@ -151,7 +151,7 @@ impl TypeConvOperations {
         // (register_memory_operations → __string_to_int → alias "string_to_int").
         // Do NOT register a stub here — it would shadow the native decimal string parser.
 
-        // NOTE: string_to_float is registered as a HOST IMPORT by builtin_generator.rs.
+        // NOTE: string_to_float is registered as a HOST IMPORT by codegen_registration.rs.
         // Do NOT register a stub here — it would shadow the host implementation.
 
         // Register float_to_int function

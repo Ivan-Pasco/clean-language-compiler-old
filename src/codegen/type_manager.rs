@@ -1,6 +1,6 @@
 //! Module for type management during code generation.
 
-use crate::ast::{Expression, Type, Value};
+use crate::ast::{Expression, Value};
 use crate::error::CompilerError;
 use crate::types::WasmType;
 use wasm_encoder::{TypeSection, ValType};
@@ -105,32 +105,6 @@ impl TypeManager {
             Expression::StringInterpolation(_) => true,
             // For variables, ideally this would check the variable's type
             _ => false,
-        }
-    }
-
-    /// Convert AST type to WasmType
-    pub(crate) fn ast_type_to_wasm_type(&self, ast_type: &Type) -> Result<WasmType, CompilerError> {
-        match ast_type {
-            Type::Boolean => Ok(WasmType::I32),
-            Type::Integer => Ok(WasmType::I64),
-            Type::Number => Ok(WasmType::F64),
-            Type::String => Ok(WasmType::I32),  // String pointers
-            Type::Void => Ok(WasmType::I32),    // Void represented as I32
-            Type::List(_) => Ok(WasmType::I32), // List pointers
-            Type::Matrix(_) => Ok(WasmType::I32), // Matrix pointers
-            Type::Pairs(_, _) => Ok(WasmType::I32), // Pairs are represented as pointers
-            Type::Object(_) => Ok(WasmType::I32), // Object pointers
-            Type::Generic(_, _) => Ok(WasmType::I32), // Generic type pointers
-            Type::TypeParameter(_) => Ok(WasmType::I32), // Type parameter pointers
-            Type::Any => Ok(WasmType::I32),     // Any type is represented as a pointer
-            // Sized types
-            Type::IntegerSized { bits: 8..=32, .. } => Ok(WasmType::I32),
-            Type::IntegerSized { bits: 64, .. } => Ok(WasmType::I64),
-            Type::NumberSized { bits: 32 } => Ok(WasmType::F32),
-            Type::NumberSized { bits: 64 } => Ok(WasmType::F64),
-            Type::Class { .. } => Ok(WasmType::I32), // Pointer to object
-            Type::Function(_, _) => Ok(WasmType::I32), // Function pointer
-            _ => Ok(WasmType::I32),                  // Default fallback for any other types
         }
     }
 }

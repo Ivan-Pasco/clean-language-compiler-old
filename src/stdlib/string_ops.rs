@@ -57,7 +57,7 @@ impl StringManager {
         instructions.push(Instruction::LocalGet(0)); // Get the size parameter
         instructions.push(Instruction::I32Const(STRING_TYPE_ID.try_into().unwrap()));
         // Memory allocation call is omitted — the codegen system resolves malloc
-        // indices at a higher level (builtin_generator.rs) rather than here.
+        // indices at a higher level (codegen_registration.rs) rather than here.
         instructions
     }
 
@@ -257,7 +257,7 @@ impl StringOperations {
 
         // NOTE: string.concat is an IMPORTED runtime function (2 params: ptr1, ptr2)
         // Each pointer points to a length-prefixed string: [4-byte len][content]
-        // It's registered in builtin_generator.rs, NOT here as a stdlib function.
+        // It's registered in codegen_registration.rs, NOT here as a stdlib function.
 
         // NOTE: string.compare is an IMPORTED runtime function (2 params: ptr1, ptr2)
         // It's registered via register_string_compare_import() in mir_codegen.rs
@@ -317,7 +317,7 @@ impl StringOperations {
             self.generate_string_replace_all(),
         )?;
 
-        // String.split is now handled by builtin_generator.rs calling the runtime string_split import
+        // String.split is now handled by the codegen calling the runtime string_split import
         // Do NOT register it as a stdlib function to avoid conflict
         // register_stdlib_function(
         //     codegen,
@@ -328,7 +328,7 @@ impl StringOperations {
         // )?;
 
         // NOTE: string_index_of, string_contains, and string_last_index_of are registered by
-        // builtin_generator.rs with proper implementations from native_stdlib/string_ops.rs
+        // codegen_registration.rs with proper implementations from native_stdlib/string_ops.rs
         // Do NOT register them here to avoid overwriting the proper implementations with stubs
 
         register_stdlib_function(
@@ -651,7 +651,7 @@ impl StringOperations {
 
     // NOTE: string.concat is an IMPORTED runtime function (2 params: ptr1, ptr2)
     // Each pointer points to a length-prefixed string: [4-byte len][content]
-    // It's registered in builtin_generator.rs and implemented in wasmtime_runner.rs, NOT here.
+    // It's registered in codegen_registration.rs and implemented in wasmtime_runner.rs, NOT here.
 
     // NOTE: string.compare is an IMPORTED runtime function - do not add an internal implementation here.
     // The host function is registered via register_string_compare_import() and handles string equality.
@@ -673,7 +673,7 @@ impl StringOperations {
     }
 
     // Note: string.contains is implemented in native_stdlib/string_ops.rs::gen_contains
-    // and registered via builtin_generator.rs with the string_index_of function index.
+    // and registered via codegen_registration.rs with the string_index_of function index.
 
     pub fn generate_string_index_of(&self) -> Vec<Instruction> {
         // Implementation of indexOf using linear search algorithm

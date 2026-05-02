@@ -22,7 +22,6 @@ lazy_static = "1.5"
 wasm-encoder = "0.35"
 wasmparser = "0.121"
 wat = "1.0.71"
-wasm-opt = "0.116"  # Binaryen WebAssembly optimizations
 
 # WebAssembly Runtimes (feature-gated)  
 wasmtime = { version = "10.0", optional = true }
@@ -50,7 +49,6 @@ dirs = "5.0"
 # Utilities
 regex = "1.11"
 rand = "0.8"
-crossbeam-channel = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 
 # Logging and tracing
@@ -61,14 +59,8 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 # Memory management and collections
 indexmap = "2.0"
-hashbrown = "0.14"
-
-# String processing and unicode
-unicode-normalization = "0.1"
-unicode-segmentation = "1.10"
 
 # Development tools
-num_cpus = "1.16"
 tempfile = "3.8"
 
 # HTTP client for real network requests (using native-tls for better macOS compatibility)

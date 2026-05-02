@@ -87,8 +87,6 @@ pub mod hir;
 pub mod lexer;
 /// Model Context Protocol server — IDE tooling integration
 pub mod mcp;
-/// Memory management utilities — WASM memory layout helpers
-pub mod memory;
 /// Medium-level Intermediate Representation — Stage 6 (TAST to MIR with optimizations)
 pub mod mir;
 /// Module system — multi-file resolution and dependency management
@@ -408,7 +406,7 @@ pub fn type_check_with_plugins(
     registry: &plugins::PluginRegistry,
 ) -> Result<TypeCheckResult, Vec<CompilerError>> {
     use crate::lexer::specification_lexer::SpecificationLexer;
-    use crate::resolver::Resolver;
+    use crate::resolver::NameResolver as Resolver;
     use crate::typechecker::TypeChecker;
 
     let start_time = std::time::Instant::now();
@@ -653,7 +651,7 @@ pub fn compile_with_plugins_and_opt_level(
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
     use crate::lexer::specification_lexer::SpecificationLexer;
     use crate::mir::lower_tast_to_mir_with_opt_level;
-    use crate::resolver::Resolver;
+    use crate::resolver::NameResolver as Resolver;
     use crate::typechecker::TypeChecker;
 
     tracing::info!(
@@ -1077,7 +1075,7 @@ pub fn compile_with_target(
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
     use crate::lexer::specification_lexer::SpecificationLexer;
     use crate::mir::lower_tast_to_mir_with_opt_level;
-    use crate::resolver::Resolver;
+    use crate::resolver::NameResolver as Resolver;
     use crate::typechecker::TypeChecker;
 
     tracing::info!(
@@ -1290,7 +1288,7 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
     use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
     use crate::mir::lower_tast_to_mir_with_opt_level;
-    use crate::resolver::Resolver;
+    use crate::resolver::NameResolver as Resolver;
     use crate::typechecker::TypeChecker;
     use std::sync::Arc;
 
@@ -1532,7 +1530,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
     use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
     use crate::mir::lower_tast_to_mir_with_opt_level;
-    use crate::resolver::Resolver;
+    use crate::resolver::NameResolver as Resolver;
     use crate::typechecker::TypeChecker;
     use std::sync::Arc;
 
@@ -1916,7 +1914,7 @@ pub fn compile_minimal(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
     // use crate::hir::hir_builder::HirBuilder; // Temporarily disabled
     use crate::codegen::generate_wasm_from_mir_minimal;
     use crate::mir::lower_tast_to_mir_with_opt_level;
-    use crate::resolver::Resolver;
+    use crate::resolver::NameResolver as Resolver;
     use crate::typechecker::TypeChecker;
 
     // Same 7-stage pipeline but with minimal WASM generation

@@ -21,7 +21,7 @@ impl StringClass {
 
     /// Register all String class methods as static functions
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Basic operations (length, size only — substring is a native alias in builtin_generator.rs)
+        // Basic operations (length, size only — substring is a native alias in codegen_registration.rs)
         self.register_basic_operations(codegen)?;
 
         // NOTE: register_case_operations() is intentionally NOT called here.
@@ -32,11 +32,11 @@ impl StringClass {
 
         // NOTE: register_search_operations() is intentionally NOT called here.
         // string.contains, string.indexOf, string.lastIndexOf, string.startsWith, string.endsWith
-        // are registered by builtin_generator.rs with proper implementations.
+        // are registered by codegen_registration.rs with proper implementations.
         // self.register_search_operations(codegen)?;
 
         // NOTE: register_formatting_operations() is intentionally NOT called.
-        // Trim functions are provided by native WASM in builtin_generator.rs.
+        // Trim functions are provided by native WASM in codegen_registration.rs.
 
         // NOTE: register_advanced_operations() registers only string.join, which has no real
         // implementation elsewhere. Keep it.
@@ -98,10 +98,10 @@ impl StringClass {
 
         // NOTE: String.concat is an IMPORTED runtime function (2 params: ptr1, ptr2)
         // Each pointer points to a length-prefixed string: [4-byte len][content]
-        // It's registered in builtin_generator.rs, NOT here as a stdlib function.
+        // It's registered in codegen_registration.rs, NOT here as a stdlib function.
 
         // NOTE: String.substring is NOT registered here.
-        // The real native WASM implementation is registered in builtin_generator.rs
+        // The real native WASM implementation is registered in codegen_registration.rs
         // as "string_substring" with an alias "string.substring".
         // Registering it here would overwrite the correct implementation with a stub
         // that returns the original string unchanged.
@@ -126,11 +126,11 @@ impl StringClass {
 
     // NOTE: register_search_operations() is NOT defined or called here.
     // string.contains, string.indexOf, string.lastIndexOf, string.startsWith, string.endsWith
-    // are all registered by builtin_generator.rs with proper native WASM implementations.
+    // are all registered by codegen_registration.rs with proper native WASM implementations.
 
     // NOTE: register_formatting_operations() is NOT defined or called here.
     // string.trim, string.trimStart, string.trimEnd are provided by native WASM
-    // implementations in builtin_generator.rs / mod.rs.
+    // implementations in codegen_registration.rs / mod.rs.
 
     fn register_advanced_operations(
         &self,
@@ -143,7 +143,7 @@ impl StringClass {
         // since the host implementation replaces all occurrences by default).
         // Do NOT register a stdlib function for it here.
 
-        // NOTE: string.split is registered as an import in builtin_generator.rs.
+        // NOTE: string.split is registered as an import in codegen_registration.rs.
         // Do NOT register a stdlib function for it here.
 
         // String.join(array<string> parts, string separator) -> string
@@ -243,7 +243,7 @@ impl StringClass {
 
     // NOTE: string.concat is an IMPORTED runtime function (2 params: ptr1, ptr2)
     // Each pointer points to a length-prefixed string: [4-byte len][content]
-    // It's registered in builtin_generator.rs and implemented in wasmtime_runner.rs, NOT here.
+    // It's registered in codegen_registration.rs and implemented in wasmtime_runner.rs, NOT here.
 
     fn generate_join(&self) -> Vec<Instruction> {
         // Simplified string.join implementation to maintain spec compliance

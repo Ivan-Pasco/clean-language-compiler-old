@@ -61,7 +61,6 @@ impl MirBuilder {
         let mut context = FunctionBuildContext {
             function: mir_function,
             scope_stack: vec![HashMap::new()],
-            pending_phis: Vec::new(),
             loop_stack: Vec::new(),
             class_context: class_context.cloned(),
             all_classes: self.all_classes.clone(),
@@ -184,7 +183,6 @@ impl MirBuilder {
 
         self.stats.basic_blocks_created += context.function.blocks.len();
         self.stats.ssa_values_created += context.function.next_value_id;
-        self.stats.phi_nodes_inserted += context.pending_phis.len();
 
         if context.function.name == "test" {
             trace!(
@@ -313,39 +311,6 @@ impl MirBuilder {
                     }
                 }
             }
-        }
-
-        // Exit scope
-        context.scope_stack.pop();
-
-        Ok(())
-    }
-
-    /// Build basic block from TAST block
-    pub(super) fn build_block(
-        &mut self,
-        context: &mut FunctionBuildContext,
-        block: &TastBlock,
-    ) -> Result<(), Vec<CompilerError>> {
-        // Enter new scope
-        context.scope_stack.push(HashMap::new());
-
-        trace!(statement_count = block.statements.len(), "Processing block");
-
-        // Lower all statements
-        for (i, statement) in block.statements.iter().enumerate() {
-            trace!(
-                statement_index = i,
-                statement_type = ?std::mem::discriminant(statement),
-                current_block = ?self.current_block,
-                "Processing block statement"
-            );
-            self.build_statement(context, statement)?;
-            trace!(
-                statement_index = i,
-                current_block = ?self.current_block,
-                "After block statement"
-            );
         }
 
         // Exit scope

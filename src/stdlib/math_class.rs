@@ -167,7 +167,7 @@ impl MathClass {
 
     fn register_trig_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // Trig functions use host imports for accuracy and performance
-        // The imports (math_sin, math_cos, etc.) are registered in builtin_generator.rs
+        // The imports (math_sin, math_cos, etc.) are registered in codegen_registration.rs
         // Here we create aliases for dot-notation access (math.sin -> math_sin)
 
         // Math.sin(number x) -> number - alias to imported math_sin
@@ -210,7 +210,7 @@ impl MathClass {
 
     fn register_log_exp_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // Log/exp functions use host imports for accuracy and performance
-        // The imports (math_ln, math_exp, etc.) are registered in builtin_generator.rs
+        // The imports (math_ln, math_exp, etc.) are registered in codegen_registration.rs
         // Here we create aliases for dot-notation access
 
         // Math.ln(number x) -> number - alias to imported math_ln
@@ -251,7 +251,7 @@ impl MathClass {
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
         // Hyperbolic functions use host imports for accuracy
-        // The imports (math_sinh, math_cosh, math_tanh) are registered in builtin_generator.rs
+        // The imports (math_sinh, math_cosh, math_tanh) are registered in codegen_registration.rs
 
         // Math.sinh(number x) -> number - alias to imported math_sinh
         if let Some(sinh_idx) = codegen.get_function_index("math_sinh") {

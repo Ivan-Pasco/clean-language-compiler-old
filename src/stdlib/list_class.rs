@@ -40,7 +40,7 @@ impl ListClass {
     }
 
     fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // NOTE: The following list functions are registered as HOST IMPORTS by builtin_generator.rs
+        // NOTE: The following list functions are registered as HOST IMPORTS by codegen_registration.rs
         // and must NOT be re-registered here as stdlib WASM functions, because the last
         // registration wins (function_map.insert overwrites) and stubs would replace real code:
         //   - list.allocate  (host import: i32 -> i32)
@@ -121,7 +121,7 @@ impl ListClass {
     }
 
     fn register_search_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // NOTE: list.contains is registered as a HOST IMPORT by builtin_generator.rs.
+        // NOTE: list.contains is registered as a HOST IMPORT by codegen_registration.rs.
         // Do NOT register it here — any stub would shadow the real host implementation.
 
         // List.indexOf(list lst, any value) -> integer
@@ -162,7 +162,7 @@ impl ListClass {
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
         // NOTE: list.push, list.push_f64, list.add, list.remove, list.clear are HOST IMPORTS
-        // registered by builtin_generator.rs. Do NOT re-register them here.
+        // registered by codegen_registration.rs. Do NOT re-register them here.
 
         // List.pop(list lst) -> any
         // Not in host imports — register here.

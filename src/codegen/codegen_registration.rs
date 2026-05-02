@@ -100,7 +100,7 @@ impl super::CodeGenerator {
             &concat_instructions,
         )?;
         // NOTE: Do NOT alias "string.concat" here - that would overwrite the host import
-        // registered in builtin_generator.rs. The host import is preferred because it
+        // registered separately. The host import is preferred because it
         // handles memory allocation more reliably in the runtime environment.
 
         // NATIVE: string_index_of - finds substring in string
@@ -654,28 +654,18 @@ impl super::CodeGenerator {
         Ok(())
     }
 
-    /// Register conditional operations including method style and list behaviors
-    /// Provides compare.integer, conditional.integer, logical operations
+    /// Register method-style and list-behavior operations (isEmpty, isDefined, list.size, etc.)
     pub(crate) fn register_conditional_operations(&mut self) -> Result<(), CompilerError> {
-        use crate::stdlib::conditional::ConditionalManager;
         use crate::stdlib::memory::MemoryManager;
         use std::cell::RefCell;
         use std::rc::Rc;
 
-        debug!("DEBUG CONDITIONAL OPS: Creating ConditionalManager");
-        // Create a MemoryManager and ConditionalManager instance
         let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(16))));
-        let conditional_manager = ConditionalManager::new(memory_manager.clone());
-        debug!("DEBUG CONDITIONAL OPS: Calling register_functions");
-        conditional_manager.register_functions(self)?;
-        debug!("DEBUG CONDITIONAL OPS: register_functions completed");
 
-        // Register MethodStyleManager for isEmpty, isDefined, etc.
         use crate::stdlib::method_style::MethodStyleManager;
         let method_style_manager = MethodStyleManager::new(memory_manager.clone());
         method_style_manager.register_functions(self)?;
 
-        // Register ListBehaviorManager for list.size, list.isEmpty, etc.
         use crate::stdlib::list_behavior::ListBehaviorManager;
         let list_behavior_manager = ListBehaviorManager::new(memory_manager.clone());
         list_behavior_manager.register_functions(self)?;

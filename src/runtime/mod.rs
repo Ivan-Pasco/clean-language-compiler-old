@@ -119,7 +119,7 @@ impl CleanRuntime {
 
         // Execute the start function
         if let Some(start_func) = instance.get_func(&mut store, "start") {
-            println!("🚀 Executing Clean Language program with async support...");
+            println!("Executing Clean Language program with async support...");
             println!("--- Output ---");
 
             // Check the function signature to create the right results buffer
@@ -150,7 +150,7 @@ impl CleanRuntime {
             // Wait for background tasks to complete
             self.wait_for_background_tasks().await;
 
-            println!("✅ Execution completed successfully!");
+            println!("Execution completed successfully.");
         } else {
             return Err(CompilerError::runtime_error(
                 "No start function found in WebAssembly module".to_string(),
@@ -181,9 +181,7 @@ impl CleanRuntime {
                         .filter(|task| matches!(task.status, TaskStatus::Running))
                         .count();
                     if running_count > 0 {
-                        println!(
-                            "⏳ Waiting for {running_count} background task(s) to complete..."
-                        );
+                        println!("Waiting for {running_count} background task(s) to complete...");
                     }
                 }
             }
@@ -195,9 +193,9 @@ impl CleanRuntime {
         }
 
         if iterations >= MAX_WAIT_ITERATIONS {
-            println!("⚠️  Timeout waiting for background tasks to complete");
+            println!("Timeout waiting for background tasks to complete");
         } else {
-            println!("✅ All background tasks completed");
+            println!("All background tasks completed.");
         }
     }
 }
@@ -283,21 +281,4 @@ impl FutureResolver {
     pub fn is_future_resolved(&self, id: &str) -> bool {
         self.futures.get(id).map(|f| f.resolved).unwrap_or(false)
     }
-}
-
-/// Convenience function to create and run a Clean Language program with async support
-#[cfg(feature = "wasmtime-runtime")]
-pub async fn run_clean_program_async(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
-    let runtime = CleanRuntime::new()?;
-    runtime.execute_async(wasm_bytes).await
-}
-
-/// Synchronous wrapper for async execution (for backward compatibility)
-#[cfg(feature = "wasmtime-runtime")]
-pub fn run_clean_program_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
-    let rt = tokio::runtime::Runtime::new().map_err(|e| {
-        CompilerError::runtime_error(format!("Failed to create async runtime: {e}"), None, None)
-    })?;
-
-    rt.block_on(run_clean_program_async(wasm_bytes))
 }

@@ -166,7 +166,7 @@ fn test_memory_operations() {
     let mut codegen = CodeGenerator::new_for_testing().unwrap();
     // Test string allocation
     let hello_str = "hello";
-    let string_ptr_result = codegen.allocate_string(hello_str);
+    let string_ptr_result = codegen.memory_utils.allocate_string(hello_str);
     assert!(
         string_ptr_result.is_ok(),
         "Failed to allocate string: {:?}",

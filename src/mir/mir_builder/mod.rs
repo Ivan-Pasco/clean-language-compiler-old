@@ -4,8 +4,6 @@
 //! to MIR (Medium-level Intermediate Representation). The builder converts high-level
 //! typed constructs into optimization-friendly SSA form with explicit control flow.
 
-#![allow(dead_code)]
-
 use crate::ast::SourceLocation;
 use crate::codegen::const_eval::{try_const_eval_tast, ConstValue};
 use crate::error::CompilerError;
@@ -63,23 +61,8 @@ pub struct MirBuildStats {
 /// MIR builder - converts TAST to MIR
 #[derive(Debug)]
 pub struct MirBuilder {
-    /// Current function being built
-    pub(super) current_function: Option<MirFunction>,
-
     /// Current basic block being built
     pub(super) current_block: Option<BasicBlockId>,
-
-    /// SSA value counter
-    pub(super) next_value_id: usize,
-
-    /// Basic block counter
-    pub(super) next_block_id: usize,
-
-    /// Symbol ID to value ID mapping
-    pub(super) symbol_values: HashMap<SymbolId, ValueId>,
-
-    /// Variable name to value ID mapping for current scope
-    pub(super) variable_values: HashMap<String, ValueId>,
 
     /// String literals pool
     pub(super) string_pool: Vec<String>,
@@ -154,9 +137,6 @@ pub(super) struct FunctionBuildContext {
     /// Stack of scopes for variable resolution
     pub(super) scope_stack: Vec<HashMap<String, ValueId>>,
 
-    /// Pending phi nodes to resolve
-    pub(super) pending_phis: Vec<PendingPhi>,
-
     /// Loop context stack for break/continue
     pub(super) loop_stack: Vec<LoopContext>,
 
@@ -177,22 +157,6 @@ pub(super) struct FunctionBuildContext {
     ///   4. The stored `result` value is returned.
     /// Only populated in debug / `--contracts` builds; empty in release builds.
     pub(super) ensure_conditions: Vec<TastExpression>,
-}
-
-/// Pending phi node that needs to be resolved
-#[derive(Debug)]
-pub(super) struct PendingPhi {
-    /// The phi instruction value ID
-    pub(super) value_id: ValueId,
-
-    /// Variable name this phi represents
-    pub(super) variable_name: String,
-
-    /// Basic block where phi is located
-    pub(super) block_id: BasicBlockId,
-
-    /// Predecessor blocks and their values
-    pub(super) incoming: Vec<(BasicBlockId, Option<ValueId>)>,
 }
 
 /// Loop context for break/continue statements
@@ -234,12 +198,7 @@ impl MirBuilder {
         }
 
         Self {
-            current_function: None,
             current_block: None,
-            next_value_id: 0,
-            next_block_id: 0,
-            symbol_values: HashMap::new(),
-            variable_values: HashMap::new(),
             string_pool: Vec::new(),
             string_indices: HashMap::new(),
             symbol_table,
