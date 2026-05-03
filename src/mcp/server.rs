@@ -799,7 +799,7 @@ fn handle_initialize(id: serde_json::Value, params: Option<&serde_json::Value>) 
             "name": "cln",
             "version": VERSION
         },
-        "instructions": "You are working with the Clean Language compiler MCP server. Clean Language is a type-safe language that compiles to WebAssembly.\n\n## GETTING STARTED (call these tools in order)\n1. `get_quick_reference` — Learn syntax, types, patterns (CALL FIRST)\n2. `get_stack_recommendation` — Get recommended plugins for your project type\n3. `list_plugins` — See installed plugins with full DSL syntax\n4. `get_plugin_examples` — Read real example files from plugins\n\n## BEST PRACTICES FOR AI ASSISTANTS\n- ALWAYS call `get_quick_reference` at the start of a session before writing any Clean Language code\n- ALWAYS call `list_plugins` before using framework features (data:, endpoints:, component:, etc.)\n- Use `check` for fast type-checking during development (no WASM generation)\n- Use `get_specification` to look up detailed language rules\n- Use `get_architecture` to understand the execution model and host bridge\n- Clean Language applications use Clean for ALL layers — server, database, UI, graphics. NEVER use JavaScript when a Clean plugin exists.\n- Use `report_error` when you encounter what appears to be a compiler bug\n- If the user reports a server runtime failure or WASM load error, call `list_server_diagnostics` BEFORE asking for reproduction details — the clean-server auto-captures structured diagnostics\n- Use `list_server_diagnostics` to surface pending compiler bugs the user may not realize are on disk\n\n## REPORT_ERROR — CRITICAL RULES\n- The `component` field MUST identify WHERE the bug lives (the component containing the buggy code), NOT the name of the task you were running (e.g. never use 'validation', 'testing', 'docs'). Invalid component names are rejected with an error.\n- Valid components: compiler, server, node-server, framework, extension, manager, website, canvas, ui, mcp, unknown. If unsure, use 'unknown'.\n- Use `discovered_during` (optional) to record the context in which you found the bug (e.g. 'solving E0042', 'doc_coverage run') — this does not affect routing.\n- Before calling `report_error` during doc/spec validation or example checking: verify the error also reproduces when compiling the file normally with the correct plugin loaded. If the error disappears in that context, it is a false positive from missing plugin context — do NOT report it.\n- Errors discovered while solving another bug are independent reports. Report them under their correct component. Do NOT attach them to the original bug.\n\n## KEY RULES\n- File extension: .cln\n- Indentation: tabs only (not spaces)\n- Entry point: `start:` block\n- Types: integer, number, string, boolean, list<T>, matrix<T>, pairs\n- Functions declared in `functions:` block with return type first\n- No semicolons, no curly braces\n- `return value` (no parentheses)\n- One way to do things — follow the spec exactly\n\n## REPORTING RUNTIME_WASM_PARSE BUGS\n1. `list_server_diagnostics` → identify pending reports\n2. `show_server_diagnostic(sha)` → load the full payload\n3. `report_error` with the payload's fields mapped into the standard error-report schema\n4. Tell the user to run `clean-server errors publish <sha>` to mark it as forwarded"
+        "instructions": "You are working with the Clean Language compiler MCP server. Clean Language is a type-safe language that compiles to WebAssembly.\n\n## GETTING STARTED (call these tools in order)\n1. `get_quick_reference` — Learn syntax, types, patterns (CALL FIRST)\n2. `get_stack_recommendation` — Get recommended plugins for your project type\n3. `list_plugins` — See installed plugins with full DSL syntax\n4. `get_plugin_examples` — Read real example files from plugins\n\n## BEST PRACTICES FOR AI ASSISTANTS\n- ALWAYS call `get_quick_reference` at the start of a session before writing any Clean Language code\n- ALWAYS call `list_plugins` before using framework features (data:, endpoints:, component:, etc.)\n- Use `check` for fast type-checking during development (no WASM generation)\n- Use `get_specification` to look up detailed language rules\n- Use `get_architecture` to understand the execution model and host bridge\n- Clean Language applications use Clean for ALL layers — server, database, UI, graphics. NEVER use JavaScript when a Clean plugin exists.\n- Use `report_error` when you encounter what appears to be a compiler bug\n- If the user reports a server runtime failure or WASM load error, call `list_server_diagnostics` BEFORE asking for reproduction details — the clean-server auto-captures structured diagnostics\n- Use `list_server_diagnostics` to surface pending compiler bugs the user may not realize are on disk\n\n## REPORT_ERROR — CRITICAL RULES\n- **SYNTHESIZE BEFORE REPORTING.** Before calling `report_error`, write a minimal reproduction and root-cause analysis. Do not file a bare error code with a plan to add details later — the team cannot fix a bug without a repro.\n- `minimal_repro`: write the smallest possible `start:` block (or function) that triggers the same compiler failure. Write it from scratch — do NOT copy from the user's file.\n- `ai_analysis`: explain which pipeline stage fails and why. This contains no user code and is always sent.\n- `suggested_fix`: if you can identify the file and line, include it (e.g. `src/codegen/mod.rs line 847: condition is inverted`).\n- The `component` field MUST identify WHERE the bug lives (the component containing the buggy code), NOT the name of the task you were running (e.g. never use 'validation', 'testing', 'docs'). Invalid component names are rejected with an error.\n- Valid components: compiler, server, node-server, framework, extension, manager, website, canvas, ui, mcp, unknown. If unsure, use 'unknown'.\n- Use `discovered_during` (optional) to record the context in which you found the bug (e.g. 'solving E0042', 'doc_coverage run') — this does not affect routing.\n- Before calling `report_error` during doc/spec validation or example checking: verify the error also reproduces when compiling the file normally with the correct plugin loaded. If the error disappears in that context, it is a false positive from missing plugin context — do NOT report it.\n- Errors discovered while solving another bug are independent reports. Report them under their correct component. Do NOT attach them to the original bug.\n\n## KEY RULES\n- File extension: .cln\n- Indentation: tabs only (not spaces)\n- Entry point: `start:` block\n- Types: integer, number, string, boolean, list<T>, matrix<T>, pairs\n- Functions declared in `functions:` block with return type first\n- No semicolons, no curly braces\n- `return value` (no parentheses)\n- One way to do things — follow the spec exactly\n\n## REPORTING RUNTIME_WASM_PARSE BUGS\n1. `list_server_diagnostics` → identify pending reports\n2. `show_server_diagnostic(sha)` → load the full payload\n3. `report_error` with the payload's fields mapped into the standard error-report schema\n4. Tell the user to run `clean-server errors publish <sha>` to mark it as forwarded"
     });
     JsonRpcResponse::success(id, result)
 }
@@ -1069,7 +1069,7 @@ fn get_available_tools() -> Vec<Tool> {
         // ====================================================================
         Tool {
             name: "report_error".to_string(),
-            description: "Report a compiler or runtime error to the Clean Language team. Generates a structured bug report with AI-enhanced context. Requires explicit user consent before sending. The report is anonymous by default and never includes the user's actual source code — only an AI-generated minimal reproduction. Call this when you detect a likely compiler bug (not a user code error).".to_string(),
+            description: "Report a compiler or runtime error to the Clean Language team. BEFORE calling this tool, synthesize a minimal reproduction and root-cause analysis — do not report and plan to enrich later. A report without minimal_repro and ai_analysis is only useful as an occurrence signal; a complete report is what lets the team actually fix the bug. The report is anonymous and never includes the user's actual source code — minimal_repro must be AI-generated code that isolates the bug, not copied from the user's file.".to_string(),
             input_schema: ToolInputSchema {
                 type_: "object".to_string(),
                 properties: json!({
@@ -1097,27 +1097,31 @@ fn get_available_tools() -> Vec<Tool> {
                     },
                     "minimal_repro": {
                         "type": "string",
-                        "description": "Minimal Clean Language code that reproduces the error. IMPORTANT: This must be an AI-generated minimal reproduction, NOT the user's actual source code."
+                        "description": "SYNTHESIZE THIS BEFORE CALLING. Minimal Clean Language code that reproduces the error — written by the AI, not copied from the user. Start from scratch: the smallest start: block that triggers the same compiler failure. Omit this only if you genuinely cannot isolate the trigger."
                     },
                     "expected_behavior": {
                         "type": "string",
-                        "description": "What the correct behavior should be according to the Language Specification."
+                        "description": "What the correct behavior should be per the Language Specification (e.g. 'should compile to WASM', 'should infer type integer')."
                     },
                     "actual_behavior": {
                         "type": "string",
-                        "description": "What actually happens when the code is compiled or executed."
+                        "description": "What actually happens — paste the exact error message or crash output."
                     },
                     "spec_reference": {
                         "type": "string",
-                        "description": "Reference to the relevant Language Specification section, if applicable."
+                        "description": "Relevant section of foundation/spec/grammar.ebnf or semantic-rules.md, if applicable."
                     },
                     "ai_analysis": {
                         "type": "string",
-                        "description": "AI's analysis of the root cause and potential fix."
+                        "description": "REQUIRED unless the bug is a pure crash with no diagnosis available. Root-cause analysis: which pipeline stage fails, why, and what the likely fix is. Does not contain user code — no privacy reason to omit it."
+                    },
+                    "suggested_fix": {
+                        "type": "string",
+                        "description": "Specific fix location and change (e.g. 'src/codegen/mod.rs line 847: string comparison is inverted, change == to !='). Include when you can identify the exact line."
                     },
                     "suggested_component_file": {
                         "type": "string",
-                        "description": "The source file in the compiler that likely needs fixing (e.g., 'parser/token_parser.rs')."
+                        "description": "Source file most likely to contain the fix (e.g. 'src/parser/token_parser.rs'). Use when you know the file but not the exact line."
                     },
                     "consent_level": {
                         "type": "string",
@@ -3588,15 +3592,28 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    // Determine error category from code prefix
-    let category = if error_code.starts_with("SYN") {
+    // Determine error category from code prefix.
+    // Covers both symbolic prefixes (SYN, SEM, COD, RUN, SYS) and the E-series
+    // codes used by compiler constructors (E001–E013, MEM*, VAL*, MOD*, PLG*).
+    let category = if error_code.starts_with("SYN") || error_code == "E001" {
         "syntax"
-    } else if error_code.starts_with("SEM") {
+    } else if error_code.starts_with("SEM") || error_code == "E002" {
         "semantic"
-    } else if error_code.starts_with("COD") || error_code.starts_with("COM") {
+    } else if error_code.starts_with("COD") || error_code.starts_with("COM") || error_code == "E007"
+    {
         "codegen"
-    } else if error_code.starts_with("RUN") {
+    } else if error_code.starts_with("RUN") || error_code == "E009" {
         "runtime"
+    } else if error_code.starts_with("MEM") || error_code == "E006" {
+        "memory"
+    } else if error_code.starts_with("VAL") || error_code == "E010" {
+        "validation"
+    } else if error_code.starts_with("MOD") || error_code == "E013" {
+        "module"
+    } else if error_code.starts_with("PLG") {
+        "plugin"
+    } else if error_code.starts_with("LEX") || error_code == "LEX000" {
+        "syntax"
     } else if error_code.starts_with("SYS") {
         "system"
     } else {
@@ -3711,8 +3728,11 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         });
     }
 
-    // Add AI context (only at "full" consent)
-    if consent_level == "full" {
+    // Add AI context at error_with_code consent and above.
+    // ai_analysis and suggested_fix contain no user code — they are AI-generated
+    // reasoning about the bug. Gating them on "full" silently discards the most
+    // actionable part of a report for all default-consent calls.
+    if consent_level != "error_only" {
         // Prepend discovered_during to analysis so the lineage is visible in the dashboard.
         let analysis = {
             let base = args
@@ -3725,23 +3745,23 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
                 (None, b) => b.clone(),
             }
         };
-        report.ai_context = Some(ReportAiContext {
-            analysis,
-            suggested_component: args
-                .get("suggested_component_file")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            suggested_fix: None,
-            confidence: None,
-        });
-    } else if let Some(ctx) = &discovered_during {
-        // Even at lower consent levels, attach the lineage note.
-        report.ai_context = Some(ReportAiContext {
-            analysis: Some(format!("Discovered during: {ctx}")),
-            suggested_component: None,
-            suggested_fix: None,
-            confidence: None,
-        });
+        let suggested_fix = args
+            .get("suggested_fix")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let suggested_component = args
+            .get("suggested_component_file")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        // Only attach the struct if there is at least one non-null field
+        if analysis.is_some() || suggested_fix.is_some() || suggested_component.is_some() {
+            report.ai_context = Some(ReportAiContext {
+                analysis,
+                suggested_component,
+                suggested_fix,
+                confidence: None,
+            });
+        }
     }
 
     // Dev-mode gate: when the MCP server runs inside the source tree of the
@@ -4030,10 +4050,18 @@ fn tool_check_reported_fixes(id: serde_json::Value, args: &serde_json::Value) ->
             json!({
                 "fingerprint": b.fingerprint,
                 "error_code": b.error_code,
+                "component": b.component,
+                "subsystem": b.subsystem,
                 "severity": b.severity,
                 "message": b.message,
+                "minimal_repro": b.minimal_repro,
+                "expected_behavior": b.expected_behavior,
+                "actual_behavior": b.actual_behavior,
                 "occurrences": b.occurrences,
                 "priority_score": b.priority_score,
+                "first_reported_version": b.first_reported_version,
+                "ai_suggested_fix": b.ai_suggested_fix,
+                "report_ids": b.report_ids,
             })
         })
         .collect();

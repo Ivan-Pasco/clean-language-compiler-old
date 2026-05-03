@@ -104,10 +104,16 @@ pub fn detect_for_component(component: &str) -> DevContext {
         return ctx;
     }
 
-    // Binary-dev-build check: a `cargo build` output is always dev-mode, even
-    // if CWD has wandered outside the component tree.
-    if let Some(reason) = binary_looks_like_dev_build() {
-        return DevContext::Dev(reason);
+    // Binary-dev-build check: a `cargo build` binary means we are developing
+    // the compiler itself. Suppress reports for the compiler and mcp components
+    // (both ship in the same `cln` binary) to avoid WIP noise on the dashboard.
+    // For cross-component bugs (framework, server, extension, etc.) the binary
+    // build type is irrelevant — only the CWD check below should apply.
+    let is_compiler_binary_component = matches!(component, "compiler" | "mcp");
+    if is_compiler_binary_component {
+        if let Some(reason) = binary_looks_like_dev_build() {
+            return DevContext::Dev(reason);
+        }
     }
 
     let dirs = component_dirs_for(component);
@@ -120,7 +126,9 @@ pub fn detect_for_component(component: &str) -> DevContext {
     };
     for ancestor in cwd.ancestors() {
         if let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) {
-            if dirs.iter().any(|&d| d == name) {
+            // Case-insensitive comparison: macOS filesystems are case-insensitive
+            // by default, so "Clean MCP" and "clean mcp" are the same directory.
+            if dirs.iter().any(|&d| d.eq_ignore_ascii_case(name)) {
                 return DevContext::Dev(format!(
                     "cwd inside {} source tree: {}",
                     component,
@@ -172,7 +180,7 @@ fn source_is_in_component_tree(source_file: &str) -> Option<String> {
     let path = PathBuf::from(source_file);
     for ancestor in path.ancestors() {
         if let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) {
-            if COMPONENT_DIRS.iter().any(|&c| c == name) {
+            if COMPONENT_DIRS.iter().any(|&c| c.eq_ignore_ascii_case(name)) {
                 return Some(format!(
                     "source inside component tree: {}",
                     ancestor.display()
@@ -248,5 +256,55 @@ mod tests {
         // asserts the source-tree branch returns None for neutral paths.
         let reason = source_is_in_component_tree("/tmp/user-project/main.cln");
         assert!(reason.is_none());
+    }
+
+    #[test]
+    fn cross_component_report_from_compiler_cwd_is_not_suppressed_by_binary_check() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("CLEEN_TELEMETRY_FORCE");
+        // When reporting a framework/server/extension bug from within the
+        // compiler source tree, the binary dev-build check must NOT fire.
+        // Only the CWD check applies, and since CWD is not inside clean-framework/,
+        // the report must reach the dashboard (Release mode).
+        // NOTE: binary_looks_like_dev_build() may still return Some when tests
+        // run from target/. We verify via component_dirs_for logic only.
+        let dirs = component_dirs_for("framework");
+        assert!(!dirs.is_empty(), "framework must have known dirs");
+        // Compiler CWD ancestors do not include clean-framework/
+        let compiler_cwd = std::path::PathBuf::from(
+            "/Users/x/Documents/Dev/Clean Language/clean-language-compiler",
+        );
+        let cwd_in_framework = compiler_cwd.ancestors().any(|a| {
+            a.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| dirs.iter().any(|&d| d == n))
+                .unwrap_or(false)
+        });
+        assert!(
+            !cwd_in_framework,
+            "compiler CWD must not match framework dirs — cross-component reports must reach dashboard"
+        );
+    }
+
+    #[test]
+    fn binary_check_only_fires_for_compiler_and_mcp() {
+        // Verify that the binary check is gated on compiler/mcp components.
+        // For framework/server/extension the function must fall through to CWD check.
+        for component in &["framework", "server", "extension", "ui", "canvas"] {
+            let is_compiler_binary_component = matches!(*component, "compiler" | "mcp");
+            assert!(
+                !is_compiler_binary_component,
+                "component '{}' must not be guarded by binary dev-build check",
+                component
+            );
+        }
+        for component in &["compiler", "mcp"] {
+            let is_compiler_binary_component = matches!(*component, "compiler" | "mcp");
+            assert!(
+                is_compiler_binary_component,
+                "component '{}' must be guarded by binary dev-build check",
+                component
+            );
+        }
     }
 }

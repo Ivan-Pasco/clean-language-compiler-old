@@ -164,8 +164,14 @@ pub fn maybe_prompt_email_on_bug() -> Option<String> {
 
 /// Report a compilation failure via telemetry (if enabled).
 /// Called automatically after a failed `cln compile` invocation.
+/// `source_content` is the raw source text — used to extract a location
+/// snippet for the reproduction field when consent allows.
 /// Non-blocking: runs submission in the background thread.
-pub fn report_compile_failure(errors: &[crate::error::CompilerError], source_file: &str) {
+pub fn report_compile_failure(
+    errors: &[crate::error::CompilerError],
+    source_file: &str,
+    source_content: Option<&str>,
+) {
     let config = TelemetryConfig::load();
     if !config.enabled {
         return;
@@ -191,7 +197,7 @@ pub fn report_compile_failure(errors: &[crate::error::CompilerError], source_fil
         return;
     }
 
-    let (code, category, component, message) = extract_error_info(first_error);
+    let info = extract_error_info(first_error);
 
     // Dev-context gate: when the platform authors are iterating on Clean
     // Language itself, route the failure to a local dev queue instead of the
@@ -202,9 +208,9 @@ pub fn report_compile_failure(errors: &[crate::error::CompilerError], source_fil
     if dev_ctx.is_dev() {
         let entry = dev_queue::entry_from(
             &dev_ctx,
-            &code,
-            &component,
-            &message,
+            &info.code,
+            &info.component,
+            &info.message,
             Some(source_file),
             crate::VERSION,
         );
@@ -214,7 +220,7 @@ pub fn report_compile_failure(errors: &[crate::error::CompilerError], source_fil
         // the error itself. Kept to one line so it doesn't crowd the error.
         eprintln!(
             "[dev-queue] {} recorded locally ({} \u{00d7}{}) \u{2014} `cln dev-queue list`",
-            code, outcome.fingerprint, outcome.occurrences
+            info.code, outcome.fingerprint, outcome.occurrences
         );
         tracing::debug!(
             reason = ?dev_ctx.reason(),
@@ -231,30 +237,51 @@ pub fn report_compile_failure(errors: &[crate::error::CompilerError], source_fil
     // same compiler bug simultaneously.
     {
         let store = ReportStore::load();
-        if store.has_recent_duplicate(&code, &message) {
+        if store.has_recent_duplicate(&info.code, &info.message) {
             tracing::debug!(
-                error_code = %code,
+                error_code = %info.code,
                 "Skipping duplicate error report (within 60s dedup window)"
             );
             return;
         }
     }
 
+    // Strip to basename only — the full path is machine-specific, leaks the
+    // user's directory structure, and is useless to the team for reproduction.
+    let file_hint = std::path::Path::new(source_file)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(String::from);
+
     let report_id = generate_report_id();
     let mut report = ErrorReport::new(
         report_id,
         ReportError {
-            code,
-            category,
-            component,
-            subsystem: None,
+            code: info.code,
+            category: info.category,
+            component: info.component,
+            subsystem: info.subsystem,
             severity: "bug".to_string(),
-            message,
-            file_context: Some(source_file.to_string()),
+            message: info.message,
+            file_context: file_hint,
         },
         "cli_telemetry",
         &config.consent_level.to_string(),
     );
+
+    // Attach reproduction context when consent allows.
+    // error_only → no code; error_with_code (default) → location snippet + inferred expected.
+    if config.consent_level.to_string() != "error_only" {
+        let snippet = source_content.and_then(|src| extract_location_snippet(first_error, src));
+        report.reproduction = Some(report::ReportReproduction {
+            minimal_code: snippet,
+            // Infer expected behavior from the error type — useful for triage even
+            // when no human writes it explicitly.
+            expected_behavior: Some(infer_expected_behavior(first_error).to_string()),
+            actual_behavior: Some(first_error.to_string()),
+            spec_reference: None,
+        });
+    }
 
     // Attach email: use stored email, or prompt if first bug report
     if let Some(ref email) = config.contact_email {
@@ -538,6 +565,77 @@ pub fn check_fix_notifications() {
     }
 }
 
+/// Extract a few lines of context around the error location from the source.
+/// Returns at most 5 lines centred on the error line — enough for reproduction
+/// without sending the whole file.
+fn extract_location_snippet(error: &crate::error::CompilerError, source: &str) -> Option<String> {
+    // Pull the line number from the error context if available.
+    let line_num: usize = match error {
+        crate::error::CompilerError::Syntax { context }
+        | crate::error::CompilerError::Type { context }
+        | crate::error::CompilerError::Codegen { context }
+        | crate::error::CompilerError::Runtime { context }
+        | crate::error::CompilerError::Memory { context }
+        | crate::error::CompilerError::IO { context }
+        | crate::error::CompilerError::Validation { context }
+        | crate::error::CompilerError::Module { context }
+        | crate::error::CompilerError::Testing { context } => {
+            // Use pre-attached snippet if already present
+            if let Some(ref s) = context.source_snippet {
+                return Some(s.clone());
+            }
+            context.location.as_ref()?.line
+        }
+        crate::error::CompilerError::PluginError { .. }
+        | crate::error::CompilerError::LexError(_) => return None,
+    };
+
+    if line_num == 0 {
+        return None;
+    }
+
+    let lines: Vec<&str> = source.lines().collect();
+    let total = lines.len();
+    // 2 lines of context before and after the error line (1-indexed → 0-indexed)
+    let start = line_num.saturating_sub(3);
+    let end = (line_num + 2).min(total);
+    if start >= total {
+        return None;
+    }
+
+    let snippet: String = lines[start..end]
+        .iter()
+        .enumerate()
+        .map(|(i, l)| format!("{:>3} | {}", start + i + 1, l))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Some(snippet)
+}
+
+/// Return a generic expected-behavior description for a compiler error type.
+/// Used in auto-reports where no human writes the expected behavior explicitly.
+fn infer_expected_behavior(error: &crate::error::CompilerError) -> &'static str {
+    match error {
+        crate::error::CompilerError::Codegen { .. } => {
+            "Compiler should produce valid WebAssembly output without internal errors"
+        }
+        crate::error::CompilerError::Memory { .. } => {
+            "Compiler should manage memory correctly during compilation"
+        }
+        crate::error::CompilerError::Validation { .. } => {
+            "Compiler should complete semantic validation without internal failures"
+        }
+        crate::error::CompilerError::Module { .. } => {
+            "Compiler should resolve module references and imports correctly"
+        }
+        crate::error::CompilerError::PluginError { .. } => {
+            "Plugin should execute correctly and return valid generated code"
+        }
+        _ => "Compiler should process the input without internal errors",
+    }
+}
+
 /// Classify whether a compiler error likely indicates a bug in the Clean
 /// Language toolchain (compiler/plugin) vs. a correctness issue in the user's
 /// source code. Only the former is appropriate for the bug dashboard.
@@ -558,75 +656,140 @@ fn is_likely_compiler_bug(error: &crate::error::CompilerError) -> bool {
     )
 }
 
-/// Extract structured error info from a CompilerError
-fn extract_error_info(error: &crate::error::CompilerError) -> (String, String, String, String) {
+/// Structured fields extracted from a CompilerError for reporting.
+struct ErrorInfo {
+    code: String,
+    category: String,
+    component: String,
+    subsystem: Option<String>,
+    message: String,
+}
+
+/// Extract structured error info from a CompilerError.
+/// Returns (code, category, component, subsystem, message).
+fn extract_error_info(error: &crate::error::CompilerError) -> ErrorInfo {
     match error {
-        crate::error::CompilerError::Syntax { context } => (
-            context
+        crate::error::CompilerError::Syntax { context } => ErrorInfo {
+            code: context
                 .error_code
                 .as_deref()
                 .unwrap_or("SYN000")
                 .to_string(),
-            "syntax".to_string(),
-            "parser".to_string(),
-            context.message.clone(),
-        ),
-        crate::error::CompilerError::Type { context } => (
-            context
+            category: "syntax".to_string(),
+            component: "compiler".to_string(),
+            subsystem: Some("parser".to_string()),
+            message: context.message.clone(),
+        },
+        crate::error::CompilerError::Type { context } => ErrorInfo {
+            code: context
                 .error_code
                 .as_deref()
                 .unwrap_or("TYP000")
                 .to_string(),
-            "semantic".to_string(),
-            "type_checker".to_string(),
-            context.message.clone(),
-        ),
-        crate::error::CompilerError::Codegen { context } => (
-            context
+            category: "semantic".to_string(),
+            component: "compiler".to_string(),
+            subsystem: Some("typechecker".to_string()),
+            message: context.message.clone(),
+        },
+        crate::error::CompilerError::Codegen { context } => ErrorInfo {
+            code: context
                 .error_code
                 .as_deref()
                 .unwrap_or("COD000")
                 .to_string(),
-            "codegen".to_string(),
-            "compiler".to_string(),
-            context.message.clone(),
-        ),
-        crate::error::CompilerError::Runtime { context } => (
-            context
+            category: "codegen".to_string(),
+            component: "compiler".to_string(),
+            subsystem: Some("codegen".to_string()),
+            message: context.message.clone(),
+        },
+        crate::error::CompilerError::Runtime { context } => ErrorInfo {
+            code: context
                 .error_code
                 .as_deref()
                 .unwrap_or("RUN000")
                 .to_string(),
-            "runtime".to_string(),
-            "runtime".to_string(),
-            context.message.clone(),
-        ),
-        crate::error::CompilerError::Memory { context }
-        | crate::error::CompilerError::IO { context }
-        | crate::error::CompilerError::Validation { context }
-        | crate::error::CompilerError::Module { context }
-        | crate::error::CompilerError::Testing { context } => (
-            context
+            category: "runtime".to_string(),
+            component: "server".to_string(),
+            subsystem: Some("runtime".to_string()),
+            message: context.message.clone(),
+        },
+        crate::error::CompilerError::Memory { context } => ErrorInfo {
+            code: context
                 .error_code
                 .as_deref()
-                .unwrap_or("SYS000")
+                .unwrap_or("MEM000")
                 .to_string(),
-            "system".to_string(),
-            "compiler".to_string(),
-            context.message.clone(),
-        ),
-        crate::error::CompilerError::LexError(lex_err) => (
-            "LEX000".to_string(),
-            "syntax".to_string(),
-            "lexer".to_string(),
-            format!("{}", lex_err),
-        ),
-        crate::error::CompilerError::PluginError { message, .. } => (
-            "PLG000".to_string(),
-            "plugin".to_string(),
-            "framework".to_string(),
-            message.clone(),
-        ),
+            category: "memory".to_string(),
+            component: "compiler".to_string(),
+            subsystem: Some("memory".to_string()),
+            message: context.message.clone(),
+        },
+        crate::error::CompilerError::IO { context } => ErrorInfo {
+            code: context.error_code.as_deref().unwrap_or("IO000").to_string(),
+            category: "io".to_string(),
+            component: "compiler".to_string(),
+            subsystem: Some("io".to_string()),
+            message: context.message.clone(),
+        },
+        crate::error::CompilerError::Validation { context } => ErrorInfo {
+            code: context
+                .error_code
+                .as_deref()
+                .unwrap_or("VAL000")
+                .to_string(),
+            category: "validation".to_string(),
+            component: "compiler".to_string(),
+            subsystem: Some("resolver".to_string()),
+            message: context.message.clone(),
+        },
+        crate::error::CompilerError::Module { context } => ErrorInfo {
+            code: context
+                .error_code
+                .as_deref()
+                .unwrap_or("MOD000")
+                .to_string(),
+            category: "module".to_string(),
+            component: "compiler".to_string(),
+            subsystem: Some("module".to_string()),
+            message: context.message.clone(),
+        },
+        crate::error::CompilerError::Testing { context } => ErrorInfo {
+            code: context
+                .error_code
+                .as_deref()
+                .unwrap_or("TST000")
+                .to_string(),
+            category: "testing".to_string(),
+            component: "compiler".to_string(),
+            subsystem: Some("testing".to_string()),
+            message: context.message.clone(),
+        },
+        crate::error::CompilerError::LexError(lex_err) => {
+            use crate::lexer::specification_lexer::LexError;
+            let code = match lex_err {
+                LexError::InvalidCharacter { .. } => "LEX001",
+                LexError::UnterminatedString { .. } => "LEX002",
+                LexError::UnterminatedComment { .. } => "LEX003",
+                LexError::InvalidNumber { .. } => "LEX004",
+                LexError::InvalidPrecisionModifier { .. } => "LEX005",
+                LexError::InvalidIndentation { .. } => "LEX006",
+                LexError::SpacesInIndentation { .. } => "LEX007",
+            };
+            ErrorInfo {
+                code: code.to_string(),
+                category: "syntax".to_string(),
+                component: "compiler".to_string(),
+                subsystem: Some("lexer".to_string()),
+                message: format!("{}", lex_err),
+            }
+        }
+        crate::error::CompilerError::PluginError { message, .. } => ErrorInfo {
+            code: "PLG000".to_string(),
+            category: "plugin".to_string(),
+            component: "framework".to_string(),
+            subsystem: Some("plugin".to_string()),
+            message: message.clone(),
+        },
     }
 }
 
@@ -666,6 +829,95 @@ mod tests {
             location: None,
         };
         assert!(is_likely_compiler_bug(&err));
+    }
+
+    #[test]
+    fn extract_error_info_codegen_has_subsystem() {
+        let err = CompilerError::codegen_error("wasm encode failed", None, None);
+        let info = extract_error_info(&err);
+        assert_eq!(info.component, "compiler");
+        assert_eq!(info.subsystem.as_deref(), Some("codegen"));
+        assert_eq!(info.category, "codegen");
+    }
+
+    #[test]
+    fn extract_error_info_memory_has_subsystem_and_category() {
+        let err = CompilerError::memory_error("out of stack space", None, None);
+        let info = extract_error_info(&err);
+        assert_eq!(info.subsystem.as_deref(), Some("memory"));
+        assert_ne!(
+            info.category, "system",
+            "category must not be the catch-all 'system'"
+        );
+        assert_eq!(info.category, "memory");
+    }
+
+    #[test]
+    fn extract_error_info_validation_has_subsystem_and_category() {
+        use crate::ast::SourceLocation;
+        let loc = SourceLocation {
+            line: 1,
+            column: 1,
+            file: String::new(),
+            byte_start: None,
+            byte_end: None,
+        };
+        let err = CompilerError::validation_error("constraint violated", loc);
+        let info = extract_error_info(&err);
+        assert_eq!(info.subsystem.as_deref(), Some("resolver"));
+        assert_eq!(info.category, "validation");
+        assert_ne!(info.category, "system");
+    }
+
+    #[test]
+    fn extract_error_info_module_has_subsystem_and_category() {
+        let err = CompilerError::module_error("module not found", None, None);
+        let info = extract_error_info(&err);
+        assert_eq!(info.subsystem.as_deref(), Some("module"));
+        assert_eq!(info.category, "module");
+        assert_ne!(info.category, "system");
+    }
+
+    #[test]
+    fn extract_error_info_plugin_routes_to_framework() {
+        let err = CompilerError::PluginError {
+            message: "expand_block failed".to_string(),
+            location: None,
+        };
+        let info = extract_error_info(&err);
+        assert_eq!(info.component, "framework");
+        assert_eq!(info.subsystem.as_deref(), Some("plugin"));
+    }
+
+    #[test]
+    fn no_error_type_maps_to_system_category() {
+        use crate::ast::SourceLocation;
+        // "system" was a catch-all category that lost signal — verify it's gone.
+        let loc = SourceLocation {
+            line: 1,
+            column: 1,
+            file: String::new(),
+            byte_start: None,
+            byte_end: None,
+        };
+        let errs = vec![
+            CompilerError::memory_error("x", None, None),
+            CompilerError::validation_error("x", loc),
+            CompilerError::module_error("x", None, None),
+        ];
+        for err in &errs {
+            let info = extract_error_info(err);
+            assert_ne!(
+                info.category, "system",
+                "catch-all 'system' category must not appear for {:?}",
+                err
+            );
+            assert!(
+                info.subsystem.is_some(),
+                "subsystem must be set for {:?}",
+                err
+            );
+        }
     }
 }
 

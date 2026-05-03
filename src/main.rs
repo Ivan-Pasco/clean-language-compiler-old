@@ -1174,7 +1174,11 @@ async fn handle_compile(
             let source = fs::read_to_string(&input).unwrap_or_default();
             output_config.report_errors(&errors, Some(&source));
             // Auto-report compile failure if telemetry is enabled
-            clean_language_compiler::telemetry::report_compile_failure(&errors, &input);
+            clean_language_compiler::telemetry::report_compile_failure(
+                &errors,
+                &input,
+                Some(&source),
+            );
             return Err(format!("Compilation failed with {} errors", errors.len()).into());
         }
     };
