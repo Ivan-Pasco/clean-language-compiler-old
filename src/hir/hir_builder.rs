@@ -895,15 +895,12 @@ impl HirBuilder {
             // Validate that imports do not appear inside nested scopes.
             // Apply blocks (type, constant, function, method) are valid inside function bodies per the spec
             // (grammar.ebnf line ~426: statement includes apply_block).
-            match stmt {
-                Statement::Import { location, .. } => {
-                    let loc = location.clone().unwrap_or_default();
-                    return Err(CompilerError::validation_error(
-                        "import statements must appear at the top level of a program, not inside a function or block",
-                        loc,
-                    ));
-                }
-                _ => {}
+            if let Statement::Import { location, .. } = stmt {
+                let loc = location.clone().unwrap_or_default();
+                return Err(CompilerError::validation_error(
+                    "import statements must appear at the top level of a program, not inside a function or block",
+                    loc,
+                ));
             }
 
             // Special handling for TypeApplyBlock - expand into multiple statements

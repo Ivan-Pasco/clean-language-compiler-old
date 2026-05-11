@@ -180,7 +180,7 @@ impl ControlFlowGraph {
             for successor in successors {
                 self.predecessors
                     .entry(successor)
-                    .or_insert_with(HashSet::new)
+                    .or_default()
                     .insert(*block_id);
             }
         }
@@ -323,7 +323,7 @@ impl ControlFlowGraph {
             self.dominance
                 .dominance_tree
                 .entry(parent)
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(child);
         }
     }
@@ -524,8 +524,8 @@ impl ControlFlowGraph {
             }
 
             self.loops.natural_loops[i].parent_loop = parent_idx;
-            self.loops.natural_loops[i].nesting_level = if parent_idx.is_some() {
-                self.loops.natural_loops[parent_idx.unwrap()].nesting_level + 1
+            self.loops.natural_loops[i].nesting_level = if let Some(pidx) = parent_idx {
+                self.loops.natural_loops[pidx].nesting_level + 1
             } else {
                 1
             };

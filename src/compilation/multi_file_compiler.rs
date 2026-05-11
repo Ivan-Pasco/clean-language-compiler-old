@@ -28,8 +28,7 @@ fn derive_companion_module_name(path: &Path, base_dir: &Path) -> String {
         .unwrap_or("")
         .trim_end_matches(".cln")
         .replace('/', "_")
-        .replace('[', "")
-        .replace(']', "")
+        .replace(['[', ']'], "")
 }
 
 /// Prefix companion functions with the module name to avoid conflicts.
@@ -507,7 +506,7 @@ impl MultiFileCompiler {
 
     /// Check if a file is an HTML page (.html extension)
     fn is_html_page_file(&self, path: &Path) -> bool {
-        path.extension().map_or(false, |ext| ext == "html")
+        path.extension().is_some_and(|ext| ext == "html")
     }
 
     /// Look for a companion .cln file for the given .html file
@@ -741,7 +740,7 @@ impl MultiFileCompiler {
             };
 
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "cln") {
+            if path.extension().is_some_and(|ext| ext == "cln") {
                 match self.extract_component_info(&path) {
                     Ok(Some(info)) => {
                         // Derive tag name from class name (PascalCase -> kebab-case)

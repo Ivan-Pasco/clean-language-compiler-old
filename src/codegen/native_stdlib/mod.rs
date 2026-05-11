@@ -55,6 +55,7 @@ pub const STRING_DATA_OFFSET: u32 = 4;
 /// - Offset 8: type_id (i32, 4 bytes)
 /// - Offset 12: padding (i32, 4 bytes)
 /// - Offset 16: elements (i32 or f64 depending on type)
+///
 /// CRITICAL: This 16-byte header format MUST match:
 ///   - list_ops.rs generate_list_allocate()
 ///   - list_class.rs generate_push()

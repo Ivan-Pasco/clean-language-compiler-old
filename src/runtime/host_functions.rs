@@ -2696,11 +2696,11 @@ fn allocate_string_in_memory(caller: &mut Caller<'_, ()>, string_value: &str) ->
                 NEXT_STRING_ALLOC += total_size + 4; // Add padding
 
                 // Check if we need to grow memory first
-                let current_size = memory.data_size(&*caller) as usize;
+                let current_size = memory.data_size(&*caller);
                 let needed_size = (ptr + total_size) as usize;
 
                 if needed_size > current_size {
-                    let pages_needed = ((needed_size - current_size) + 65535) / 65536;
+                    let pages_needed = (needed_size - current_size).div_ceil(65536);
                     if memory.grow(&mut *caller, pages_needed as u64).is_err() {
                         tracing::error!(
                             pages_needed = pages_needed,

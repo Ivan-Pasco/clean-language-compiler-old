@@ -112,6 +112,18 @@ large_enum_variant = "allow"
 cognitive_complexity = "allow"
 # Too many arguments is expected in code generation functions
 too_many_arguments = "allow"
+# Structural Vec error design in plugins — boxing would change the public API
+result_large_err = "allow"
+# Compiler algorithm pattern — self is needed for method dispatch in recursive traversals
+only_used_in_recursion = "allow"
+# Compiler inherently has complex types in codegen and runtime
+type_complexity = "allow"
+# basic_ops module naming is intentional
+module_inception = "allow"
+# wasmer runtime pattern — new() returns a configured instance, not Self
+new_ret_no_self = "allow"
+# Caching the regex would be a larger architectural change
+regex_creation_in_loops = "allow"
 
 [lints.rust]
 deprecated = "allow"

@@ -508,9 +508,9 @@ mod tests {
 
     #[test]
     fn test_float_literal() {
-        let expr = make_float_literal(3.14);
+        let expr = make_float_literal(std::f64::consts::PI);
         match try_const_eval(&expr) {
-            ConstValue::Float(f) => assert!((f - 3.14).abs() < 0.001),
+            ConstValue::Float(f) => assert!((f - std::f64::consts::PI).abs() < 0.001),
             _ => panic!("Expected float"),
         }
     }

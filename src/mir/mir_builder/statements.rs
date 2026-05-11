@@ -76,10 +76,10 @@ impl MirBuilder {
                             .unwrap_or_else(|| declared_mir_type.clone());
 
                         // Check if types differ and we need conversion
-                        let needs_type_conversion = match (&init_mir_type, &declared_mir_type) {
-                            (MirType::F64, MirType::I32) | (MirType::I32, MirType::F64) => true,
-                            _ => false,
-                        };
+                        let needs_type_conversion = matches!(
+                            (&init_mir_type, &declared_mir_type),
+                            (MirType::F64, MirType::I32) | (MirType::I32, MirType::F64)
+                        );
 
                         if needs_type_conversion {
                             trace!(
@@ -485,7 +485,7 @@ impl MirBuilder {
                             self.calculate_field_byte_offset(context, class_symbol, property_symbol)
                                 .ok_or_else(|| {
                                     vec![CompilerError::validation_error(
-                                        &format!(
+                                        format!(
                                             "Field '{}' not found in class or parent classes",
                                             property_name
                                         ),
@@ -495,7 +495,7 @@ impl MirBuilder {
                         } else {
                             // Object doesn't have a class type - this shouldn't happen for field access
                             return Err(vec![CompilerError::validation_error(
-                                &format!(
+                                format!(
                                     "Cannot assign to field '{}' on non-class type: {:?}",
                                     property_name, object.expr_type
                                 ),
@@ -1860,7 +1860,7 @@ impl MirBuilder {
             _ => {
                 // Unsupported statement type - return error with details
                 return Err(vec![CompilerError::validation_error(
-                    &format!("Statement type not yet implemented: {:?}", statement),
+                    format!("Statement type not yet implemented: {:?}", statement),
                     SourceLocation::default(),
                 )]);
             }

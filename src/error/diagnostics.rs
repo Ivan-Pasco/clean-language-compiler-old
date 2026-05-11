@@ -116,6 +116,12 @@ pub struct ErrorPatternDatabase {
     patterns: Vec<ErrorPattern>,
 }
 
+impl Default for ErrorPatternDatabase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ErrorPatternDatabase {
     pub fn new() -> Self {
         let patterns = vec![
@@ -176,7 +182,7 @@ impl ErrorPatternDatabase {
         for pattern in &self.patterns {
             let matches = self.find_pattern_matches(pattern, errors);
             if !matches.is_empty() {
-                let confidence = self.calculate_confidence(&pattern, &matches);
+                let confidence = self.calculate_confidence(pattern, &matches);
                 detected.push(DetectedPattern {
                     pattern: pattern.clone(),
                     instances: matches,
@@ -227,6 +233,12 @@ impl ErrorPatternDatabase {
 /// Engine for generating automated fix suggestions
 pub struct FixSuggestionEngine {
     fix_templates: HashMap<String, Vec<FixTemplate>>,
+}
+
+impl Default for FixSuggestionEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FixSuggestionEngine {
@@ -361,6 +373,12 @@ impl FixSuggestionEngine {
 /// Analyzer for correlating related errors
 pub struct ErrorCorrelator;
 
+impl Default for ErrorCorrelator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ErrorCorrelator {
     pub fn new() -> Self {
         Self
@@ -470,6 +488,12 @@ pub struct ErrorStatistics {
     pub error_types: HashMap<String, usize>,
     pub error_locations: HashMap<String, usize>,
     pub most_common_patterns: Vec<(String, usize)>,
+}
+
+impl Default for ErrorStatistics {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ErrorStatistics {

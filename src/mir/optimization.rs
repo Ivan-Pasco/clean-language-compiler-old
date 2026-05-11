@@ -91,14 +91,13 @@ impl PassStats {
 impl MirOptimizer {
     /// Create a new MIR optimizer with default passes
     pub fn new() -> Self {
-        let mut passes: Vec<Box<dyn OptimizationPass>> = Vec::new();
-
-        // Add optimization passes in order
-        passes.push(Box::new(ConstantFoldingPass::new()));
-        passes.push(Box::new(DeadCodeEliminationPass::new()));
-        passes.push(Box::new(ControlFlowSimplificationPass::new()));
-        passes.push(Box::new(PeepholeOptimizationPass::new()));
-        passes.push(Box::new(FunctionInliningPass::new()));
+        let passes: Vec<Box<dyn OptimizationPass>> = vec![
+            Box::new(ConstantFoldingPass::new()),
+            Box::new(DeadCodeEliminationPass::new()),
+            Box::new(ControlFlowSimplificationPass::new()),
+            Box::new(PeepholeOptimizationPass::new()),
+            Box::new(FunctionInliningPass::new()),
+        ];
 
         Self {
             config: MirConfig::default(),
@@ -177,6 +176,12 @@ pub struct ConstantFoldingPass {
     constant_values: HashMap<ValueId, MirConstant>,
     /// Values that have multiple definitions (cannot be treated as constants)
     multi_def_values: HashSet<ValueId>,
+}
+
+impl Default for ConstantFoldingPass {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ConstantFoldingPass {
@@ -288,7 +293,7 @@ impl OptimizationPass for ConstantFoldingPass {
         for block in function.blocks.values_mut() {
             let _instructions_to_remove: Vec<usize> = Vec::new();
 
-            for (_i, instruction) in block.instructions.iter_mut().enumerate() {
+            for instruction in block.instructions.iter_mut() {
                 match &mut instruction.operation {
                     MirOperation::Copy {
                         source: MirOperand::Constant(constant),
@@ -391,6 +396,12 @@ impl OptimizationPass for ConstantFoldingPass {
 pub struct DeadCodeEliminationPass {
     /// Values that are used (live)
     live_values: HashSet<ValueId>,
+}
+
+impl Default for DeadCodeEliminationPass {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DeadCodeEliminationPass {
@@ -605,6 +616,12 @@ impl OptimizationPass for DeadCodeEliminationPass {
 #[derive(Debug)]
 pub struct ControlFlowSimplificationPass;
 
+impl Default for ControlFlowSimplificationPass {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ControlFlowSimplificationPass {
     pub fn new() -> Self {
         Self
@@ -637,6 +654,12 @@ impl OptimizationPass for ControlFlowSimplificationPass {
 #[derive(Debug)]
 pub struct PeepholeOptimizationPass;
 
+impl Default for PeepholeOptimizationPass {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PeepholeOptimizationPass {
     pub fn new() -> Self {
         Self
@@ -668,6 +691,12 @@ impl OptimizationPass for PeepholeOptimizationPass {
 /// Function inlining optimization pass
 #[derive(Debug)]
 pub struct FunctionInliningPass {}
+
+impl Default for FunctionInliningPass {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl FunctionInliningPass {
     pub fn new() -> Self {

@@ -53,7 +53,7 @@ fn allocate_string_in_memory(
     let current_pages = memory.size(&caller) as usize;
     let current_bytes = current_pages * 65536;
     if aligned_end > current_bytes {
-        let needed_pages = ((aligned_end - current_bytes + 65535) / 65536) as u64;
+        let needed_pages = (aligned_end - current_bytes).div_ceil(65536) as u64;
         if memory.grow(&mut *caller, needed_pages).is_err() {
             println!("⚠️  WARNING: memory.grow failed for {needed_pages} pages");
             return 0;
@@ -1193,7 +1193,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Grow memory if needed
             let current_bytes = memory.size(&caller) as usize * 65536;
             if (new_heap_ptr as usize) > current_bytes {
-                let needed_pages = ((new_heap_ptr as usize - current_bytes + 65535) / 65536) as u64;
+                let needed_pages = (new_heap_ptr as usize - current_bytes).div_ceil(65536) as u64;
                 let _ = memory.grow(&mut caller, needed_pages);
             }
 
@@ -1287,14 +1287,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Read the element value
             let element_bytes = &data[element_offset..element_offset + 4];
-            let element_value = i32::from_le_bytes([
+
+            i32::from_le_bytes([
                 element_bytes[0],
                 element_bytes[1],
                 element_bytes[2],
                 element_bytes[3],
-            ]);
-
-            element_value
+            ])
         },
     )?;
 

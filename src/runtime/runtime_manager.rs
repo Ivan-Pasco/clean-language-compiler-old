@@ -31,6 +31,7 @@ pub struct RuntimeInfo {
 
 impl RuntimeManager {
     /// Get information about all available runtimes
+    #[allow(clippy::vec_init_then_push)]
     pub fn list_available_runtimes() -> Vec<RuntimeInfo> {
         let mut runtimes = Vec::new();
 
@@ -118,7 +119,7 @@ impl RuntimeManager {
                 // For general use, prefer Wasmtime if available
                 #[cfg(feature = "wasmtime-runtime")]
                 {
-                    return Ok(RuntimeType::Wasmtime);
+                    Ok(RuntimeType::Wasmtime)
                 }
 
                 // Wasmer runtime support is currently disabled
@@ -252,24 +253,13 @@ impl fmt::Display for RuntimeBenchmark {
 
 /// Helper function to create a runtime-appropriate configuration
 pub fn create_runtime_config(runtime_type: RuntimeType) -> RuntimeConfig {
-    let mut config = RuntimeConfig::default();
-    config.runtime_type = runtime_type;
+    let async_support = matches!(runtime_type, RuntimeType::Wasmtime);
 
-    match runtime_type {
-        RuntimeType::Wasmtime => {
-            // Wasmtime-specific defaults
-            config.async_support = true;
-        }
-        RuntimeType::Wasmer => {
-            // Wasmer-specific defaults
-            config.async_support = false; // Wasmer doesn't have built-in async
-        }
-        RuntimeType::Auto => {
-            // Auto defaults - will be adjusted based on selected runtime
-        }
+    RuntimeConfig {
+        runtime_type,
+        async_support,
+        ..RuntimeConfig::default()
     }
-
-    config
 }
 
 #[cfg(test)]

@@ -339,9 +339,9 @@ impl<'a> TypeInference<'a> {
                 symbol_info.kind,
                 crate::resolver::symbol_table::SymbolKind::Namespace { .. }
             ) {
-                if !self.type_env.contains_key(&symbol_id) {
-                    self.type_env.insert(symbol_id, ConcreteType::Namespace);
-                }
+                self.type_env
+                    .entry(symbol_id)
+                    .or_insert(ConcreteType::Namespace);
             }
         }
 
@@ -900,7 +900,7 @@ impl<'a> TypeInference<'a> {
                             return_type,
                         } => {
                             // Skip if already registered (to preserve manual overrides above)
-                            if self.type_env.get(&symbol_id).is_none() {
+                            self.type_env.entry(symbol_id).or_insert_with(|| {
                                 let concrete_params: Vec<ConcreteType> = parameters
                                     .iter()
                                     .map(Self::hir_type_to_concrete_type)
@@ -910,15 +910,12 @@ impl<'a> TypeInference<'a> {
                                     .map(|t| Box::new(Self::hir_type_to_concrete_type(t)))
                                     .unwrap_or_else(|| Box::new(ConcreteType::Null));
 
-                                self.type_env.insert(
-                                    symbol_id,
-                                    ConcreteType::Function {
-                                        parameters: concrete_params,
-                                        return_type: concrete_return,
-                                        is_background: false,
-                                    },
-                                );
-                            }
+                                ConcreteType::Function {
+                                    parameters: concrete_params,
+                                    return_type: concrete_return,
+                                    is_background: false,
+                                }
+                            });
                         }
                         _ => {
                             // Skip non-function builtins (classes, namespaces, etc.)
@@ -1134,7 +1131,9 @@ impl<'a> TypeInference<'a> {
             }
         }
 
-        let result = TastProgram {
+        // Type inference completed successfully
+
+        TastProgram {
             functions: tast_functions,
             classes: tast_classes,
             start_function: tast_start_function,
@@ -1147,11 +1146,7 @@ impl<'a> TypeInference<'a> {
             // NOTE: Pass symbol table through to MIR for dynamic SymbolId resolution
             symbol_table: std::sync::Arc::new(program.symbol_table.clone()),
             externals: tast_externals,
-        };
-
-        // Type inference completed successfully
-
-        result
+        }
     }
 
     /// Type-check a watch block's body.
@@ -1301,11 +1296,10 @@ impl<'a> TypeInference<'a> {
 
         // Set current return type for constraint generation within the function
         // We'll update this later if no explicit return type is declared
-        self.current_return_type = if let Some(ref return_type) = function.return_type {
-            Some(self.hir_type_to_concrete(return_type))
-        } else {
-            None // Will be inferred from function body
-        };
+        self.current_return_type = function
+            .return_type
+            .as_ref()
+            .map(|return_type| self.hir_type_to_concrete(return_type));
 
         // Add parameters to type environment
         let mut tast_parameters = Vec::new();
@@ -1417,7 +1411,8 @@ impl<'a> TypeInference<'a> {
         let has_non_none_return = Self::block_has_non_none_return(&tast_body);
         let final_return_type = if has_none_return && has_non_none_return {
             // Mixed paths: return type is Optional(T) where T is the non-none type
-            let inner = match &declared_return_type {
+
+            match &declared_return_type {
                 // If already Optional, keep it
                 ConcreteType::Optional(_) => declared_return_type.clone(),
                 // If declared as Null/Undefined/Unknown, treat inner as Unknown
@@ -1425,8 +1420,7 @@ impl<'a> TypeInference<'a> {
                     ConcreteType::Optional(Box::new(ConcreteType::Unknown))
                 }
                 other => ConcreteType::Optional(Box::new(other.clone())),
-            };
-            inner
+            }
         } else {
             declared_return_type
         };
@@ -1889,11 +1883,8 @@ impl<'a> TypeInference<'a> {
                     match stmt {
                         Expression { expression, .. } => collect_refs_expr(expression, out),
                         Assignment { value, .. } => collect_refs_expr(value, out),
-                        Return { value, .. } => {
-                            if let Some(v) = value {
-                                collect_refs_expr(v, out);
-                            }
-                        }
+                        Return { value: Some(v), .. } => collect_refs_expr(v, out),
+                        Return { value: None, .. } => {}
                         If {
                             condition,
                             then_branch,
@@ -2101,13 +2092,13 @@ impl<'a> TypeInference<'a> {
             TastStatement::Expression { expression, .. } => self.expression_uses_this(expression),
             TastStatement::VariableDeclaration { initializer, .. } => initializer
                 .as_ref()
-                .map_or(false, |e| self.expression_uses_this(e)),
+                .is_some_and(|e| self.expression_uses_this(e)),
             TastStatement::Assignment { target, value, .. } => {
                 self.expression_uses_this(target) || self.expression_uses_this(value)
             }
-            TastStatement::Return { value, .. } => value
-                .as_ref()
-                .map_or(false, |e| self.expression_uses_this(e)),
+            TastStatement::Return { value, .. } => {
+                value.as_ref().is_some_and(|e| self.expression_uses_this(e))
+            }
             TastStatement::If {
                 condition,
                 then_block,
@@ -2116,9 +2107,7 @@ impl<'a> TypeInference<'a> {
             } => {
                 self.expression_uses_this(condition)
                     || self.body_uses_this(then_block)
-                    || else_block
-                        .as_ref()
-                        .map_or(false, |b| self.body_uses_this(b))
+                    || else_block.as_ref().is_some_and(|b| self.body_uses_this(b))
             }
             TastStatement::For { iterable, body, .. } => {
                 self.expression_uses_this(iterable) || self.body_uses_this(body)
@@ -2342,7 +2331,7 @@ impl<'a> TypeInference<'a> {
                         }
                     ) {
                         return Err(CompilerError::type_error(
-                            &format!(
+                            format!(
                                 "none cannot be used in a variable declaration for '{}'; \
                                  optionality comes from function return types",
                                 name
@@ -2358,10 +2347,10 @@ impl<'a> TypeInference<'a> {
                         // Empty array literal []
                         ResolvedHirExpression::Array { elements, .. } => elements.is_empty(),
                         // Empty pairs literal {}
-                        ResolvedHirExpression::Literal { value, .. } => match value {
-                            crate::ast::Value::Pairs(pairs) => pairs.is_empty(),
-                            _ => false,
-                        },
+                        ResolvedHirExpression::Literal {
+                            value: crate::ast::Value::Pairs(pairs),
+                            ..
+                        } => pairs.is_empty(),
                         _ => false,
                     };
 
@@ -2651,10 +2640,10 @@ impl<'a> TypeInference<'a> {
                     // Empty array literal []
                     ResolvedHirExpression::Array { elements, .. } => elements.is_empty(),
                     // Empty pairs literal {}
-                    ResolvedHirExpression::Literal { value: val, .. } => match val {
-                        crate::ast::Value::Pairs(pairs) => pairs.is_empty(),
-                        _ => false,
-                    },
+                    ResolvedHirExpression::Literal {
+                        value: crate::ast::Value::Pairs(pairs),
+                        ..
+                    } => pairs.is_empty(),
                     _ => false,
                 };
 
@@ -2976,7 +2965,7 @@ impl<'a> TypeInference<'a> {
             } => {
                 let var_type = self.type_env.get(symbol_id).cloned().unwrap_or_else(|| {
                     self.errors.push(CompilerError::type_error(
-                        &format!("Variable {} not found in type environment", name),
+                        format!("Variable {} not found in type environment", name),
                         None,
                         Some(location.clone()),
                     ));
@@ -3042,7 +3031,7 @@ impl<'a> TypeInference<'a> {
                 if let Some(function_type) = self.type_env.get(function_symbol_id).cloned() {
                     if matches!(function_type, ConcreteType::Namespace) {
                         return Err(CompilerError::type_error(
-                            &format!(
+                            format!(
                                 "'{}' is a namespace, not a function — use '{}.function_name()' syntax",
                                 function, function
                             ),
@@ -3365,7 +3354,7 @@ impl<'a> TypeInference<'a> {
                                     if let Some(rcn) = &receiver_class_name {
                                         if rcn == owner {
                                             self.errors.push(CompilerError::validation_error(
-                                                &format!(
+                                                format!(
                                                     "'{}' is private and cannot be accessed from outside '{}'",
                                                     method, owner
                                                 ),
@@ -3506,7 +3495,7 @@ impl<'a> TypeInference<'a> {
                                     .unwrap_or(false);
                                 if !inside_owner {
                                     self.errors.push(CompilerError::validation_error(
-                                        &format!(
+                                        format!(
                                             "'{}' is private and cannot be accessed from outside '{}'",
                                             field, owner
                                         ),
@@ -3892,7 +3881,7 @@ impl<'a> TypeInference<'a> {
             // Check left operand
             if let ConcreteType::Optional(inner) = left_type {
                 return Err(CompilerError::type_error(
-                    &format!(
+                    format!(
                         "value of type '{}?' might be none — use 'or' for a fallback or \
                          'if' to check before using it",
                         inner
@@ -3907,7 +3896,7 @@ impl<'a> TypeInference<'a> {
             // Check right operand (only if not a none-literal comparison, which is fine)
             if let ConcreteType::Optional(inner) = right_type {
                 return Err(CompilerError::type_error(
-                    &format!(
+                    format!(
                         "value of type '{}?' might be none — use 'or' for a fallback or \
                          'if' to check before using it",
                         inner
@@ -4244,7 +4233,7 @@ impl<'a> TypeInference<'a> {
                 // Validate argument count against required parameters (not total parameters)
                 if arguments.len() < required_count {
                     return Err(CompilerError::type_error(
-                        &format!(
+                        format!(
                             "Function requires at least {} arguments, got {}",
                             required_count,
                             arguments.len()
@@ -4257,7 +4246,7 @@ impl<'a> TypeInference<'a> {
                 // Skip argument count check for variadic print functions
                 if !is_variadic_print_fn && arguments.len() > parameters.len() {
                     return Err(CompilerError::type_error(
-                        &format!(
+                        format!(
                             "Function accepts at most {} arguments, got {}",
                             parameters.len(),
                             arguments.len()
@@ -4283,7 +4272,7 @@ impl<'a> TypeInference<'a> {
             }
 
             _ => Err(CompilerError::type_error(
-                &format!("Cannot call non-function type: {}", function_type),
+                format!("Cannot call non-function type: {}", function_type),
                 None,
                 Some(location.clone()),
             )),
@@ -4425,7 +4414,7 @@ impl<'a> TypeInference<'a> {
             }
 
             Err(CompilerError::type_error(
-                &format!(
+                format!(
                     "Function symbol {:?} not found in type environment",
                     function_symbol_id
                 ),
@@ -5070,7 +5059,7 @@ impl<'a> TypeInference<'a> {
 
                         // Field not found in class or parent class
                         return Err(CompilerError::type_error(
-                            &format!(
+                            format!(
                                 "Field '{}' not found in class '{}'",
                                 field_name, class_symbol.name
                             ),
@@ -5081,7 +5070,7 @@ impl<'a> TypeInference<'a> {
                 }
                 // Class symbol not found - return error
                 Err(CompilerError::type_error(
-                    &format!(
+                    format!(
                         "Cannot resolve class type for field access '{}'",
                         field_name
                     ),
@@ -5099,7 +5088,7 @@ impl<'a> TypeInference<'a> {
             }
 
             _ => Err(CompilerError::type_error(
-                &format!(
+                format!(
                     "Type {:?} does not have field '{}'",
                     object_type, field_name
                 ),
@@ -5199,7 +5188,7 @@ impl<'a> TypeInference<'a> {
 
                         // Field not found in class or parent class
                         return Err(CompilerError::type_error(
-                            &format!(
+                            format!(
                                 "Field '{}' not found in class '{}'",
                                 field_name, class_symbol.name
                             ),
@@ -5210,7 +5199,7 @@ impl<'a> TypeInference<'a> {
                 }
                 // Class symbol not found - return error
                 Err(CompilerError::type_error(
-                    &format!(
+                    format!(
                         "Cannot resolve class type for field access '{}'",
                         field_name
                     ),
@@ -5562,18 +5551,16 @@ impl<'a> TypeInference<'a> {
             Some(TastStatement::Return { .. }) => true,
             Some(TastStatement::If {
                 then_block,
-                else_block,
+                else_block: Some(else_b),
                 ..
             }) => {
                 // Both branches must unconditionally return; if there is no else
                 // branch the function may fall through after the if.
-                if let Some(else_b) = else_block {
-                    Self::block_definitely_returns(then_block)
-                        && Self::block_definitely_returns(else_b)
-                } else {
-                    false
-                }
+                Self::block_definitely_returns(then_block) && Self::block_definitely_returns(else_b)
             }
+            Some(TastStatement::If {
+                else_block: None, ..
+            }) => false,
             Some(TastStatement::Try {
                 body, catch_clause, ..
             }) => {

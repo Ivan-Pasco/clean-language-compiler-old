@@ -8,6 +8,12 @@ use wasm_encoder::Instruction;
 /// Comprehensive mathematical operations implementation
 pub struct NumericOperations {}
 
+impl Default for NumericOperations {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NumericOperations {
     pub fn new() -> Self {
         Self {}

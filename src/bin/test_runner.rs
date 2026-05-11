@@ -100,7 +100,7 @@ fn run_integration_tests() -> TestSuite {
     for file_path in test_files {
         if Path::new(file_path).exists() {
             let start = Instant::now();
-            let name = file_path.split('/').last().unwrap_or(file_path);
+            let name = file_path.split('/').next_back().unwrap_or(file_path);
 
             match std::fs::read_to_string(file_path) {
                 Ok(content) => {
@@ -143,10 +143,7 @@ fn main() {
     println!("{}", "=".repeat(60));
 
     let start_time = Instant::now();
-    let mut all_suites = Vec::new();
-
-    all_suites.push(run_compilation_tests());
-    all_suites.push(run_integration_tests());
+    let all_suites = vec![run_compilation_tests(), run_integration_tests()];
 
     let total_time = start_time.elapsed();
 

@@ -101,7 +101,7 @@ impl MirBuilder {
         }
 
         // Process parameters
-        for (_i, param) in tast_function.parameters.iter().enumerate() {
+        for param in tast_function.parameters.iter() {
             let value_id = ValueId(context.function.next_value_id);
             context.function.next_value_id += 1;
 

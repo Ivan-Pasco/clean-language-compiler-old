@@ -68,21 +68,21 @@ impl TokenParser {
                         None
                     };
 
-                    return Ok(Statement::VariableDecl {
+                    Ok(Statement::VariableDecl {
                         name: var_name,
                         type_: Type::Object(first_name), // Test is a class type
                         initializer,
                         location: Some(var_location),
-                    });
+                    })
                 } else {
                     // Not a variable declaration, might be a function call like Test()
                     // Move cursor back to reparse as expression
                     self.cursor -= 1;
                     let expr = self.parse_expression()?;
-                    return Ok(Statement::Expression {
+                    Ok(Statement::Expression {
                         expr,
                         location: Some(first_location),
-                    });
+                    })
                 }
             }
             TokenKind::Identifier(name) => {
@@ -372,23 +372,23 @@ impl TokenParser {
                         None
                     };
 
-                    return Ok(Statement::VariableDecl {
+                    Ok(Statement::VariableDecl {
                         name: var_name,
                         type_,
                         initializer,
                         location: Some(var_location),
-                    });
+                    })
                 } else if self.check(&TokenKind::Assign) {
                     // This is a simple assignment: VAR = EXPR
                     self.bump(); // consume =
                     self.skip_whitespace();
                     let value = self.parse_expression()?;
 
-                    return Ok(Statement::Assignment {
+                    Ok(Statement::Assignment {
                         target: AssignmentTarget::Variable(first_name),
                         value,
                         location: Some(first_location),
-                    });
+                    })
                 } else if self.check(&TokenKind::Dot) {
                     // Could be a property-chain assignment: `obj.prop = val`
                     // or `obj.a.b = val`, or just a method-call expression.
@@ -419,14 +419,14 @@ impl TokenParser {
                         self.bump(); // consume =
                         self.skip_whitespace();
                         let value = self.parse_expression()?;
-                        return Ok(Statement::Assignment {
+                        Ok(Statement::Assignment {
                             target: AssignmentTarget::Property {
                                 object: first_name,
                                 path,
                             },
                             value,
                             location: Some(first_location),
-                        });
+                        })
                     } else if path.len() == 1 && path[0] == "check" {
                         // Validate check statement: `schemaName.check expr:\n\tok: ...\n\terror: ...`
                         // Rewind to the dot, consume it, then call parse_validate_check_stmt
@@ -434,7 +434,7 @@ impl TokenParser {
                         self.cursor = save_cursor;
                         self.bump(); // consume the "."
                         self.skip_whitespace();
-                        return self.parse_validate_check_stmt(first_name, first_location);
+                        self.parse_validate_check_stmt(first_name, first_location)
                     } else {
                         // Not an assignment — backtrack to first_name and parse the
                         // whole thing as an expression (e.g. `nums.add(4)`, `s.replace(a,b)`).
@@ -442,10 +442,10 @@ impl TokenParser {
                         // facing a bare `.`, which causes "Unexpected token: Dot".
                         self.cursor = first_cursor;
                         let expr = self.parse_expression()?;
-                        return Ok(Statement::Expression {
+                        Ok(Statement::Expression {
                             expr,
                             location: Some(first_location),
-                        });
+                        })
                     }
                 } else if self.check(&TokenKind::LeftBracket) {
                     // This could be an indexed assignment: VAR[index] = value
@@ -480,7 +480,7 @@ impl TokenParser {
                                 });
                             }
                             // Non-variable receiver — keep as ListAssignment expression.
-                            return Ok(Statement::Expression {
+                            Ok(Statement::Expression {
                                 expr: Expression::ListAssignment {
                                     list,
                                     index,
@@ -488,24 +488,24 @@ impl TokenParser {
                                     location: first_location.clone(),
                                 },
                                 location: Some(first_location),
-                            });
+                            })
                         } else {
                             // Not a list access - unsupported assignment target
-                            return Err(CompilerError::parse_error(
+                            Err(CompilerError::parse_error(
                                 "Unsupported assignment target".to_string(),
                                 Some(first_location),
                                 Some(
                                     "Only simple variables and list indices can be assigned to"
                                         .to_string(),
                                 ),
-                            ));
+                            ))
                         }
                     } else {
                         // Not an assignment, just an expression statement
-                        return Ok(Statement::Expression {
+                        Ok(Statement::Expression {
                             expr: lhs_expr,
                             location: Some(first_location),
-                        });
+                        })
                     }
                 } else {
                     // This could be an expression statement with operators: x + 1, x * y, etc.
@@ -524,10 +524,10 @@ impl TokenParser {
                         });
                     }
 
-                    return Ok(Statement::Expression {
+                    Ok(Statement::Expression {
                         expr,
                         location: Some(first_location),
-                    });
+                    })
                 }
             }
             TokenKind::StringLiteral(_)
@@ -549,10 +549,10 @@ impl TokenParser {
                     });
                 }
 
-                return Ok(Statement::Expression {
+                Ok(Statement::Expression {
                     expr,
                     location: Some(location),
-                });
+                })
             }
             TokenKind::Description => {
                 // Parse description statement: description "text"
@@ -564,16 +564,16 @@ impl TokenParser {
                 if let TokenKind::StringLiteral(text) = self.current_kind() {
                     let description_text = text.clone();
                     self.bump(); // consume string
-                    return Ok(Statement::Description {
+                    Ok(Statement::Description {
                         text: description_text,
                         location: Some(location),
-                    });
+                    })
                 } else {
-                    return Err(CompilerError::parse_error(
+                    Err(CompilerError::parse_error(
                         "Expected string literal after 'description'".to_string(),
                         Some(self.current().location.clone()),
                         None,
-                    ));
+                    ))
                 }
             }
             // Contextual keywords used as variable names in statements
@@ -597,19 +597,19 @@ impl TokenParser {
                     self.bump(); // consume =
                     self.skip_whitespace();
                     let value = self.parse_expression()?;
-                    return Ok(Statement::Assignment {
+                    Ok(Statement::Assignment {
                         target: AssignmentTarget::Variable(first_name),
                         value,
                         location: Some(first_location),
-                    });
+                    })
                 } else {
                     // Expression statement (e.g., rules.something())
                     self.cursor -= 1;
                     let expr = self.parse_expression()?;
-                    return Ok(Statement::Expression {
+                    Ok(Statement::Expression {
                         expr,
                         location: Some(first_location),
-                    });
+                    })
                 }
             }
             _ => {
@@ -706,23 +706,18 @@ impl TokenParser {
 
         // Consume Dedent tokens until we return to the if statement's own level
         // This allows us to see if there's an else clause at the same level as the if
-        loop {
-            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
-                let level = *dedent_level; // Copy the value to avoid borrow issues
-                if level < if_indent_level {
-                    // This Dedent would take us below the if statement's level
-                    // Don't consume it - it belongs to a parent block
-                    break;
-                }
-                self.bump();
-                self.skip_whitespace();
+        while let TokenKind::Dedent(dedent_level) = self.current_kind() {
+            let level = *dedent_level; // Copy the value to avoid borrow issues
+            if level < if_indent_level {
+                // This Dedent would take us below the if statement's level
+                // Don't consume it - it belongs to a parent block
+                break;
+            }
+            self.bump();
+            self.skip_whitespace();
 
-                // After consuming a dedent, if we've reached the if statement's level, stop
-                if level == if_indent_level {
-                    break;
-                }
-            } else {
-                // Not a Dedent token - stop
+            // After consuming a dedent, if we've reached the if statement's level, stop
+            if level == if_indent_level {
                 break;
             }
         }
@@ -771,23 +766,18 @@ impl TokenParser {
 
         // Consume Dedent tokens until we return to the while statement's own level
         // This ensures proper positioning for the next statement at the same level
-        loop {
-            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
-                let level = *dedent_level; // Copy the value to avoid borrow issues
-                if level < while_indent_level {
-                    // This Dedent would take us below the while statement's level
-                    // Don't consume it - it belongs to a parent block
-                    break;
-                }
-                self.bump();
-                self.skip_whitespace();
+        while let TokenKind::Dedent(dedent_level) = self.current_kind() {
+            let level = *dedent_level; // Copy the value to avoid borrow issues
+            if level < while_indent_level {
+                // This Dedent would take us below the while statement's level
+                // Don't consume it - it belongs to a parent block
+                break;
+            }
+            self.bump();
+            self.skip_whitespace();
 
-                // After consuming a dedent, if we've reached the while statement's level, stop
-                if level == while_indent_level {
-                    break;
-                }
-            } else {
-                // Not a Dedent token - stop
+            // After consuming a dedent, if we've reached the while statement's level, stop
+            if level == while_indent_level {
                 break;
             }
         }

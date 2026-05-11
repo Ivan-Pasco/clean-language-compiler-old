@@ -316,10 +316,7 @@ pub fn check_version_change() {
     let mut config = TelemetryConfig::load();
     let current_version = crate::VERSION;
 
-    let version_changed = config
-        .last_seen_version
-        .as_deref()
-        .map_or(true, |v| v != current_version);
+    let version_changed = config.last_seen_version.as_deref() != Some(current_version);
 
     if version_changed {
         config.last_seen_version = Some(current_version.to_string());
@@ -793,6 +790,18 @@ fn extract_error_info(error: &crate::error::CompilerError) -> ErrorInfo {
     }
 }
 
+/// Generate a UUID v4-format report ID
+fn generate_report_id() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let a: u32 = rng.gen();
+    let b: u16 = rng.gen();
+    let c: u16 = (rng.gen::<u16>() & 0x0FFF) | 0x4000;
+    let d: u16 = (rng.gen::<u16>() & 0x3FFF) | 0x8000;
+    let e: u64 = rng.gen::<u64>() & 0xFFFF_FFFF_FFFF;
+    format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}", a, b, c, d, e)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -919,16 +928,4 @@ mod tests {
             );
         }
     }
-}
-
-/// Generate a UUID v4-format report ID
-fn generate_report_id() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let a: u32 = rng.gen();
-    let b: u16 = rng.gen();
-    let c: u16 = (rng.gen::<u16>() & 0x0FFF) | 0x4000;
-    let d: u16 = (rng.gen::<u16>() & 0x3FFF) | 0x8000;
-    let e: u64 = rng.gen::<u64>() & 0xFFFF_FFFF_FFFF;
-    format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}", a, b, c, d, e)
 }

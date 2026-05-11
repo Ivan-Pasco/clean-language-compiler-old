@@ -1688,7 +1688,7 @@ impl NameResolver {
                                 let method_symbol_id = self
                                     .symbol_table
                                     .lookup_class_member(class_symbol_id, method)
-                                    .unwrap_or_else(|| {
+                                    .unwrap_or({
                                         // Create a placeholder symbol for built-in static methods if not found
                                         // This allows built-in static methods to work even if not explicitly defined
                                         SymbolId(0)
@@ -1711,10 +1711,8 @@ impl NameResolver {
                                 // Try to look up the qualified function name in the symbol table
                                 // CRITICAL: Stdlib functions (string.length, math.max, etc.) are NOT in the symbol table
                                 // They're registered directly in MirCodeGenerator, so we use a placeholder SymbolId
-                                let function_symbol_id = self
-                                    .symbol_table
-                                    .lookup_symbol(&qualified_name)
-                                    .unwrap_or_else(|| {
+                                let function_symbol_id =
+                                    self.symbol_table.lookup_symbol(&qualified_name).unwrap_or({
                                         // Use SymbolId(0) as placeholder for stdlib namespace functions
                                         // The actual function lookup will happen during code generation
                                         SymbolId(0)
@@ -2125,12 +2123,10 @@ impl NameResolver {
                 // However, do NOT convert if it's a known namespace or a class (static method call)
                 if let Some(symbol_id) = self.symbol_table.lookup_symbol(namespace) {
                     // Check the symbol kind to determine if it's a true namespace or class
-                    let symbol_kind = if let Some(symbol) = self.symbol_table.get_symbol(symbol_id)
-                    {
-                        Some(symbol.kind.clone())
-                    } else {
-                        None
-                    };
+                    let symbol_kind = self
+                        .symbol_table
+                        .get_symbol(symbol_id)
+                        .map(|symbol| symbol.kind.clone());
 
                     match symbol_kind {
                         Some(SymbolKind::Namespace { .. }) => {
@@ -2165,13 +2161,16 @@ impl NameResolver {
                                     location: location.clone(),
                                 });
                             } else {
-                                return Err(self.error(
-                                    &format!(
-                                        "Static method '{}' not found in class '{}'",
-                                        function, namespace
-                                    ),
-                                    location.clone(),
-                                ));
+                                return {
+                                    self.error(
+                                        &format!(
+                                            "Static method '{}' not found in class '{}'",
+                                            function, namespace
+                                        ),
+                                        location.clone(),
+                                    );
+                                    Err(())
+                                };
                             }
                         }
                         Some(_) => {
@@ -2212,10 +2211,8 @@ impl NameResolver {
                 // Try to look up the qualified function name in the symbol table
                 // CRITICAL: Stdlib functions (string.length, math.max, etc.) are NOT in the symbol table
                 // They're registered directly in MirCodeGenerator, so we use a placeholder SymbolId
-                let function_symbol_id = self
-                    .symbol_table
-                    .lookup_symbol(&qualified_name)
-                    .unwrap_or_else(|| {
+                let function_symbol_id =
+                    self.symbol_table.lookup_symbol(&qualified_name).unwrap_or({
                         // Use SymbolId(0) as placeholder for stdlib namespace functions
                         // The actual function lookup will happen during code generation
                         SymbolId(0)
@@ -3222,7 +3219,7 @@ impl NameResolver {
                 let parameters: Vec<HirType> = bf
                     .get_param_types()
                     .iter()
-                    .map(|bt| Self::builtin_type_to_hir_type(bt))
+                    .map(Self::builtin_type_to_hir_type)
                     .collect();
 
                 let return_type = {
@@ -3315,7 +3312,7 @@ impl NameResolver {
             let parameters: Vec<HirType> = func
                 .get_param_types()
                 .iter()
-                .map(|bt| Self::builtin_type_to_hir_type(bt))
+                .map(Self::builtin_type_to_hir_type)
                 .collect();
 
             // Convert return type

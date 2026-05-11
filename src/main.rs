@@ -674,7 +674,7 @@ fn handle_runtime(
         ""
     };
 
-    if list || (!detect && !list) {
+    if list || !detect {
         println!("\n{}WebAssembly Runtimes{}", cyan, reset);
         println!("{}", "=".repeat(50));
 
@@ -2472,8 +2472,8 @@ fn handle_dev_queue(cmd: DevQueueCommands) -> Result<(), Box<dyn std::error::Err
             // Newest first by last_seen_at
             entries.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
             println!(
-                "{:<16}  {:<8}  {:>5}  {:<19}  {}",
-                "fingerprint", "code", "×", "last seen (UTC)", "message"
+                "{:<16}  {:<8}  {:>5}  {:<19}  message",
+                "fingerprint", "code", "×", "last seen (UTC)"
             );
             println!("{}", "-".repeat(96));
             for e in &entries {

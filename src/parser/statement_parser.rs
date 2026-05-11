@@ -457,18 +457,12 @@ fn parse_test_statement(
 
     let mut body = Vec::new();
     for part in parts {
-        match part.as_rule() {
-            Rule::indented_block => {
-                for stmt_pair in part.into_inner() {
-                    match stmt_pair.as_rule() {
-                        Rule::statement => {
-                            body.push(parse_statement(stmt_pair)?);
-                        }
-                        _ => {}
-                    }
+        if part.as_rule() == Rule::indented_block {
+            for stmt_pair in part.into_inner() {
+                if stmt_pair.as_rule() == Rule::statement {
+                    body.push(parse_statement(stmt_pair)?);
                 }
             }
-            _ => {}
         }
     }
 
@@ -631,22 +625,19 @@ fn parse_type_apply_block_statement(
 
     let mut assignments = Vec::new();
     for part in parts {
-        match part.as_rule() {
-            Rule::indented_variable_assignments => {
-                for assignment_pair in part.into_inner() {
-                    if assignment_pair.as_rule() == Rule::variable_assignment {
-                        let mut assignment_parts = assignment_pair.into_inner();
-                        let name = assignment_parts.next().unwrap().as_str().to_string();
-                        let initializer = assignment_parts
-                            .next()
-                            .map(|expr_pair| parse_expression(expr_pair))
-                            .transpose()?;
+        if part.as_rule() == Rule::indented_variable_assignments {
+            for assignment_pair in part.into_inner() {
+                if assignment_pair.as_rule() == Rule::variable_assignment {
+                    let mut assignment_parts = assignment_pair.into_inner();
+                    let name = assignment_parts.next().unwrap().as_str().to_string();
+                    let initializer = assignment_parts
+                        .next()
+                        .map(|expr_pair| parse_expression(expr_pair))
+                        .transpose()?;
 
-                        assignments.push(crate::ast::VariableAssignment { name, initializer });
-                    }
+                    assignments.push(crate::ast::VariableAssignment { name, initializer });
                 }
             }
-            _ => {}
         }
     }
 
@@ -666,15 +657,12 @@ fn parse_function_apply_block_statement(
 
     let mut expressions = Vec::new();
     for part in parts {
-        match part.as_rule() {
-            Rule::indented_expressions => {
-                for expr_pair in part.into_inner() {
-                    if expr_pair.as_rule() == Rule::expression {
-                        expressions.push(parse_expression(expr_pair)?);
-                    }
+        if part.as_rule() == Rule::indented_expressions {
+            for expr_pair in part.into_inner() {
+                if expr_pair.as_rule() == Rule::expression {
+                    expressions.push(parse_expression(expr_pair)?);
                 }
             }
-            _ => {}
         }
     }
 
@@ -705,15 +693,12 @@ fn parse_method_apply_block_statement(
 
     let mut expressions = Vec::new();
     for part in parts {
-        match part.as_rule() {
-            Rule::indented_expressions => {
-                for expr_pair in part.into_inner() {
-                    if expr_pair.as_rule() == Rule::expression {
-                        expressions.push(parse_expression(expr_pair)?);
-                    }
+        if part.as_rule() == Rule::indented_expressions {
+            for expr_pair in part.into_inner() {
+                if expr_pair.as_rule() == Rule::expression {
+                    expressions.push(parse_expression(expr_pair)?);
                 }
             }
-            _ => {}
         }
     }
 
@@ -732,20 +717,17 @@ fn parse_constant_apply_block_statement(
     let mut constants = Vec::new();
 
     for part in pair.into_inner() {
-        match part.as_rule() {
-            Rule::indented_constant_assignments => {
-                for constant_pair in part.into_inner() {
-                    if constant_pair.as_rule() == Rule::constant_assignment {
-                        let mut constant_parts = constant_pair.into_inner();
-                        let type_ = parse_type(constant_parts.next().unwrap())?;
-                        let name = constant_parts.next().unwrap().as_str().to_string();
-                        let value = parse_expression(constant_parts.next().unwrap())?;
+        if part.as_rule() == Rule::indented_constant_assignments {
+            for constant_pair in part.into_inner() {
+                if constant_pair.as_rule() == Rule::constant_assignment {
+                    let mut constant_parts = constant_pair.into_inner();
+                    let type_ = parse_type(constant_parts.next().unwrap())?;
+                    let name = constant_parts.next().unwrap().as_str().to_string();
+                    let value = parse_expression(constant_parts.next().unwrap())?;
 
-                        constants.push(crate::ast::ConstantAssignment { type_, name, value });
-                    }
+                    constants.push(crate::ast::ConstantAssignment { type_, name, value });
                 }
             }
-            _ => {}
         }
     }
 
@@ -882,41 +864,33 @@ fn parse_import_block_statement(
     let mut imports = Vec::new();
 
     for part in pair.into_inner() {
-        match part.as_rule() {
-            Rule::import_list => {
-                for import_pair in part.into_inner() {
-                    if import_pair.as_rule() == Rule::import_item {
-                        // Parse import item: Math, Math.sqrt, Utils as U, Json.decode as jd
-                        let mut item_parts = import_pair.into_inner();
-                        let first_part = item_parts.next().unwrap().as_str();
+        if part.as_rule() == Rule::import_list {
+            for import_pair in part.into_inner() {
+                if import_pair.as_rule() == Rule::import_item {
+                    // Parse import item: Math, Math.sqrt, Utils as U, Json.decode as jd
+                    let mut item_parts = import_pair.into_inner();
+                    let first_part = item_parts.next().unwrap().as_str();
 
-                        let import_item = if let Some(second_part) = item_parts.next() {
-                            let second_str = second_part.as_str();
-                            if second_str == "as" {
-                                // Format: ModuleName as Alias
-                                let alias = item_parts.next().unwrap().as_str();
-                                crate::ast::ImportItem {
-                                    name: first_part.to_string(),
-                                    alias: Some(alias.to_string()),
-                                    is_file_import: false,
-                                }
-                            } else {
-                                // Format: ModuleName.symbol or ModuleName.symbol as alias
-                                let symbol_name = format!("{first_part}.{second_str}");
-                                if let Some(as_keyword) = item_parts.next() {
-                                    if as_keyword.as_str() == "as" {
-                                        let alias = item_parts.next().unwrap().as_str();
-                                        crate::ast::ImportItem {
-                                            name: symbol_name,
-                                            alias: Some(alias.to_string()),
-                                            is_file_import: false,
-                                        }
-                                    } else {
-                                        crate::ast::ImportItem {
-                                            name: symbol_name,
-                                            alias: None,
-                                            is_file_import: false,
-                                        }
+                    let import_item = if let Some(second_part) = item_parts.next() {
+                        let second_str = second_part.as_str();
+                        if second_str == "as" {
+                            // Format: ModuleName as Alias
+                            let alias = item_parts.next().unwrap().as_str();
+                            crate::ast::ImportItem {
+                                name: first_part.to_string(),
+                                alias: Some(alias.to_string()),
+                                is_file_import: false,
+                            }
+                        } else {
+                            // Format: ModuleName.symbol or ModuleName.symbol as alias
+                            let symbol_name = format!("{first_part}.{second_str}");
+                            if let Some(as_keyword) = item_parts.next() {
+                                if as_keyword.as_str() == "as" {
+                                    let alias = item_parts.next().unwrap().as_str();
+                                    crate::ast::ImportItem {
+                                        name: symbol_name,
+                                        alias: Some(alias.to_string()),
+                                        is_file_import: false,
                                     }
                                 } else {
                                     crate::ast::ImportItem {
@@ -925,21 +899,26 @@ fn parse_import_block_statement(
                                         is_file_import: false,
                                     }
                                 }
+                            } else {
+                                crate::ast::ImportItem {
+                                    name: symbol_name,
+                                    alias: None,
+                                    is_file_import: false,
+                                }
                             }
-                        } else {
-                            // Simple module import: Math
-                            crate::ast::ImportItem {
-                                name: first_part.to_string(),
-                                alias: None,
-                                is_file_import: false,
-                            }
-                        };
+                        }
+                    } else {
+                        // Simple module import: Math
+                        crate::ast::ImportItem {
+                            name: first_part.to_string(),
+                            alias: None,
+                            is_file_import: false,
+                        }
+                    };
 
-                        imports.push(import_item);
-                    }
+                    imports.push(import_item);
                 }
             }
-            _ => {}
         }
     }
 
@@ -959,40 +938,34 @@ fn parse_private_block_statement(
     let mut private_items = Vec::new();
 
     for part in pair.into_inner() {
-        match part.as_rule() {
-            Rule::indented_private_list => {
-                for private_pair in part.into_inner() {
-                    match private_pair.as_rule() {
-                        Rule::private_item => {
-                            // Handle private function or identifier
-                            let mut item_inner = private_pair.into_inner();
-                            if let Some(item) = item_inner.next() {
-                                match item.as_rule() {
-                                    Rule::identifier => {
-                                        private_items.push(crate::ast::ImportItem {
-                                            name: format!("private:{}", item.as_str()),
-                                            alias: None,
-                                            is_file_import: false,
-                                        });
-                                    }
-                                    Rule::function_in_block => {
-                                        // Handle private function - parse as regular function but mark as private
-                                        // This is a simplified approach
-                                        private_items.push(crate::ast::ImportItem {
-                                            name: "private:function".to_string(),
-                                            alias: None,
-                                            is_file_import: false,
-                                        });
-                                    }
-                                    _ => {}
-                                }
+        if part.as_rule() == Rule::indented_private_list {
+            for private_pair in part.into_inner() {
+                if private_pair.as_rule() == Rule::private_item {
+                    // Handle private function or identifier
+                    let mut item_inner = private_pair.into_inner();
+                    if let Some(item) = item_inner.next() {
+                        match item.as_rule() {
+                            Rule::identifier => {
+                                private_items.push(crate::ast::ImportItem {
+                                    name: format!("private:{}", item.as_str()),
+                                    alias: None,
+                                    is_file_import: false,
+                                });
                             }
+                            Rule::function_in_block => {
+                                // Handle private function - parse as regular function but mark as private
+                                // This is a simplified approach
+                                private_items.push(crate::ast::ImportItem {
+                                    name: "private:function".to_string(),
+                                    alias: None,
+                                    is_file_import: false,
+                                });
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
             }
-            _ => {}
         }
     }
 

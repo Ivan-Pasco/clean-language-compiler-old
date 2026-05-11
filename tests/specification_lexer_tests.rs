@@ -4,6 +4,10 @@
 //! by testing all language constructs defined in the specification.
 
 #![cfg(test)]
+// These tests verify that specific numeric literals (3.14, 2.718, 3.14159) are parsed
+// correctly by the lexer. The values are intentional test inputs, not approximations of
+// mathematical constants.
+#![allow(clippy::approx_constant)]
 
 use clean_language_compiler::lexer::specification_lexer::{SourceCode, SpecificationLexer};
 use clean_language_compiler::lexer::specification_token::TokenKind;
@@ -36,7 +40,7 @@ fn test_integer_literals() {
     ];
 
     for (input, expected) in test_cases {
-        let tokens = tokenize(input).expect(&format!("Failed to tokenize: {}", input));
+        let tokens = tokenize(input).unwrap_or_else(|_| panic!("Failed to tokenize: {}", input));
         assert_eq!(
             tokens, expected,
             "Integer literal test failed for: {}",
@@ -61,7 +65,7 @@ fn test_precision_integer_literals() {
     ];
 
     for (input, expected) in test_cases {
-        let tokens = tokenize(input).expect(&format!("Failed to tokenize: {}", input));
+        let tokens = tokenize(input).unwrap_or_else(|_| panic!("Failed to tokenize: {}", input));
         assert_eq!(
             tokens, expected,
             "Precision integer test failed for: {}",
@@ -80,7 +84,7 @@ fn test_number_literals() {
     ];
 
     for (input, expected) in test_cases {
-        let tokens = tokenize(input).expect(&format!("Failed to tokenize: {}", input));
+        let tokens = tokenize(input).unwrap_or_else(|_| panic!("Failed to tokenize: {}", input));
         assert_eq!(
             tokens, expected,
             "Number literal test failed for: {}",
@@ -98,7 +102,7 @@ fn test_precision_number_literals() {
     ];
 
     for (input, expected) in test_cases {
-        let tokens = tokenize(input).expect(&format!("Failed to tokenize: {}", input));
+        let tokens = tokenize(input).unwrap_or_else(|_| panic!("Failed to tokenize: {}", input));
         assert_eq!(
             tokens, expected,
             "Precision number test failed for: {}",
@@ -123,7 +127,7 @@ fn test_string_literals() {
     ];
 
     for (input, expected) in test_cases {
-        let tokens = tokenize(input).expect(&format!("Failed to tokenize: {}", input));
+        let tokens = tokenize(input).unwrap_or_else(|_| panic!("Failed to tokenize: {}", input));
         assert_eq!(
             tokens, expected,
             "String literal test failed for: {}",
@@ -141,7 +145,7 @@ fn test_boolean_literals() {
     ];
 
     for (input, expected) in test_cases {
-        let tokens = tokenize(input).expect(&format!("Failed to tokenize: {}", input));
+        let tokens = tokenize(input).unwrap_or_else(|_| panic!("Failed to tokenize: {}", input));
         assert_eq!(
             tokens, expected,
             "Boolean literal test failed for: {}",
@@ -191,7 +195,8 @@ fn test_all_keywords() {
     ];
 
     for (keyword, expected_kind) in keywords {
-        let tokens = tokenize(keyword).expect(&format!("Failed to tokenize keyword: {}", keyword));
+        let tokens =
+            tokenize(keyword).unwrap_or_else(|_| panic!("Failed to tokenize keyword: {}", keyword));
         assert_eq!(
             tokens.len(),
             1,
@@ -226,7 +231,7 @@ fn test_operators() {
     ];
 
     for (op, expected) in operators {
-        let tokens = tokenize(op).expect(&format!("Failed to tokenize operator: {}", op));
+        let tokens = tokenize(op).unwrap_or_else(|_| panic!("Failed to tokenize operator: {}", op));
         assert_eq!(tokens, expected, "Operator test failed for: {}", op);
     }
 }
@@ -250,7 +255,8 @@ fn test_punctuation() {
     ];
 
     for (punct, expected) in punctuation {
-        let tokens = tokenize(punct).expect(&format!("Failed to tokenize punctuation: {}", punct));
+        let tokens =
+            tokenize(punct).unwrap_or_else(|_| panic!("Failed to tokenize punctuation: {}", punct));
         assert_eq!(tokens, expected, "Punctuation test failed for: {}", punct);
     }
 }
@@ -276,7 +282,8 @@ fn test_identifiers() {
     ];
 
     for (ident, expected) in identifiers {
-        let tokens = tokenize(ident).expect(&format!("Failed to tokenize identifier: {}", ident));
+        let tokens =
+            tokenize(ident).unwrap_or_else(|_| panic!("Failed to tokenize identifier: {}", ident));
         assert_eq!(tokens, expected, "Identifier test failed for: {}", ident);
     }
 }
@@ -310,7 +317,8 @@ fn test_comments() {
     ];
 
     for (input, expected) in test_cases {
-        let tokens = tokenize(input).expect(&format!("Failed to tokenize comment: {}", input));
+        let tokens =
+            tokenize(input).unwrap_or_else(|_| panic!("Failed to tokenize comment: {}", input));
         assert_eq!(tokens, expected, "Comment test failed for: {}", input);
     }
 }
@@ -352,8 +360,8 @@ fn test_precision_edge_cases() {
     ];
 
     for (input, expected) in test_cases {
-        let tokens =
-            tokenize(input).expect(&format!("Failed to tokenize precision case: {}", input));
+        let tokens = tokenize(input)
+            .unwrap_or_else(|_| panic!("Failed to tokenize precision case: {}", input));
         assert_eq!(
             tokens, expected,
             "Precision edge case test failed for: {}",

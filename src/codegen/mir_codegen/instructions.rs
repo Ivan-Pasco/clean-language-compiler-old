@@ -1519,7 +1519,7 @@ impl MirCodeGenerator<'_> {
                     let is_known_void_by_name = function_name
                         .as_deref()
                         .and_then(|name| self.function_return_types.get(name))
-                        .map_or(false, |rt| matches!(rt, MirType::Void));
+                        .is_some_and(|rt| matches!(rt, MirType::Void));
 
                     if is_known_void_by_name {
                         debug_mir!("DEBUG SIG VOID: Known void function by name - no DROP needed");
@@ -1661,13 +1661,17 @@ impl MirCodeGenerator<'_> {
                 // Fallback: check known void functions by name
                 // These are builtin/stdlib functions that return nothing (modify in-place or have side effects only)
                 // NOTE: list.push is NOT void - it returns the list for chaining
-                let is_known_void_builtin = match function_name.as_deref() {
-                    Some("print") | Some("printl") => true,
-                    Some("list.set") | Some("list.clear") => true,
-                    Some("mem_release") | Some("mem_retain") => true,
-                    Some("mem_scope_push") | Some("mem_scope_pop") => true,
-                    _ => false,
-                };
+                let is_known_void_builtin = matches!(
+                    function_name.as_deref(),
+                    Some("print")
+                        | Some("printl")
+                        | Some("list.set")
+                        | Some("list.clear")
+                        | Some("mem_release")
+                        | Some("mem_retain")
+                        | Some("mem_scope_push")
+                        | Some("mem_scope_pop")
+                );
 
                 if is_known_void_builtin {
                     debug_mir!(

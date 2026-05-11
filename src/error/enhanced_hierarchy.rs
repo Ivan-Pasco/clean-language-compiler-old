@@ -507,6 +507,12 @@ pub struct EnhancedErrorCollector {
     stats: ErrorStatistics,
 }
 
+impl Default for EnhancedErrorCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EnhancedErrorCollector {
     pub fn new() -> Self {
         Self {

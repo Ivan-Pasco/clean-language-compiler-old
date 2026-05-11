@@ -52,7 +52,7 @@ impl SpecificationCache {
             line_number += 1;
             let line = line.ok()?;
 
-            if line.starts_with("## ") {
+            if let Some(heading) = line.strip_prefix("## ") {
                 // Save previous section if exists
                 if !current_title.is_empty() {
                     sections.push(SpecSection {
@@ -63,7 +63,7 @@ impl SpecificationCache {
                 }
 
                 // Start new section
-                current_title = line[3..].trim().to_string();
+                current_title = heading.trim().to_string();
                 current_content = String::new();
                 current_line_start = line_number;
             } else if !current_title.is_empty() {
@@ -1521,11 +1521,8 @@ fn tool_check(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRespons
 
     match type_check(source, file_path) {
         Ok(result) => {
-            let diagnostics: Vec<serde_json::Value> = result
-                .diagnostics
-                .iter()
-                .map(|e| error_to_json(e))
-                .collect();
+            let diagnostics: Vec<serde_json::Value> =
+                result.diagnostics.iter().map(error_to_json).collect();
             JsonRpcResponse::success(
                 id,
                 json!({
@@ -1538,8 +1535,7 @@ fn tool_check(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRespons
             )
         }
         Err(errors) => {
-            let diagnostics: Vec<serde_json::Value> =
-                errors.iter().map(|e| error_to_json(e)).collect();
+            let diagnostics: Vec<serde_json::Value> = errors.iter().map(error_to_json).collect();
             JsonRpcResponse::success(
                 id,
                 json!({
@@ -1584,8 +1580,7 @@ fn tool_compile(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRespo
             )
         }
         Err(errors) => {
-            let diagnostics: Vec<serde_json::Value> =
-                errors.iter().map(|e| error_to_json(e)).collect();
+            let diagnostics: Vec<serde_json::Value> = errors.iter().map(error_to_json).collect();
             JsonRpcResponse::success(
                 id,
                 json!({
@@ -1631,8 +1626,7 @@ fn tool_parse(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRespons
             ),
         },
         Err(errors) => {
-            let diagnostics: Vec<serde_json::Value> =
-                errors.iter().map(|e| error_to_json(e)).collect();
+            let diagnostics: Vec<serde_json::Value> = errors.iter().map(error_to_json).collect();
             JsonRpcResponse::success(
                 id,
                 json!({
@@ -1677,7 +1671,7 @@ fn tool_diagnostics(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcR
         ),
         Err(errors) => {
             let all_diagnostics: Vec<serde_json::Value> =
-                errors.iter().map(|e| error_to_json(e)).collect();
+                errors.iter().map(error_to_json).collect();
 
             let diagnostics: Vec<serde_json::Value> = if let Some(filter) = severity_filter {
                 all_diagnostics
@@ -1786,8 +1780,7 @@ fn tool_list_functions(id: serde_json::Value, args: &serde_json::Value) -> JsonR
             )
         }
         Err(errors) => {
-            let diagnostics: Vec<serde_json::Value> =
-                errors.iter().map(|e| error_to_json(e)).collect();
+            let diagnostics: Vec<serde_json::Value> = errors.iter().map(error_to_json).collect();
             JsonRpcResponse::success(
                 id,
                 json!({
@@ -1844,8 +1837,7 @@ fn tool_list_types(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRe
             )
         }
         Err(errors) => {
-            let diagnostics: Vec<serde_json::Value> =
-                errors.iter().map(|e| error_to_json(e)).collect();
+            let diagnostics: Vec<serde_json::Value> = errors.iter().map(error_to_json).collect();
             JsonRpcResponse::success(
                 id,
                 json!({
@@ -4196,7 +4188,7 @@ fn tool_format(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRespon
             // Count spaces and convert: 4 spaces = 1 tab level, round up partial
             let spaces = leading.len();
             if spaces > 0 {
-                (spaces + 3) / 4 // Round up to nearest tab
+                spaces.div_ceil(4) // Round up to nearest tab
             } else {
                 0
             }
@@ -4369,7 +4361,7 @@ fn tool_run(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse 
     let type_check_ok = type_check_result.is_ok();
     let type_errors: Vec<serde_json::Value> = match &type_check_result {
         Ok(_) => vec![],
-        Err(errors) => errors.iter().map(|e| error_to_json(e)).collect(),
+        Err(errors) => errors.iter().map(error_to_json).collect(),
     };
 
     // Step 2: Compile (even if type-check fails, to get all diagnostics)
@@ -4400,8 +4392,7 @@ fn tool_run(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse 
             )
         }
         Err(errors) => {
-            let compile_errors: Vec<serde_json::Value> =
-                errors.iter().map(|e| error_to_json(e)).collect();
+            let compile_errors: Vec<serde_json::Value> = errors.iter().map(error_to_json).collect();
             JsonRpcResponse::success(
                 id,
                 json!({

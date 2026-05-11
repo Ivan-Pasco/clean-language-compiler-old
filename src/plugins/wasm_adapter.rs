@@ -344,7 +344,7 @@ impl WasmPluginAdapter {
                 let current_size = memory.data_size(&caller);
                 let required_size = ptr + total_size;
                 if required_size > current_size {
-                    let pages_needed = ((required_size - current_size) + 65535) / 65536;
+                    let pages_needed = (required_size - current_size).div_ceil(65536);
                     if memory.grow(&mut caller, pages_needed as u64).is_err() {
                         return 0; // Allocation failed
                     }
@@ -430,7 +430,7 @@ impl WasmPluginAdapter {
                 let current_size = memory.data_size(&caller);
                 let required_size = list_ptr + total;
                 if required_size > current_size {
-                    let pages_needed = ((required_size - current_size) + 65535) / 65536;
+                    let pages_needed = (required_size - current_size).div_ceil(65536);
                     if memory.grow(&mut caller, pages_needed as u64).is_err() {
                         return 0;
                     }
@@ -657,7 +657,7 @@ impl WasmPluginAdapter {
                 let current_size = memory.data_size(&caller);
                 let required_size = ptr + total_size;
                 if required_size > current_size {
-                    let pages_needed = ((required_size - current_size) + 65535) / 65536;
+                    let pages_needed = (required_size - current_size).div_ceil(65536);
                     if memory.grow(&mut caller, pages_needed as u64).is_err() {
                         return 0;
                     }
@@ -681,7 +681,7 @@ impl WasmPluginAdapter {
             "string_from_char_code",
             |mut caller: Caller<'_, PluginState>, char_code: i32| -> i32 {
                 // Create a single-character string from the char code
-                let ch = if char_code >= 0 && char_code <= 127 {
+                let ch = if (0..=127).contains(&char_code) {
                     char::from_u32(char_code as u32).unwrap_or('\0')
                 } else {
                     '\0'
@@ -752,7 +752,7 @@ impl WasmPluginAdapter {
                 let current_size = memory.data_size(&caller);
                 let required_size = result_ptr + total_size;
                 if required_size > current_size {
-                    let pages_needed = ((required_size - current_size) + 65535) / 65536;
+                    let pages_needed = (required_size - current_size).div_ceil(65536);
                     if memory.grow(&mut caller, pages_needed as u64).is_err() {
                         return 0;
                     }
@@ -2444,16 +2444,13 @@ impl WasmPluginAdapter {
         //
         // Use the production parser (SpecificationLexer + SpecificationParser) so that
         // all valid Clean Language constructs are accepted.
-        match self.parse_plugin_code(generated_code) {
-            Ok(program) => {
-                if let Some(start_fn) = program.start_function {
-                    return Ok(start_fn.body);
-                }
-                // Plugin returned classes/functions but no start block —
-                // there are no imperative statements to return.
-                return Ok(Vec::new());
+        if let Ok(program) = self.parse_plugin_code(generated_code) {
+            if let Some(start_fn) = program.start_function {
+                return Ok(start_fn.body);
             }
-            Err(_) => {}
+            // Plugin returned classes/functions but no start block —
+            // there are no imperative statements to return.
+            return Ok(Vec::new());
         }
 
         // Fallback: the plugin may have returned only the body of a start block
@@ -2465,10 +2462,10 @@ impl WasmPluginAdapter {
                 .filter(|line| !line.trim().is_empty()) // Skip whitespace-only lines
                 .map(|line| {
                     // Remove one level of indentation (tab or 4 spaces)
-                    if line.starts_with('\t') {
-                        &line[1..]
-                    } else if line.starts_with("    ") {
-                        &line[4..]
+                    if let Some(stripped) = line.strip_prefix('\t') {
+                        stripped
+                    } else if let Some(stripped) = line.strip_prefix("    ") {
+                        stripped
                     } else {
                         line
                     }
@@ -2713,10 +2710,10 @@ impl WasmPluginAdapter {
                 .skip(1)
                 .filter(|line| !line.trim().is_empty())
                 .map(|line| {
-                    if line.starts_with('\t') {
-                        &line[1..]
-                    } else if line.starts_with("    ") {
-                        &line[4..]
+                    if let Some(stripped) = line.strip_prefix('\t') {
+                        stripped
+                    } else if let Some(stripped) = line.strip_prefix("    ") {
+                        stripped
                     } else {
                         line
                     }
@@ -2805,7 +2802,7 @@ impl WasmPluginAdapter {
 
         // Layout: [length:4][data:len]
         // Align to 8 bytes for safety
-        let total_size = ((4 + len + 7) / 8) * 8;
+        let total_size = (4 + len).div_ceil(8) * 8;
 
         let ptr = store.data_mut().allocate(total_size);
 
@@ -3146,7 +3143,7 @@ fn write_clean_string(caller: &mut Caller<'_, PluginState>, data: &[u8]) -> i32 
     let current_size = memory.data_size(&mut *caller);
     let required_size = ptr + total_size;
     if required_size > current_size {
-        let pages_needed = ((required_size - current_size) + 65535) / 65536;
+        let pages_needed = (required_size - current_size).div_ceil(65536);
         if memory.grow(&mut *caller, pages_needed as u64).is_err() {
             return 0;
         }
@@ -3195,13 +3192,13 @@ fn extract_inline_attrs(content: &str) -> (Vec<String>, String) {
             let key = remaining[..eq_pos].trim();
             let after_eq = &remaining[eq_pos + 1..];
 
-            if after_eq.starts_with('"') {
+            if let Some(after_quote) = after_eq.strip_prefix('"') {
                 // Find closing quote
-                if let Some(close_pos) = after_eq[1..].find('"') {
-                    let value = &after_eq[1..close_pos + 1];
+                if let Some(close_pos) = after_quote.find('"') {
+                    let value = &after_quote[..close_pos];
                     let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
                     pairs.push(format!("\"{}\":\"{}\"", key, escaped));
-                    remaining = after_eq[close_pos + 2..].trim_start();
+                    remaining = after_quote[close_pos + 1..].trim_start();
                     continue;
                 }
             }

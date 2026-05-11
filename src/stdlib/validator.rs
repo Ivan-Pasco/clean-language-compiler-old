@@ -62,11 +62,11 @@ const _RULES_HEADER_SIZE: i32 = 16;
 /// in the standard module layout. This matches existing usage in this file.
 const MEM_ALLOC_CALL_INDEX: u32 = 7;
 
-/// Call index for pairs.get(pairs_ptr: i32, key_ptr: i32) -> i32.
-/// pairs.get is registered as a WASM stdlib function by PairsTypeManager.
-/// The exact index is determined at registration time; 2000 is used as a
-/// forward-reference sentinel consistent with pairs_type.rs and string_advanced.rs.
-/// Calls to this index will resolve correctly once the full module is linked.
+// Call index for pairs.get(pairs_ptr: i32, key_ptr: i32) -> i32.
+// pairs.get is registered as a WASM stdlib function by PairsTypeManager.
+// The exact index is determined at registration time; 2000 is used as a
+// forward-reference sentinel consistent with pairs_type.rs and string_advanced.rs.
+// Calls to this index will resolve correctly once the full module is linked.
 // PAIRS_GET_CALL_INDEX removed — pairs.get requires dynamic call-index resolution.
 
 /// Validator stdlib module for Clean Language

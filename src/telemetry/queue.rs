@@ -45,8 +45,7 @@ impl PendingQueue {
         let filename = format!("{}.json", report.report_id);
         let path = self.queue_dir.join(&filename);
 
-        let contents = serde_json::to_string_pretty(report)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let contents = serde_json::to_string_pretty(report).map_err(std::io::Error::other)?;
 
         std::fs::write(&path, contents)?;
         Ok(path)

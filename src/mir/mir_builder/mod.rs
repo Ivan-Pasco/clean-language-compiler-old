@@ -155,6 +155,7 @@ pub(super) struct FunctionBuildContext {
     ///   2. Each ensure condition is evaluated (with `result` in scope).
     ///   3. If any condition is false the function traps.
     ///   4. The stored `result` value is returned.
+    ///
     /// Only populated in debug / `--contracts` builds; empty in release builds.
     pub(super) ensure_conditions: Vec<TastExpression>,
 }

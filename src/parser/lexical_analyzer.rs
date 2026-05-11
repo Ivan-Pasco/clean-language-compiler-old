@@ -227,10 +227,8 @@ impl LexicalAnalyzer {
         let mut segments = Vec::new();
 
         for boundary in &self.function_boundaries {
-            let function_lines: Vec<String> = self.lines[boundary.start_line..=boundary.end_line]
-                .iter()
-                .cloned()
-                .collect();
+            let function_lines: Vec<String> =
+                self.lines[boundary.start_line..=boundary.end_line].to_vec();
 
             segments.push(FunctionSegment {
                 boundary: boundary.clone(),

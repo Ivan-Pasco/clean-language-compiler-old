@@ -132,7 +132,7 @@ impl MirCodeGenerator<'_> {
         // If more than one block targets it, it's a continuation (merge), not an else.
         {
             let mut predecessor_count = 0;
-            for (_, block) in &function.blocks {
+            for block in function.blocks.values() {
                 match &block.terminator {
                     MirTerminator::Jump { target } => {
                         if *target == false_block {

@@ -316,9 +316,7 @@ impl MirBuilder {
             .iter()
             .find(|c| c.symbol_id == class_symbol);
 
-        if current_class_opt.is_none() {
-            return None;
-        }
+        current_class_opt?;
 
         // Collect all classes in the hierarchy from current to root
         let mut hierarchy = Vec::new();

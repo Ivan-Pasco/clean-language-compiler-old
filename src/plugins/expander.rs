@@ -78,10 +78,10 @@ impl<'a> PluginExpander<'a> {
         }
 
         // Merge pending functions into program
-        program.functions.extend(self.pending_functions.drain(..));
+        program.functions.append(&mut self.pending_functions);
 
         // Merge pending classes into program (e.g., ORM models from frame.data)
-        program.classes.extend(self.pending_classes.drain(..));
+        program.classes.append(&mut self.pending_classes);
 
         // Merge pending externals into program (deduplicate by name)
         for ext in self.pending_externals.drain(..) {

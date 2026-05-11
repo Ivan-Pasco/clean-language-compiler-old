@@ -947,9 +947,7 @@ pub fn compile_with_plugins_and_opt_level(
         mir_codegen.set_language_to_bridge_map(lang_to_bridge);
     }
 
-    let codegen_result = mir_codegen
-        .generate(mir_result.program)
-        .map_err(|errors| errors)?;
+    let codegen_result = mir_codegen.generate(mir_result.program)?;
     let wasm_bytes = codegen_result.wasm_bytes;
     crate::codegen::validate::validate_generated_wasm(&wasm_bytes).map_err(|e| vec![e])?;
     tracing::info!(
@@ -1118,9 +1116,7 @@ pub fn compile_with_target(
     use crate::codegen::mir_codegen::MirCodeGenerator;
     let mut mir_codegen = MirCodeGenerator::with_target(target);
 
-    let codegen_result = mir_codegen
-        .generate(mir_result.program)
-        .map_err(|errors| errors)?;
+    let codegen_result = mir_codegen.generate(mir_result.program)?;
 
     crate::codegen::validate::validate_generated_wasm(&codegen_result.wasm_bytes)
         .map_err(|e| vec![e])?;

@@ -44,8 +44,8 @@ impl ModuleGraph {
     /// Add a module to the graph
     pub fn add_module(&mut self, id: CompilationModuleId) {
         self.nodes.insert(id);
-        self.dependencies.entry(id).or_insert_with(Vec::new);
-        self.dependents.entry(id).or_insert_with(Vec::new);
+        self.dependencies.entry(id).or_default();
+        self.dependents.entry(id).or_default();
     }
 
     /// Add a dependency edge: `from` imports `to`
@@ -60,15 +60,9 @@ impl ModuleGraph {
         self.add_module(to);
 
         // Add to adjacency lists
-        self.dependencies
-            .entry(from)
-            .or_insert_with(Vec::new)
-            .push(to);
+        self.dependencies.entry(from).or_default().push(to);
 
-        self.dependents
-            .entry(to)
-            .or_insert_with(Vec::new)
-            .push(from);
+        self.dependents.entry(to).or_default().push(from);
 
         // Store the edge with location
         self.edges.push(DependencyEdge { from, to, location });

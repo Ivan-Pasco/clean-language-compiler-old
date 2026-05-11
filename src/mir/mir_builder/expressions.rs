@@ -228,7 +228,7 @@ impl MirBuilder {
                         .map(|f| f.symbol_id)
                         .ok_or_else(|| {
                             vec![CompilerError::type_error(
-                                &format!("Function '{}' not found for reference", name),
+                                format!("Function '{}' not found for reference", name),
                                 None,
                                 Some(expression.location.clone()),
                             )]
@@ -259,7 +259,7 @@ impl MirBuilder {
 
                 // Parent class field access resolved via inheritance chain at codegen time
                 Err(vec![CompilerError::type_error(
-                    &format!("Undefined variable: {}", name),
+                    format!("Undefined variable: {}", name),
                     None,
                     Some(expression.location.clone()),
                 )])
@@ -606,7 +606,7 @@ impl MirBuilder {
                     | UnaryOperator::PreDecrement
                     | UnaryOperator::PostDecrement => {
                         return Err(vec![CompilerError::validation_error(
-                            &format!(
+                            format!(
                                 "Increment/decrement operators must be desugared before MIR lowering. \
                                  Operator {:?} cannot be directly lowered to MIR.",
                                 operator
@@ -724,7 +724,7 @@ impl MirBuilder {
                         .find(|c| c.symbol_id == *class_symbol_id)
                         .ok_or_else(|| {
                             vec![CompilerError::validation_error(
-                                &format!(
+                                format!(
                                     "Class definition not found for symbol {:?}",
                                     class_symbol_id
                                 ),
@@ -878,7 +878,7 @@ impl MirBuilder {
                         mir_arguments.push(MirOperand::Value(default_id));
                     } else {
                         return Err(vec![CompilerError::validation_error(
-                            &format!("Missing required argument for parameter '{}'", param_name),
+                            format!("Missing required argument for parameter '{}'", param_name),
                             expression.location.clone(),
                         )]);
                     }
@@ -955,12 +955,16 @@ impl MirBuilder {
                 // Check for known void functions by name
                 // These are builtin/stdlib functions that return nothing (modify in-place or have side effects only)
                 // NOTE: list.push is NOT void - it returns the list for chaining
-                let is_known_void_function = match function_name_opt.as_deref() {
-                    Some("list.set") | Some("list.clear") => true,
-                    Some("print") | Some("printl") | Some("println") => true,
-                    Some("mem_release") | Some("mem_retain") => true,
-                    _ => false,
-                };
+                let is_known_void_function = matches!(
+                    function_name_opt.as_deref(),
+                    Some("list.set")
+                        | Some("list.clear")
+                        | Some("print")
+                        | Some("printl")
+                        | Some("println")
+                        | Some("mem_release")
+                        | Some("mem_retain")
+                );
 
                 // NOTE: Do NOT treat Ptr(Void) as void!
                 // Ptr(Void) means "unknown pointer type" which happens when type inference
@@ -2548,7 +2552,7 @@ impl MirBuilder {
                     self.calculate_field_byte_offset(context, class_symbol, property_symbol)
                         .ok_or_else(|| {
                             vec![CompilerError::validation_error(
-                                &format!(
+                                format!(
                                     "Field '{}' not found in class or parent classes",
                                     property_name
                                 ),
@@ -2558,7 +2562,7 @@ impl MirBuilder {
                 } else {
                     // Object doesn't have a class type - this shouldn't happen for field access
                     return Err(vec![CompilerError::validation_error(
-                        &format!(
+                        format!(
                             "Cannot access field '{}' on non-class type: {:?}",
                             property_name, object.expr_type
                         ),
@@ -3298,7 +3302,7 @@ impl MirBuilder {
             _ => {
                 // Unsupported expression type - return error with details
                 Err(vec![CompilerError::validation_error(
-                    &format!("Expression type not yet implemented: {:?}", expression.kind),
+                    format!("Expression type not yet implemented: {:?}", expression.kind),
                     expression.location.clone(),
                 )])
             }

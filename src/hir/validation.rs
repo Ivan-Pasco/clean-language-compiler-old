@@ -36,6 +36,12 @@ pub struct ValidationContext {
     pub warnings: Vec<CompilerError>,
 }
 
+impl Default for ValidationContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ValidationContext {
     pub fn new() -> Self {
         Self {

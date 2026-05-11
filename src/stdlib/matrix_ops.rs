@@ -9,6 +9,12 @@ use wasm_encoder::Instruction;
 /// Simplified matrix operations for Clean Language
 pub struct MatrixOperations;
 
+impl Default for MatrixOperations {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MatrixOperations {
     pub fn new() -> Self {
         Self

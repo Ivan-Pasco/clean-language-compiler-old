@@ -133,10 +133,10 @@ mod tests {
     #[test]
     fn test_module_builder_creation() {
         let builder = WasmModuleBuilder::new(true);
-        assert_eq!(builder.include_runtime_imports, true);
+        assert!(builder.include_runtime_imports);
 
         let builder_no_imports = WasmModuleBuilder::new(false);
-        assert_eq!(builder_no_imports.include_runtime_imports, false);
+        assert!(!builder_no_imports.include_runtime_imports);
     }
 
     #[test]

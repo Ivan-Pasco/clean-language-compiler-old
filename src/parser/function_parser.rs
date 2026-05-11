@@ -57,7 +57,7 @@ impl FunctionParser {
             <CleanParser as Parser<Rule>>::parse(Rule::functions_block, &wrapped_source);
         let pairs = parse_result.map_err(|e| {
             CompilerError::syntax_error(
-                &format!(
+                format!(
                     "Failed to parse function {}: {}",
                     segment.boundary.function_name, e
                 ),
@@ -85,7 +85,7 @@ impl FunctionParser {
         }
 
         Err(CompilerError::syntax_error(
-            &format!(
+            format!(
                 "No function found in segment for {}",
                 segment.boundary.function_name
             ),

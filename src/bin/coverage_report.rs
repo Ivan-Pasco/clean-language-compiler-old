@@ -51,7 +51,7 @@ fn run_tests_with_coverage() -> Result<(), Box<dyn std::error::Error>> {
 
     // Set environment variables for coverage
     let output = Command::new("cargo")
-        .args(&["test", "--lib"])
+        .args(["test", "--lib"])
         .env("CARGO_INCREMENTAL", "0")
         .env("RUSTFLAGS", "-Cinstrument-coverage")
         .env("LLVM_PROFILE_FILE", "coverage-%p-%m.profraw")
@@ -213,7 +213,7 @@ fn generate_html_report() -> Result<(), Box<dyn std::error::Error>> {
 
     // Generate HTML report with grcov if available
     let output = Command::new("grcov")
-        .args(&[
+        .args([
             ".",
             "--binary-path",
             "./target/debug/",

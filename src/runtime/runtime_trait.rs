@@ -229,7 +229,7 @@ impl RuntimeType {
         // In the future, we could add platform-specific logic
         #[cfg(feature = "wasmtime-runtime")]
         {
-            return RuntimeType::Wasmtime;
+            RuntimeType::Wasmtime
         }
 
         // Wasmer runtime support is currently disabled

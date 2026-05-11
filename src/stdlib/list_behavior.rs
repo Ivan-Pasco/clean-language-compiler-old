@@ -125,6 +125,7 @@ impl ListBehaviorManager {
     /// - 'l' or 'L' = line (FIFO)
     /// - 'p' or 'P' = pile (LIFO)
     /// - 'u' or 'U' = unique
+    ///
     /// For full string matching, use the host bridge.
     fn generate_set_type(&self) -> Vec<Instruction> {
         vec![

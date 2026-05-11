@@ -8,6 +8,6 @@ mod tests {
     #[test]
     fn placeholder_test() {
         // Placeholder to ensure the test module compiles
-        assert!(true);
+        // Parser tests will be added here as AST refactoring completes
     }
 }

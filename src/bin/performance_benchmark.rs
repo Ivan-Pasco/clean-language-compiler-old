@@ -67,7 +67,7 @@ fn benchmark_file(file_path: &str) -> BenchmarkResult {
 }
 
 fn run_benchmark_suite() -> Vec<BenchmarkResult> {
-    let test_files = vec![
+    let test_files = [
         "tests/clean_files/00_minimal.cln",
         "tests/clean_files/01_hello_world.cln",
         "tests/clean_files/10_functions_basic.cln",
@@ -96,7 +96,7 @@ fn print_benchmark_report(results: &[BenchmarkResult]) {
         total_compile_time += result.compile_time;
 
         let status = if result.success { "OK" } else { "FAIL" };
-        let file_name = result.name.split('/').last().unwrap_or(&result.name);
+        let file_name = result.name.split('/').next_back().unwrap_or(&result.name);
 
         println!(
             "{} {} | Compile: {:.2}ms | Speed: {:.0} lines/sec",

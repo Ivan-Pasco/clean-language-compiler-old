@@ -503,9 +503,9 @@ impl<'a> SpecificationLexer<'a> {
         let saved_column = self.column;
 
         while let Some(ch) = self.peek() {
-            match ch {
-                &'"' => break,
-                &'\\' => {
+            match *ch {
+                '"' => break,
+                '\\' => {
                     self.advance(); // Skip backslash
                     if let Some(escaped) = self.advance() {
                         if escaped == '{' || escaped == '}' {
@@ -513,7 +513,7 @@ impl<'a> SpecificationLexer<'a> {
                         }
                     }
                 }
-                &'{' => {
+                '{' => {
                     // Check if this looks like interpolation (followed by identifier char or whitespace)
                     self.advance(); // Skip '{'
                     self.skip_whitespace();
@@ -535,7 +535,7 @@ impl<'a> SpecificationLexer<'a> {
                         break;
                     }
                 }
-                &'\n' => {
+                '\n' => {
                     return Err(LexError::UnterminatedString {
                         location: start_location.clone(),
                     });
@@ -555,10 +555,10 @@ impl<'a> SpecificationLexer<'a> {
 
         if !has_interpolation {
             // Simple string without interpolation
-            return self.read_simple_string(start_location, start_pos);
+            self.read_simple_string(start_location, start_pos)
         } else {
             // Interpolated string - parse and buffer all tokens
-            return self.read_interpolated_string(start_location, start_pos);
+            self.read_interpolated_string(start_location, start_pos)
         }
     }
 
@@ -571,8 +571,8 @@ impl<'a> SpecificationLexer<'a> {
         let mut content = String::new();
 
         while let Some(ch) = self.peek() {
-            match ch {
-                &'"' => {
+            match *ch {
+                '"' => {
                     self.advance(); // Skip closing quote
                     let text = self.source_text_range(start_pos, self.current_pos);
                     return Ok(Token::new(
@@ -581,7 +581,7 @@ impl<'a> SpecificationLexer<'a> {
                         text,
                     ));
                 }
-                &'\\' => {
+                '\\' => {
                     self.advance(); // Skip backslash
                     match self.advance() {
                         Some('n') => content.push('\n'),
@@ -603,7 +603,7 @@ impl<'a> SpecificationLexer<'a> {
                         }
                     }
                 }
-                &'\n' => {
+                '\n' => {
                     return Err(LexError::UnterminatedString {
                         location: start_location,
                     });
@@ -631,13 +631,13 @@ impl<'a> SpecificationLexer<'a> {
         let mut current_string = String::new();
 
         while let Some(ch) = self.peek() {
-            match ch {
-                &'"' => {
+            match *ch {
+                '"' => {
                     // End of string
                     parts.push(InterpolationPart::String(current_string));
                     break;
                 }
-                &'\\' => {
+                '\\' => {
                     self.advance(); // Skip backslash
                     match self.advance() {
                         Some('n') => current_string.push('\n'),
@@ -659,7 +659,7 @@ impl<'a> SpecificationLexer<'a> {
                         }
                     }
                 }
-                &'{' => {
+                '{' => {
                     // Start of interpolation expression
                     parts.push(InterpolationPart::String(current_string.clone()));
                     current_string.clear();
@@ -670,7 +670,7 @@ impl<'a> SpecificationLexer<'a> {
                     let expr_tokens = self.read_interpolation_expression()?;
                     parts.push(InterpolationPart::Expression(expr_tokens));
                 }
-                &'\n' => {
+                '\n' => {
                     return Err(LexError::UnterminatedString {
                         location: start_location.clone(),
                     });
@@ -940,7 +940,7 @@ impl<'a> SpecificationLexer<'a> {
                         self.advance();
                         let mut digits = String::new();
                         while let Some(&ch) = self.peek() {
-                            if ch >= '0' && ch <= '7' {
+                            if ('0'..='7').contains(&ch) {
                                 digits.push(ch);
                                 self.advance();
                             } else {

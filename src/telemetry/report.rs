@@ -148,17 +148,9 @@ pub struct TrackedReport {
 }
 
 /// Persistent store of tracked reports in ~/.cleen/telemetry/reported_errors.json
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ReportStore {
     pub reports: Vec<TrackedReport>,
-}
-
-impl Default for ReportStore {
-    fn default() -> Self {
-        Self {
-            reports: Vec::new(),
-        }
-    }
 }
 
 impl ReportStore {
@@ -196,8 +188,7 @@ impl ReportStore {
         std::fs::create_dir_all(&dir)?;
 
         let path = dir.join("reported_errors.json");
-        let contents = serde_json::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let contents = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
 
         std::fs::write(path, contents)
     }

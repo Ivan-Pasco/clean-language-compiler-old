@@ -259,7 +259,7 @@ impl MemoryUtils {
         // The alignment check for 4/8 bytes is overly strict for data segments
         // Only check that address is not completely misaligned (allow any natural alignment)
         // For data segments, WASM doesn't enforce strict alignment requirements
-        if address % 4 != 0 && size > 4 {
+        if !address.is_multiple_of(4) && size > 4 {
             // Only enforce 4-byte alignment for larger allocations
             // This is a relaxed check compared to the previous 8-byte requirement
             return Err(MemorySafetyError::UnalignedAccess {
@@ -597,7 +597,7 @@ impl MemoryUtils {
         self.add_data_segment(string_ptr as u32, &len_bytes)
             .map_err(|e| {
                 CompilerError::memory_allocation_error(
-                    &format!("String length allocation failed: {:?}", e),
+                    format!("String length allocation failed: {:?}", e),
                     4,
                     None,
                     None,
@@ -608,7 +608,7 @@ impl MemoryUtils {
         self.add_data_segment((string_ptr + 4) as u32, bytes)
             .map_err(|e| {
                 CompilerError::memory_allocation_error(
-                    &format!("String content allocation failed: {:?}", e),
+                    format!("String content allocation failed: {:?}", e),
                     len,
                     None,
                     None,
@@ -664,7 +664,7 @@ impl MemoryUtils {
         self.add_data_segment((ptr - HEADER_SIZE as usize) as u32, &len_bytes)
             .map_err(|e| {
                 CompilerError::memory_allocation_error(
-                    &format!("Array length allocation failed: {e:?}"),
+                    format!("Array length allocation failed: {e:?}"),
                     4,
                     None,
                     None,
@@ -718,7 +718,7 @@ impl MemoryUtils {
             self.add_data_segment((ptr + offset - HEADER_SIZE as usize) as u32, &element_bytes)
                 .map_err(|e| {
                     CompilerError::memory_allocation_error(
-                        &format!("Array element allocation failed: {e:?}"),
+                        format!("Array element allocation failed: {e:?}"),
                         element_bytes.len(),
                         None,
                         None,
@@ -768,7 +768,7 @@ impl MemoryUtils {
         self.add_data_segment((ptr - HEADER_SIZE as usize) as u32, &dims_bytes)
             .map_err(|e| {
                 CompilerError::memory_allocation_error(
-                    &format!("Matrix dimensions allocation failed: {e:?}"),
+                    format!("Matrix dimensions allocation failed: {e:?}"),
                     8,
                     None,
                     None,
@@ -784,7 +784,7 @@ impl MemoryUtils {
         self.add_data_segment((ptr + 8 - HEADER_SIZE as usize) as u32, &element_bytes)
             .map_err(|e| {
                 CompilerError::memory_allocation_error(
-                    &format!("Matrix elements allocation failed: {e:?}"),
+                    format!("Matrix elements allocation failed: {e:?}"),
                     element_bytes.len(),
                     None,
                     None,

@@ -115,7 +115,7 @@ impl ModuleResolver {
         // Find module file
         let module_path = self.find_module_file(module_name).ok_or_else(|| {
             vec![CompilerError::validation_error(
-                &format!("Module '{}' not found in search paths", module_name),
+                format!("Module '{}' not found in search paths", module_name),
                 import.location.clone(),
             )]
         })?;
@@ -135,7 +135,7 @@ impl ModuleResolver {
         if let Some(current) = &self.current_module {
             self.dependencies
                 .entry(current.clone())
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(module_name.clone());
         }
 
@@ -168,19 +168,17 @@ impl ModuleResolver {
         let mut rec_stack = HashSet::new();
 
         for module in self.dependencies.keys() {
-            if !visited.contains(module) {
-                if self.has_cycle(module, &mut visited, &mut rec_stack) {
-                    return Err(CompilerError::validation_error(
-                        &format!("Circular dependency detected involving module '{}'", module),
-                        crate::ast::SourceLocation {
-                            file: "<module_resolver>".to_string(),
-                            line: 0,
-                            column: 0,
-                            byte_start: None,
-                            byte_end: None,
-                        },
-                    ));
-                }
+            if !visited.contains(module) && self.has_cycle(module, &mut visited, &mut rec_stack) {
+                return Err(CompilerError::validation_error(
+                    format!("Circular dependency detected involving module '{}'", module),
+                    crate::ast::SourceLocation {
+                        file: "<module_resolver>".to_string(),
+                        line: 0,
+                        column: 0,
+                        byte_start: None,
+                        byte_end: None,
+                    },
+                ));
             }
         }
 
@@ -246,7 +244,7 @@ impl ModuleResolver {
     ) -> Result<(), CompilerError> {
         if temp_visited.contains(module) {
             return Err(CompilerError::validation_error(
-                &format!("Circular dependency detected at module '{}'", module),
+                format!("Circular dependency detected at module '{}'", module),
                 crate::ast::SourceLocation {
                     file: "<module_resolver>".to_string(),
                     line: 0,
@@ -289,7 +287,7 @@ impl ModuleResolver {
                 // 1. Read the file
                 let source = fs::read_to_string(&module.file_path).map_err(|e| {
                     CompilerError::validation_error(
-                        &format!("Failed to read module '{}': {}", module_name, e),
+                        format!("Failed to read module '{}': {}", module_name, e),
                         crate::ast::SourceLocation {
                             file: module.file_path.to_string_lossy().to_string(),
                             line: 0,
@@ -308,7 +306,7 @@ impl ModuleResolver {
                 let mut lexer = SpecificationLexer::new(&source_code);
                 let tokens = lexer.tokenize().map_err(|e| {
                     CompilerError::validation_error(
-                        &format!("Lexer error in module '{}': {}", module_name, e),
+                        format!("Lexer error in module '{}': {}", module_name, e),
                         crate::ast::SourceLocation {
                             file: module.file_path.to_string_lossy().to_string(),
                             line: 0,
@@ -353,7 +351,7 @@ impl ModuleResolver {
             Ok(module.hir.as_ref().unwrap())
         } else {
             Err(CompilerError::validation_error(
-                &format!("Module '{}' not found", module_name),
+                format!("Module '{}' not found", module_name),
                 crate::ast::SourceLocation {
                     file: "<module_resolver>".to_string(),
                     line: 0,

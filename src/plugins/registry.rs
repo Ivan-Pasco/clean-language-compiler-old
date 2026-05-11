@@ -535,9 +535,7 @@ impl PluginRegistry {
                         let method = &stripped[underscore_pos + 1..];
                         let dot_name = format!("{}.{}", namespace, method);
                         // Don't override explicit mappings from phase 1
-                        if !map.contains_key(&dot_name) {
-                            map.insert(dot_name, bf.name.clone());
-                        }
+                        map.entry(dot_name).or_insert_with(|| bf.name.clone());
                     }
                 }
             }

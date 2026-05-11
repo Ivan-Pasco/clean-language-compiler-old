@@ -197,7 +197,7 @@ impl<'a> ConstraintSolver<'a> {
                     self.bind_type_var(type_var, t.clone(), location)
                 } else {
                     Err(CompilerError::type_error(
-                        &format!("Invalid type variable: {}", var_name),
+                        format!("Invalid type variable: {}", var_name),
                         None,
                         Some(location.clone()),
                     ))
@@ -218,7 +218,7 @@ impl<'a> ConstraintSolver<'a> {
                     self.unify(inner_element_type, element_type, location)
                 } else {
                     Err(CompilerError::type_error(
-                        &format!(
+                        format!(
                             "Cannot unify types: {} and Matrix<{}>",
                             ConcreteType::Array(inner.clone()),
                             element_type
@@ -252,7 +252,7 @@ impl<'a> ConstraintSolver<'a> {
 
                 if p1.len() != p2.len() {
                     return Err(CompilerError::type_error(
-                        &format!(
+                        format!(
                             "Function parameter count mismatch: {} vs {}",
                             p1.len(),
                             p2.len()
@@ -288,7 +288,7 @@ impl<'a> ConstraintSolver<'a> {
                     // Allow unifying child class with parent class
                     if !self.is_subclass_of(*id1, *id2) && !self.is_subclass_of(*id2, *id1) {
                         return Err(CompilerError::type_error(
-                            &format!("Cannot unify incompatible classes: {} vs {}", id1.0, id2.0),
+                            format!("Cannot unify incompatible classes: {} vs {}", id1.0, id2.0),
                             None,
                             Some(location.clone()),
                         ));
@@ -315,7 +315,7 @@ impl<'a> ConstraintSolver<'a> {
             (ConcreteType::Tuple(t1), ConcreteType::Tuple(t2)) => {
                 if t1.len() != t2.len() {
                     return Err(CompilerError::type_error(
-                        &format!("Tuple size mismatch: {} vs {}", t1.len(), t2.len()),
+                        format!("Tuple size mismatch: {} vs {}", t1.len(), t2.len()),
                         None,
                         Some(location.clone()),
                     ));
@@ -338,7 +338,7 @@ impl<'a> ConstraintSolver<'a> {
                     Ok(())
                 } else {
                     Err(CompilerError::type_error(
-                        &format!("Type {} is not compatible with union type", t),
+                        format!("Type {} is not compatible with union type", t),
                         None,
                         Some(location.clone()),
                     ))
@@ -411,7 +411,7 @@ impl<'a> ConstraintSolver<'a> {
 
             // Types cannot be unified
             _ => Err(CompilerError::type_error(
-                &format!("Cannot unify types: {} and {}", left, right),
+                format!("Cannot unify types: {} and {}", left, right),
                 None,
                 Some(location.clone()),
             )),
@@ -432,7 +432,7 @@ impl<'a> ConstraintSolver<'a> {
             Ok(())
         } else {
             Err(CompilerError::type_error(
-                &format!("Type {} is not a subtype of {}", subtype, supertype),
+                format!("Type {} is not a subtype of {}", subtype, supertype),
                 None,
                 Some(location.clone()),
             ))
@@ -453,7 +453,7 @@ impl<'a> ConstraintSolver<'a> {
                 Ok(())
             }
             _ => Err(CompilerError::type_error(
-                &format!("Type {} does not implement interface {}", type_, interface),
+                format!("Type {} does not implement interface {}", type_, interface),
                 None,
                 Some(location.clone()),
             )),
@@ -480,7 +480,7 @@ impl<'a> ConstraintSolver<'a> {
                         Ok(())
                     }
                     _ => Err(CompilerError::type_error(
-                        &format!("Array type does not have member: {}", member_name),
+                        format!("Array type does not have member: {}", member_name),
                         None,
                         Some(location.clone()),
                     )),
@@ -496,7 +496,7 @@ impl<'a> ConstraintSolver<'a> {
                         Ok(())
                     }
                     _ => Err(CompilerError::type_error(
-                        &format!("String type does not have member: {}", member_name),
+                        format!("String type does not have member: {}", member_name),
                         None,
                         Some(location.clone()),
                     )),
@@ -510,7 +510,7 @@ impl<'a> ConstraintSolver<'a> {
             }
 
             _ => Err(CompilerError::type_error(
-                &format!("Type {} does not have member: {}", type_, member_name),
+                format!("Type {} does not have member: {}", type_, member_name),
                 None,
                 Some(location.clone()),
             )),
@@ -800,15 +800,17 @@ impl<'a> ConstraintSolver<'a> {
         if let Some(symbol_table) = self.symbol_table {
             // Get the child class symbol
             if let Some(child_symbol) = symbol_table.get_symbol(child_id) {
-                if let crate::resolver::SymbolKind::Class { parent, .. } = &child_symbol.kind {
+                if let crate::resolver::SymbolKind::Class {
+                    parent: Some(parent_symbol_id),
+                    ..
+                } = &child_symbol.kind
+                {
                     // Check immediate parent
-                    if let Some(parent_symbol_id) = parent {
-                        if *parent_symbol_id == parent_id {
-                            return true;
-                        }
-                        // Recursively check parent's ancestors
-                        return self.is_subclass_of(*parent_symbol_id, parent_id);
+                    if *parent_symbol_id == parent_id {
+                        return true;
                     }
+                    // Recursively check parent's ancestors
+                    return self.is_subclass_of(*parent_symbol_id, parent_id);
                 }
             }
         }

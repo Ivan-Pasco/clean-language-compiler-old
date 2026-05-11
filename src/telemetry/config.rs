@@ -118,8 +118,7 @@ impl TelemetryConfig {
         std::fs::create_dir_all(&dir)?;
 
         let path = dir.join("config.toml");
-        let contents = toml::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let contents = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
 
         std::fs::write(path, contents)
     }
@@ -173,7 +172,7 @@ mod tests {
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let deserialized: TelemetryConfig = toml::from_str(&toml_str).unwrap();
 
-        assert_eq!(deserialized.enabled, true);
+        assert!(deserialized.enabled);
         assert_eq!(deserialized.consent_level, ConsentLevel::Full);
         assert_eq!(deserialized.anonymous_id, "test-id-1234");
     }

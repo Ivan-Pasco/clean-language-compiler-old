@@ -188,11 +188,13 @@ fn collect_call_names_from_statements(stmts: &[Statement], names: &mut Vec<Strin
 fn collect_call_names_from_statement(stmt: &Statement, names: &mut Vec<String>) {
     match stmt {
         Statement::Expression { expr, .. } => collect_call_names_from_expr(expr, names),
-        Statement::VariableDecl { initializer, .. } => {
-            if let Some(v) = initializer {
-                collect_call_names_from_expr(v, names);
-            }
-        }
+        Statement::VariableDecl {
+            initializer: Some(v),
+            ..
+        } => collect_call_names_from_expr(v, names),
+        Statement::VariableDecl {
+            initializer: None, ..
+        } => {}
         Statement::Assignment { value, .. } => collect_call_names_from_expr(value, names),
         Statement::Return {
             value: Some(expr), ..

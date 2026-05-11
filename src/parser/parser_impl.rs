@@ -105,33 +105,24 @@ impl ErrorRecoveringParser {
 
         // Find major structural boundaries
         let mut byte_pos = 0;
-        for (_line_idx, line) in lines.iter().enumerate() {
+        for line in lines.iter() {
             let trimmed = line.trim();
 
-            // Function declarations
-            if trimmed.starts_with("function ") || trimmed.starts_with("functions:") {
-                self.recovery_points.push(byte_pos);
-            }
-            // Class declarations
-            else if trimmed.starts_with("class ") {
-                self.recovery_points.push(byte_pos);
-            }
-            // Start block
-            else if trimmed.starts_with("start:") {
-                self.recovery_points.push(byte_pos);
-            }
-            // Import statements
-            else if trimmed.starts_with("import ") || trimmed.starts_with("import:") {
-                self.recovery_points.push(byte_pos);
-            }
-            // Block-level constructs
-            else if trimmed.ends_with(":")
-                && (trimmed.starts_with("if ")
-                    || trimmed.starts_with("while ")
-                    || trimmed.starts_with("for ")
-                    || trimmed == "functions:"
-                    || trimmed == "tests:")
-            {
+            // Function, class, start, import, and block-level declarations
+            let is_major_boundary = trimmed.starts_with("function ")
+                || trimmed.starts_with("functions:")
+                || trimmed.starts_with("class ")
+                || trimmed.starts_with("start:")
+                || trimmed.starts_with("import ")
+                || trimmed.starts_with("import:")
+                || (trimmed.ends_with(':')
+                    && (trimmed.starts_with("if ")
+                        || trimmed.starts_with("while ")
+                        || trimmed.starts_with("for ")
+                        || trimmed == "functions:"
+                        || trimmed == "tests:"));
+
+            if is_major_boundary {
                 self.recovery_points.push(byte_pos);
             }
             // Statement-level recovery (indented lines)
@@ -661,8 +652,7 @@ impl ErrorRecoveringParser {
         let pairs = <CleanParser as Parser<Rule>>::parse(Rule::program, trimmed_source)
             .map_err(|e| crate::error::ErrorUtils::from_pest_error(e, source, &self.file_path))?;
 
-        let result = parse_program_ast(pairs);
-        result
+        parse_program_ast(pairs)
     }
 }
 
@@ -1623,10 +1613,11 @@ impl ErrorRecoveringParser {
                         total_segments
                     ))
                     .with_source_snippet(segment.lines().take(5).collect::<Vec<_>>().join("\n"))
-                    .with_help_option(Some(format!(
+                    .with_help_option(Some(
                         "This error occurred while trying to parse a recovered segment. \
                         Check the syntax in this section of your code."
-                    )));
+                            .to_string(),
+                    ));
                 CompilerError::Syntax {
                     context: Box::new(enhanced_context),
                 }
@@ -1776,32 +1767,29 @@ fn parse_external_parameter_list(
     let mut parameters = Vec::new();
 
     for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::parameter => {
-                // For external functions, we have type-only parameters or type name pairs
-                // Handle format: type name or just type (with name optional)
-                let text = inner.as_str().trim();
-                let parts: Vec<&str> = text.split_whitespace().collect();
+        if inner.as_rule() == Rule::parameter {
+            // For external functions, we have type-only parameters or type name pairs
+            // Handle format: type name or just type (with name optional)
+            let text = inner.as_str().trim();
+            let parts: Vec<&str> = text.split_whitespace().collect();
 
-                let (param_type, param_name) = if parts.len() >= 2 {
-                    (parse_type_from_str(parts[0])?, parts[1].to_string())
-                } else if parts.len() == 1 {
-                    // Single word - assume it's a type with generated name
-                    (
-                        parse_type_from_str(parts[0])?,
-                        format!("arg{}", parameters.len()),
-                    )
-                } else {
-                    (crate::ast::Type::Any, format!("arg{}", parameters.len()))
-                };
+            let (param_type, param_name) = if parts.len() >= 2 {
+                (parse_type_from_str(parts[0])?, parts[1].to_string())
+            } else if parts.len() == 1 {
+                // Single word - assume it's a type with generated name
+                (
+                    parse_type_from_str(parts[0])?,
+                    format!("arg{}", parameters.len()),
+                )
+            } else {
+                (crate::ast::Type::Any, format!("arg{}", parameters.len()))
+            };
 
-                parameters.push(Parameter {
-                    name: param_name,
-                    type_: param_type,
-                    default_value: None,
-                });
-            }
-            _ => {}
+            parameters.push(Parameter {
+                name: param_name,
+                type_: param_type,
+                default_value: None,
+            });
         }
     }
 
@@ -1879,12 +1867,9 @@ fn parse_rules_block(pair: Pair<Rule>) -> Result<crate::ast::RulesBlock, Compile
     let mut rules = Vec::new();
 
     for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::expression => {
-                let expr = parse_expression(inner)?;
-                rules.push(expr);
-            }
-            _ => {}
+        if inner.as_rule() == Rule::expression {
+            let expr = parse_expression(inner)?;
+            rules.push(expr);
         }
     }
 
@@ -2098,131 +2083,6 @@ pub fn parse_screen_block(pair: Pair<Rule>) -> Result<Statement, CompilerError> 
         functions,
         location,
     })
-}
-
-// ============================================================================
-// END STATE MANAGEMENT PARSERS
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::CleanParser;
-    use super::*;
-    use pest::Parser;
-
-    #[test]
-    fn test_parse_function_in_block_valid() {
-        // Test simpler function without input block
-        let source = "integer add(integer a, integer b)\n\treturn a + b";
-        let mut pairs =
-            <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source).unwrap();
-        let pair = pairs.next().unwrap();
-        let func = parse_function_in_block(pair).unwrap();
-        assert_eq!(func.name, "add");
-        assert_eq!(func.parameters.len(), 2);
-        assert_eq!(func.parameters[0].name, "a");
-        assert_eq!(func.parameters[1].name, "b");
-        assert_eq!(func.body.len(), 1);
-    }
-
-    #[test]
-    fn test_parse_function_in_block_duplicate_param() {
-        let source = "integer add()\n\tinput\n\t\tinteger a\n\t\tinteger a\n\treturn a + a";
-        let mut pairs =
-            <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source).unwrap();
-        let pair = pairs.next().unwrap();
-        let err = parse_function_in_block(pair).unwrap_err();
-        assert!(err.to_string().contains("Duplicate parameter name"));
-    }
-
-    #[test]
-    fn test_parse_function_in_block_missing_name() {
-        // Test that a function without a proper name fails
-        // Note: The grammar might allow some edge cases, so we just verify
-        // that the parser doesn't crash and produces some kind of result
-        let source = "integer ()\n\treturn 42";
-        let result = <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source);
-
-        // Either the grammar rejects it (preferred) or parse_function_in_block catches it
-        match result {
-            Ok(mut pairs) => {
-                let pair = pairs.next().unwrap();
-                // If grammar allows it, parse_function_in_block should handle it gracefully
-                // (either accepting with a default name or rejecting)
-                let _func_result = parse_function_in_block(pair);
-                // Test passes if we don't panic
-            }
-            Err(_) => {
-                // Grammar rejected it - also fine
-            }
-        }
-    }
-
-    #[test]
-    fn debug_parse_tree_for_function_in_block() {
-        let source = "integer add()\n\tinput\n\t\tinteger a\n\t\tinteger b\n\t\n\treturn a + b";
-        let mut pairs =
-            <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source).unwrap();
-        let pair = pairs.next().unwrap();
-        println!("Parse tree: {:#?}", pair);
-    }
-
-    #[test]
-    fn debug_iterate_with_nested_if_parsing() {
-        // This test traces how iterate with nested if is parsed - matches debug_iterate_with_if.cln
-        let source = "start()\n\tlist<integer> nums = [5, 15, 25]\n\tprint(\"Before iterate\")\n\titerate item in nums\n\t\tif item > 10\n\t\t\tprint(\"Large\")\n\tprint(\"After iterate\")\n";
-
-        println!("=== Input with explicit characters ===");
-        for c in source.chars() {
-            if c == '\t' {
-                print!("→");
-            } else if c == '\n' {
-                println!("↵");
-            } else {
-                print!("{}", c);
-            }
-        }
-        println!("\n");
-
-        let result = <CleanParser as Parser<Rule>>::parse(Rule::program, source);
-        match result {
-            Ok(pairs) => {
-                println!("=== Parse tree ===");
-                for pair in pairs {
-                    print_pair(&pair, 0);
-                }
-            }
-            Err(e) => {
-                println!("Parse error: {}", e);
-            }
-        }
-    }
-
-    fn print_pair(pair: &pest::iterators::Pair<Rule>, indent: usize) {
-        let rule = pair.as_rule();
-        let span = pair.as_str();
-        let indent_str = "  ".repeat(indent);
-
-        // Show rule and first 80 chars of content
-        let preview: String = span
-            .chars()
-            .take(80)
-            .map(|c| {
-                if c == '\n' {
-                    '↵'
-                } else if c == '\t' {
-                    '→'
-                } else {
-                    c
-                }
-            })
-            .collect();
-        println!("{}{:?}: '{}'", indent_str, rule, preview);
-
-        for inner in pair.clone().into_inner() {
-            print_pair(&inner, indent + 1);
-        }
-    }
 }
 
 // ============================================================================
@@ -2617,4 +2477,129 @@ fn parse_simple_indented_block_statements(
         }
     }
     Ok(statements)
+}
+
+// ============================================================================
+// END STATE MANAGEMENT PARSERS
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::CleanParser;
+    use super::*;
+    use pest::Parser;
+
+    #[test]
+    fn test_parse_function_in_block_valid() {
+        // Test simpler function without input block
+        let source = "integer add(integer a, integer b)\n\treturn a + b";
+        let mut pairs =
+            <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source).unwrap();
+        let pair = pairs.next().unwrap();
+        let func = parse_function_in_block(pair).unwrap();
+        assert_eq!(func.name, "add");
+        assert_eq!(func.parameters.len(), 2);
+        assert_eq!(func.parameters[0].name, "a");
+        assert_eq!(func.parameters[1].name, "b");
+        assert_eq!(func.body.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_function_in_block_duplicate_param() {
+        let source = "integer add()\n\tinput\n\t\tinteger a\n\t\tinteger a\n\treturn a + a";
+        let mut pairs =
+            <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source).unwrap();
+        let pair = pairs.next().unwrap();
+        let err = parse_function_in_block(pair).unwrap_err();
+        assert!(err.to_string().contains("Duplicate parameter name"));
+    }
+
+    #[test]
+    fn test_parse_function_in_block_missing_name() {
+        // Test that a function without a proper name fails
+        // Note: The grammar might allow some edge cases, so we just verify
+        // that the parser doesn't crash and produces some kind of result
+        let source = "integer ()\n\treturn 42";
+        let result = <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source);
+
+        // Either the grammar rejects it (preferred) or parse_function_in_block catches it
+        match result {
+            Ok(mut pairs) => {
+                let pair = pairs.next().unwrap();
+                // If grammar allows it, parse_function_in_block should handle it gracefully
+                // (either accepting with a default name or rejecting)
+                let _func_result = parse_function_in_block(pair);
+                // Test passes if we don't panic
+            }
+            Err(_) => {
+                // Grammar rejected it - also fine
+            }
+        }
+    }
+
+    #[test]
+    fn debug_parse_tree_for_function_in_block() {
+        let source = "integer add()\n\tinput\n\t\tinteger a\n\t\tinteger b\n\t\n\treturn a + b";
+        let mut pairs =
+            <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source).unwrap();
+        let pair = pairs.next().unwrap();
+        println!("Parse tree: {:#?}", pair);
+    }
+
+    #[test]
+    fn debug_iterate_with_nested_if_parsing() {
+        // This test traces how iterate with nested if is parsed - matches debug_iterate_with_if.cln
+        let source = "start()\n\tlist<integer> nums = [5, 15, 25]\n\tprint(\"Before iterate\")\n\titerate item in nums\n\t\tif item > 10\n\t\t\tprint(\"Large\")\n\tprint(\"After iterate\")\n";
+
+        println!("=== Input with explicit characters ===");
+        for c in source.chars() {
+            if c == '\t' {
+                print!("→");
+            } else if c == '\n' {
+                println!("↵");
+            } else {
+                print!("{}", c);
+            }
+        }
+        println!("\n");
+
+        let result = <CleanParser as Parser<Rule>>::parse(Rule::program, source);
+        match result {
+            Ok(pairs) => {
+                println!("=== Parse tree ===");
+                for pair in pairs {
+                    print_pair(&pair, 0);
+                }
+            }
+            Err(e) => {
+                println!("Parse error: {}", e);
+            }
+        }
+    }
+
+    fn print_pair(pair: &pest::iterators::Pair<Rule>, indent: usize) {
+        let rule = pair.as_rule();
+        let span = pair.as_str();
+        let indent_str = "  ".repeat(indent);
+
+        // Show rule and first 80 chars of content
+        let preview: String = span
+            .chars()
+            .take(80)
+            .map(|c| {
+                if c == '\n' {
+                    '↵'
+                } else if c == '\t' {
+                    '→'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        println!("{}{:?}: '{}'", indent_str, rule, preview);
+
+        for inner in pair.clone().into_inner() {
+            print_pair(&inner, indent + 1);
+        }
+    }
 }

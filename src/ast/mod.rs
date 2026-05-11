@@ -1467,6 +1467,6 @@ mod tests {
         };
         let json = serde_json::to_string(&program).unwrap();
         assert!(json.contains("test_func"));
-        assert!(json.len() > 0);
+        assert!(!json.is_empty());
     }
 }

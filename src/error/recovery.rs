@@ -384,26 +384,23 @@ impl ParserRecovery {
 
     fn recover_contextual(&self, error: &CompilerError) -> RecoveryResult {
         // Try to recover based on error context and location
-        match error {
-            CompilerError::Syntax { context } => {
-                if let Some(location) = &context.location {
-                    // Analyze surrounding context to provide better recovery
-                    if location.line > 0 {
-                        // This is a more sophisticated recovery attempt
-                        return RecoveryResult::success(
-                            vec![
-                                RecoveryAction::SuggestFix(format!(
-                                    "Syntax error at line {}:{}. Check the Clean Language syntax guide",
-                                    location.line, location.column
-                                )),
-                                RecoveryAction::SkipToSync(SyncPoint::NextStatement),
-                            ],
-                            0.5,
-                        );
-                    }
+        if let CompilerError::Syntax { context } = error {
+            if let Some(location) = &context.location {
+                // Analyze surrounding context to provide better recovery
+                if location.line > 0 {
+                    // This is a more sophisticated recovery attempt
+                    return RecoveryResult::success(
+                        vec![
+                            RecoveryAction::SuggestFix(format!(
+                                "Syntax error at line {}:{}. Check the Clean Language syntax guide",
+                                location.line, location.column
+                            )),
+                            RecoveryAction::SkipToSync(SyncPoint::NextStatement),
+                        ],
+                        0.5,
+                    );
                 }
             }
-            _ => {}
         }
 
         RecoveryResult::no_recovery()
@@ -572,22 +569,20 @@ impl SemanticRecovery {
             let suggestions = self.suggest_similar_symbols(&symbol_name);
 
             let mut actions = vec![];
-            let confidence;
-
-            if !suggestions.is_empty() {
+            let confidence = if !suggestions.is_empty() {
                 actions.push(RecoveryAction::SuggestFix(format!(
                     "Symbol '{symbol_name}' not found. Did you mean: {}?",
                     suggestions.join(", ")
                 )));
-                confidence = 0.7;
+                0.7
             } else {
                 // Try to infer what kind of symbol this might be based on context
                 let symbol_type = self.infer_symbol_type(&symbol_name);
                 actions.push(RecoveryAction::SuggestFix(format!(
                     "Define the symbol '{symbol_name}' (likely type: {symbol_type}) before use"
                 )));
-                confidence = 0.5;
-            }
+                0.5
+            };
 
             actions.push(RecoveryAction::AssumeDefault(
                 self.default_types
@@ -768,8 +763,8 @@ impl SemanticRecovery {
 
         let mut matrix = vec![vec![0; s2_len + 1]; s1_len + 1];
 
-        for i in 0..=s1_len {
-            matrix[i][0] = i;
+        for (i, row) in matrix.iter_mut().enumerate().take(s1_len + 1) {
+            row[0] = i;
         }
         for j in 0..=s2_len {
             matrix[0][j] = j;

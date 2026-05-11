@@ -265,7 +265,7 @@ impl MirCodeGenerator<'_> {
 
         // Auto-allocated locals that were created during code generation
         for (value_id, &local_index) in &self.value_to_local {
-            if !local_types_map.contains_key(&local_index) {
+            local_types_map.entry(local_index).or_insert_with(|| {
                 let wasm_type = if let Some(mir_type) = self.value_to_type.get(value_id) {
                     self.mir_type_to_wasm_type(mir_type).unwrap_or(ValType::I32)
                 } else {
@@ -277,20 +277,20 @@ impl MirCodeGenerator<'_> {
                     wasm_type = ?wasm_type,
                     "Auto-allocated local type"
                 );
-                local_types_map.insert(local_index, wasm_type);
-            }
+                wasm_type
+            });
         }
 
         // Tracked temporary locals (e.g., string expansion in load_string_argument_for_print)
         for (&local_index, &wasm_type) in &self.temp_local_types {
-            if !local_types_map.contains_key(&local_index) {
+            local_types_map.entry(local_index).or_insert_with(|| {
                 debug_mir!(
                     "DEBUG MIR: Adding temporary local {} with tracked type {:?}",
                     local_index,
                     wasm_type
                 );
-                local_types_map.insert(local_index, wasm_type);
-            }
+                wasm_type
+            });
         }
 
         // Build vec of (count, type) pairs — only locals AFTER parameters
@@ -1229,7 +1229,7 @@ impl MirCodeGenerator<'_> {
             None
         };
 
-        for (_symbol_id, function) in &mir_program.functions {
+        for function in mir_program.functions.values() {
             for block in function.blocks.values() {
                 for instruction in &block.instructions {
                     if let MirOperation::Call { function, .. } = &instruction.operation {
@@ -1346,7 +1346,7 @@ impl MirCodeGenerator<'_> {
 
                 let wrapper_params: Vec<WasmType> = param_types
                     .iter()
-                    .map(|t| Self::builtin_type_to_wasm_type(t))
+                    .map(Self::builtin_type_to_wasm_type)
                     .collect();
 
                 tracing::debug!(
@@ -1365,7 +1365,7 @@ impl MirCodeGenerator<'_> {
             } else {
                 let wasm_params: Vec<WasmType> = param_types
                     .iter()
-                    .map(|t| Self::builtin_type_to_wasm_type(t))
+                    .map(Self::builtin_type_to_wasm_type)
                     .collect();
 
                 let wasm_return = match &return_type {
@@ -1600,7 +1600,7 @@ impl MirCodeGenerator<'_> {
 
             let wrapper_params: Vec<WasmType> = param_types
                 .iter()
-                .map(|t| Self::builtin_type_to_wasm_type(t))
+                .map(Self::builtin_type_to_wasm_type)
                 .collect();
 
             let mut wrapper_instructions = Vec::new();

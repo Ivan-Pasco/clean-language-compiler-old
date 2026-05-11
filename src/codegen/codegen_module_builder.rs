@@ -73,7 +73,7 @@ impl super::CodeGenerator {
             .add_data_segment(current_offset, &string_data)
             .map_err(|e| {
                 CompilerError::codegen_error(
-                    &format!("Failed to add string '{}' to data section: {:?}", s, e),
+                    format!("Failed to add string '{}' to data section: {:?}", s, e),
                     None,
                     None,
                 )

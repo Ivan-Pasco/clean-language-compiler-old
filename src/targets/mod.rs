@@ -77,23 +77,22 @@ impl TargetManager {
 
     /// Get recommended runtime configuration for a target
     pub fn get_recommended_runtime_config(target: &Target) -> RuntimeConfig {
-        let mut config = RuntimeConfig::default();
+        use crate::runtime::runtime_trait::OptimizationLevel;
 
-        // Set runtime type based on target preference
-        config.runtime_type = target.runtime_preference;
+        let optimization_level = match target.target_type {
+            TargetType::Web | TargetType::Embedded => OptimizationLevel::SpeedAndSize,
+            _ => OptimizationLevel::Speed,
+        };
 
-        // Configure features based on target capabilities
-        config.async_support = target.capabilities.async_support;
-        config.threads_support = target.capabilities.threads_support;
-        config.simd_support = target.capabilities.simd_support;
-        config.bulk_memory = target.capabilities.bulk_memory;
-        config.reference_types = target.capabilities.reference_types;
-
-        // Set optimization level based on target
-        config.optimization_level = match target.target_type {
-            TargetType::Web => crate::runtime::runtime_trait::OptimizationLevel::SpeedAndSize,
-            TargetType::Embedded => crate::runtime::runtime_trait::OptimizationLevel::SpeedAndSize,
-            _ => crate::runtime::runtime_trait::OptimizationLevel::Speed,
+        let mut config = RuntimeConfig {
+            runtime_type: target.runtime_preference,
+            async_support: target.capabilities.async_support,
+            threads_support: target.capabilities.threads_support,
+            simd_support: target.capabilities.simd_support,
+            bulk_memory: target.capabilities.bulk_memory,
+            reference_types: target.capabilities.reference_types,
+            optimization_level,
+            ..RuntimeConfig::default()
         };
 
         // Configure memory settings based on target constraints

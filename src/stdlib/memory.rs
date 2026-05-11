@@ -65,7 +65,7 @@ impl MemoryManager {
 
     pub fn create_memory_section(&self) -> MemorySection {
         let mut section = MemorySection::new();
-        section.memory(self.memory.clone());
+        section.memory(self.memory);
         section
     }
 
@@ -519,9 +519,8 @@ impl MemoryManager {
                 });
             }
 
-            if next_is_adjacent && next_is_free && current_next.is_some() {
+            if let Some(next_ptr) = current_next.filter(|_| next_is_adjacent && next_is_free) {
                 // Get the next block's size and next pointer
-                let next_ptr = current_next.unwrap();
                 let (next_size, next_next) = {
                     let next_block = self.allocations.get(&next_ptr).unwrap();
                     (next_block.size, next_block.next)

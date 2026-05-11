@@ -274,7 +274,7 @@ mod tests {
         let cwd_in_framework = compiler_cwd.ancestors().any(|a| {
             a.file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| dirs.iter().any(|&d| d == n))
+                .map(|n| dirs.contains(&n))
                 .unwrap_or(false)
         });
         assert!(
