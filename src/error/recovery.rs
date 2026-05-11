@@ -2,8 +2,6 @@
 //!
 //! This module provides comprehensive error recovery strategies for each compilation phase.
 
-#![allow(dead_code)]
-
 use super::*;
 use std::collections::HashMap;
 
@@ -123,7 +121,7 @@ pub enum SyncPoint {
 #[derive(Debug, Clone)]
 pub struct LexerRecovery {
     /// Common character substitutions for recovery
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Populated at construction; recovery not yet invoked from the parser
     char_substitutions: HashMap<char, Vec<char>>,
 }
 
@@ -191,8 +189,6 @@ impl LexerRecovery {
 /// Parser error recovery with advanced recovery strategies
 #[derive(Debug, Clone)]
 pub struct ParserRecovery {
-    /// Synchronization tokens for recovery
-    sync_tokens: Vec<String>,
     /// Common syntax error patterns and their recovery strategies
     error_patterns: HashMap<String, RecoveryStrategy>,
     /// Track recovery success rates for adaptive learning
@@ -207,7 +203,6 @@ pub struct ParserRecovery {
 struct RecoveryStrategy {
     actions: Vec<RecoveryAction>,
     confidence: f64,
-    description: String,
 }
 
 #[derive(Debug, Clone)]
@@ -230,7 +225,6 @@ impl ParserRecovery {
                     RecoveryAction::SkipToSync(SyncPoint::NextStatement),
                 ],
                 confidence: 0.8,
-                description: "Identifier syntax error recovery".to_string(),
             }
         );
 
@@ -242,7 +236,6 @@ impl ParserRecovery {
                     RecoveryAction::SuggestFix("Add missing closing parenthesis".to_string()),
                 ],
                 confidence: 0.9,
-                description: "Missing closing parenthesis recovery".to_string(),
             },
         );
 
@@ -256,7 +249,6 @@ impl ParserRecovery {
                     RecoveryAction::AssumeDefault("\t// Missing block".to_string()),
                 ],
                 confidence: 0.7,
-                description: "Missing indentation recovery".to_string(),
             },
         );
 
@@ -272,24 +264,10 @@ impl ParserRecovery {
                     ),
                 ],
                 confidence: 0.6,
-                description: "Missing function body recovery".to_string(),
             },
         );
 
         Self {
-            sync_tokens: vec![
-                ";".to_string(),
-                "{".to_string(),
-                "}".to_string(),
-                "function".to_string(),
-                "class".to_string(),
-                "start".to_string(),
-                "if".to_string(),
-                "while".to_string(),
-                "for".to_string(),
-                "return".to_string(),
-                "import".to_string(),
-            ],
             error_patterns,
             recovery_stats: HashMap::new(),
             max_recovery_depth: 5,

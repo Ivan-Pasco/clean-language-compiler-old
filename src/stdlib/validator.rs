@@ -89,7 +89,7 @@ const MEM_ALLOC_CALL_INDEX: u32 = 7;
 ///     print result.firstError
 /// ```
 pub struct ValidatorManager {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Held for future direct allocations; codegen uses global memory manager
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

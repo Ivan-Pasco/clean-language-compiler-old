@@ -54,7 +54,7 @@ impl Default for ModuleResolver {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // ModuleResolver not yet wired into the main compilation pipeline
 impl ModuleResolver {
     /// Create a new module resolver
     pub fn new() -> Self {

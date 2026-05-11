@@ -10,7 +10,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 /// Method-style syntax implementation for Clean Language
 /// Enables value.method() calls instead of only function(value) calls
 pub struct MethodStyleManager {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Held for future direct allocations; codegen uses global memory manager
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

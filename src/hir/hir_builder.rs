@@ -551,6 +551,40 @@ impl HirBuilder {
             .map(|ext| self.build_external_function(ext))
             .collect::<Result<Vec<_>, _>>()?;
 
+        // Process screen blocks (each has its own local state scope for SCOPE005)
+        let mut screen_blocks: Vec<crate::hir::HirScreenBlock> = Vec::new();
+        for stmt in &program.screen_blocks {
+            if let crate::ast::Statement::ScreenBlockStmt {
+                name,
+                state: screen_state,
+                watch_blocks: screen_watches,
+                functions: screen_fns,
+                location,
+            } = stmt
+            {
+                let hir_state = if let Some(ast_state) = screen_state {
+                    Some(self.build_state_block(ast_state)?)
+                } else {
+                    None
+                };
+                let hir_watches = screen_watches
+                    .iter()
+                    .map(|wb| self.build_watch_block(wb))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let hir_fns = screen_fns
+                    .iter()
+                    .map(|f| self.build_function(f))
+                    .collect::<Result<Vec<_>, _>>()?;
+                screen_blocks.push(crate::hir::HirScreenBlock {
+                    name: name.clone(),
+                    state: hir_state,
+                    watch_blocks: hir_watches,
+                    functions: hir_fns,
+                    location: location.clone().unwrap_or_default(),
+                });
+            }
+        }
+
         // Prepend top-level validate schema initializations to the start function body.
         // This ensures schema variables are declared and initialized before any `.check` usage.
         if !validate_preamble.is_empty() {
@@ -570,6 +604,7 @@ impl HirBuilder {
             state,
             watch_blocks,
             externals,
+            screen_blocks,
             location: program.location.unwrap_or_default(),
         };
 
@@ -1283,10 +1318,6 @@ impl HirBuilder {
                 // NOTE: Detect base() calls for parent constructor invocation
                 // base() is a special function call that invokes the parent class constructor
                 if name == "base" {
-                    eprintln!(
-                        "DEBUG HIR: Detected base() call with {} arguments",
-                        args.len()
-                    );
                     let hir_args =
                         self.build_call_args("base", args, &SourceLocation::default())?;
                     Ok(HirExpression::BaseCall {
@@ -1621,10 +1652,6 @@ impl HirBuilder {
                 arguments,
                 location,
             } => {
-                eprintln!(
-                    "DEBUG HIR: Handling Expression::BaseCall with {} arguments",
-                    arguments.len()
-                );
                 // For `base()`, we look up the parent class constructor.
                 // At this point we don't know the parent class name, so we use "base"
                 // as the registry key and fall back to positional if not found.

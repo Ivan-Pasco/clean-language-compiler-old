@@ -1,0 +1,45 @@
+// Test: stdlib/string/complex_function_returns
+// Grammar: FunctionDeclaration, IfStatement, WhileStatement, MethodCall, BinaryOp
+// Semantic: FUNC001, SEM003
+// Verifies Task 2: complex function with nested if/else, multiple indexOf + substring, 10+ locals
+// Expected output:
+//   Found: hello
+//   Built: hello-world-test
+//   Complex function works
+
+start:
+	string result1 = findWord("say hello there", "hello")
+	print("Found: " + result1)
+	string result2 = buildFromParts("hello", "world", "test")
+	print("Built: " + result2)
+	print("Complex function works")
+
+functions:
+	string findWord(string text, string target)
+		integer pos = text.indexOf(target)
+		string found = ""
+		string prefix = ""
+		string suffix = ""
+		integer targetLen = target.length()
+		integer textLen = text.length()
+		if pos >= 0
+			string before = text.substring(0, pos)
+			string after = text.substring(pos, pos + targetLen)
+			found = after
+			prefix = before
+		return found
+
+	string buildFromParts(string a, string b, string c)
+		string sep = "-"
+		string ab = a + sep + b
+		string abc = ab + sep + c
+		integer totalLen = abc.length()
+		integer posFirst = abc.indexOf("-")
+		integer posSecond = abc.indexOf("-")
+		string part1 = abc.substring(0, posFirst)
+		string rest = abc.substring(posFirst + 1, totalLen)
+		integer restLen = rest.length()
+		string part2 = rest.substring(0, posSecond - 1)
+		string part3 = rest.substring(posSecond, restLen)
+		string result = part1 + "-" + b + "-" + c
+		return result

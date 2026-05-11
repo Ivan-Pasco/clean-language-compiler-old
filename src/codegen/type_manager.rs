@@ -79,7 +79,7 @@ impl TypeManager {
     }
 
     /// Check if conversion is possible between two types
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Type compatibility helper — not yet called from codegen paths
     pub(crate) fn can_convert(&self, from: WasmType, to: WasmType) -> bool {
         // Any type is compatible with any other type
         if from == WasmType::I32 && to == WasmType::I32 {
@@ -98,7 +98,7 @@ impl TypeManager {
     }
 
     /// Check if the given expression is a string type
-    #[allow(dead_code)]
+    #[allow(dead_code)] // String-type predicate — not yet called from codegen paths
     pub(crate) fn is_string_type(&self, expr: &Expression) -> bool {
         match expr {
             Expression::Literal(Value::String(_)) => true,

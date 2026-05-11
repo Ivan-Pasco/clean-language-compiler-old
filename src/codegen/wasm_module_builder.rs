@@ -3,8 +3,6 @@
 //! This module provides functionality to assemble WebAssembly modules from
 //! various sections (type, function, export, code, etc.) following WASM standards.
 
-#![allow(dead_code)]
-
 use crate::codegen::type_manager::TypeManager;
 use crate::error::CompilerError;
 use wasm_encoder::{
@@ -87,6 +85,7 @@ impl WasmModuleBuilder {
 
     /// Create a minimal test module without imports.
     /// Used for testing basic WASM generation without runtime dependencies.
+    #[cfg(test)]
     pub fn create_test_module_without_imports(
         &self,
         type_manager: &TypeManager,
@@ -124,14 +123,6 @@ impl WasmModuleBuilder {
 
         Ok(module.finish())
     }
-
-    /// Validate that the module sections are in the correct order.
-    /// This is a sanity check to ensure WASM compliance.
-    pub fn validate_section_order(&self) -> bool {
-        // This would contain validation logic for section ordering
-        // For now, return true as the assemble_module method handles ordering
-        true
-    }
 }
 
 #[cfg(test)]
@@ -146,12 +137,6 @@ mod tests {
 
         let builder_no_imports = WasmModuleBuilder::new(false);
         assert_eq!(builder_no_imports.include_runtime_imports, false);
-    }
-
-    #[test]
-    fn test_section_order_validation() {
-        let builder = WasmModuleBuilder::new(true);
-        assert!(builder.validate_section_order());
     }
 
     #[test]

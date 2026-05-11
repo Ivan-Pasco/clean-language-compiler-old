@@ -1,0 +1,12 @@
+// Test: spec_compliance/statements/scope005_screen_state_access
+// Grammar: screen_block, state_block
+// Semantic: SCOPE005 — Screen-local state cannot be accessed outside its screen
+// Expected: compiler rejects access to homeCount from outside screen Home
+
+screen Home:
+	state:
+		integer homeCount = 0
+
+start:
+	integer x = homeCount
+	print(x)

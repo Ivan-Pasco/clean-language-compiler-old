@@ -36,7 +36,7 @@ pub struct TypeInference<'a> {
     symbol_table: &'a GlobalSymbolTable,
 
     /// Built-in types and their methods
-    #[allow(dead_code)]
+    #[allow(dead_code)] // BuiltinTypes constructed but lookups go through symbol_table instead
     builtins: BuiltinTypes,
 
     /// Map from function SymbolId to minimum required parameter count
@@ -1648,14 +1648,20 @@ impl<'a> TypeInference<'a> {
                     if tast_expr.expr_type != ConcreteType::Boolean
                         && tast_expr.expr_type != ConcreteType::Unknown
                     {
-                        return Err(CompilerError::type_error(
-                            format!(
-                                "always: condition must be boolean, found {:?}",
-                                tast_expr.expr_type
+                        return Err(CompilerError::Type {
+                            context: Box::new(
+                                crate::error::ErrorContext::new(
+                                    format!(
+                                        "always: condition must be boolean, found {:?}",
+                                        tast_expr.expr_type
+                                    ),
+                                    None,
+                                    crate::error::ErrorType::Type,
+                                    Some(class.location.clone()),
+                                )
+                                .with_error_code("CLASS006"),
                             ),
-                            None,
-                            Some(class.location.clone()),
-                        ));
+                        });
                     }
                     tast_invariants.push(tast_expr);
                 }
@@ -5103,7 +5109,7 @@ impl<'a> TypeInference<'a> {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Convenience wrapper — callers currently use infer_field_type_and_symbol directly
     fn infer_field_type(
         &self,
         object_type: &ConcreteType,
@@ -5622,13 +5628,13 @@ impl BuiltinTypes {
     }
 }
 
-// Extension trait to get location from HIR statements (currently unused but useful for error reporting)
-#[allow(dead_code)]
+// Extension trait to get location from HIR statements — available for error reporting
+#[allow(dead_code)] // Not yet used; kept for future structured diagnostics
 trait StatementLocation {
     fn location(&self) -> &SourceLocation;
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Impl for dead trait — retained alongside the trait above
 impl StatementLocation for ResolvedHirStatement {
     fn location(&self) -> &SourceLocation {
         match self {

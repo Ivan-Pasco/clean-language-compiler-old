@@ -10,6 +10,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
 pub struct ListManager {
     #[allow(dead_code)]
+    // Held for future direct list allocations; codegen uses global memory manager
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 
@@ -34,6 +35,9 @@ impl ListManager {
 
         // NOTE: list.push_f64 for f64 elements (floats, numbers)
         // This is needed for float array literals like [1.1, 2.2, 3.3]
+        // It is reachability-gated (Import Minimality Rule): only emitted when
+        // the program contains float array literals. The u32::MAX sentinel means
+        // the import was tree-shaken; skip the alias so nothing maps to a bogus index.
         tracing::debug!("DEBUG LIST_OPS: Registering list.push_f64...");
         let idx2 = codegen.register_import_function(
             "env",
@@ -43,12 +47,20 @@ impl ListManager {
         )?;
         tracing::debug!("DEBUG LIST_OPS: list.push_f64 registered at index {}", idx2);
 
-        // Add alias list_push_f64 -> list.push_f64 for MIR codegen compatibility
-        codegen.add_function_alias("list_push_f64", idx2);
-        tracing::debug!(
-            "DEBUG LIST_OPS: list_push_f64 alias added at index {}",
-            idx2
-        );
+        // Add alias list_push_f64 -> list.push_f64 for MIR codegen compatibility.
+        // Skip when the import was tree-shaken (sentinel u32::MAX) so we do not
+        // insert a bogus index that would generate invalid Call instructions.
+        if idx2 != u32::MAX {
+            codegen.add_function_alias("list_push_f64", idx2);
+            tracing::debug!(
+                "DEBUG LIST_OPS: list_push_f64 alias added at index {}",
+                idx2
+            );
+        } else {
+            tracing::debug!(
+                "DEBUG LIST_OPS: list.push_f64 tree-shaken (not reachable), skipping alias"
+            );
+        }
 
         // Register list allocation function
         register_stdlib_function(

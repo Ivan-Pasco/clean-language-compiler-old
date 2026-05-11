@@ -46,7 +46,7 @@ pub struct MirProgram {
 
     /// Plugins used by this program, detected during AST parsing
     /// Maps plugin name to whether it was explicitly imported or auto-detected
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Populated during AST traversal; querying not yet wired into codegen
     pub used_plugins: Vec<String>,
 
     /// State rules (invariants) — tracked here for tooling/debugging

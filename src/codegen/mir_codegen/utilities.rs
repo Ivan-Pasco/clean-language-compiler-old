@@ -323,7 +323,7 @@ impl MirCodeGenerator<'_> {
     /// Compute basic block ordering for code generation.
     ///
     /// Reserved for future optimisation passes; currently produces entry-block-first order.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Block ordering utility — not yet called from the main codegen loop
     pub(super) fn compute_block_order(&self, function: &MirFunction) -> Vec<BasicBlockId> {
         let mut order = vec![function.entry_block];
         for &block_id in function.blocks.keys() {
@@ -339,7 +339,7 @@ impl MirCodeGenerator<'_> {
     // -------------------------------------------------------------------------
 
     /// Resolve a namespace function `SymbolId` to a WASM function name.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Namespace-by-ID resolver — superseded by string-keyed lookup in mod.rs
     pub(super) fn resolve_namespace_function(&self, symbol_id: SymbolId) -> Option<String> {
         match symbol_id.0 {
             35 => Some("math_sin".to_string()),
@@ -1096,15 +1096,24 @@ impl MirCodeGenerator<'_> {
     /// language-level names (`http.get`) match WASM import field names
     /// (`http_get`).
     pub(super) fn collect_all_called_names_from_mir(mir_program: &MirProgram) -> HashSet<String> {
-        use crate::mir::mir_types::{MirOperand, MirOperation};
+        use crate::mir::mir_types::{MirBinaryOp, MirOperand, MirOperation, MirType};
 
         let mut names: HashSet<String> = HashSet::new();
+
+        /// Return true if this MIR type is a string (pointer-to-char or pointer-to-byte).
+        fn is_string_type(t: &MirType) -> bool {
+            matches!(
+                t,
+                MirType::Ptr(inner)
+                    if matches!(inner.as_ref(), MirType::I8 | MirType::U8)
+            )
+        }
 
         for function in mir_program.functions.values() {
             for block in function.blocks.values() {
                 for instruction in &block.instructions {
-                    if let MirOperation::Call { function, .. } = &instruction.operation {
-                        match function {
+                    match &instruction.operation {
+                        MirOperation::Call { function, .. } => match function {
                             MirOperand::NamedFunction { name, .. } => {
                                 names.insert(name.clone());
                             }
@@ -1114,10 +1123,53 @@ impl MirCodeGenerator<'_> {
                                 }
                             }
                             _ => {}
+                        },
+                        // Detect string equality / inequality comparisons.
+                        // These do NOT emit an explicit MIR Call — instead the
+                        // codegen injects a `string_compare` call at BinaryOp
+                        // code-gen time. We must mark `string_compare` reachable
+                        // here so the import is not tree-shaken.
+                        MirOperation::BinaryOp {
+                            op: MirBinaryOp::Eq | MirBinaryOp::Ne,
+                            left,
+                            right,
+                        } => {
+                            let left_is_string = match left {
+                                MirOperand::Value(vid) => function
+                                    .locals
+                                    .get(vid)
+                                    .map(|l| is_string_type(&l.local_type))
+                                    .unwrap_or(false),
+                                _ => false,
+                            };
+                            let right_is_string = match right {
+                                MirOperand::Value(vid) => function
+                                    .locals
+                                    .get(vid)
+                                    .map(|l| is_string_type(&l.local_type))
+                                    .unwrap_or(false),
+                                _ => false,
+                            };
+                            if left_is_string || right_is_string {
+                                names.insert("string_compare".to_string());
+                                names.insert("string.compare".to_string());
+                            }
                         }
+                        _ => {}
                     }
                 }
             }
+        }
+
+        // Implicit dependency: JSON stringify operations (json.dataToText,
+        // json.prettyDataToText) generate native WASM that calls string.concat
+        // internally. If any json.* function is reachable, ensure string.concat
+        // is also in the reachable set so the import is not tree-shaken.
+        if names
+            .iter()
+            .any(|n| n.starts_with("json.") || n.starts_with("json_"))
+        {
+            names.insert("string.concat".to_string());
         }
 
         // Expand language-level names to the WASM import field names used by

@@ -1,11 +1,7 @@
 //! Module for memory operations during code generation with comprehensive safety validation.
 //!
-//! Note: Much of the memory safety infrastructure is currently unused but kept for future
-//! enhancements. The basic MemoryUtils is actively used for data segment management.
+//! The basic MemoryUtils is actively used for data segment management.
 
-#![allow(dead_code)]
-
-use crate::ast::Value;
 use crate::error::CompilerError;
 use crate::stdlib::memory::MemoryManager;
 use std::cell::RefCell;
@@ -13,25 +9,21 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use wasm_encoder::{ConstExpr, DataSection};
 
-/// Memory safety configuration constants
-#[allow(dead_code)]
-const GUARD_PAGE_SIZE: usize = 512; // 512 bytes guard pages (reduced for single-page WASM)
 /// Maximum data-section size (1 MB).  All static data (string literals, globals)
 /// must fit within this region.  The runtime heap (`__heap_ptr`) starts
 /// immediately after at `native_stdlib::HEAP_START` (also 1 MB).
 const MAX_MEMORY_SIZE: usize = 1048576;
-const MEMORY_ALIGNMENT: usize = 8; // 8-byte alignment
-#[allow(dead_code)]
-const POISON_PATTERN: u8 = 0xDE; // Pattern for poisoned memory
 const CANARY_VALUE: u32 = 0xDEADBEEF; // Canary for overflow detection
 
 // Essential constants
 pub const HEADER_SIZE: u32 = 16; // 16-byte header for memory blocks
 pub const ALIGNMENT: usize = 8;
 
-// Memory type IDs (keep only the ones actually used)
+// Memory type IDs
 pub const STRING_TYPE_ID: u32 = 3;
+#[cfg(test)]
 pub const ARRAY_TYPE_ID: u32 = 4;
+#[cfg(test)]
 pub const MATRIX_TYPE_ID: u32 = 5;
 
 // Memory pool sizes for efficient allocation
@@ -39,32 +31,36 @@ const SMALL_POOL_SIZE: usize = 64;
 const MEDIUM_POOL_SIZE: usize = 256;
 const LARGE_POOL_SIZE: usize = 1024;
 
-/// Enhanced memory block header layout in WASM memory with safety validation
+/// Memory block header layout in WASM memory.
 /// Offset 0-3: Size (u32)
 /// Offset 4-7: Reference count (u32)
 /// Offset 8-11: Type ID (u32)
 /// Offset 12-15: Next free block pointer (u32, 0 if not free)
-/// Safety extensions:
-/// - Guard bytes before/after allocation
-/// - Canary values for overflow detection
-/// - Allocation metadata for bounds checking
 #[derive(Debug, Clone)]
 pub struct MemoryBlock {
+    #[allow(dead_code)] // Written at allocation time for future ARC inspection
     pub address: usize,
     pub size: usize,
     pub is_free: bool,
     pub type_id: u32,
     pub ref_count: usize,
     pub next_free: Option<usize>,
-    // Memory safety fields
+    #[allow(dead_code)] // Allocation sequence number for future use-after-free detection
     pub allocation_id: u64,
+    #[allow(dead_code)] // Canary written at allocation; validation not yet wired up
     pub canary_start: u32,
+    #[allow(dead_code)] // Canary written at allocation; validation not yet wired up
     pub canary_end: u32,
+    #[allow(dead_code)] // Poisoning flag for future freed-block detection
     pub is_poisoned: bool,
-    pub stack_trace: Vec<String>, // For debugging use-after-free
+    #[allow(dead_code)] // Stack trace placeholder for future debug builds
+    pub stack_trace: Vec<String>,
 }
 
-/// Memory safety validation errors
+/// Memory safety validation errors.
+/// Fields carry diagnostic payload — callers currently convert via `map_err`
+/// without inspecting them, so they appear unread.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum MemorySafetyError {
     BufferOverflow {
@@ -76,22 +72,8 @@ pub enum MemorySafetyError {
         address: usize,
         allocation_id: u64,
     },
-    DoubleFree {
-        address: usize,
-        allocation_id: u64,
-    },
     InvalidPointer {
         address: usize,
-    },
-    CorruptedCanary {
-        address: usize,
-        expected: u32,
-        found: u32,
-    },
-    OutOfBounds {
-        address: usize,
-        base: usize,
-        size: usize,
     },
     UnalignedAccess {
         address: usize,
@@ -105,15 +87,12 @@ struct MemoryRegion {
     start: usize,
     end: usize,
     permissions: MemoryPermissions,
-    name: String,
 }
 
 /// Memory access permissions
 #[derive(Debug, Clone, PartialEq)]
 enum MemoryPermissions {
     ReadWrite,
-    ReadOnly,
-    NoAccess, // Guard regions
 }
 
 /// Memory pool for size-segregated allocation
@@ -131,24 +110,6 @@ impl MemoryPool {
             free_blocks: Vec::new(),
             total_blocks: 0,
         }
-    }
-
-    /// Validate pool integrity
-    fn validate_integrity(&self) -> Result<(), MemorySafetyError> {
-        // Ensure all free blocks are unique
-        let mut sorted_blocks = self.free_blocks.clone();
-        sorted_blocks.sort_unstable();
-        sorted_blocks.dedup();
-
-        if sorted_blocks.len() != self.free_blocks.len() {
-            return Err(MemorySafetyError::CorruptedCanary {
-                address: 0,
-                expected: self.free_blocks.len() as u32,
-                found: sorted_blocks.len() as u32,
-            });
-        }
-
-        Ok(())
     }
 
     fn allocate(&mut self, _heap_start: usize, current_address: &mut usize) -> Option<usize> {
@@ -192,14 +153,15 @@ pub(crate) struct MemoryUtils {
     // Memory safety validation
     memory_regions: Vec<MemoryRegion>,
     allocation_counter: u64,
-    guard_regions: HashMap<usize, usize>, // Guard page mappings
+    #[allow(dead_code)] // Guard page map — populated but querying not yet wired up
+    guard_regions: HashMap<usize, usize>,
     poisoned_memory: HashMap<usize, u64>, // Address -> allocation_id for freed memory
     bounds_check_enabled: bool,
 
-    // Shadow memory for tracking allocation status
+    // Shadow memory for tracking allocation status (write-only; future GC hook)
     shadow_memory: HashMap<usize, AllocationStatus>,
 
-    // Shared memory manager for stdlib integration
+    #[allow(dead_code)] // Stdlib memory manager retained for future bridge integration
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 
@@ -211,11 +173,6 @@ enum AllocationStatus {
         type_id: u32,
         allocation_id: u64,
     },
-    Free,
-    Poisoned {
-        allocation_id: u64,
-    },
-    Guard,
 }
 
 impl MemoryUtils {
@@ -263,7 +220,6 @@ impl MemoryUtils {
             start: self.heap_start, // 1024
             end: MAX_MEMORY_SIZE,   // 1MB (1048576)
             permissions: MemoryPermissions::ReadWrite,
-            name: "main_heap".to_string(),
         });
 
         // Note: The MIR codegen uses the __heap_ptr WASM global for heap management.
@@ -286,13 +242,6 @@ impl MemoryUtils {
         let data_vec: Vec<u8> = data.to_vec();
         self.data_section.active(0, &offset_expr, data_vec);
         Ok(())
-    }
-
-    /// Legacy add_data_segment for compatibility (unsafe)
-    pub(crate) fn unsafe_add_data_segment(&mut self, offset: u32, data: &[u8]) {
-        let offset_expr = ConstExpr::i32_const(offset as i32);
-        let data_vec: Vec<u8> = data.to_vec();
-        self.data_section.active(0, &offset_expr, data_vec);
     }
 
     /// Comprehensive memory access validation
@@ -331,14 +280,7 @@ impl MemoryUtils {
         for region in &self.memory_regions {
             if address >= region.start && address < region.end {
                 match region.permissions {
-                    MemoryPermissions::NoAccess => {
-                        return Err(MemorySafetyError::OutOfBounds {
-                            address,
-                            base: region.start,
-                            size: region.end - region.start,
-                        });
-                    }
-                    MemoryPermissions::ReadWrite | MemoryPermissions::ReadOnly => {
+                    MemoryPermissions::ReadWrite => {
                         // Check if access goes beyond region bounds
                         if address + size > region.end {
                             return Err(MemorySafetyError::BufferOverflow {
@@ -541,30 +483,6 @@ impl MemoryUtils {
         }
     }
 
-    /// Decrease reference count for a block (ARC release)
-    pub(crate) fn release(&mut self, address: usize) -> Result<(), CompilerError> {
-        let header_address = address - HEADER_SIZE as usize;
-
-        if let Some(block) = self.memory_blocks.get_mut(&header_address) {
-            if block.ref_count > 0 {
-                block.ref_count -= 1;
-            }
-
-            // If reference count is zero, mark as free and return to pool
-            if block.ref_count == 0 {
-                self.deallocate_block(header_address);
-            }
-
-            Ok(())
-        } else {
-            Err(CompilerError::runtime_error(
-                format!("Attempt to release invalid memory address: {address}"),
-                None,
-                None,
-            ))
-        }
-    }
-
     /// Deallocate a block and return it to the appropriate pool
     fn deallocate_block(&mut self, address: usize) {
         if let Some(mut block) = self.memory_blocks.remove(&address) {
@@ -700,21 +618,24 @@ impl MemoryUtils {
         Ok(string_ptr)
     }
 
-    /// Allocates memory for an array with proper ARC
-    pub(crate) fn allocate_array(&mut self, elements: &[Value]) -> Result<usize, CompilerError> {
+    #[cfg(test)]
+    pub(crate) fn allocate_array(
+        &mut self,
+        elements: &[crate::ast::Value],
+    ) -> Result<usize, CompilerError> {
         self.allocate_array_with_target_type(elements, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn allocate_array_with_target_type(
         &mut self,
-        elements: &[Value],
+        elements: &[crate::ast::Value],
         target_element_type: Option<&crate::ast::Type>,
     ) -> Result<usize, CompilerError> {
         use crate::ast::Type;
         use crate::types::WasmType;
 
         let element_type = if let Some(target_type) = target_element_type {
-            // If we have a target type, use it to determine the storage format
             match target_type {
                 Type::Number => WasmType::F64,
                 Type::Integer => WasmType::I32,
@@ -725,43 +646,39 @@ impl MemoryUtils {
         } else if elements.is_empty() {
             WasmType::I32
         } else {
-            // Fallback to existing logic if no target type provided
             match &elements[0] {
-                Value::Integer(_) => WasmType::I32,
-                Value::Boolean(_) => WasmType::I32,
-                Value::String(_) => WasmType::I32,
-                Value::Number(_) => WasmType::F64,
+                crate::ast::Value::Integer(_) => WasmType::I32,
+                crate::ast::Value::Boolean(_) => WasmType::I32,
+                crate::ast::Value::String(_) => WasmType::I32,
+                crate::ast::Value::Number(_) => WasmType::F64,
                 _ => WasmType::I32,
             }
         };
 
         let element_size = element_type.size_in_bytes();
-        let total_size = 4 + (elements.len() * element_size); // length + elements
+        let total_size = 4 + (elements.len() * element_size);
 
         let ptr = self.allocate(total_size, ARRAY_TYPE_ID)?;
 
-        // Create data segment for array length with safety validation
         let len_bytes = (elements.len() as u32).to_le_bytes();
         self.add_data_segment((ptr - HEADER_SIZE as usize) as u32, &len_bytes)
             .map_err(|e| {
                 CompilerError::memory_allocation_error(
-                    &format!("Array length allocation failed: {:?}", e),
+                    &format!("Array length allocation failed: {e:?}"),
                     4,
                     None,
                     None,
                 )
             })?;
 
-        // Create data segments for array elements
         let mut offset = 4;
         for element in elements {
-            let element_bytes = match element_type {
+            let element_bytes: Vec<u8> = match element_type {
                 WasmType::F64 => {
-                    // Convert all values to F64 for number arrays
-                    let f64_value = match element {
-                        Value::Integer(i) => *i as f64,
-                        Value::Number(f) => *f,
-                        Value::Boolean(b) => {
+                    let f: f64 = match element {
+                        crate::ast::Value::Integer(i) => *i as f64,
+                        crate::ast::Value::Number(f) => *f,
+                        crate::ast::Value::Boolean(b) => {
                             if *b {
                                 1.0
                             } else {
@@ -776,49 +693,32 @@ impl MemoryUtils {
                             ))
                         }
                     };
-                    f64_value.to_le_bytes().to_vec()
+                    f.to_le_bytes().to_vec()
                 }
-                WasmType::I32 => {
-                    // Convert all values to I32 for integer/boolean/string arrays
-                    let i32_value = match element {
-                        Value::Integer(i) => *i as u32,
-                        Value::Boolean(b) => *b as u32,
-                        Value::Number(f) => *f as u32,
-                        Value::String(s) => {
-                            // For string elements, allocate string and store pointer
+                _ => {
+                    let i: u32 = match element {
+                        crate::ast::Value::Integer(i) => *i as u32,
+                        crate::ast::Value::Boolean(b) => *b as u32,
+                        crate::ast::Value::Number(f) => *f as u32,
+                        crate::ast::Value::String(s) => {
                             let str_ptr = self.allocate_string(s)?;
                             str_ptr as u32
                         }
                         _ => {
                             return Err(CompilerError::type_error(
-                                format!("Cannot convert {element:?} to I32 for array storage"),
+                                format!("Cannot convert {element:?} to i32 for array storage"),
                                 None,
                                 None,
                             ))
                         }
                     };
-                    i32_value.to_le_bytes().to_vec()
-                }
-                _ => {
-                    // Fallback to original logic for other types
-                    match element {
-                        Value::Integer(i) => (*i as u32).to_le_bytes().to_vec(),
-                        Value::Boolean(b) => (*b as u32).to_le_bytes().to_vec(),
-                        Value::Number(f) => f.to_le_bytes().to_vec(),
-                        Value::String(s) => {
-                            // For string elements, store pointer to string
-                            let str_ptr = self.allocate_string(s)?;
-                            (str_ptr as u32).to_le_bytes().to_vec()
-                        }
-                        _ => vec![0; element_size],
-                    }
+                    i.to_le_bytes().to_vec()
                 }
             };
-
             self.add_data_segment((ptr + offset - HEADER_SIZE as usize) as u32, &element_bytes)
                 .map_err(|e| {
                     CompilerError::memory_allocation_error(
-                        &format!("Array element allocation failed: {:?}", e),
+                        &format!("Array element allocation failed: {e:?}"),
                         element_bytes.len(),
                         None,
                         None,
@@ -830,7 +730,7 @@ impl MemoryUtils {
         Ok(ptr)
     }
 
-    /// Allocates memory for a matrix with proper ARC
+    #[cfg(test)]
     pub(crate) fn allocate_matrix(&mut self, rows: &[Vec<f64>]) -> Result<usize, CompilerError> {
         if rows.is_empty() {
             return Err(CompilerError::memory_allocation_error(
@@ -844,7 +744,6 @@ impl MemoryUtils {
         let num_rows = rows.len();
         let num_cols = rows[0].len();
 
-        // Validate matrix dimensions
         for row in rows {
             if row.len() != num_cols {
                 return Err(CompilerError::memory_allocation_error(
@@ -857,11 +756,10 @@ impl MemoryUtils {
         }
 
         let total_elements = num_rows * num_cols;
-        let total_size = 8 + (total_elements * 8); // rows + cols + elements (f64)
+        let total_size = 8 + (total_elements * 8);
 
         let ptr = self.allocate(total_size, MATRIX_TYPE_ID)?;
 
-        // Create data segment for matrix dimensions with safety validation
         let dims_bytes = [
             (num_rows as u32).to_le_bytes(),
             (num_cols as u32).to_le_bytes(),
@@ -870,25 +768,23 @@ impl MemoryUtils {
         self.add_data_segment((ptr - HEADER_SIZE as usize) as u32, &dims_bytes)
             .map_err(|e| {
                 CompilerError::memory_allocation_error(
-                    &format!("Matrix dimensions allocation failed: {:?}", e),
+                    &format!("Matrix dimensions allocation failed: {e:?}"),
                     8,
                     None,
                     None,
                 )
             })?;
 
-        // Create data segment for matrix elements (row-major order) with safety validation
-        let mut element_bytes = Vec::new();
+        let mut element_bytes: Vec<u8> = Vec::new();
         for row in rows {
             for &element in row {
                 element_bytes.extend_from_slice(&element.to_le_bytes());
             }
         }
-
         self.add_data_segment((ptr + 8 - HEADER_SIZE as usize) as u32, &element_bytes)
             .map_err(|e| {
                 CompilerError::memory_allocation_error(
-                    &format!("Matrix elements allocation failed: {:?}", e),
+                    &format!("Matrix elements allocation failed: {e:?}"),
                     element_bytes.len(),
                     None,
                     None,
@@ -896,10 +792,5 @@ impl MemoryUtils {
             })?;
 
         Ok(ptr)
-    }
-
-    /// Get the current allocation address (first available address for new allocations)
-    pub(crate) fn get_current_address(&self) -> usize {
-        self.current_address
     }
 }

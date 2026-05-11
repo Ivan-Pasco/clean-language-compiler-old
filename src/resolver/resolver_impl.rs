@@ -14,12 +14,15 @@ pub struct NameResolver {
     /// Return type of the function currently being resolved. Used to inject
     /// the synthetic `result` variable when resolving `ensure` postconditions.
     current_function_return_type: Option<HirType>,
+    /// Name of the screen currently being resolved (for SCOPE005 enforcement).
+    /// `None` when resolving code that is not inside a screen block.
+    current_screen: Option<String>,
     errors: Vec<CompilerError>,
     warnings: Vec<CompilerError>,
     expression_recursion_depth: usize,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // NameResolver not yet wired into the main compilation pipeline
 impl NameResolver {
     /// Create a new name resolver
     pub fn new() -> Self {
@@ -28,6 +31,7 @@ impl NameResolver {
             current_class: None,
             current_function: None,
             current_function_return_type: None,
+            current_screen: None,
             errors: Vec::new(),
             warnings: Vec::new(),
             expression_recursion_depth: 0,
@@ -111,6 +115,22 @@ impl NameResolver {
 
         // Resolve external functions (WASM imports)
         let resolved_externals = self.resolve_externals(&hir.externals)?;
+
+        // Resolve screen blocks — each body is resolved with current_screen set so
+        // that SCOPE005 access checks know they're inside the owning screen.
+        for screen in &hir.screen_blocks {
+            self.current_screen = Some(screen.name.clone());
+            if let Some(ref screen_state) = screen.state {
+                let _ = self.resolve_state_block(screen_state);
+            }
+            for watch in &screen.watch_blocks {
+                let _ = self.resolve_block(&watch.body);
+            }
+            for func in &screen.functions {
+                let _ = self.resolve_function(func.clone());
+            }
+            self.current_screen = None;
+        }
 
         Ok(ResolvedHirProgram {
             functions: resolved_functions,
@@ -259,6 +279,7 @@ impl NameResolver {
                             scope: state_block.scope,
                             has_guard: state_decl.guard.is_some(),
                             is_computed: false,
+                            screen_name: None,
                         },
                         self.symbol_table.current_scope_id(),
                         state_decl.location.clone(),
@@ -292,6 +313,7 @@ impl NameResolver {
                             scope: state_block.scope,
                             has_guard: false,  // Computed state doesn't have guards
                             is_computed: true, // Computed state is read-only (STATE004)
+                            screen_name: None,
                         },
                         self.symbol_table.current_scope_id(),
                         computed_decl.location.clone(),
@@ -362,6 +384,36 @@ impl NameResolver {
                 );
                 // Mark as builtin so it doesn't require a body
                 self.symbol_table.mark_as_builtin(symbol_id);
+            }
+        }
+
+        // Register screen-local state variables (SCOPE005).
+        // Each screen's state variables are registered globally so that the symbol table
+        // can look them up, but they carry the owning screen name so that access from
+        // outside that screen can be rejected at resolution time.
+        for screen in &hir.screen_blocks {
+            if let Some(ref screen_state) = screen.state {
+                for state_decl in &screen_state.declarations {
+                    // Screen-local variables share the global symbol table but carry
+                    // their screen name so SCOPE005 can be enforced during resolution.
+                    if !self
+                        .symbol_table
+                        .has_symbol_in_current_scope(&state_decl.name)
+                    {
+                        self.symbol_table.create_symbol(
+                            state_decl.name.clone(),
+                            SymbolKind::StateVariable {
+                                var_type: state_decl.state_type.clone(),
+                                scope: crate::hir::HirStateScope::Screen,
+                                has_guard: state_decl.guard.is_some(),
+                                is_computed: false,
+                                screen_name: Some(screen.name.clone()),
+                            },
+                            self.symbol_table.current_scope_id(),
+                            state_decl.location.clone(),
+                        );
+                    }
+                }
             }
         }
 
@@ -1434,6 +1486,42 @@ impl NameResolver {
 
                 // Try to find the variable in normal scope (for non-shadowed cases)
                 if let Some(symbol_id) = self.symbol_table.lookup_symbol(name) {
+                    // SCOPE005: Screen-local state cannot be accessed outside its screen.
+                    if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
+                        if let SymbolKind::StateVariable {
+                            screen_name: Some(ref owner_screen),
+                            ..
+                        } = &symbol.kind
+                        {
+                            let currently_in_owner = self
+                                .current_screen
+                                .as_deref()
+                                .map(|s| s == owner_screen)
+                                .unwrap_or(false);
+                            if !currently_in_owner {
+                                self.errors.push(CompilerError::Validation {
+                                    context: Box::new(
+                                        crate::error::ErrorContext::new(
+                                            format!(
+                                                "State variable '{}' is local to screen '{}' and cannot be accessed here",
+                                                name, owner_screen
+                                            ),
+                                            Some(format!(
+                                                "Screen-local state is private to its screen. \
+                                                 Access '{}' only from within screen '{}'.",
+                                                name, owner_screen
+                                            )),
+                                            crate::error::ErrorType::Validation,
+                                            Some(location.clone()),
+                                        )
+                                        .with_error_code("SCOPE005"),
+                                    ),
+                                });
+                                return Err(());
+                            }
+                        }
+                    }
+
                     return Ok(ResolvedHirExpression::Variable {
                         name: name.clone(),
                         symbol_id,
@@ -3284,5 +3372,125 @@ impl NameResolver {
 impl Default for NameResolver {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+
+    fn loc() -> SourceLocation {
+        SourceLocation {
+            line: 1,
+            column: 1,
+            file: "<test>".to_string(),
+            byte_start: None,
+            byte_end: None,
+        }
+    }
+
+    fn empty_block() -> HirBlock {
+        HirBlock {
+            statements: vec![],
+            location: loc(),
+        }
+    }
+
+    /// Build a minimal HirProgram with one screen block containing a state variable,
+    /// and a start function that tries to reference that state variable.
+    /// Resolution should fail with SCOPE005.
+    fn make_scope005_program(access_in_start: bool) -> HirProgram {
+        let screen_state = HirStateBlock {
+            declarations: vec![HirStateDeclaration {
+                name: "homeCount".to_string(),
+                state_type: HirType::Integer,
+                initializer: HirExpression::Literal {
+                    value: crate::ast::Value::Integer(0),
+                    location: loc(),
+                },
+                guard: None,
+                is_private: false,
+                location: loc(),
+            }],
+            computed: vec![],
+            rules: vec![],
+            scope: HirStateScope::Screen,
+            location: loc(),
+        };
+
+        let screen = HirScreenBlock {
+            name: "Home".to_string(),
+            state: Some(screen_state),
+            watch_blocks: vec![],
+            functions: vec![],
+            location: loc(),
+        };
+
+        // The start function body: if access_in_start is true, it references homeCount.
+        let start_body = if access_in_start {
+            HirBlock {
+                statements: vec![HirStatement::VariableDeclaration {
+                    name: "x".to_string(),
+                    var_type: HirType::Integer,
+                    initializer: Some(HirExpression::Variable {
+                        name: "homeCount".to_string(),
+                        location: loc(),
+                    }),
+                    is_mutable: true,
+                    location: loc(),
+                }],
+                location: loc(),
+            }
+        } else {
+            empty_block()
+        };
+
+        HirProgram {
+            functions: vec![],
+            classes: vec![],
+            start_function: Some(HirFunction {
+                name: "start".to_string(),
+                parameters: vec![],
+                return_type: None,
+                body: start_body,
+                is_start: true,
+                is_private: false,
+                location: loc(),
+            }),
+            imports: vec![],
+            tests: vec![],
+            state: None,
+            watch_blocks: vec![],
+            externals: vec![],
+            screen_blocks: vec![screen],
+            location: loc(),
+        }
+    }
+
+    #[test]
+    fn scope005_rejects_screen_state_access_from_start() {
+        let hir = make_scope005_program(true);
+        let result = NameResolver::resolve(hir);
+        assert!(
+            result.is_err(),
+            "Expected SCOPE005 error but resolution succeeded"
+        );
+        let errors = result.unwrap_err();
+        let has_scope005 = errors.iter().any(|e| {
+            e.message().contains("homeCount")
+                && (e.message().contains("local to screen") || e.message().contains("Home"))
+        });
+        assert!(has_scope005, "Expected SCOPE005 message, got: {:?}", errors);
+    }
+
+    #[test]
+    fn scope005_allows_empty_start_with_screen_state() {
+        let hir = make_scope005_program(false);
+        let result = NameResolver::resolve(hir);
+        assert!(
+            result.is_ok(),
+            "Unexpected errors: {:?}",
+            result.unwrap_err()
+        );
     }
 }

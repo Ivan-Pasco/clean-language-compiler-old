@@ -17,7 +17,7 @@
  * `CLEEN_TELEMETRY_FORCE` env var (`publish` or `local`).
  */
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Known Clean Language component directory names. Any of these appearing as
 /// a path segment under the source file (or the binary) marks it as dev work.
@@ -204,9 +204,6 @@ pub fn describe(ctx: &DevContext) -> &str {
 pub fn component_dirs() -> &'static [&'static str] {
     COMPONENT_DIRS
 }
-
-#[allow(dead_code)]
-fn _force_path_type(_: &Path) {}
 
 #[cfg(test)]
 mod tests {

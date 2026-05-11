@@ -7,8 +7,6 @@
 //! - Control flow simplification
 //! - Peephole optimizations
 
-#![allow(dead_code)]
-
 use crate::error::CompilerError;
 use crate::mir::mir_types::{
     MirBinaryOp, MirConstant, MirFunction, MirOperand, MirOperation, MirProgram, MirTerminator,
@@ -669,16 +667,11 @@ impl OptimizationPass for PeepholeOptimizationPass {
 
 /// Function inlining optimization pass
 #[derive(Debug)]
-pub struct FunctionInliningPass {
-    /// Functions eligible for inlining
-    inline_candidates: HashMap<crate::resolver::SymbolId, MirFunction>,
-}
+pub struct FunctionInliningPass {}
 
 impl FunctionInliningPass {
     pub fn new() -> Self {
-        Self {
-            inline_candidates: HashMap::new(),
-        }
+        Self {}
     }
 }
 

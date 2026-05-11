@@ -99,13 +99,14 @@ pub struct PackageManager {
     /// Local package cache directory
     cache_dir: PathBuf,
     /// Registry URLs
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Registry list populated at init; network fetch not yet implemented
     registries: Vec<String>,
     /// Module resolver for loading packages
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Resolver held for future on-demand loading; not yet queried
     module_resolver: ModuleResolver,
     /// Installed packages cache
     #[allow(dead_code)]
+    // Package cache populated by install(); lookups not yet used at compile time
     installed_packages: HashMap<String, InstalledPackage>,
 }
 
@@ -536,6 +537,7 @@ impl PackageManager {
 struct DependencyResolver {
     dependencies: HashMap<String, Vec<(DependencySpec, bool)>>, // name -> (spec, is_dev)
     #[allow(dead_code)]
+    // Resolution results stored but not yet read back by add_dependency callers
     resolved: HashMap<String, ResolvedPackage>,
 }
 

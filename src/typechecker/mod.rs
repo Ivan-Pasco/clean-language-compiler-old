@@ -27,12 +27,12 @@ pub use tast::{
 };
 pub use type_inference::{BuiltinTypes, InferenceResult, TypeInference};
 
-/// Type checker - Stage 5 of the pipeline  
+/// Type checker - Stage 5 of the pipeline
 ///
 /// This is the main interface for type checking that wraps the constraint-based
 /// type inference engine. It transforms resolved HIR into TAST.
 #[derive(Debug)]
-#[allow(dead_code)]
+#[allow(dead_code)] // TypeChecker struct not yet called from lib.rs; pipeline goes direct to MIR builder
 pub struct TypeChecker {
     /// The underlying type inference engine
     inference_engine: Option<TypeInference<'static>>,
@@ -89,7 +89,7 @@ mod tests {
     use super::*;
     use crate::ast::SourceLocation;
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Test fixture — no test currently calls it
     fn test_location() -> SourceLocation {
         SourceLocation {
             file: "test.cln".to_string(),

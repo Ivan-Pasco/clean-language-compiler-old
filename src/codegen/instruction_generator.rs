@@ -7,7 +7,7 @@ use super::type_manager::TypeManager;
 
 /// Tracks function signatures and indices for WASM code generation.
 pub(crate) struct InstructionGenerator {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Stored at construction; type queries not yet delegated here
     type_manager: TypeManager,
     function_map: std::collections::HashMap<String, u32>,
     function_signatures: std::collections::HashMap<String, u32>,

@@ -1,0 +1,28 @@
+// Test: stdlib/string/substring_multi_assign_concat
+// Grammar: FunctionDeclaration, MethodCall (substring), BinaryOp (string +)
+// Semantic: SEM003 (type checking), FUNC001 (function return type)
+// Verifies Task 1: local variable index mismatch with substring() in multi-part concat chains
+// Expected output:
+//   Hello-World
+//   Hello World
+//   extract works
+
+start:
+	string r1 = extract("Hello World")
+	print(r1)
+	string r2 = multiExtract("Hello World")
+	print(r2)
+	print("extract works")
+
+functions:
+	string extract(string input)
+		string part1 = input.substring(0, 5)
+		string part2 = input.substring(6, 11)
+		string result = part1 + "-" + part2
+		return result
+
+	string multiExtract(string input)
+		string a = input.substring(0, 5)
+		string b = input.substring(6, 11)
+		string c = a + " " + b
+		return c

@@ -1713,10 +1713,6 @@ pub fn parse_base_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         }
     }
 
-    eprintln!(
-        "DEBUG: parse_base_call returning BaseCall with {} arguments",
-        arguments.len()
-    );
     Ok(Expression::BaseCall {
         arguments,
         location: convert_to_ast_location(&location),

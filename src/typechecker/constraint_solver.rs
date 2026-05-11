@@ -17,7 +17,7 @@ pub type Substitution = HashMap<TypeVarId, ConcreteType>;
 
 /// Constraint solver for type inference
 #[derive(Debug)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Constraint-based solver not yet integrated; inference runs via TypeInference directly
 pub struct ConstraintSolver<'a> {
     /// Current substitution being built
     substitution: Substitution,

@@ -19,6 +19,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 ///   Elements start at offset 16
 pub struct ListBehaviorManager {
     #[allow(dead_code)]
+    // Held for future runtime list behavior; codegen uses global memory manager
     memory_manager: Rc<RefCell<MemoryManager>>,
 }
 

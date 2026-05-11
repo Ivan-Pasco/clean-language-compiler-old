@@ -1,5 +1,31 @@
 # Clean Language Compiler - Implementation Tasks
 
+## 🟡 MEDIUM-HIGH: Replace .unwrap() calls in critical pipeline paths
+
+**Priority**: MEDIUM-HIGH — panics instead of structured error propagation
+**Discovered**: 2026-05-11
+**Status**: Open
+
+### Summary
+
+136 `.unwrap()` calls exist in the parser, resolver, typechecker, codegen, and MIR pipeline.
+The highest concentrations:
+
+- `src/parser/expression_parser.rs` — 57 calls
+- `src/parser/statement_parser.rs` — 40 calls
+- `src/parser/parser_impl.rs` — 17 calls
+- `src/resolver/module_resolver.rs` — 5 calls
+- Other pipeline files — ~17 calls
+
+These will panic on unexpected internal state instead of returning a `CompilerError`.
+
+### Required Fix
+
+Replace `x.unwrap()` with `x.ok_or_else(|| CompilerError::...)` and propagate via `?`.
+Prioritize the parser (113 of 136 calls) as it is the outermost error boundary.
+
+---
+
 ## ✅ RESOLVED: BRIDGE_REG_001 — Canvas bridge functions not registered in `cln check`
 
 **Priority**: HIGH — `cln check` (type-check command) rejected all `_canvas_*` calls when using `plugins: frame.canvas` without a `canvasScene:` DSL block
@@ -1081,3 +1107,24 @@ Fix the codegen bug documented in "🔴 CRITICAL: Codegen Bug — Complex Functi
 
 - `src/plugins/wasm_adapter.rs` — delete the two Rust functions and their call sites
 - `foundation/management/ARCHITECTURE_BOUNDARIES.md` — update history table row (currently "ACTIVE VIOLATION")
+
+---
+
+## 🟡 MEDIUM-HIGH: Spec gap — SCOPE005 (Screen State Access)
+
+- **Spec says:** A state variable declared inside a `screen:` block cannot be referenced outside that screen block (semantic-rules.md § SCOPE005).
+- **Code does:** Screen blocks are silently dropped during HIR building (`hir_builder.rs:377-378`) — they are not tracked in `HirProgram`. Therefore no per-screen scope boundary can be enforced.
+- **Prerequisite:** Add screen block support to `HirProgram` (new field `screen_blocks: Vec<HirScreenBlock>`, where each `HirScreenBlock` tracks its name, state declarations, and body). The resolver must then expose screen-local symbols only within their block.
+- **Files:** `src/hir/mod.rs`, `src/hir/hir_builder.rs`, `src/resolver/resolver_impl.rs`
+- **Spec ref:** `foundation/spec/semantic-rules.md` § SCOPE005
+- **Message template:** `"State variable '{name}' is local to screen '{screen}' and cannot be accessed here"`
+
+---
+
+## 🟢 LOW: Spec gap — List behavior compile-time enforcement
+
+- **Spec says:** `list<T>.line`, `list<T>.pile`, `list<T>.unique` configure runtime behavior (type-system.md §61–74). The spec calls these "runtime behavior configuration".
+- **Code does:** Behavior flags are parsed, stored, and passed to the runtime correctly via `ListBehaviorManager`. No compile-time type-check validates that modifiers appear only on `list<T>` declarations (not on primitive types or other composites).
+- **Gap:** The grammar already enforces the syntax so invalid uses are rejected at parse time. The remaining gap is: the typechecker does not verify that the *resolved* type of a variable declared with `.pile`/`.unique`/`.line` is `list<T>`. If the grammar ever allows these modifiers on other types, there would be no semantic backstop.
+- **Files:** `src/typechecker/type_inference.rs`, `src/hir/validation.rs`
+- **Spec ref:** `foundation/spec/type-system.md` §61–74

@@ -27,9 +27,9 @@ pub mod wasmtime_runtime;
 #[cfg(feature = "wasmtime-runtime")]
 pub struct CleanRuntime {
     engine: Engine,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Async scheduler — constructed but not yet wired into execute()
     task_scheduler: Arc<Mutex<TaskScheduler>>,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Future resolver — constructed but not yet wired into execute()
     future_resolver: Arc<Mutex<FutureResolver>>,
     background_tasks: Arc<Mutex<Vec<BackgroundTask>>>,
 }

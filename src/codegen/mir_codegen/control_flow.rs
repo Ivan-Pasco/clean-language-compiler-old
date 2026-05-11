@@ -361,7 +361,7 @@ impl MirCodeGenerator<'_> {
         })
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // CFG analysis helper — available for future optimizer passes
     pub(super) fn block_always_returns(
         &self,
         function: &MirFunction,
@@ -372,7 +372,7 @@ impl MirCodeGenerator<'_> {
         self.block_always_returns_recursive(function, block_id, &mut visited, &mut on_stack)
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Recursive impl for block_always_returns — not yet called externally
     fn block_always_returns_recursive(
         &self,
         function: &MirFunction,
@@ -467,7 +467,7 @@ impl MirCodeGenerator<'_> {
     }
 
     /// Check if a path from start_block eventually reaches target_block.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // CFG reachability helper — available for future optimizer passes
     pub(super) fn path_reaches_block(
         &self,
         function: &MirFunction,

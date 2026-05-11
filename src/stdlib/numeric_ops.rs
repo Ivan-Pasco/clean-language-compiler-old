@@ -587,23 +587,6 @@ impl NumericOperations {
         ]
     }
 
-    #[allow(dead_code)]
-    fn generate_sign_function(&self) -> Vec<Instruction> {
-        vec![
-            // Simplified sign function using comparison without nested control flow
-            // sign(x) = (x > 0) - (x < 0)
-            Instruction::LocalGet(0), // x
-            Instruction::F64Const(0.0),
-            Instruction::F64Gt,          // x > 0 (i32: 1 or 0)
-            Instruction::F64ConvertI32U, // convert to f64
-            Instruction::LocalGet(0),    // x
-            Instruction::F64Const(0.0),
-            Instruction::F64Lt,          // x < 0 (i32: 1 or 0)
-            Instruction::F64ConvertI32U, // convert to f64
-            Instruction::F64Sub,         // (x > 0) - (x < 0) = sign(x)
-        ]
-    }
-
     /// Generate sine function using Taylor series approximation
     fn generate_sin(&self) -> Vec<Instruction> {
         // sin(x) ≈ x - x³/6 + x⁵/120 - x⁷/5040 (Taylor series)

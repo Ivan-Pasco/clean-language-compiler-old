@@ -15,7 +15,21 @@
       "Bash(/tmp/mock-install/bin/cln report *)",
       "Bash(git rebase *)",
       "Bash(\"/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/target/debug/cln\" check /tmp/bridge_test.cln)",
-      "Bash(/Users/earcandy/.cleen/versions/0.30.90/cln check *)"
+      "Bash(/Users/earcandy/.cleen/versions/0.30.90/cln check *)",
+      "Bash(RUSTFLAGS=\"-A dead_code\" cargo check)",
+      "Bash(sed -n '1230,1240p' src/lib.rs)",
+      "Bash(sed -n '55,65p' src/module/mod.rs)",
+      "Bash(sed -n '28,36p' src/runtime/mod.rs)",
+      "Bash(sed -n '8,16p' src/codegen/instruction_generator.rs)",
+      "Bash(sed -n '360,380p' src/codegen/mir_codegen/control_flow.rs)",
+      "Bash(sed -n '410,420p' src/stdlib/type_conv.rs)",
+      "Bash(sed -n '19,25p' src/stdlib/list_behavior.rs)",
+      "Bash(sed -n '90,96p' src/stdlib/validator.rs)",
+      "Bash(sed -n '5628,5645p' src/typechecker/type_inference.rs)",
+      "Bash(sed -n '17,25p' src/typechecker/constraint_solver.rs)",
+      "Bash(sed -n '32,40p' src/typechecker/mod.rs)",
+      "Bash(sed -n '88,97p' src/typechecker/mod.rs)",
+      "Bash(./target/release/debug_wasm tests/output/00_minimal.wasm)"
     ],
     "additionalDirectories": [
       "/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"

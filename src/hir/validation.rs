@@ -84,10 +84,41 @@ impl ValidationContext {
             .push(CompilerError::validation_error(message, location));
     }
 
+    /// Add an error with a spec error code (e.g. "FUNC006")
+    pub fn error_with_code(&mut self, message: &str, location: SourceLocation, code: &str) {
+        self.errors.push(CompilerError::Validation {
+            context: Box::new(
+                crate::error::ErrorContext::new(
+                    message,
+                    None,
+                    crate::error::ErrorType::Validation,
+                    Some(location),
+                )
+                .with_error_code(code),
+            ),
+        });
+    }
+
     /// Add a warning
     pub fn warning(&mut self, message: &str, location: SourceLocation) {
         self.warnings
             .push(CompilerError::validation_warning(message, location));
+    }
+
+    /// Add a warning with a spec error code (e.g. "FUNC007")
+    pub fn warning_with_code(&mut self, message: &str, location: SourceLocation, code: &str) {
+        self.warnings.push(CompilerError::Validation {
+            context: Box::new(
+                crate::error::ErrorContext::new(
+                    message,
+                    None,
+                    crate::error::ErrorType::Validation,
+                    Some(location),
+                )
+                .with_severity(crate::error::ErrorSeverity::Warning)
+                .with_error_code(code),
+            ),
+        });
     }
 }
 
@@ -210,9 +241,10 @@ impl HirValidator {
             let mut seen = HashSet::new();
             for item in items {
                 if !seen.insert(item) {
-                    context.error(
+                    context.error_with_code(
                         &format!("Duplicate import item '{}'", item),
                         import.location.clone(),
+                        "IMPORT004",
                     );
                 }
             }
@@ -259,18 +291,20 @@ impl HirValidator {
     fn validate_start_function(context: &mut ValidationContext, function: &HirFunction) {
         // Start function must have no parameters
         if !function.parameters.is_empty() {
-            context.error(
+            context.error_with_code(
                 "Start function cannot have parameters",
                 function.location.clone(),
+                "FUNC006",
             );
         }
 
         // Start function return type should be void or None
         if let Some(return_type) = &function.return_type {
             if *return_type != HirType::Void {
-                context.warning(
+                context.warning_with_code(
                     "Start function should return void",
                     function.location.clone(),
+                    "FUNC007",
                 );
             }
         }
@@ -898,6 +932,7 @@ mod tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            screen_blocks: vec![],
             location: test_location(),
         };
 
@@ -933,6 +968,7 @@ mod tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            screen_blocks: vec![],
             location: test_location(),
         };
 
@@ -985,6 +1021,7 @@ mod tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            screen_blocks: vec![],
             location: test_location(),
         };
 
@@ -1029,6 +1066,7 @@ mod tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            screen_blocks: vec![],
             location: test_location(),
         };
 
@@ -1066,6 +1104,7 @@ mod tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            screen_blocks: vec![],
             location: test_location(),
         };
 

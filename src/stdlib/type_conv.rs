@@ -411,7 +411,7 @@ mod tests {
     use crate::codegen::CodeGenerator;
     use wasmtime::{Instance, Module, Store};
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Test helper — requires wasmtime feature; no test currently calls it
     fn setup_test_environment() -> (Store<()>, Instance) {
         let mut codegen = CodeGenerator::new();
         let type_conv = TypeConvOperations::new(1024);

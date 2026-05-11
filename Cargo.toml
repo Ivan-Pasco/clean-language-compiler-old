@@ -1,6 +1,6 @@
 [package]
 name = "clean-language-compiler"
-version = "0.30.110"
+version = "0.30.111"
 authors = ["Ivan Pasco Lizarraga"]
 edition = "2021"
 homepage = "https://www.cleanlanguage.dev"
@@ -102,10 +102,16 @@ lto = false
 codegen-units = 1
 
 [lints.clippy]
-all = "allow"
+# Pedantic/nursery/cargo are too noisy for this codebase right now
 pedantic = "allow"
 nursery = "allow"
 cargo = "allow"
+# Large enums and match blocks are intentional in AST/IR types
+large_enum_variant = "allow"
+# Cognitive complexity limits don't fit recursive AST walkers
+cognitive_complexity = "allow"
+# Too many arguments is expected in code generation functions
+too_many_arguments = "allow"
 
 [lints.rust]
 deprecated = "allow"

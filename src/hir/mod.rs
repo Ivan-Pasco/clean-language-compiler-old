@@ -25,12 +25,27 @@ pub struct HirProgram {
     pub start_function: Option<HirFunction>,
     pub imports: Vec<HirImport>,
     pub tests: Vec<HirTest>,
-    /// State block containing persistent state declarations
+    /// App-level state block containing persistent state declarations
     pub state: Option<HirStateBlock>,
     /// Watch blocks for reactive state observers
     pub watch_blocks: Vec<HirWatchBlock>,
     /// External functions (WASM imports from host)
     pub externals: Vec<HirExternalFunction>,
+    /// Screen blocks — each has its own local state scope (SCOPE005)
+    pub screen_blocks: Vec<HirScreenBlock>,
+    pub location: SourceLocation,
+}
+
+/// HIR Screen Block — a named UI screen with its own local state scope.
+///
+/// State variables declared inside a screen's `state:` section are
+/// screen-local and cannot be accessed from outside this screen (SCOPE005).
+#[derive(Debug, Clone)]
+pub struct HirScreenBlock {
+    pub name: String,
+    pub state: Option<HirStateBlock>,
+    pub watch_blocks: Vec<HirWatchBlock>,
+    pub functions: Vec<HirFunction>,
     pub location: SourceLocation,
 }
 

@@ -65,6 +65,9 @@ pub enum SymbolKind {
         /// true when declared inside `computed:` — read-only, assignment is STATE004 error.
         /// spec/semantic-rules.md STATE004: "Cannot assign to computed state variable"
         is_computed: bool,
+        /// For Screen-scoped state, the name of the screen that owns this variable.
+        /// Used to enforce SCOPE005: screen-local state cannot be accessed outside its screen.
+        screen_name: Option<String>,
     },
 }
 

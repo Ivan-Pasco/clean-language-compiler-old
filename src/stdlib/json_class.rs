@@ -12,6 +12,7 @@ use wasm_encoder::Instruction;
 
 /// JSON Value Type Tags (stored in high bits of pointer)
 /// These tags identify the type of JSON value at runtime
+// Tags are public API; WASM codegen embeds them as i32 literals rather than importing these consts
 #[allow(dead_code)]
 pub const JSON_TAG_NULL: i32 = 0;
 #[allow(dead_code)]
@@ -201,6 +202,19 @@ impl JsonClass {
         &self,
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
+        // Get required function indices for stringify operations.
+        // string.concat is reachability-gated (Import Minimality Rule): it is
+        // only registered when the program uses string concatenation or JSON.
+        // If it is absent the program does not call json.dataToText or
+        // json.prettyDataToText, so skip the stringify helpers entirely.
+        let Some(string_concat_index) = codegen.get_function_index("string.concat") else {
+            tracing::debug!(
+                "JSON stringify: string.concat not registered (Import Minimality) — \
+                 skipping stringify operations (json.textToData still available)"
+            );
+            return Ok(());
+        };
+
         // Get required function indices for stringify operations
         let malloc_index = codegen
             .get_function_index("__malloc")
@@ -214,10 +228,6 @@ impl JsonClass {
         let float_to_string_index = codegen
             .get_function_index("float_to_string")
             .expect("float_to_string must be registered before JSON stringify functions");
-
-        let string_concat_index = codegen
-            .get_function_index("string.concat")
-            .expect("string.concat must be registered before JSON stringify functions");
 
         // Calculate what the function indices will be for mutual recursion
         let base_idx = codegen.get_next_function_index();

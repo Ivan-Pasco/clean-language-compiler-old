@@ -1086,7 +1086,7 @@ pub fn gen_substring(malloc_func: u32) -> Vec<Instruction<'static>> {
 /// Helper: Check if a byte is whitespace (space, tab, newline, carriage return)
 /// Returns instructions that leave 1 on stack if whitespace, 0 otherwise
 /// Expects byte value on stack, consumes it
-#[allow(dead_code)]
+#[allow(dead_code)] // Whitespace-check helper — not yet referenced by any string function
 fn gen_is_whitespace() -> Vec<Instruction<'static>> {
     vec![
         // Stack has: byte

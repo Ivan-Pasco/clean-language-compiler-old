@@ -1,0 +1,16 @@
+// Test: spec_compliance/statements/scope005_screen_state_valid
+// Grammar: screen_block, state_block
+// Semantic: SCOPE005 — Access within the owning screen must be accepted
+// Expected output:
+//   0
+
+screen Home:
+	state:
+		integer homeCount = 0
+
+	functions:
+		function showCount():
+			print(homeCount)
+
+start:
+	showCount()

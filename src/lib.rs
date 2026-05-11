@@ -1230,7 +1230,7 @@ fn extract_plugins(source: &str) -> Vec<String> {
 /// Uses `[paths]` section from plugin.toml files to determine which plugins
 /// should be activated for a given file path, based on the plugin's `owns`
 /// directories and `implicit_import` flag.
-#[allow(dead_code)]
+#[allow(dead_code)] // Plugin auto-detection helper — not yet called from the main compile path
 fn detect_plugins_from_manifests<P: AsRef<std::path::Path>>(
     file_path: P,
     manifests: &std::collections::HashMap<String, plugins::plugin_abi::PluginManifest>,
@@ -1435,6 +1435,7 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
             state: merged_state,
             watch_blocks: Vec::new(),
             externals: all_externals,
+            screen_blocks: Vec::new(),
             location,
         }
     };
@@ -1646,6 +1647,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
             state: merged_state,
             watch_blocks: Vec::new(),
             externals: all_externals,
+            screen_blocks: Vec::new(),
             location,
         }
     };
