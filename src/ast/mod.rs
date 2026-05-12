@@ -147,6 +147,9 @@ pub enum BinaryOperator {
 pub enum UnaryOperator {
     Negate,
     Not,
+    /// Postfix `!` (required / non-null assertion) — spec grammar.ebnf line 235.
+    /// Traps at runtime if the value is null (0); otherwise returns the value unchanged.
+    RequiredAssert,
 }
 
 /// Assignment target variants as defined by `assignment_target` in foundation/spec/grammar.ebnf:
@@ -1422,17 +1425,17 @@ mod tests {
 
         // Test simple types
         let int_type = Type::Integer;
-        let json = serde_json::to_string(&int_type).unwrap();
+        let json = serde_json::to_string(&int_type).expect("test: Type::Integer must serialize");
         assert!(json.contains("Integer"));
 
         // Test Value
         let value = Value::Integer(42);
-        let json = serde_json::to_string(&value).unwrap();
+        let json = serde_json::to_string(&value).expect("test: Value::Integer must serialize");
         assert!(json.contains("42"));
 
         // Test Expression
         let expr = Expression::Literal(Value::String("test".to_string()));
-        let json = serde_json::to_string(&expr).unwrap();
+        let json = serde_json::to_string(&expr).expect("test: Expression::Literal must serialize");
         assert!(json.contains("test"));
 
         // Test Statement
@@ -1440,12 +1443,12 @@ mod tests {
             value: Some(Expression::Literal(Value::Boolean(true))),
             location: None,
         };
-        let json = serde_json::to_string(&stmt).unwrap();
+        let json = serde_json::to_string(&stmt).expect("test: Statement::Return must serialize");
         assert!(json.contains("Return"));
 
         // Test Function
         let func = Function::new("test_func".to_string(), vec![], Type::Void, vec![], None);
-        let json = serde_json::to_string(&func).unwrap();
+        let json = serde_json::to_string(&func).expect("test: Function must serialize");
         assert!(json.contains("test_func"));
 
         // Test Program
@@ -1465,7 +1468,7 @@ mod tests {
             source_block: None,
             location: None,
         };
-        let json = serde_json::to_string(&program).unwrap();
+        let json = serde_json::to_string(&program).expect("test: Program must serialize");
         assert!(json.contains("test_func"));
         assert!(!json.is_empty());
     }

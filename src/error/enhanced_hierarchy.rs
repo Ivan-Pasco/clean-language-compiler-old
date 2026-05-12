@@ -311,10 +311,14 @@ impl EnhancedCompilerError {
                 SystemErrorKind::ResourceExhaustion { .. } => "SYS004".to_string(),
             },
             ErrorCategory::User(kind) => match kind {
-                UserErrorKind::InvalidArguments { .. } => "USR001".to_string(),
-                UserErrorKind::Configuration { .. } => "USR002".to_string(),
-                UserErrorKind::MissingInput { .. } => "USR003".to_string(),
-                UserErrorKind::ProjectStructure { .. } => "USR004".to_string(),
+                // Invalid arguments map to SEM009 (invalid type specification / bad input)
+                UserErrorKind::InvalidArguments { .. } => "SEM009".to_string(),
+                // Configuration errors map to COM005 (target/environment-specific error)
+                UserErrorKind::Configuration { .. } => "COM005".to_string(),
+                // Missing input is a syntax-level omission
+                UserErrorKind::MissingInput { .. } => "SYN003".to_string(),
+                // Project structure errors are module resolution failures
+                UserErrorKind::ProjectStructure { .. } => "COM004".to_string(),
             },
         }
     }
@@ -675,6 +679,8 @@ pub fn spec_error_code(error: &super::CompilerError) -> Option<&'static str> {
     };
 
     // If the code already uses a known spec prefix, return it directly.
+    // Accepted prefixes are the first 3 characters of every spec-defined code family.
+    // USR is omitted: user-facing codes are now mapped to semantic/compilation spec codes.
     if let Some(code) = raw_code {
         let is_spec_code = matches!(
             code.get(..3),
@@ -691,7 +697,6 @@ pub fn spec_error_code(error: &super::CompilerError) -> Option<&'static str> {
                     | "RUN"
                     | "SYN"
                     | "SYS"
-                    | "USR"
             )
         );
         if is_spec_code {

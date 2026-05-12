@@ -980,8 +980,20 @@ impl super::CodeGenerator {
     }
 
     /// Register console input function imports
+    ///
+    /// `input` (plain string input) is always emitted — it is a core language
+    /// built-in and cheap for any host to provide.
+    ///
+    /// The typed variants (`input_integer`, `input_float`, `input_yesno`,
+    /// `input_range`) are gated on reachability: if no call site in the MIR
+    /// references any `input.*` variant, they are omitted from the import
+    /// section.  This is safe because `mem_alloc` (and the other memory
+    /// imports registered by `register_type_conversion_imports`) is now
+    /// resolved dynamically by `ValidatorManager` and `ListClass` rather
+    /// than via a hardcoded index, so skipping these four imports no longer
+    /// shifts subsequent indices in a way that corrupts those wrappers.
     pub(crate) fn register_console_imports(&mut self) -> Result<(), CompilerError> {
-        // input(prompt_ptr: i32) -> string_ptr: i32
+        // input(prompt_ptr: i32) -> string_ptr: i32  [always emitted]
         let input_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
         if self.emit_import(
             "env",
@@ -997,55 +1009,71 @@ impl super::CodeGenerator {
             self.function_count += 1;
         }
 
-        // input_integer(prompt_ptr: i32) -> integer: i32
-        let input_integer_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
-        if self.emit_import(
-            "env",
-            "input_integer",
-            wasm_encoder::EntityType::Function(input_integer_type),
-        ) {
-            self.function_map
-                .insert("input.integer".to_string(), self.function_count);
-            self.function_count += 1;
-        }
+        // Gate the typed input variants on reachability.
+        // Programs that never call input.integer / input.number / input.yesNo /
+        // input.range do not need these host imports.
+        let has_typed_input = self.has_reachable_prefix("input_integer")
+            || self.has_reachable_prefix("input_float")
+            || self.has_reachable_prefix("input_yesno")
+            || self.has_reachable_prefix("input_range")
+            || self.has_reachable_prefix("input.integer")
+            || self.has_reachable_prefix("input.number")
+            || self.has_reachable_prefix("input.yesNo")
+            || self.has_reachable_prefix("input.range");
 
-        // input_float(prompt_ptr: i32) -> number: f64
-        let input_number_type = self.add_function_type(&[WasmType::I32], Some(WasmType::F64))?;
-        if self.emit_import(
-            "env",
-            "input_float",
-            wasm_encoder::EntityType::Function(input_number_type),
-        ) {
-            self.function_map
-                .insert("input.number".to_string(), self.function_count);
-            self.function_count += 1;
-        }
+        if has_typed_input {
+            // input_integer(prompt_ptr: i32) -> integer: i32
+            let input_integer_type =
+                self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
+            if self.emit_import(
+                "env",
+                "input_integer",
+                wasm_encoder::EntityType::Function(input_integer_type),
+            ) {
+                self.function_map
+                    .insert("input.integer".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
-        // input_yesno(prompt_ptr: i32) -> boolean: i32
-        let input_yesno_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
-        if self.emit_import(
-            "env",
-            "input_yesno",
-            wasm_encoder::EntityType::Function(input_yesno_type),
-        ) {
-            self.function_map
-                .insert("input.yesNo".to_string(), self.function_count);
-            self.function_count += 1;
-        }
+            // input_float(prompt_ptr: i32) -> number: f64
+            let input_number_type =
+                self.add_function_type(&[WasmType::I32], Some(WasmType::F64))?;
+            if self.emit_import(
+                "env",
+                "input_float",
+                wasm_encoder::EntityType::Function(input_number_type),
+            ) {
+                self.function_map
+                    .insert("input.number".to_string(), self.function_count);
+                self.function_count += 1;
+            }
 
-        // input_range(prompt_ptr: i32, prompt_len: i32, min: i32, max: i32) -> integer: i32
-        let input_range_type = self.add_function_type(
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-        )?;
-        if self.emit_import(
-            "env",
-            "input_range",
-            wasm_encoder::EntityType::Function(input_range_type),
-        ) {
-            self.function_map
-                .insert("input.range".to_string(), self.function_count);
-            self.function_count += 1;
+            // input_yesno(prompt_ptr: i32) -> boolean: i32
+            let input_yesno_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
+            if self.emit_import(
+                "env",
+                "input_yesno",
+                wasm_encoder::EntityType::Function(input_yesno_type),
+            ) {
+                self.function_map
+                    .insert("input.yesNo".to_string(), self.function_count);
+                self.function_count += 1;
+            }
+
+            // input_range(prompt_ptr: i32, prompt_len: i32, min: i32, max: i32) -> integer: i32
+            let input_range_type = self.add_function_type(
+                &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+            )?;
+            if self.emit_import(
+                "env",
+                "input_range",
+                wasm_encoder::EntityType::Function(input_range_type),
+            ) {
+                self.function_map
+                    .insert("input.range".to_string(), self.function_count);
+                self.function_count += 1;
+            }
         }
 
         Ok(())

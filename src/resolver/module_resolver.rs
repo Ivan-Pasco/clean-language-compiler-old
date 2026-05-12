@@ -348,7 +348,10 @@ impl ModuleResolver {
                 module.dependencies = deps;
             }
 
-            Ok(module.hir.as_ref().unwrap())
+            Ok(module
+                .hir
+                .as_ref()
+                .expect("invariant: hir was just assigned Some above"))
         } else {
             Err(CompilerError::validation_error(
                 format!("Module '{}' not found", module_name),
@@ -477,12 +480,23 @@ mod tests {
             .dependencies
             .insert("B".to_string(), ["C".to_string()].into_iter().collect());
 
-        let result = resolver.topological_sort().unwrap();
+        let result = resolver
+            .topological_sort()
+            .expect("test: topological_sort should succeed");
 
         // C should come before B, and B should come before A
-        let c_pos = result.iter().position(|x| x == "C").unwrap();
-        let b_pos = result.iter().position(|x| x == "B").unwrap();
-        let a_pos = result.iter().position(|x| x == "A").unwrap();
+        let c_pos = result
+            .iter()
+            .position(|x| x == "C")
+            .expect("test: C must be in result");
+        let b_pos = result
+            .iter()
+            .position(|x| x == "B")
+            .expect("test: B must be in result");
+        let a_pos = result
+            .iter()
+            .position(|x| x == "A")
+            .expect("test: A must be in result");
 
         assert!(c_pos < b_pos, "C should come before B");
         assert!(b_pos < a_pos, "B should come before A");

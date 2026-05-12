@@ -190,6 +190,9 @@ impl GlobalSymbolTable {
             ("print", vec![HirType::String], Some(HirType::Void)),
             ("println", vec![HirType::String], Some(HirType::Void)),
             ("printl", vec![HirType::String], Some(HirType::Void)),
+            ("console_log", vec![HirType::String], Some(HirType::Void)),
+            ("console_error", vec![HirType::String], Some(HirType::Void)),
+            ("console_warn", vec![HirType::String], Some(HirType::Void)),
             ("abs", vec![HirType::Number], Some(HirType::Number)),
             (
                 "max",
@@ -946,6 +949,55 @@ impl GlobalSymbolTable {
                 HirType::String,
             ),
             ("http.delete", vec![HirType::String], HirType::String),
+            // Extended HTTP client functions
+            ("http.head", vec![HirType::String], HirType::String),
+            ("http.options", vec![HirType::String], HirType::String),
+            (
+                "http.postJson",
+                vec![HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "http.putJson",
+                vec![HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "http.postForm",
+                vec![HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "http.getWithHeaders",
+                vec![HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "http.postWithHeaders",
+                vec![HirType::String, HirType::String, HirType::String],
+                HirType::String,
+            ),
+            ("http.encodeUrl", vec![HirType::String], HirType::String),
+            ("http.decodeUrl", vec![HirType::String], HirType::String),
+            ("http.buildQuery", vec![HirType::String], HirType::String),
+            // Layer 3: HTTP response functions (server-only)
+            (
+                "http.respond",
+                vec![HirType::Integer, HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "http.redirect",
+                vec![HirType::Integer, HirType::String],
+                HirType::String,
+            ),
+            (
+                "http.setHeader",
+                vec![HirType::String, HirType::String],
+                HirType::String,
+            ),
+            ("http.setCache", vec![HirType::Integer], HirType::Integer),
+            ("http.noCache", vec![], HirType::Integer),
             // File namespace functions
             ("file.read", vec![HirType::String], HirType::String),
             (
@@ -1064,6 +1116,85 @@ impl GlobalSymbolTable {
                 vec![HirType::Integer, HirType::String],
                 HirType::Integer,
             ),
+            // db namespace functions — Layer 2 host bridge
+            (
+                "db.query",
+                vec![HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "db.execute",
+                vec![HirType::String, HirType::String],
+                HirType::Integer,
+            ),
+            ("db.begin", vec![], HirType::Boolean),
+            ("db.commit", vec![], HirType::Boolean),
+            ("db.rollback", vec![], HirType::Boolean),
+            // crypto namespace functions — Layer 2 host bridge
+            (
+                "crypto.hashPassword",
+                vec![HirType::String],
+                HirType::String,
+            ),
+            (
+                "crypto.verifyPassword",
+                vec![HirType::String, HirType::String],
+                HirType::Boolean,
+            ),
+            (
+                "crypto.randomBytes",
+                vec![HirType::Integer],
+                HirType::String,
+            ),
+            ("crypto.randomHex", vec![HirType::Integer], HirType::String),
+            ("crypto.sha256", vec![HirType::String], HirType::String),
+            ("crypto.sha512", vec![HirType::String], HirType::String),
+            (
+                "crypto.hmac",
+                vec![HirType::String, HirType::String, HirType::String],
+                HirType::String,
+            ),
+            // jwt namespace functions — Layer 2 host bridge
+            (
+                "jwt.sign",
+                vec![HirType::String, HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "jwt.verify",
+                vec![HirType::String, HirType::String, HirType::String],
+                HirType::String,
+            ),
+            ("jwt.decode", vec![HirType::String], HirType::String),
+            // env namespace functions — Layer 2 host bridge
+            ("env.get", vec![HirType::String], HirType::String),
+            // time namespace functions — Layer 2 host bridge
+            ("time.now", vec![], HirType::Integer),
+            // req namespace functions — Layer 3 server-only
+            ("req.param", vec![HirType::String], HirType::String),
+            ("req.query", vec![HirType::String], HirType::String),
+            ("req.body", vec![], HirType::String),
+            ("req.header", vec![HirType::String], HirType::String),
+            ("req.headers", vec![], HirType::String),
+            ("req.method", vec![], HirType::String),
+            ("req.path", vec![], HirType::String),
+            ("req.ip", vec![], HirType::String),
+            ("req.form", vec![], HirType::String),
+            ("req.cookie", vec![HirType::String], HirType::String),
+            // auth namespace functions — Layer 3 server-only
+            ("auth.getSession", vec![], HirType::String),
+            ("auth.requireAuth", vec![], HirType::Boolean),
+            ("auth.requireRole", vec![HirType::String], HirType::Boolean),
+            ("auth.can", vec![HirType::String], HirType::Boolean),
+            ("auth.hasAnyRole", vec![HirType::String], HirType::Boolean),
+            ("auth.setSession", vec![HirType::String], HirType::Boolean),
+            ("auth.clearSession", vec![], HirType::Boolean),
+            ("auth.userId", vec![], HirType::Integer),
+            ("auth.userRole", vec![], HirType::String),
+            // session namespace functions — Layer 3 server-only
+            ("session.get", vec![], HirType::String),
+            ("session.delete", vec![], HirType::Boolean),
+            ("session.exists", vec![HirType::String], HirType::Boolean),
         ];
 
         for (name, params, return_type) in namespace_functions {
@@ -1241,6 +1372,23 @@ impl GlobalSymbolTable {
             self.lookup_symbol("http.put").unwrap_or(SymbolId(0)),
             self.lookup_symbol("http.patch").unwrap_or(SymbolId(0)),
             self.lookup_symbol("http.delete").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.head").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.options").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.postJson").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.putJson").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.postForm").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.getWithHeaders")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.postWithHeaders")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.encodeUrl").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.decodeUrl").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.buildQuery").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.respond").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.redirect").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.setHeader").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.setCache").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("http.noCache").unwrap_or(SymbolId(0)),
         ];
 
         let http_namespace_id = self.create_symbol(
@@ -1391,6 +1539,204 @@ impl GlobalSymbolTable {
             },
         );
         self.builtins.insert(validator_namespace_id);
+
+        // Extended http namespace — add new functions to the existing http namespace symbol
+        // (The http namespace identifier was already created above; we add a second entry
+        // for the extended functions so the resolver can find them via dot-notation lookup.)
+
+        // db namespace
+        let db_functions = vec![
+            self.lookup_symbol("db.query").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("db.execute").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("db.begin").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("db.commit").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("db.rollback").unwrap_or(SymbolId(0)),
+        ];
+        let db_namespace_id = self.create_symbol(
+            "db".to_string(),
+            SymbolKind::Namespace {
+                functions: db_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+                byte_start: None,
+                byte_end: None,
+            },
+        );
+        self.builtins.insert(db_namespace_id);
+
+        // crypto namespace
+        let crypto_functions = vec![
+            self.lookup_symbol("crypto.hashPassword")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("crypto.verifyPassword")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("crypto.randomBytes")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("crypto.randomHex")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("crypto.sha256").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("crypto.sha512").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("crypto.hmac").unwrap_or(SymbolId(0)),
+        ];
+        let crypto_namespace_id = self.create_symbol(
+            "crypto".to_string(),
+            SymbolKind::Namespace {
+                functions: crypto_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+                byte_start: None,
+                byte_end: None,
+            },
+        );
+        self.builtins.insert(crypto_namespace_id);
+
+        // jwt namespace
+        let jwt_functions = vec![
+            self.lookup_symbol("jwt.sign").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("jwt.verify").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("jwt.decode").unwrap_or(SymbolId(0)),
+        ];
+        let jwt_namespace_id = self.create_symbol(
+            "jwt".to_string(),
+            SymbolKind::Namespace {
+                functions: jwt_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+                byte_start: None,
+                byte_end: None,
+            },
+        );
+        self.builtins.insert(jwt_namespace_id);
+
+        // env namespace
+        let env_functions = vec![self.lookup_symbol("env.get").unwrap_or(SymbolId(0))];
+        let env_namespace_id = self.create_symbol(
+            "env".to_string(),
+            SymbolKind::Namespace {
+                functions: env_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+                byte_start: None,
+                byte_end: None,
+            },
+        );
+        self.builtins.insert(env_namespace_id);
+
+        // time namespace
+        let time_functions = vec![self.lookup_symbol("time.now").unwrap_or(SymbolId(0))];
+        let time_namespace_id = self.create_symbol(
+            "time".to_string(),
+            SymbolKind::Namespace {
+                functions: time_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+                byte_start: None,
+                byte_end: None,
+            },
+        );
+        self.builtins.insert(time_namespace_id);
+
+        // req namespace (Layer 3 server-only)
+        let req_functions = vec![
+            self.lookup_symbol("req.param").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("req.query").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("req.body").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("req.header").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("req.headers").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("req.method").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("req.path").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("req.ip").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("req.form").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("req.cookie").unwrap_or(SymbolId(0)),
+        ];
+        let req_namespace_id = self.create_symbol(
+            "req".to_string(),
+            SymbolKind::Namespace {
+                functions: req_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+                byte_start: None,
+                byte_end: None,
+            },
+        );
+        self.builtins.insert(req_namespace_id);
+
+        // auth namespace (Layer 3 server-only)
+        let auth_functions = vec![
+            self.lookup_symbol("auth.getSession").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("auth.requireAuth")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("auth.requireRole")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("auth.can").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("auth.hasAnyRole").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("auth.setSession").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("auth.clearSession")
+                .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("auth.userId").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("auth.userRole").unwrap_or(SymbolId(0)),
+        ];
+        let auth_namespace_id = self.create_symbol(
+            "auth".to_string(),
+            SymbolKind::Namespace {
+                functions: auth_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+                byte_start: None,
+                byte_end: None,
+            },
+        );
+        self.builtins.insert(auth_namespace_id);
+
+        // session namespace (Layer 3 server-only)
+        let session_functions = vec![
+            self.lookup_symbol("session.get").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("session.delete").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("session.exists").unwrap_or(SymbolId(0)),
+        ];
+        let session_namespace_id = self.create_symbol(
+            "session".to_string(),
+            SymbolKind::Namespace {
+                functions: session_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+                byte_start: None,
+                byte_end: None,
+            },
+        );
+        self.builtins.insert(session_namespace_id);
     }
 }
 
@@ -1417,7 +1763,7 @@ mod tests {
         // Built-ins should be in global scope
         let print_symbol = table.lookup_symbol("print");
         assert!(print_symbol.is_some());
-        assert!(table.is_builtin(print_symbol.unwrap()));
+        assert!(table.is_builtin(print_symbol.expect("test: print symbol must exist in builtins")));
     }
 
     #[test]

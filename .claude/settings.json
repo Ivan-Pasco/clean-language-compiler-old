@@ -29,7 +29,9 @@
       "Bash(sed -n '17,25p' src/typechecker/constraint_solver.rs)",
       "Bash(sed -n '32,40p' src/typechecker/mod.rs)",
       "Bash(sed -n '88,97p' src/typechecker/mod.rs)",
-      "Bash(./target/release/debug_wasm tests/output/00_minimal.wasm)"
+      "Bash(./target/release/debug_wasm tests/output/00_minimal.wasm)",
+      "Bash(sed -n '765,775p' src/error/recovery.rs)",
+      "Bash(sed -n '976,984p' src/error/mod.rs)"
     ],
     "additionalDirectories": [
       "/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"

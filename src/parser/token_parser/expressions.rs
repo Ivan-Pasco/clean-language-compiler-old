@@ -396,7 +396,17 @@ impl TokenParser {
 
                     expr = Expression::ListAccess(Box::new(expr), Box::new(index));
                 }
-                // Bang (!) is no longer a postfix operator; stop parsing postfix chain
+                TokenKind::Bang => {
+                    // Postfix `!` (required / non-null assertion) — spec grammar.ebnf line 235.
+                    // `value!` traps at runtime if value is null; otherwise returns value unchanged.
+                    let bang_location = self.current().location.clone();
+                    self.bump(); // consume !
+                    expr = Expression::Unary(
+                        crate::ast::UnaryOperator::RequiredAssert,
+                        Box::new(expr),
+                    );
+                    let _ = bang_location; // location captured in outer expression
+                }
                 _ => break,
             }
         }

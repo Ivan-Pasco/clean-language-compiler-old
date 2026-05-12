@@ -571,10 +571,17 @@ impl HirBuilder {
                     .iter()
                     .map(|wb| self.build_watch_block(wb))
                     .collect::<Result<Vec<_>, _>>()?;
-                let hir_fns = screen_fns
+                let mut hir_fns = screen_fns
                     .iter()
                     .map(|f| self.build_function(f))
                     .collect::<Result<Vec<_>, _>>()?;
+                // Set owner_screen on each function so the resolver can enforce SCOPE005
+                // while resolving the function body, and promote them to the global
+                // function list so they are callable from start: and other functions.
+                for hir_fn in hir_fns.iter_mut() {
+                    hir_fn.owner_screen = Some(name.clone());
+                    functions.push(hir_fn.clone());
+                }
                 screen_blocks.push(crate::hir::HirScreenBlock {
                     name: name.clone(),
                     state: hir_state,
@@ -638,6 +645,7 @@ impl HirBuilder {
             body,
             is_start: func.name == "start",
             is_private: func.visibility == crate::ast::Visibility::Private,
+            owner_screen: None, // Set to Some(screen_name) when building screen functions
             location: func.location.clone().unwrap_or_default(),
         })
     }
@@ -1374,7 +1382,10 @@ impl HirBuilder {
                             ));
                         }
                         1 => {
-                            let sig = candidates.into_iter().next().unwrap();
+                            let sig = candidates
+                                .into_iter()
+                                .next()
+                                .expect("invariant: match arm len==1 guarantees one element");
                             let ordered =
                                 Self::resolve_named_args(method, &sig, arguments, location)?;
                             ordered
@@ -1734,6 +1745,7 @@ impl HirBuilder {
         match op {
             UnaryOperator::Negate => HirUnaryOp::Negate,
             UnaryOperator::Not => HirUnaryOp::Not,
+            UnaryOperator::RequiredAssert => HirUnaryOp::Required,
         }
     }
 

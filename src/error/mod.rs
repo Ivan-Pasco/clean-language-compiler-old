@@ -179,7 +179,7 @@ impl ErrorContext {
             source_snippet,
             stack_trace: Vec::new(),
             severity: ErrorSeverity::Error,
-            error_code: Some("E001".to_string()),
+            error_code: Some("SYN001".to_string()),
             related_errors: Vec::new(),
         }
     }
@@ -209,7 +209,7 @@ impl ErrorContext {
             source_snippet: None,
             stack_trace: Vec::new(),
             severity: ErrorSeverity::Error,
-            error_code: Some("E002".to_string()),
+            error_code: Some("SEM001".to_string()),
             related_errors: Vec::new(),
         }
     }
@@ -246,7 +246,7 @@ impl ErrorContext {
             source_snippet,
             stack_trace: Vec::new(),
             severity: ErrorSeverity::Error,
-            error_code: Some("E003".to_string()),
+            error_code: Some("SEM002".to_string()),
             related_errors: Vec::new(),
         }
     }
@@ -274,7 +274,7 @@ impl ErrorContext {
             source_snippet: None,
             stack_trace: Vec::new(),
             severity: ErrorSeverity::Error,
-            error_code: Some("E004".to_string()),
+            error_code: Some("SYN006".to_string()),
             related_errors: Vec::new(),
         }
     }
@@ -300,7 +300,7 @@ impl ErrorContext {
             source_snippet: None,
             stack_trace: Vec::new(),
             severity: ErrorSeverity::Error,
-            error_code: Some("E005".to_string()),
+            error_code: Some("SYN003".to_string()),
             related_errors: Vec::new(),
         }
     }
@@ -448,14 +448,14 @@ impl CompilerError {
         CompilerError::Syntax {
             context: Box::new(
                 ErrorContext::new(message, help, ErrorType::Syntax, location)
-                    .with_error_code("E001"),
+                    .with_error_code("SYN001"),
             ),
         }
     }
 
     /// Semantic error: a well-formed program that violates a language semantic rule
     /// (type mismatches, undeclared variables, FUNC008–FUNC011, etc.).
-    /// Maps to the `Syntax` variant with error type `Semantic` and code `E003`.
+    /// Maps to the `Syntax` variant with error type `Semantic` and code `SEM002` (UndefinedSymbol).
     pub fn semantic_error<T: Into<String>>(
         message: T,
         help: Option<String>,
@@ -464,7 +464,7 @@ impl CompilerError {
         CompilerError::Syntax {
             context: Box::new(
                 ErrorContext::new(message, help, ErrorType::Semantic, location)
-                    .with_error_code("E003"),
+                    .with_error_code("SEM002"),
             ),
         }
     }
@@ -476,7 +476,8 @@ impl CompilerError {
     ) -> Self {
         CompilerError::Type {
             context: Box::new(
-                ErrorContext::new(message, help, ErrorType::Type, location).with_error_code("E002"),
+                ErrorContext::new(message, help, ErrorType::Type, location)
+                    .with_error_code("SEM001"),
             ),
         }
     }
@@ -489,7 +490,7 @@ impl CompilerError {
         CompilerError::Memory {
             context: Box::new(
                 ErrorContext::new(message, help, ErrorType::Memory, location)
-                    .with_error_code("E006"),
+                    .with_error_code("COM003"),
             ),
         }
     }
@@ -502,7 +503,7 @@ impl CompilerError {
         CompilerError::Codegen {
             context: Box::new(
                 ErrorContext::new(message, help, ErrorType::Codegen, location)
-                    .with_error_code("E007"),
+                    .with_error_code("COM001"),
             ),
         }
     }
@@ -514,7 +515,7 @@ impl CompilerError {
     ) -> Self {
         CompilerError::IO {
             context: Box::new(
-                ErrorContext::new(message, help, ErrorType::IO, location).with_error_code("E008"),
+                ErrorContext::new(message, help, ErrorType::IO, location).with_error_code("COM005"),
             ),
         }
     }
@@ -527,7 +528,7 @@ impl CompilerError {
         CompilerError::Runtime {
             context: Box::new(
                 ErrorContext::new(message, help, ErrorType::Runtime, location)
-                    .with_error_code("E009"),
+                    .with_error_code("RUN001"),
             ),
         }
     }
@@ -536,7 +537,7 @@ impl CompilerError {
         CompilerError::Validation {
             context: Box::new(
                 ErrorContext::new(message, None, ErrorType::Validation, Some(location))
-                    .with_error_code("E010"),
+                    .with_error_code("SEM007"),
             ),
         }
     }
@@ -546,7 +547,7 @@ impl CompilerError {
             context: Box::new(
                 ErrorContext::new(message, None, ErrorType::Validation, Some(location))
                     .with_severity(ErrorSeverity::Warning)
-                    .with_error_code("W010"),
+                    .with_error_code("FUNC004"),
             ),
         }
     }
@@ -559,7 +560,7 @@ impl CompilerError {
         CompilerError::Syntax {
             context: Box::new(
                 ErrorContext::new(message, help, ErrorType::Syntax, location)
-                    .with_error_code("E001"),
+                    .with_error_code("SYN001"),
             ),
         }
     }
@@ -670,7 +671,7 @@ impl CompilerError {
             context: Box::new(
                 ErrorContext::enhanced_syntax_error(message, location, None, suggestions)
                     .with_help(help)
-                    .with_error_code("E005"),
+                    .with_error_code("SYN003"),
             ),
         }
     }
@@ -730,7 +731,7 @@ impl CompilerError {
                     Some(location),
                 )
                 .with_suggestions(error_suggestions)
-                .with_error_code("E011"),
+                .with_error_code("FUNC001"),
             ),
         }
     }
@@ -760,7 +761,7 @@ impl CompilerError {
                     Some(location),
                 )
                 .with_suggestions(error_suggestions)
-                .with_error_code("E012"),
+                .with_error_code("SEM002"),
             ),
         }
     }
@@ -801,7 +802,7 @@ impl CompilerError {
         CompilerError::Module {
             context: Box::new(
                 ErrorContext::new(message, help, ErrorType::Module, location)
-                    .with_error_code("E013"),
+                    .with_error_code("COM004"),
             ),
         }
     }
@@ -815,7 +816,7 @@ impl CompilerError {
         CompilerError::Testing {
             context: Box::new(
                 ErrorContext::new(message, help, ErrorType::Validation, location)
-                    .with_error_code("E019"),
+                    .with_error_code("SEM009"),
             ),
         }
     }
@@ -833,7 +834,7 @@ impl CompilerError {
         CompilerError::Module {
             context: Box::new(
                 ErrorContext::new(detailed_message, help, ErrorType::Import, location)
-                    .with_error_code("E014"),
+                    .with_error_code("IMPORT001"),
             ),
         }
     }
@@ -859,7 +860,7 @@ impl CompilerError {
         CompilerError::Module {
             context: Box::new(
                 ErrorContext::new(detailed_message, help, ErrorType::Module, None)
-                    .with_error_code("E015"),
+                    .with_error_code("SEM002"),
             ),
         }
     }
@@ -890,7 +891,7 @@ impl CompilerError {
         CompilerError::Memory {
             context: Box::new(
                 ErrorContext::new(full_message, help, ErrorType::Memory, location)
-                    .with_error_code("E016"),
+                    .with_error_code("COM003"),
             ),
         }
     }
@@ -913,7 +914,7 @@ impl CompilerError {
         CompilerError::Type {
             context: Box::new(
                 ErrorContext::new(full_message, help, ErrorType::Type, location)
-                    .with_error_code("E017"),
+                    .with_error_code("SEM001"),
             ),
         }
     }
@@ -928,7 +929,7 @@ impl CompilerError {
                     ErrorType::Runtime,
                     location,
                 )
-                .with_error_code("E018"),
+                .with_error_code("RUN003"),
             ),
         }
     }

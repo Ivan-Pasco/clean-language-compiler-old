@@ -117,7 +117,7 @@ impl MirCodeGenerator<'_> {
                                     crate::error::ErrorType::Codegen,
                                     None,
                                 )
-                                .with_error_code("E007"),
+                                .with_error_code("COM001"),
                             ),
                         });
                     }
@@ -130,7 +130,7 @@ impl MirCodeGenerator<'_> {
                                 crate::error::ErrorType::Codegen,
                                 None,
                             )
-                            .with_error_code("E007"),
+                            .with_error_code("COM001"),
                         ),
                     });
                 }

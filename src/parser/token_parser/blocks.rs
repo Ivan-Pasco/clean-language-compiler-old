@@ -15,7 +15,7 @@ use crate::ast::{
     ConstantAssignment, Expression, FrameworkAttribute, Statement, TestCase, Type, Value,
     VariableAssignment,
 };
-use crate::error::CompilerError;
+use crate::error::{CompilerError, ErrorContext, ErrorType};
 use crate::lexer::specification_token::TokenKind;
 use tracing::{debug, trace};
 
@@ -421,6 +421,21 @@ impl TokenParser {
                 // Wrong indentation level or no indentation — exit the block.
                 break;
             }
+        }
+
+        // SYN008: A print: block with no expressions is a compile-time error.
+        if expressions.is_empty() {
+            return Err(CompilerError::Syntax {
+                context: Box::new(
+                    ErrorContext::new(
+                        "print: block must contain at least one expression",
+                        Some("Add at least one expression inside the print: block".to_string()),
+                        ErrorType::Syntax,
+                        Some(location),
+                    )
+                    .with_error_code("SYN008"),
+                ),
+            });
         }
 
         Ok(Statement::PrintBlock {
@@ -2914,5 +2929,125 @@ impl TokenParser {
         }
 
         Ok(body)
+    }
+
+    /// Parse a `screen Name:` block.
+    ///
+    /// Syntax:
+    /// ```text
+    /// screen Home:
+    ///     state:
+    ///         integer count = 0
+    ///     watch count:
+    ///         print("changed")
+    ///     functions:
+    ///         void show()
+    ///             print(count)
+    /// ```
+    ///
+    /// Returns a `Statement::ScreenBlockStmt` which is then pushed into
+    /// `Program::screen_blocks` by the caller in `parse_program`.
+    pub(super) fn parse_screen_block(&mut self) -> Result<crate::ast::Statement, CompilerError> {
+        let location = Some(self.current().location.clone());
+
+        // Consume "screen" keyword
+        self.expect(&TokenKind::Screen)?;
+        self.skip_whitespace();
+
+        // Parse the screen name
+        let name = self
+            .expect_name()
+            .map(|t| t.text.clone())
+            .unwrap_or_else(|_| "unnamed".to_string());
+        self.skip_whitespace();
+
+        // Consume ":"
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Skip newline before the indented body
+        if matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump();
+        }
+
+        let mut state: Option<crate::ast::StateBlock> = None;
+        let mut watch_blocks: Vec<crate::ast::WatchBlock> = Vec::new();
+        let mut functions: Vec<crate::ast::Function> = Vec::new();
+
+        // Parse indented body items until we dedent back to top level.
+        while !self.is_at_end() {
+            self.skip_whitespace();
+            // Skip empty lines
+            while matches!(self.current_kind(), TokenKind::Newline) {
+                self.bump();
+                self.skip_whitespace();
+            }
+
+            if self.is_at_end() {
+                break;
+            }
+
+            // A Dedent at the top-level indentation means we've exited the screen body
+            if matches!(self.current_kind(), TokenKind::Dedent(_)) {
+                self.bump();
+                break;
+            }
+
+            // Skip over Indent tokens entering the screen body
+            if let TokenKind::Indent(_) = self.current_kind() {
+                self.bump();
+                self.skip_whitespace();
+                if self.is_at_end() {
+                    break;
+                }
+            }
+
+            match self.current_kind() {
+                TokenKind::State => match self.parse_state_block() {
+                    Ok(mut sb) => {
+                        sb.scope = crate::ast::StateScope::Screen;
+                        state = Some(sb);
+                    }
+                    Err(e) => return Err(e),
+                },
+                TokenKind::Watch => match self.parse_watch_block() {
+                    Ok(wb) => watch_blocks.push(wb),
+                    Err(e) => return Err(e),
+                },
+                TokenKind::Functions => match self.parse_functions_block() {
+                    Ok(mut fns) => functions.append(&mut fns),
+                    Err(e) => return Err(e),
+                },
+                // Any top-level keyword (class, start, screen) means we've
+                // left the screen body even without an explicit Dedent.
+                TokenKind::Class | TokenKind::Function | TokenKind::Start | TokenKind::Screen => {
+                    break;
+                }
+                _ => {
+                    // Unknown token inside screen body — skip and continue
+                    let token = self.current();
+                    self.errors.push(CompilerError::parse_error(
+                        format!(
+                            "Unexpected token inside screen '{}' body: {:?}",
+                            name, token.kind
+                        ),
+                        Some(token.location.clone()),
+                        Some(
+                            "Screen body may contain: state:, watch <name>:, functions:"
+                                .to_string(),
+                        ),
+                    ));
+                    self.bump();
+                }
+            }
+        }
+
+        Ok(crate::ast::Statement::ScreenBlockStmt {
+            name,
+            state,
+            watch_blocks,
+            functions,
+            location,
+        })
     }
 }

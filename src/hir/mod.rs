@@ -76,6 +76,10 @@ pub struct HirFunction {
     /// True when declared inside a `private:` sub-section of a `functions:` block.
     /// Private functions may not be called from importing modules (SEM005).
     pub is_private: bool,
+    /// When this function was declared inside a `screen Name:` block, this carries
+    /// the owning screen name so the resolver can enforce SCOPE005 (allow access to
+    /// that screen's state variables while resolving this function's body).
+    pub owner_screen: Option<String>,
     pub location: SourceLocation,
 }
 

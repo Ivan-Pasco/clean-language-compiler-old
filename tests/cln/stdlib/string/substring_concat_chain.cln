@@ -1,0 +1,17 @@
+// Test: stdlib/string/substring_concat_chain
+// Grammar: FunctionDeclaration, MethodCall (substring), BinaryOp (string +)
+// Semantic: SEM003 (type checking), FUNC001 (function return type)
+// Verifies Task 1: local variable index mismatch with substring() in multi-part concat chains
+// Expected output:
+//   abc-def-ghi
+
+start:
+	print(extract("abc-def-ghi"))
+
+functions:
+	string extract(string s)
+		string a = s.substring(0, 3)
+		string b = s.substring(4, 7)
+		string c = s.substring(8, 11)
+		string result = a + "-" + b + "-" + c
+		return result

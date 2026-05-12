@@ -137,9 +137,9 @@ impl MirBuilder {
                     return Ok(result_id);
                 }
 
-                // If not found in scope and we're in a class method, check class fields
-                // Extract field index before any mutable borrows to avoid borrow checker issues
-                let field_index_opt = if let Some(ref class) = context.class_context {
+                // If not found in scope and we're in a class method, check class fields.
+                // Extract both the field index and field type before any mutable borrows.
+                let field_info_opt = if let Some(ref class) = context.class_context {
                     trace!(
                         field_name = %name,
                         field_count = class.fields.len(),
@@ -150,7 +150,7 @@ impl MirBuilder {
                         .iter()
                         .enumerate()
                         .find(|(_, f)| f.name == *name)
-                        .map(|(idx, _)| idx);
+                        .map(|(idx, f)| (idx, f.field_type.clone()));
                     trace!(result = ?result, "Field search result");
                     result
                 } else {
@@ -158,7 +158,7 @@ impl MirBuilder {
                     None
                 };
 
-                if let Some(field_index) = field_index_opt {
+                if let Some((field_index, field_concrete_type)) = field_info_opt {
                     trace!(
                         field_name = %name,
                         field_index = field_index,
@@ -181,6 +181,16 @@ impl MirBuilder {
                     // Create GetElementPtr to get field address
                     let field_ptr_id = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;
+                    // Register the pointer local (always I32)
+                    context.function.locals.insert(
+                        field_ptr_id,
+                        MirLocal {
+                            name: Some(format!("field_ptr_{}", name)),
+                            local_type: MirType::I32,
+                            is_mutable: false,
+                            location: expression.location.clone(),
+                        },
+                    );
 
                     let gep_instruction = MirInstruction {
                         dest: Some(field_ptr_id),
@@ -195,9 +205,20 @@ impl MirBuilder {
                     };
                     self.add_instruction(context, gep_instruction);
 
-                    // Load the field value
+                    // Load the field value — register with the correct MIR type so the
+                    // codegen emits F64Load / I32Load correctly (not always I32Load).
                     let value_id = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;
+                    let field_mir_type = self.convert_concrete_type(&field_concrete_type);
+                    context.function.locals.insert(
+                        value_id,
+                        MirLocal {
+                            name: Some(format!("field_{}", name)),
+                            local_type: field_mir_type,
+                            is_mutable: false,
+                            location: expression.location.clone(),
+                        },
+                    );
 
                     let load_instruction = MirInstruction {
                         dest: Some(value_id),

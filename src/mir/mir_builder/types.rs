@@ -375,8 +375,10 @@ impl MirBuilder {
             ConcreteType::Boolean => MirType::Bool,
 
             // String operations preserve type
-            // NOTE: Strings are i32 pointers to [len|content] structure in memory
-            ConcreteType::String => MirType::I32,
+            // Use Ptr(I8) consistent with from_concrete_type and string literal types.
+            // Using I32 here caused load_string_argument_for_print to treat the string pointer as
+            // an integer and call int_to_string on it, producing garbage memory address output.
+            ConcreteType::String => MirType::Ptr(Box::new(MirType::I8)),
 
             // Array operations preserve pointer type
             ConcreteType::Array(elem_type) => {

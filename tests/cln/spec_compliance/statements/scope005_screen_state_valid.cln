@@ -9,7 +9,7 @@ screen Home:
 		integer homeCount = 0
 
 	functions:
-		function showCount():
+		void showCount()
 			print(homeCount)
 
 start:

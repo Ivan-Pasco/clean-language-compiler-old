@@ -469,13 +469,35 @@ pub(crate) fn is_reachability_gated_import(field: &str) -> bool {
         return true;
     }
 
-    // NOTE: Stdlib prefixes `math_*`, `input_*`, `string_*`, `string.*`,
-    // `list_*`, `list.*`, `float_to_string`, `string_to_float` are NOT
-    // gated at the import level. They are gated at the register-class
-    // level instead (see `register_math_operations`, `register_console_imports`,
-    // etc.) — that pattern cleanly skips both the imports AND the wrapper
-    // functions together, avoiding stack-unbalanced WASM from wrappers
-    // that embed stale pre-tree-shake indices.
+    // String primitives: only used when the program actually calls these operations.
+    // The MIR call graph analysis in `collect_all_called_names_from_mir` marks
+    // these reachable when:
+    //   - string.concat  → any string `+` expression (SymbolId(1000) → "string.concat")
+    //   - string_compare → any string `==` / `!=` expression (BinaryOp::Eq/Ne on strings)
+    //   - string_replace → an explicit `string.replace()` call
+    //   - string.split   → an explicit `string.split()` call
+    // A minimal `print("hello")` program contains none of these, so they are
+    // safely tree-shaken from the import section.
+    if matches!(
+        field,
+        "string.concat"
+            | "string_compare"
+            | "string.compare"
+            | "string_replace"
+            | "string.replace"
+            | "string.replaceAll"
+            | "string.split"
+    ) {
+        return true;
+    }
+
+    // list.push_f64: only used when the program contains float array literals.
+    // The MIR builder emits SymbolId(1005) → "list.push_f64" for each f64
+    // element pushed onto a list. Safe to gate — a program with no float lists
+    // never calls this import.
+    if field == "list.push_f64" {
+        return true;
+    }
 
     false
 }

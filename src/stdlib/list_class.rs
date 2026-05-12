@@ -4,9 +4,19 @@ use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_loca
 use crate::types::WasmType;
 use wasm_encoder::{BlockType, Instruction, MemArg};
 
+/// Fallback mem_alloc call index matching the standard import layout.
+/// 0=print, 1=printl, 2=input, 3=input_integer, 4=input_float,
+/// 5=input_yesno, 6=input_range, 7=mem_alloc.
+const DEFAULT_MEM_ALLOC_CALL_INDEX: u32 = 7;
+/// Public alias for use in codegen_registration.rs.
+pub const DEFAULT_MEM_ALLOC_CALL_INDEX_PUB: u32 = DEFAULT_MEM_ALLOC_CALL_INDEX;
+
 /// List class implementation for Clean Language
 /// Provides comprehensive list manipulation capabilities as static methods
-pub struct ListClass;
+pub struct ListClass {
+    /// Dynamically resolved index for mem_alloc in the current module's import table.
+    mem_alloc_idx: u32,
+}
 
 impl Default for ListClass {
     fn default() -> Self {
@@ -16,7 +26,14 @@ impl Default for ListClass {
 
 impl ListClass {
     pub fn new() -> Self {
-        Self
+        Self {
+            mem_alloc_idx: DEFAULT_MEM_ALLOC_CALL_INDEX,
+        }
+    }
+
+    /// Create a ListClass with a specific mem_alloc call index.
+    pub fn new_with_mem_alloc_idx(mem_alloc_idx: u32) -> Self {
+        Self { mem_alloc_idx }
     }
 
     /// Register all List class methods as static functions
@@ -472,7 +489,7 @@ impl ListClass {
             // mem_alloc signature: (type_id: i32, size: i32) -> i32
             Instruction::I32Const(0),  // type_id = 0 for generic allocation
             Instruction::I32Const(12), // Basic list header size
-            Instruction::Call(7),      // memory_runtime.mem_alloc (import index 7)
+            Instruction::Call(self.mem_alloc_idx), // memory_runtime.mem_alloc (dynamic index)
         ]
     }
 
@@ -515,8 +532,8 @@ impl ListClass {
             Instruction::LocalGet(4),  // total_size
             Instruction::I32Const(4),  // element size
             Instruction::I32Mul,
-            Instruction::I32Add,      // total bytes = 16 + total_size * 4
-            Instruction::Call(7),     // mem_alloc - returns new list pointer
+            Instruction::I32Add, // total bytes = 16 + total_size * 4
+            Instruction::Call(self.mem_alloc_idx), // mem_alloc - returns new list pointer
             Instruction::LocalSet(5), // new_list_ptr
             // Initialize new list header
             // Store size = total_size
@@ -718,8 +735,8 @@ impl ListClass {
             Instruction::I32Const(4), // + 4 bytes for size field
             Instruction::I32Add,      // total bytes needed
             // Call mem_alloc to allocate memory
-            Instruction::Call(7),     // mem_alloc function index
-            Instruction::LocalSet(2), // store list_ptr
+            Instruction::Call(self.mem_alloc_idx), // mem_alloc function index (dynamic)
+            Instruction::LocalSet(2),              // store list_ptr
             // Write size to list header
             Instruction::LocalGet(2), // list_ptr
             Instruction::LocalGet(0), // size
@@ -785,8 +802,8 @@ impl ListClass {
             Instruction::I32Const(4), // + 4 bytes for size field
             Instruction::I32Add,      // total bytes needed
             // Call mem_alloc to allocate memory
-            Instruction::Call(7),     // mem_alloc function index
-            Instruction::LocalSet(2), // store list_ptr
+            Instruction::Call(self.mem_alloc_idx), // mem_alloc function index (dynamic)
+            Instruction::LocalSet(2),              // store list_ptr
             // Write size to list header
             Instruction::LocalGet(2), // list_ptr
             Instruction::LocalGet(4), // size

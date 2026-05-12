@@ -704,13 +704,13 @@ impl MirBuilder {
                         let converted_id = ValueId(context.function.next_value_id);
                         context.function.next_value_id += 1;
 
-                        // Register the converted_id BEFORE creating the instruction to ensure
-                        // it's in the function.locals map for codegen
-                        // NOTE: Strings are i32 pointers to [len|content] structure in memory
+                        // Register the converted_id as Ptr(U8) — int_to_string returns a string
+                        // pointer, not an integer. Using I32 here causes load_string_argument_for_print
+                        // to call int_to_string AGAIN on the pointer address, producing garbage output.
                         self.register_temp_local(
                             context,
                             converted_id,
-                            MirType::I32,
+                            MirType::Ptr(Box::new(MirType::U8)),
                             location.clone(),
                         );
 
@@ -770,13 +770,13 @@ impl MirBuilder {
                         let converted_id = ValueId(context.function.next_value_id);
                         context.function.next_value_id += 1;
 
-                        // Register the converted_id BEFORE creating the instruction to ensure
-                        // it's in the function.locals map for codegen
-                        // NOTE: Strings are i32 pointers to [len|content] structure in memory
+                        // Register the converted_id as Ptr(U8) — bool_to_string returns a string
+                        // pointer, not an integer. Using I32 here causes load_string_argument_for_print
+                        // to call int_to_string on the pointer address, producing garbage output.
                         self.register_temp_local(
                             context,
                             converted_id,
-                            MirType::I32,
+                            MirType::Ptr(Box::new(MirType::U8)),
                             location.clone(),
                         );
 

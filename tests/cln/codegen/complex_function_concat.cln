@@ -1,0 +1,25 @@
+// Test: codegen/complex_function_concat
+// Grammar: FunctionDeclaration, WhileStatement, IfStatement, MethodCall (indexOf, substring, length), BinaryOp
+// Semantic: FUNC001, SEM003
+// Verifies Task 2: complex function with 20+ locals, nested while/if/else, indexOf + substring, string concat
+// Expected output:
+//   [world][bar]
+
+start:
+	print(process("hello(world)foo(bar)"))
+
+functions:
+	string process(string input)
+		string result = ""
+		integer pos = 0
+		while pos < input.length()
+			integer openPos = input.indexOf("(", pos)
+			if openPos == -1
+				break
+			integer closePos = input.indexOf(")", openPos)
+			if closePos == -1
+				break
+			string inner = input.substring(openPos + 1, closePos)
+			result = result + "[" + inner + "]"
+			pos = closePos + 1
+		return result

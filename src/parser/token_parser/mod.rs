@@ -149,7 +149,8 @@ impl TokenParser {
         let mut imports = Vec::new();
         let mut plugins = Vec::new();
         let mut statements = Vec::new();
-        let screens = Vec::new(); // Always empty - screens handled as framework blocks by plugins
+        let screens = Vec::new(); // Legacy field; screen blocks are stored in screen_blocks below
+        let mut screen_blocks_vec: Vec<crate::ast::Statement> = Vec::new();
         let mut state: Option<crate::ast::StateBlock> = None;
         let mut watch_blocks: Vec<crate::ast::WatchBlock> = Vec::new();
         let mut externals: Vec<crate::ast::ExternalFunction> = Vec::new();
@@ -285,6 +286,14 @@ impl TokenParser {
                             );
                             watch_blocks.push(watch_block);
                         }
+                        Err(e) => self.errors.push(e),
+                    }
+                }
+                TokenKind::Screen => {
+                    // Parse screen Name: block (UI screen with its own state scope)
+                    debug!("Parsing screen: block");
+                    match self.parse_screen_block() {
+                        Ok(screen_stmt) => screen_blocks_vec.push(screen_stmt),
                         Err(e) => self.errors.push(e),
                     }
                 }
@@ -448,7 +457,7 @@ impl TokenParser {
             screens,
             state,
             watch_blocks,
-            screen_blocks: Vec::new(),
+            screen_blocks: screen_blocks_vec,
             externals,
             source_block,
             location: None,

@@ -476,6 +476,10 @@ pub fn type_check_with_plugins(
     let mut hir_builder = HirBuilder::new();
     let hir_result = hir_builder.build_hir(ast).map_err(|e| vec![e])?;
 
+    // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
+    use crate::hir::validation::HirValidator;
+    HirValidator::validate(&hir_result.hir)?;
+
     // Stage 4: Name and Module Resolution
     let bridge_functions = registry.bridge_functions();
     let resolution_result = if bridge_functions.is_empty() {
@@ -879,6 +883,11 @@ pub fn compile_with_plugins_and_opt_level(
         "Stage 3 complete: HIR created"
     );
 
+    // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
+    use crate::hir::validation::HirValidator;
+    HirValidator::validate(&hir_result.hir)?;
+    tracing::debug!("Stage 3b complete: HIR validation passed");
+
     // Stage 4: Name and Module Resolution - symbol resolution per specification
     tracing::debug!(
         functions = hir_result.hir.functions.len(),
@@ -1101,6 +1110,10 @@ pub fn compile_with_target(
     use crate::hir::hir_builder::HirBuilder;
     let mut hir_builder = HirBuilder::new();
     let hir_result = hir_builder.build_hir(ast).map_err(|e| vec![e])?;
+
+    // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
+    use crate::hir::validation::HirValidator;
+    HirValidator::validate(&hir_result.hir)?;
 
     // Stage 4: Name and Module Resolution
     let resolution_result = Resolver::resolve(hir_result.hir)?;
@@ -1365,6 +1378,8 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
         let mut all_tests = Vec::new();
         let mut all_externals = Vec::new();
         let mut merged_state: Option<crate::hir::HirStateBlock> = None;
+        let mut merged_screen_blocks: Vec<crate::hir::HirScreenBlock> = Vec::new();
+        let mut merged_watch_blocks: Vec<crate::hir::HirWatchBlock> = Vec::new();
         let mut root_location = None;
 
         // Process modules in compilation order (dependencies first)
@@ -1381,10 +1396,12 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
                         all_classes.push(class.clone());
                     }
 
-                    // Only the entry module's start function and state block are used
+                    // Only the entry module's start function, state, and screen blocks are used
                     if module.is_entry {
                         start_function = hir.start_function.clone();
                         merged_state = hir.state.clone();
+                        merged_screen_blocks = hir.screen_blocks.clone();
+                        merged_watch_blocks = hir.watch_blocks.clone();
                         root_location = Some(hir.location.clone());
                     }
 
@@ -1419,6 +1436,7 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
         tracing::info!(
             functions = all_functions.len(),
             classes = all_classes.len(),
+            screen_blocks = merged_screen_blocks.len(),
             "Merged HIR from all modules"
         );
 
@@ -1429,9 +1447,9 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
             imports: all_imports,
             tests: all_tests,
             state: merged_state,
-            watch_blocks: Vec::new(),
+            watch_blocks: merged_watch_blocks,
             externals: all_externals,
-            screen_blocks: Vec::new(),
+            screen_blocks: merged_screen_blocks,
             location,
         }
     };
@@ -1445,6 +1463,11 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
         .as_ref()
         .map(|r| r.language_to_bridge_map())
         .unwrap_or_default();
+
+    // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
+    use crate::hir::validation::HirValidator;
+    HirValidator::validate(&merged_hir)?;
+    tracing::debug!("Stage 3b complete: HIR validation passed");
 
     // Stage 4: Resolution (with bridge functions if plugins are loaded)
     tracing::debug!(
@@ -1595,6 +1618,8 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         let mut all_tests = Vec::new();
         let mut all_externals = Vec::new();
         let mut merged_state: Option<crate::hir::HirStateBlock> = None;
+        let mut merged_screen_blocks: Vec<crate::hir::HirScreenBlock> = Vec::new();
+        let mut merged_watch_blocks: Vec<crate::hir::HirWatchBlock> = Vec::new();
         let mut root_location = None;
 
         for module_id in &unit.compilation_order {
@@ -1609,6 +1634,8 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
                     if module.is_entry {
                         start_function = hir.start_function.clone();
                         merged_state = hir.state.clone();
+                        merged_screen_blocks = hir.screen_blocks.clone();
+                        merged_watch_blocks = hir.watch_blocks.clone();
                         root_location = Some(hir.location.clone());
                     }
                     for import in &hir.imports {
@@ -1641,9 +1668,9 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
             imports: all_imports,
             tests: all_tests,
             state: merged_state,
-            watch_blocks: Vec::new(),
+            watch_blocks: merged_watch_blocks,
             externals: all_externals,
-            screen_blocks: Vec::new(),
+            screen_blocks: merged_screen_blocks,
             location,
         }
     };
@@ -1656,6 +1683,11 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         .as_ref()
         .map(|r| r.language_to_bridge_map())
         .unwrap_or_default();
+
+    // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
+    use crate::hir::validation::HirValidator;
+    HirValidator::validate(&merged_hir)?;
+    tracing::debug!("Stage 3b complete: HIR validation passed");
 
     // Stage 4: Resolution
     let resolution_result = if bridge_functions.is_empty() {
@@ -1931,6 +1963,10 @@ pub fn compile_minimal(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
     use crate::hir::hir_builder::HirBuilder;
     let mut hir_builder = HirBuilder::new();
     let hir_result = hir_builder.build_hir(ast).map_err(|e| vec![e])?;
+
+    // Stage 3b: HIR semantic validation
+    use crate::hir::validation::HirValidator;
+    HirValidator::validate(&hir_result.hir)?;
 
     let resolution_result = Resolver::resolve(hir_result.hir)?;
     let resolved_hir = resolution_result.resolved_hir;

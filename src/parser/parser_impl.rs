@@ -129,7 +129,12 @@ impl ErrorRecoveringParser {
             else if line.starts_with('\t') || (line.starts_with(' ') && line.trim() != "") {
                 // Only add if it's not already close to another recovery point
                 if self.recovery_points.is_empty()
-                    || byte_pos.saturating_sub(*self.recovery_points.last().unwrap()) > 20
+                    || byte_pos.saturating_sub(
+                        *self
+                            .recovery_points
+                            .last()
+                            .expect("invariant: non-empty vec checked above"),
+                    ) > 20
                 {
                     self.recovery_points.push(byte_pos);
                 }
@@ -421,7 +426,12 @@ impl ErrorRecoveringParser {
     fn parse_function_segment(&mut self, segment: &str) -> Result<Program, CompilerError> {
         // Try to parse as start block first
         if let Ok(pairs) = <CleanParser as Parser<Rule>>::parse(Rule::start_block, segment) {
-            let start_func = parse_start_block(pairs.into_iter().next().unwrap())?;
+            let start_func = parse_start_block(
+                pairs
+                    .into_iter()
+                    .next()
+                    .expect("invariant: parse succeeded, start_block pair exists"),
+            )?;
             return Ok(Program {
                 imports: Vec::new(),
                 plugins: Vec::new(),
@@ -510,7 +520,11 @@ impl ErrorRecoveringParser {
                 let start_function = if !start_function_lines.is_empty() {
                     let start_source = start_function_lines.join("\n");
                     match <CleanParser as Parser<Rule>>::parse(Rule::start_block, &start_source) {
-                        Ok(pairs) => Some(parse_start_block(pairs.into_iter().next().unwrap())?),
+                        Ok(pairs) => {
+                            Some(parse_start_block(pairs.into_iter().next().expect(
+                                "invariant: parse succeeded, start_block pair exists",
+                            ))?)
+                        }
                         Err(_) => {
                             // Failed to parse start block, continuing without it
                             None
@@ -545,7 +559,12 @@ impl ErrorRecoveringParser {
     fn parse_class_segment(&mut self, segment: &str) -> Result<Program, CompilerError> {
         match <CleanParser as Parser<Rule>>::parse(Rule::class_decl, segment) {
             Ok(pairs) => {
-                let class = parse_class(pairs.into_iter().next().unwrap())?;
+                let class = parse_class(
+                    pairs
+                        .into_iter()
+                        .next()
+                        .expect("invariant: parse succeeded, class_decl pair exists"),
+                )?;
                 Ok(Program {
                     imports: Vec::new(),
                     plugins: Vec::new(),
@@ -1322,10 +1341,14 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
                                 if stmt_pair.as_rule() == Rule::function_body_statement {
                                     // function_body_statement = { INDENT+ ~ statement }
                                     // So we need to get the inner statement
-                                    let statement_pair = stmt_pair.into_inner().last().unwrap(); // Skip INDENT+, get statement
+                                    let statement_pair = stmt_pair.into_inner().last().expect("invariant: function_body_statement has at least a statement child"); // Skip INDENT+, get statement
 
                                     // Check if this statement contains an input_declaration
-                                    let inner = statement_pair.clone().into_inner().next().unwrap();
+                                    let inner = statement_pair
+                                        .clone()
+                                        .into_inner()
+                                        .next()
+                                        .expect("invariant: statement has inner rule child");
                                     if inner.as_rule() == Rule::standalone_input_declaration {
                                         // Parse as parameter and add to parameters list
                                         let param =
@@ -1350,7 +1373,11 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
                             // Handle single statement function bodies
                             found_body = true;
                             // Check if this statement contains an input_declaration
-                            let inner = body_item.clone().into_inner().next().unwrap();
+                            let inner = body_item
+                                .clone()
+                                .into_inner()
+                                .next()
+                                .expect("invariant: statement has inner rule child");
                             if inner.as_rule() == Rule::standalone_input_declaration {
                                 // Parse as parameter and add to parameters list
                                 let param = parse_standalone_input_declaration_as_parameter(inner)?;
@@ -1517,7 +1544,11 @@ impl ErrorRecoveringParser {
 
             // Case 1: function name(
             if words[1].contains('(') {
-                function_name = words[1].split('(').next().unwrap().to_string();
+                function_name = words[1]
+                    .split('(')
+                    .next()
+                    .expect("invariant: contains '(' verified above")
+                    .to_string();
             }
             // Case 2: function type name(
             else if words.len() >= 3 && words[2].contains('(') {
@@ -1529,7 +1560,11 @@ impl ErrorRecoveringParser {
                     "boolean" => Type::Boolean,
                     _ => Type::Any,
                 };
-                function_name = words[2].split('(').next().unwrap().to_string();
+                function_name = words[2]
+                    .split('(')
+                    .next()
+                    .expect("invariant: contains '(' verified above")
+                    .to_string();
             }
             // Case 3: just function name
             else {
@@ -2493,10 +2528,10 @@ mod tests {
     fn test_parse_function_in_block_valid() {
         // Test simpler function without input block
         let source = "integer add(integer a, integer b)\n\treturn a + b";
-        let mut pairs =
-            <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source).unwrap();
-        let pair = pairs.next().unwrap();
-        let func = parse_function_in_block(pair).unwrap();
+        let mut pairs = <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source)
+            .expect("test: parse should succeed");
+        let pair = pairs.next().expect("test: pair should exist");
+        let func = parse_function_in_block(pair).expect("test: function should parse");
         assert_eq!(func.name, "add");
         assert_eq!(func.parameters.len(), 2);
         assert_eq!(func.parameters[0].name, "a");
@@ -2507,9 +2542,9 @@ mod tests {
     #[test]
     fn test_parse_function_in_block_duplicate_param() {
         let source = "integer add()\n\tinput\n\t\tinteger a\n\t\tinteger a\n\treturn a + a";
-        let mut pairs =
-            <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source).unwrap();
-        let pair = pairs.next().unwrap();
+        let mut pairs = <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source)
+            .expect("test: parse should succeed");
+        let pair = pairs.next().expect("test: pair should exist");
         let err = parse_function_in_block(pair).unwrap_err();
         assert!(err.to_string().contains("Duplicate parameter name"));
     }
@@ -2525,7 +2560,7 @@ mod tests {
         // Either the grammar rejects it (preferred) or parse_function_in_block catches it
         match result {
             Ok(mut pairs) => {
-                let pair = pairs.next().unwrap();
+                let pair = pairs.next().expect("test: pair should exist in Ok branch");
                 // If grammar allows it, parse_function_in_block should handle it gracefully
                 // (either accepting with a default name or rejecting)
                 let _func_result = parse_function_in_block(pair);
@@ -2540,9 +2575,9 @@ mod tests {
     #[test]
     fn debug_parse_tree_for_function_in_block() {
         let source = "integer add()\n\tinput\n\t\tinteger a\n\t\tinteger b\n\t\n\treturn a + b";
-        let mut pairs =
-            <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source).unwrap();
-        let pair = pairs.next().unwrap();
+        let mut pairs = <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source)
+            .expect("test: parse should succeed");
+        let pair = pairs.next().expect("test: pair should exist");
         println!("Parse tree: {:#?}", pair);
     }
 

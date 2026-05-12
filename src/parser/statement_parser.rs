@@ -9,7 +9,10 @@ use pest::iterators::Pair;
 
 pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
     let ast_location = convert_to_ast_location(&get_location(&pair));
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair
+        .into_inner()
+        .next()
+        .expect("invariant: statement grammar child");
 
     match inner.as_rule() {
         Rule::variable_decl => parse_variable_declaration(inner, ast_location),
@@ -103,19 +106,29 @@ fn parse_variable_declaration(
 
     // Handle the case where we get a nested rule
     let (type_part, name_part, initializer) = if parts.len() == 1 {
-        let inner = parts.next().unwrap();
+        let inner = parts.next().expect("invariant: variable_decl inner child");
         match inner.as_rule() {
             Rule::variable_decl_without_assignment => {
                 let mut inner_parts = inner.into_inner();
-                let type_part = inner_parts.next().unwrap();
-                let name_part = inner_parts.next().unwrap();
+                let type_part = inner_parts
+                    .next()
+                    .expect("invariant: variable_decl_without_assignment type");
+                let name_part = inner_parts
+                    .next()
+                    .expect("invariant: variable_decl_without_assignment name");
                 (type_part, name_part, None)
             }
             Rule::variable_decl_with_assignment => {
                 let mut inner_parts = inner.into_inner();
-                let type_part = inner_parts.next().unwrap();
-                let name_part = inner_parts.next().unwrap();
-                let initializer_part = inner_parts.next().unwrap();
+                let type_part = inner_parts
+                    .next()
+                    .expect("invariant: variable_decl_with_assignment type");
+                let name_part = inner_parts
+                    .next()
+                    .expect("invariant: variable_decl_with_assignment name");
+                let initializer_part = inner_parts
+                    .next()
+                    .expect("invariant: variable_decl_with_assignment initializer");
                 let initializer = Some(parse_expression(initializer_part)?);
                 (type_part, name_part, initializer)
             }
@@ -132,8 +145,12 @@ fn parse_variable_declaration(
         }
     } else {
         // Direct parts case
-        let type_part = parts.next().unwrap();
-        let name_part = parts.next().unwrap();
+        let type_part = parts
+            .next()
+            .expect("invariant: variable_decl direct type child");
+        let name_part = parts
+            .next()
+            .expect("invariant: variable_decl direct name child");
         let initializer = parts
             .next()
             .map(|expr_part| parse_expression(expr_part))
@@ -157,8 +174,8 @@ fn parse_assignment_statement(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     let mut parts = pair.into_inner();
-    let target_part = parts.next().unwrap();
-    let value = parse_expression(parts.next().unwrap())?;
+    let target_part = parts.next().expect("invariant: assignment target child");
+    let value = parse_expression(parts.next().expect("invariant: assignment value child"))?;
 
     // Check if this is an assignment_target with property access or array access
     if target_part.as_rule() == Rule::assignment_target {
@@ -271,7 +288,7 @@ fn parse_else_block_recursive(else_block: Pair<Rule>) -> Result<Vec<Statement>, 
                 let condition = parse_expression(part)?;
 
                 // Get the indented block for this else if
-                let then_block = parts.next().unwrap(); // This should be the indented_block
+                let then_block = parts.next().expect("invariant: else_if then_block child"); // This should be the indented_block
                 let mut then_stmts = Vec::new();
                 parse_indented_block_statements(then_block, &mut then_stmts)?;
 
@@ -340,7 +357,7 @@ fn parse_if_statement(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     let mut parts = pair.into_inner();
-    let condition = parse_expression(parts.next().unwrap())?;
+    let condition = parse_expression(parts.next().expect("invariant: if_stmt condition child"))?;
 
     let mut then_branch = Vec::new();
     let mut else_branch = None;
@@ -372,7 +389,7 @@ fn parse_while_statement(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     let mut parts = pair.into_inner();
-    let condition = parse_expression(parts.next().unwrap())?;
+    let condition = parse_expression(parts.next().expect("invariant: while_stmt condition child"))?;
 
     let mut body = Vec::new();
     for part in parts {
@@ -393,8 +410,16 @@ fn parse_iterate_statement(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     let mut parts = pair.into_inner();
-    let iterator = parts.next().unwrap().as_str().to_string();
-    let collection = parse_expression(parts.next().unwrap())?;
+    let iterator = parts
+        .next()
+        .expect("invariant: iterate_stmt iterator child")
+        .as_str()
+        .to_string();
+    let collection = parse_expression(
+        parts
+            .next()
+            .expect("invariant: iterate_stmt collection child"),
+    )?;
 
     let mut body = Vec::new();
     for part in parts {
@@ -417,9 +442,21 @@ fn parse_range_iterate_statement(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     let mut parts = pair.into_inner();
-    let iterator = parts.next().unwrap().as_str().to_string();
-    let start = parse_expression(parts.next().unwrap())?;
-    let end = parse_expression(parts.next().unwrap())?;
+    let iterator = parts
+        .next()
+        .expect("invariant: range_iterate_stmt iterator child")
+        .as_str()
+        .to_string();
+    let start = parse_expression(
+        parts
+            .next()
+            .expect("invariant: range_iterate_stmt start child"),
+    )?;
+    let end = parse_expression(
+        parts
+            .next()
+            .expect("invariant: range_iterate_stmt end child"),
+    )?;
 
     let mut step = None;
     let mut body = Vec::new();
@@ -453,7 +490,12 @@ fn parse_test_statement(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     let mut parts = pair.into_inner();
-    let name = parts.next().unwrap().as_str().trim_matches('"').to_string();
+    let name = parts
+        .next()
+        .expect("invariant: test_stmt name child")
+        .as_str()
+        .trim_matches('"')
+        .to_string();
 
     let mut body = Vec::new();
     for part in parts {
@@ -495,7 +537,7 @@ fn parse_error_statement(
 ) -> Result<Statement, CompilerError> {
     // error("message") syntax
     let mut inner = pair.into_inner();
-    let message_expr = inner.next().unwrap();
+    let message_expr = inner.next().expect("invariant: error_stmt message child");
     let message = parse_expression(message_expr)?;
 
     Ok(Statement::Error {
@@ -512,7 +554,9 @@ fn parse_require_statement(
 ) -> Result<Statement, CompilerError> {
     // require <expression>
     let mut inner = pair.into_inner();
-    let condition_expr = inner.next().unwrap();
+    let condition_expr = inner
+        .next()
+        .expect("invariant: require_stmt condition child");
     let condition = parse_expression(condition_expr)?;
 
     Ok(Statement::Require {
@@ -574,7 +618,10 @@ fn parse_apply_block_statement(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     // apply_block is a choice rule, so we need to dispatch to the specific type
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair
+        .into_inner()
+        .next()
+        .expect("invariant: apply_block inner child");
     match inner.as_rule() {
         Rule::type_apply_block => parse_type_apply_block_statement(inner, ast_location),
         Rule::function_apply_block => parse_function_apply_block_statement(inner, ast_location),
@@ -593,7 +640,9 @@ fn parse_type_apply_block_statement(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     let mut parts = pair.into_inner();
-    let type_part = parts.next().unwrap();
+    let type_part = parts
+        .next()
+        .expect("invariant: type_apply_block type child");
 
     // Parse the specific type allowed in type_apply_block: core_type | sized_type | matrix_type | array_type | pairs_type
     let type_ = match type_part.as_rule() {
@@ -629,7 +678,11 @@ fn parse_type_apply_block_statement(
             for assignment_pair in part.into_inner() {
                 if assignment_pair.as_rule() == Rule::variable_assignment {
                     let mut assignment_parts = assignment_pair.into_inner();
-                    let name = assignment_parts.next().unwrap().as_str().to_string();
+                    let name = assignment_parts
+                        .next()
+                        .expect("invariant: variable_assignment name child")
+                        .as_str()
+                        .to_string();
                     let initializer = assignment_parts
                         .next()
                         .map(|expr_pair| parse_expression(expr_pair))
@@ -653,7 +706,11 @@ fn parse_function_apply_block_statement(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     let mut parts = pair.into_inner();
-    let function_name = parts.next().unwrap().as_str().to_string();
+    let function_name = parts
+        .next()
+        .expect("invariant: function_apply_block name child")
+        .as_str()
+        .to_string();
 
     let mut expressions = Vec::new();
     for part in parts {
@@ -678,11 +735,17 @@ fn parse_method_apply_block_statement(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     let mut parts = pair.into_inner();
-    let method_call_chain_part = parts.next().unwrap();
+    let method_call_chain_part = parts
+        .next()
+        .expect("invariant: method_apply_block chain child");
 
     // Parse the method call chain: object.method or object.method1.method2
     let mut chain_parts = method_call_chain_part.into_inner();
-    let object_name = chain_parts.next().unwrap().as_str().to_string();
+    let object_name = chain_parts
+        .next()
+        .expect("invariant: method_call_chain object child")
+        .as_str()
+        .to_string();
     let mut method_chain = Vec::new();
 
     for part in chain_parts {
@@ -721,9 +784,21 @@ fn parse_constant_apply_block_statement(
             for constant_pair in part.into_inner() {
                 if constant_pair.as_rule() == Rule::constant_assignment {
                     let mut constant_parts = constant_pair.into_inner();
-                    let type_ = parse_type(constant_parts.next().unwrap())?;
-                    let name = constant_parts.next().unwrap().as_str().to_string();
-                    let value = parse_expression(constant_parts.next().unwrap())?;
+                    let type_ = parse_type(
+                        constant_parts
+                            .next()
+                            .expect("invariant: constant_assignment type child"),
+                    )?;
+                    let name = constant_parts
+                        .next()
+                        .expect("invariant: constant_assignment name child")
+                        .as_str()
+                        .to_string();
+                    let value = parse_expression(
+                        constant_parts
+                            .next()
+                            .expect("invariant: constant_assignment value child"),
+                    )?;
 
                     constants.push(crate::ast::ConstantAssignment { type_, name, value });
                 }
@@ -742,7 +817,11 @@ fn parse_background_statement(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     let mut parts = pair.into_inner();
-    let expression = parse_expression(parts.next().unwrap())?;
+    let expression = parse_expression(
+        parts
+            .next()
+            .expect("invariant: background_stmt expression child"),
+    )?;
 
     Ok(Statement::Background {
         expression,
@@ -755,8 +834,16 @@ fn parse_later_assignment_statement(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     let mut parts = pair.into_inner();
-    let variable = parts.next().unwrap().as_str().to_string();
-    let expression = parse_expression(parts.next().unwrap())?;
+    let variable = parts
+        .next()
+        .expect("invariant: later_assignment variable child")
+        .as_str()
+        .to_string();
+    let expression = parse_expression(
+        parts
+            .next()
+            .expect("invariant: later_assignment expression child"),
+    )?;
 
     Ok(Statement::LaterAssignment {
         variable,
@@ -790,7 +877,10 @@ fn parse_print_newline_statement(
     if expressions.len() == 1 {
         // Single argument - use Print
         Ok(Statement::Print {
-            expression: expressions.into_iter().next().unwrap(),
+            expression: expressions
+                .into_iter()
+                .next()
+                .expect("invariant: single-element vec verified above"),
             newline: true, // print(...) + explicitly adds newline
             location: Some(ast_location),
         })
@@ -809,7 +899,11 @@ fn parse_print_bare_statement(
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
     let mut parts = pair.into_inner();
-    let expression = parse_expression(parts.next().unwrap())?;
+    let expression = parse_expression(
+        parts
+            .next()
+            .expect("invariant: print_bare_stmt expression child"),
+    )?;
 
     Ok(Statement::Print {
         expression,
@@ -843,7 +937,10 @@ fn parse_print_parenthesized_statement(
     if expressions.len() == 1 {
         // Single argument - use Print
         Ok(Statement::Print {
-            expression: expressions.into_iter().next().unwrap(),
+            expression: expressions
+                .into_iter()
+                .next()
+                .expect("invariant: single-element vec verified above"),
             newline: true, // print(...) acts like print(...) + without explicit +
             location: Some(ast_location),
         })
@@ -869,13 +966,19 @@ fn parse_import_block_statement(
                 if import_pair.as_rule() == Rule::import_item {
                     // Parse import item: Math, Math.sqrt, Utils as U, Json.decode as jd
                     let mut item_parts = import_pair.into_inner();
-                    let first_part = item_parts.next().unwrap().as_str();
+                    let first_part = item_parts
+                        .next()
+                        .expect("invariant: import_item first child")
+                        .as_str();
 
                     let import_item = if let Some(second_part) = item_parts.next() {
                         let second_str = second_part.as_str();
                         if second_str == "as" {
                             // Format: ModuleName as Alias
-                            let alias = item_parts.next().unwrap().as_str();
+                            let alias = item_parts
+                                .next()
+                                .expect("invariant: import_item alias child")
+                                .as_str();
                             crate::ast::ImportItem {
                                 name: first_part.to_string(),
                                 alias: Some(alias.to_string()),
@@ -886,7 +989,10 @@ fn parse_import_block_statement(
                             let symbol_name = format!("{first_part}.{second_str}");
                             if let Some(as_keyword) = item_parts.next() {
                                 if as_keyword.as_str() == "as" {
-                                    let alias = item_parts.next().unwrap().as_str();
+                                    let alias = item_parts
+                                        .next()
+                                        .expect("invariant: import_item dot alias child")
+                                        .as_str();
                                     crate::ast::ImportItem {
                                         name: symbol_name,
                                         alias: Some(alias.to_string()),

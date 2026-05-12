@@ -218,6 +218,12 @@ impl BuiltinRegistry {
         registry.register_json_namespace(); // BOOK: json-module
         registry.register_file_namespace();
         registry.register_http_namespace();
+        registry.register_db_namespace();
+        registry.register_crypto_namespace();
+        registry.register_jwt_namespace();
+        registry.register_env_namespace();
+        registry.register_time_namespace();
+        registry.register_server_namespaces();
 
         registry
     }
@@ -233,6 +239,34 @@ impl BuiltinRegistry {
                 BuiltinCategory::IO,
             )
             .with_wasm_import("env", "print"),
+            BuiltinFunction::new(
+                "printl",
+                vec![BuiltinType::String],
+                BuiltinType::Void,
+                BuiltinCategory::IO,
+            )
+            .with_wasm_import("env", "printl"),
+            BuiltinFunction::new(
+                "console_log",
+                vec![BuiltinType::String],
+                BuiltinType::Void,
+                BuiltinCategory::IO,
+            )
+            .with_wasm_import("env", "console_log"),
+            BuiltinFunction::new(
+                "console_error",
+                vec![BuiltinType::String],
+                BuiltinType::Void,
+                BuiltinCategory::IO,
+            )
+            .with_wasm_import("env", "console_error"),
+            BuiltinFunction::new(
+                "console_warn",
+                vec![BuiltinType::String],
+                BuiltinType::Void,
+                BuiltinCategory::IO,
+            )
+            .with_wasm_import("env", "console_warn"),
             BuiltinFunction::new(
                 "input",
                 vec![BuiltinType::String],
@@ -1041,9 +1075,344 @@ impl BuiltinRegistry {
                 BuiltinType::String,
                 BuiltinCategory::IO,
             ),
+            // Extended HTTP client functions
+            BuiltinFunction::new(
+                "head",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "options",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "postJson",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "putJson",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "postForm",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "getWithHeaders",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "postWithHeaders",
+                vec![
+                    BuiltinType::String,
+                    BuiltinType::String,
+                    BuiltinType::String,
+                ],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "encodeUrl",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "decodeUrl",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "buildQuery",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            // Layer 3: HTTP response functions (server-only)
+            BuiltinFunction::new(
+                "respond",
+                vec![
+                    BuiltinType::Integer,
+                    BuiltinType::String,
+                    BuiltinType::String,
+                ],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "redirect",
+                vec![BuiltinType::Integer, BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "setHeader",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "setCache",
+                vec![BuiltinType::Integer],
+                BuiltinType::Integer,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new("noCache", vec![], BuiltinType::Integer, BuiltinCategory::IO),
         ]);
 
         self.namespaces.insert("http".to_string(), http_ns);
+    }
+
+    /// Register db namespace (db.query, db.execute, etc.) — Layer 2 host bridge
+    fn register_db_namespace(&mut self) {
+        let db_ns = BuiltinNamespace::new("db").with_functions(vec![
+            BuiltinFunction::new(
+                "query",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "execute",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::Integer,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new("begin", vec![], BuiltinType::Boolean, BuiltinCategory::IO),
+            BuiltinFunction::new("commit", vec![], BuiltinType::Boolean, BuiltinCategory::IO),
+            BuiltinFunction::new(
+                "rollback",
+                vec![],
+                BuiltinType::Boolean,
+                BuiltinCategory::IO,
+            ),
+        ]);
+
+        self.namespaces.insert("db".to_string(), db_ns);
+    }
+
+    /// Register crypto namespace — Layer 2 host bridge
+    fn register_crypto_namespace(&mut self) {
+        let crypto_ns = BuiltinNamespace::new("crypto").with_functions(vec![
+            BuiltinFunction::new(
+                "hashPassword",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "verifyPassword",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::Boolean,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "randomBytes",
+                vec![BuiltinType::Integer],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "randomHex",
+                vec![BuiltinType::Integer],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "sha256",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "sha512",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "hmac",
+                vec![
+                    BuiltinType::String,
+                    BuiltinType::String,
+                    BuiltinType::String,
+                ],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+        ]);
+
+        self.namespaces.insert("crypto".to_string(), crypto_ns);
+    }
+
+    /// Register jwt namespace — Layer 2 host bridge
+    fn register_jwt_namespace(&mut self) {
+        let jwt_ns = BuiltinNamespace::new("jwt").with_functions(vec![
+            BuiltinFunction::new(
+                "sign",
+                vec![
+                    BuiltinType::String,
+                    BuiltinType::String,
+                    BuiltinType::String,
+                ],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "verify",
+                vec![
+                    BuiltinType::String,
+                    BuiltinType::String,
+                    BuiltinType::String,
+                ],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "decode",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+        ]);
+
+        self.namespaces.insert("jwt".to_string(), jwt_ns);
+    }
+
+    /// Register env namespace — Layer 2 host bridge
+    fn register_env_namespace(&mut self) {
+        let env_ns = BuiltinNamespace::new("env").with_functions(vec![BuiltinFunction::new(
+            "get",
+            vec![BuiltinType::String],
+            BuiltinType::String,
+            BuiltinCategory::IO,
+        )]);
+
+        self.namespaces.insert("env".to_string(), env_ns);
+    }
+
+    /// Register time namespace — Layer 2 host bridge
+    fn register_time_namespace(&mut self) {
+        let time_ns = BuiltinNamespace::new("time").with_functions(vec![BuiltinFunction::new(
+            "now",
+            vec![],
+            BuiltinType::Integer,
+            BuiltinCategory::IO,
+        )]);
+
+        self.namespaces.insert("time".to_string(), time_ns);
+    }
+
+    /// Register Layer 3 server-only namespaces: req, auth, session
+    fn register_server_namespaces(&mut self) {
+        // req namespace — HTTP request context (Layer 3, server-only)
+        let req_ns = BuiltinNamespace::new("req").with_functions(vec![
+            BuiltinFunction::new(
+                "param",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "query",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new("body", vec![], BuiltinType::String, BuiltinCategory::IO),
+            BuiltinFunction::new(
+                "header",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new("headers", vec![], BuiltinType::String, BuiltinCategory::IO),
+            BuiltinFunction::new("method", vec![], BuiltinType::String, BuiltinCategory::IO),
+            BuiltinFunction::new("path", vec![], BuiltinType::String, BuiltinCategory::IO),
+            BuiltinFunction::new("ip", vec![], BuiltinType::String, BuiltinCategory::IO),
+            BuiltinFunction::new("form", vec![], BuiltinType::String, BuiltinCategory::IO),
+            BuiltinFunction::new(
+                "cookie",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+        ]);
+        self.namespaces.insert("req".to_string(), req_ns);
+
+        // auth namespace — authentication and authorization (Layer 3, server-only)
+        let auth_ns = BuiltinNamespace::new("auth").with_functions(vec![
+            BuiltinFunction::new(
+                "getSession",
+                vec![],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "requireAuth",
+                vec![],
+                BuiltinType::Boolean,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "requireRole",
+                vec![BuiltinType::String],
+                BuiltinType::Boolean,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "can",
+                vec![BuiltinType::String],
+                BuiltinType::Boolean,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "hasAnyRole",
+                vec![BuiltinType::String],
+                BuiltinType::Boolean,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "setSession",
+                vec![BuiltinType::String],
+                BuiltinType::Boolean,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new(
+                "clearSession",
+                vec![],
+                BuiltinType::Boolean,
+                BuiltinCategory::IO,
+            ),
+            BuiltinFunction::new("userId", vec![], BuiltinType::Integer, BuiltinCategory::IO),
+            BuiltinFunction::new("userRole", vec![], BuiltinType::String, BuiltinCategory::IO),
+        ]);
+        self.namespaces.insert("auth".to_string(), auth_ns);
+
+        // session namespace — session management (Layer 3, server-only)
+        let session_ns = BuiltinNamespace::new("session").with_functions(vec![
+            BuiltinFunction::new("get", vec![], BuiltinType::String, BuiltinCategory::IO),
+            BuiltinFunction::new("delete", vec![], BuiltinType::Boolean, BuiltinCategory::IO),
+            BuiltinFunction::new(
+                "exists",
+                vec![BuiltinType::String],
+                BuiltinType::Boolean,
+                BuiltinCategory::IO,
+            ),
+        ]);
+        self.namespaces.insert("session".to_string(), session_ns);
     }
 
     // ============== Query Methods ==============

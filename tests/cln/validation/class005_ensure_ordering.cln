@@ -1,0 +1,14 @@
+// Test: validation/class005_ensure_ordering
+// Grammar: ensure_statement
+// Semantic: CLASS005
+// Expected: compile error CLASS005 — ensure must appear before other statements
+
+start:
+	print(divide(10, 2).toString())
+
+functions:
+	integer divide(integer a, integer b)
+		require b != 0
+		integer result = a / b
+		ensure result * b == a
+		return result

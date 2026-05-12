@@ -116,15 +116,15 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     match pair.as_rule() {
         Rule::expression => {
             // Handle the top-level expression rule
-            let inner = pair.into_inner().next().unwrap();
+            let inner = pair.into_inner().next().expect("invariant: expression grammar child");
             parse_expression(inner)
         }
         Rule::on_error_expr => {
             // Handle onError expression
             let location = convert_to_ast_location(&get_location(&pair));
             let mut inner = pair.into_inner();
-            let expression = parse_expression(inner.next().unwrap())?;
-            let fallback = parse_expression(inner.next().unwrap())?;
+            let expression = parse_expression(inner.next().expect("invariant: on_error_expr first child"))?;
+            let fallback = parse_expression(inner.next().expect("invariant: on_error_expr second child"))?;
 
             Ok(Expression::OnError {
                 expression: Box::new(expression),
@@ -136,10 +136,10 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
             // Handle onError block
             let location = convert_to_ast_location(&get_location(&pair));
             let mut inner = pair.into_inner();
-            let expression = parse_expression(inner.next().unwrap())?;
+            let expression = parse_expression(inner.next().expect("invariant: on_error_block expression child"))?;
 
             // Parse the indented block
-            let block_pair = inner.next().unwrap();
+            let block_pair = inner.next().expect("invariant: on_error_block block child");
             let mut error_handler = Vec::new();
 
             for stmt_pair in block_pair.into_inner() {
@@ -192,7 +192,7 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::start_expr => {
             // Parse start expression - async start
             let location = convert_to_ast_location(&get_location(&pair));
-            let inner = pair.into_inner().next().unwrap();
+            let inner = pair.into_inner().next().expect("invariant: start_expr grammar child");
             let expr = parse_expression(inner)?;
             Ok(Expression::StartExpression {
                 expression: Box::new(expr),
@@ -241,7 +241,7 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         }
         Rule::parenthesized_expr => {
             // Parse parenthesized expression
-            let inner = pair.into_inner().next().unwrap();
+            let inner = pair.into_inner().next().expect("invariant: parenthesized_expr grammar child");
             parse_expression(inner)
         }
         Rule::argument_expression => {
@@ -684,7 +684,9 @@ pub fn parse_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
     }
 
     // For right-associativity of power operator, we build from right to left
-    let mut result = expr_stack.pop().unwrap();
+    let mut result = expr_stack
+        .pop()
+        .expect("invariant: non-empty stack checked above");
 
     while let (Some(left), Some(op)) = (expr_stack.pop(), op_stack.pop()) {
         result = Expression::Binary(Box::new(left), op, Box::new(result));
@@ -711,7 +713,10 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         }
         Rule::integer => {
             // Handle legacy integer rule (fallback)
-            let integer_inner = inner.into_inner().next().unwrap();
+            let integer_inner = inner
+                .into_inner()
+                .next()
+                .expect("invariant: integer grammar child");
             parse_integer_literal(integer_inner, &location)
         }
         Rule::float => {
@@ -779,7 +784,10 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         }
         Rule::parenthesized_expr => {
             // Handle parenthesized expressions: (parenthesized_expr)
-            let inner_expr = inner.into_inner().next().unwrap();
+            let inner_expr = inner
+                .into_inner()
+                .next()
+                .expect("invariant: parenthesized_expr inner grammar child");
             // BOOK: null-coalescing - parenthesized_expr now contains multiline_default_expression
             match inner_expr.as_rule() {
                 Rule::multiline_default_expression => {
@@ -862,7 +870,10 @@ pub fn parse_string(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                         Rule::string_interpolation => {
                             // Handle {variable} or {object.property}
                             let mut inner = inner_part.into_inner();
-                            let expr_str = inner.next().unwrap().as_str();
+                            let expr_str = inner
+                                .next()
+                                .expect("invariant: string_interpolation grammar child")
+                                .as_str();
 
                             // Parse the interpolation expression properly
                             // Instead of treating as simple variable, parse as full expression
@@ -919,7 +930,10 @@ pub fn parse_string(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
             Rule::string_interpolation => {
                 // Direct string_interpolation (shouldn't happen with current grammar, but keeping for safety)
                 let mut inner = part.into_inner();
-                let expr_str = inner.next().unwrap().as_str();
+                let expr_str = inner
+                    .next()
+                    .expect("invariant: string_interpolation grammar child")
+                    .as_str();
 
                 // Parse the interpolation expression properly
                 match parse_interpolation_expression(expr_str) {
@@ -1132,7 +1146,9 @@ pub fn parse_pairs_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError
             let mut pair_parts = pair_element.into_inner();
 
             // Parse the key (string, identifier, or decimal_integer)
-            let key_part = pair_parts.next().unwrap();
+            let key_part = pair_parts
+                .next()
+                .expect("invariant: pair_element key child");
             let key_value = match key_part.as_rule() {
                 Rule::string => {
                     // Parse string and extract the inner value
@@ -1172,7 +1188,9 @@ pub fn parse_pairs_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError
             };
 
             // Parse the value (single_line_expression)
-            let value_part = pair_parts.next().unwrap();
+            let value_part = pair_parts
+                .next()
+                .expect("invariant: pair_element value child");
             let value_expr = parse_expression(value_part)?;
             let value_value = match value_expr {
                 Expression::Literal(v) => v,
@@ -1196,7 +1214,11 @@ pub fn parse_pairs_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError
 pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let location = convert_to_ast_location(&get_location(&pair));
     let mut inner = pair.into_inner();
-    let name = inner.next().unwrap().as_str().to_string();
+    let name = inner
+        .next()
+        .expect("invariant: function_call name child")
+        .as_str()
+        .to_string();
     let mut arguments = Vec::new();
 
     for arg in inner {
@@ -1244,10 +1266,18 @@ pub fn parse_namespace_function_call(pair: Pair<Rule>) -> Result<Expression, Com
     let mut inner = pair.into_inner();
 
     // First child is namespace_identifier
-    let namespace = inner.next().unwrap().as_str().to_string();
+    let namespace = inner
+        .next()
+        .expect("invariant: namespace_function_call namespace child")
+        .as_str()
+        .to_string();
 
     // Second child is the function identifier
-    let function = inner.next().unwrap().as_str().to_string();
+    let function = inner
+        .next()
+        .expect("invariant: namespace_function_call function child")
+        .as_str()
+        .to_string();
 
     let mut arguments = Vec::new();
 
@@ -1283,10 +1313,18 @@ pub fn parse_namespace_method_chain(pair: Pair<Rule>) -> Result<Expression, Comp
     let mut inner = pair.into_inner();
 
     // First child is namespace_identifier
-    let namespace = inner.next().unwrap().as_str().to_string();
+    let namespace = inner
+        .next()
+        .expect("invariant: namespace_method_chain namespace child")
+        .as_str()
+        .to_string();
 
     // Second child is the function identifier
-    let function = inner.next().unwrap().as_str().to_string();
+    let function = inner
+        .next()
+        .expect("invariant: namespace_method_chain function child")
+        .as_str()
+        .to_string();
 
     let mut arguments = Vec::new();
 
@@ -1330,7 +1368,9 @@ pub fn parse_namespace_method_chain(pair: Pair<Rule>) -> Result<Expression, Comp
         if let Rule::method_call_segment = remaining[i].as_rule() {
             let segment = remaining[i].clone();
             let mut seg_inner = segment.into_inner();
-            let first_child = seg_inner.next().unwrap();
+            let first_child = seg_inner
+                .next()
+                .expect("invariant: method_call_segment grammar child");
 
             let (method_name, method_arguments) = match first_child.as_rule() {
                 Rule::method_name => {
@@ -1388,11 +1428,13 @@ pub fn parse_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
     let mut inner = pair.into_inner();
 
     // Parse method_call_base
-    let base_pair = inner.next().unwrap();
+    let base_pair = inner.next().expect("invariant: method_call base child");
     let object_expr = match base_pair.as_rule() {
         Rule::method_call_base => {
             let mut base_inner = base_pair.into_inner();
-            let first = base_inner.next().unwrap();
+            let first = base_inner
+                .next()
+                .expect("invariant: method_call_base inner child");
             match first.as_rule() {
                 Rule::identifier | Rule::base_identifier => {
                     Expression::Variable(first.as_str().to_string())
@@ -1433,7 +1475,9 @@ pub fn parse_method_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
     for segment in inner {
         if let Rule::method_call_segment = segment.as_rule() {
             let mut seg_inner = segment.into_inner();
-            let first_child = seg_inner.next().unwrap();
+            let first_child = seg_inner
+                .next()
+                .expect("invariant: method_call_segment inner child");
 
             let (method_name, arguments) = match first_child.as_rule() {
                 Rule::method_name => {
@@ -1497,9 +1541,14 @@ pub fn parse_parenthesized_method_call(pair: Pair<Rule>) -> Result<Expression, C
     let mut inner = pair.into_inner();
 
     // First should be the parenthesized_expr
-    let paren_expr_pair = inner.next().unwrap();
+    let paren_expr_pair = inner
+        .next()
+        .expect("invariant: parenthesized_method_call paren child");
     // parenthesized_expr contains multiline_logical_expression, so extract it
-    let expr_inside = paren_expr_pair.into_inner().next().unwrap();
+    let expr_inside = paren_expr_pair
+        .into_inner()
+        .next()
+        .expect("invariant: parenthesized_expr inner child");
     let mut current_expr = match expr_inside.as_rule() {
         Rule::multiline_logical_expression => parse_multiline_logical_expression(expr_inside)?,
         _ => parse_expression(expr_inside)?,
@@ -1512,7 +1561,9 @@ pub fn parse_parenthesized_method_call(pair: Pair<Rule>) -> Result<Expression, C
         }
 
         let mut segment_inner = segment.into_inner();
-        let first_child = segment_inner.next().unwrap();
+        let first_child = segment_inner
+            .next()
+            .expect("invariant: parenthesized_method_call segment child");
 
         let method_name = match first_child.as_rule() {
             Rule::method_name => first_child.as_str().to_string(),
@@ -1554,7 +1605,11 @@ pub fn parse_parenthesized_method_call(pair: Pair<Rule>) -> Result<Expression, C
 
 pub fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let mut inner = pair.into_inner();
-    let object_name = inner.next().unwrap().as_str().to_string();
+    let object_name = inner
+        .next()
+        .expect("invariant: property_access object child")
+        .as_str()
+        .to_string();
     let mut current_expr = Expression::Variable(object_name);
 
     for segment in inner {
@@ -1627,7 +1682,11 @@ pub fn parse_list_access(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
     let mut inner = pair.into_inner();
 
     // First element is the list identifier
-    let list_name = inner.next().unwrap().as_str().to_string();
+    let list_name = inner
+        .next()
+        .expect("invariant: list_access identifier child")
+        .as_str()
+        .to_string();
     let mut current_expr = Expression::Variable(list_name);
 
     // Grammar allows multiple chained [index] accesses: identifier ~ ("[" ~ additive_expression ~ "]")+
@@ -1768,9 +1827,15 @@ pub fn parse_static_method_call(pair: Pair<Rule>) -> Result<Expression, Compiler
     let mut inner = pair.into_inner();
 
     // Parse: ClassName.method(args...) or namespace.subnamespace.method(args...)
-    let static_class_name_pair = inner.next().unwrap();
+    let static_class_name_pair = inner
+        .next()
+        .expect("invariant: static_method_call class name child");
     let full_class_name = static_class_name_pair.as_str().to_string();
-    let method_name = inner.next().unwrap().as_str().to_string();
+    let method_name = inner
+        .next()
+        .expect("invariant: static_method_call method name child")
+        .as_str()
+        .to_string();
     let mut arguments = Vec::new();
 
     // Parse arguments
@@ -1828,9 +1893,21 @@ pub fn parse_three_level_method_call(pair: Pair<Rule>) -> Result<Expression, Com
     let mut inner = pair.into_inner();
 
     // Parse: namespace.subnamespace.method(args...) like compare.integer.greaterThan(a, b)
-    let namespace = inner.next().unwrap().as_str().to_string();
-    let subnamespace = inner.next().unwrap().as_str().to_string();
-    let method_name = inner.next().unwrap().as_str().to_string();
+    let namespace = inner
+        .next()
+        .expect("invariant: three_level_method_call namespace child")
+        .as_str()
+        .to_string();
+    let subnamespace = inner
+        .next()
+        .expect("invariant: three_level_method_call subnamespace child")
+        .as_str()
+        .to_string();
+    let method_name = inner
+        .next()
+        .expect("invariant: three_level_method_call method child")
+        .as_str()
+        .to_string();
     let mut arguments = Vec::new();
 
     // Parse arguments
@@ -1872,7 +1949,9 @@ pub fn parse_chained_method_call(pair: Pair<Rule>) -> Result<Expression, Compile
     let mut inner = pair.into_inner();
 
     // First element can be static_method_call, function_call, property_access, or identifier
-    let base_pair = inner.next().unwrap();
+    let base_pair = inner
+        .next()
+        .expect("invariant: chained_method_call base child");
     let mut current_expr =
         match base_pair.as_rule() {
             Rule::static_method_call => parse_static_method_call(base_pair)?,
@@ -1899,7 +1978,9 @@ pub fn parse_chained_method_call(pair: Pair<Rule>) -> Result<Expression, Compile
     for segment in inner {
         if let Rule::method_call_segment = segment.as_rule() {
             let mut seg_inner = segment.into_inner();
-            let first_child = seg_inner.next().unwrap();
+            let first_child = seg_inner
+                .next()
+                .expect("invariant: method_call_segment inner child");
 
             let (method_name, arguments) = match first_child.as_rule() {
                 Rule::method_name => {
@@ -1964,7 +2045,11 @@ pub fn parse_start_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
     let mut inner = pair.into_inner();
 
     // Parse: start expression
-    let expression = parse_expression(inner.next().unwrap())?;
+    let expression = parse_expression(
+        inner
+            .next()
+            .expect("invariant: start_expression grammar child"),
+    )?;
 
     Ok(Expression::StartExpression {
         expression: Box::new(expression),
@@ -2061,7 +2146,9 @@ pub fn parse_argument_item(pair: Pair<Rule>) -> Result<Expression, CompilerError
 pub fn parse_argument_logical(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let location = get_location(&pair);
     let mut pairs = pair.into_inner();
-    let first = pairs.next().unwrap();
+    let first = pairs
+        .next()
+        .expect("invariant: argument_logical left operand");
 
     let mut left = parse_argument_comparison(first)?;
 
@@ -2089,7 +2176,9 @@ pub fn parse_argument_logical(pair: Pair<Rule>) -> Result<Expression, CompilerEr
 pub fn parse_argument_comparison(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let location = get_location(&pair);
     let mut pairs = pair.into_inner();
-    let first = pairs.next().unwrap();
+    let first = pairs
+        .next()
+        .expect("invariant: argument_comparison left operand");
 
     let mut left = parse_argument_unary(first)?;
 
@@ -2121,7 +2210,9 @@ pub fn parse_argument_comparison(pair: Pair<Rule>) -> Result<Expression, Compile
 pub fn parse_argument_additive(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let location = get_location(&pair);
     let mut pairs = pair.into_inner();
-    let first = pairs.next().unwrap();
+    let first = pairs
+        .next()
+        .expect("invariant: argument_additive left operand");
 
     let mut left = parse_argument_multiplicative(first)?;
 
@@ -2149,7 +2240,9 @@ pub fn parse_argument_additive(pair: Pair<Rule>) -> Result<Expression, CompilerE
 pub fn parse_argument_multiplicative(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let location = get_location(&pair);
     let mut pairs = pair.into_inner();
-    let first = pairs.next().unwrap();
+    let first = pairs
+        .next()
+        .expect("invariant: argument_multiplicative left operand");
 
     let mut left = parse_argument_power(first)?;
 
@@ -2178,7 +2271,9 @@ pub fn parse_argument_multiplicative(pair: Pair<Rule>) -> Result<Expression, Com
 pub fn parse_argument_power(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let location = get_location(&pair);
     let mut pairs = pair.into_inner();
-    let first = pairs.next().unwrap();
+    let first = pairs
+        .next()
+        .expect("invariant: argument_power left operand");
 
     let mut left = match first.as_rule() {
         Rule::argument_primary => parse_argument_primary(first)?,
@@ -3003,7 +3098,9 @@ pub fn parse_multiline_power_expression(pair: Pair<Rule>) -> Result<Expression, 
         ));
     }
 
-    let mut result = expr_stack.pop().unwrap();
+    let mut result = expr_stack
+        .pop()
+        .expect("invariant: non-empty stack checked above");
 
     while let Some(op) = op_stack.pop() {
         if let Some(left) = expr_stack.pop() {
@@ -3043,7 +3140,7 @@ mod tests {
             result.err()
         );
 
-        let pairs: Vec<_> = result.unwrap().collect();
+        let pairs: Vec<_> = result.expect("test: parse succeeded above").collect();
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs[0].as_rule(), Rule::none_literal);
         assert_eq!(pairs[0].as_str(), "none");
@@ -3059,12 +3156,15 @@ mod tests {
             result.err()
         );
 
-        let mut pairs = result.unwrap();
-        let primary = pairs.next().unwrap();
+        let mut pairs = result.expect("test: parse succeeded above");
+        let primary = pairs.next().expect("test: primary pair exists");
         assert_eq!(primary.as_rule(), Rule::primary);
 
         // The inner rule should be none_literal
-        let inner = primary.into_inner().next().unwrap();
+        let inner = primary
+            .into_inner()
+            .next()
+            .expect("test: none_literal inner child");
         assert_eq!(
             inner.as_rule(),
             Rule::none_literal,
@@ -3090,8 +3190,8 @@ mod tests {
             result.err()
         );
 
-        let mut pairs = result.unwrap();
-        let expr_pair = pairs.next().unwrap();
+        let mut pairs = result.expect("test: parse succeeded above");
+        let expr_pair = pairs.next().expect("test: expression pair exists");
         let expr = parse_expression(expr_pair).expect("Should parse expression");
 
         match expr {
@@ -3120,8 +3220,8 @@ mod tests {
             result.err()
         );
 
-        let mut pairs = result.unwrap();
-        let expr_pair = pairs.next().unwrap();
+        let mut pairs = result.expect("test: parse succeeded above");
+        let expr_pair = pairs.next().expect("test: argument_expression pair exists");
         let expr = parse_argument_expression(expr_pair).expect("Should parse argument");
 
         match expr {
@@ -3155,12 +3255,14 @@ mod tests {
             result.err()
         );
 
-        let program = result.unwrap();
+        let program = result.expect("test: parse succeeded above");
         assert!(
             program.start_function.is_some(),
             "Program should have start function"
         );
-        let start_fn = program.start_function.unwrap();
+        let start_fn = program
+            .start_function
+            .expect("test: start function present per assert above");
         assert!(!start_fn.body.is_empty(), "Start function should have body");
     }
 
@@ -3185,8 +3287,8 @@ mod tests {
         let result = CleanParser::parse(Rule::statement, stmt);
         assert!(result.is_ok(), "statement should parse: {:?}", result.err());
 
-        let mut pairs = result.unwrap();
-        let stmt_pair = pairs.next().unwrap();
+        let mut pairs = result.expect("test: parse succeeded above");
+        let stmt_pair = pairs.next().expect("test: statement pair exists");
 
         // Convert to AST
         let ast_stmt = parse_statement(stmt_pair);
@@ -3196,7 +3298,7 @@ mod tests {
             ast_stmt.err()
         );
 
-        let stmt = ast_stmt.unwrap();
+        let stmt = ast_stmt.expect("test: statement parse succeeded per assert above");
 
         // Check that the expression is Literal(None)
         if let crate::ast::Statement::Print { expression, .. } = stmt {
@@ -3227,7 +3329,7 @@ mod tests {
         // Parse
         let program = CleanParser::parse_program(source);
         assert!(program.is_ok(), "Program should parse: {:?}", program.err());
-        let program = program.unwrap();
+        let program = program.expect("test: parse succeeded per assert above");
 
         // Build HIR - build_hir takes owned Program
         let mut hir_builder = crate::hir::hir_builder::HirBuilder::new();
@@ -3237,7 +3339,7 @@ mod tests {
             "HIR should build: {:?}",
             hir_result.err()
         );
-        let hir_result = hir_result.unwrap();
+        let hir_result = hir_result.expect("test: HIR build succeeded per assert above");
 
         // Check that none is in the HIR as a literal
         if let Some(start_fn) = &hir_result.hir.start_function {

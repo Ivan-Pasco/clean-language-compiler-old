@@ -2317,29 +2317,10 @@ impl<'a> TypeInference<'a> {
                 let declared_type = self.hir_type_to_concrete(var_type);
 
                 let tast_initializer = if let Some(init_expr) = initializer {
-                    // Reject `none` as a direct variable initializer.
-                    // The spec only allows `none` in:
-                    //   1. `return none` — handled in the Return branch
-                    //   2. `if x == none` — handled as a comparison expression
-                    // `string x = none` is a compile error; optionality comes from function
-                    // return types, not from explicit assignment of none.
-                    if matches!(
-                        init_expr,
-                        ResolvedHirExpression::Literal {
-                            value: crate::ast::Value::None,
-                            ..
-                        }
-                    ) {
-                        return Err(CompilerError::type_error(
-                            format!(
-                                "none cannot be used in a variable declaration for '{}'; \
-                                 optionality comes from function return types",
-                                name
-                            ),
-                            None,
-                            Some(location.clone()),
-                        ));
-                    }
+                    // NOTE: null/none is valid as a variable initializer per type-system.md §5
+                    // "Null can be assigned to any type (nullable types)" — type-system.md row 121
+                    // e.g., `any value = null`, `integer x = null`, `string s = null` are all valid.
+                    // The ConcreteType::Null produced by null literals is assignable to every type.
 
                     // Special handling for empty literals with explicit type annotations
                     // Check if this is an empty array [] or empty pairs {} literal

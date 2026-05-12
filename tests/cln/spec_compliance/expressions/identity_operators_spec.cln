@@ -14,16 +14,16 @@ start:
 	boolean differentValue = a is b
 	print("5 is 15: " + differentValue.toString())
 
-	// Test 3: not operator (negated identity)
+	// Test 3: not operator (negated identity) — Fixed: was using binary 'not' which is not in spec; spec requires unary 'not' prefix
 	integer m = 10
 	integer n = 20
-	boolean notSame = m not n
+	boolean notSame = not (m is n)
 	print("10 not 20: " + notSame.toString())
 
-	// Test 4: not with equal values
+	// Test 4: not with equal values — Fixed: binary 'not' → unary 'not (... is ...)'
 	integer p = 7
 	integer q = 7
-	boolean notEqual = p not q
+	boolean notEqual = not (p is q)
 	print("7 not 7: " + notEqual.toString())
 
 	// Test 5: is with strings
@@ -38,10 +38,10 @@ start:
 	boolean boolSame = t1 is t2
 	print("true is true: " + boolSame.toString())
 
-	// Test 7: not with booleans
+	// Test 7: not with booleans — Fixed: binary 'not' → unary 'not (... is ...)'
 	boolean trueVal = true
 	boolean falseVal = false
-	boolean boolNot = trueVal not falseVal
+	boolean boolNot = not (trueVal is falseVal)
 	print("true not false: " + boolNot.toString())
 
 	// Test 8: is in conditional

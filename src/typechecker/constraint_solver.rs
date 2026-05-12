@@ -376,15 +376,10 @@ impl<'a> ConstraintSolver<'a> {
             (ConcreteType::Null, ConcreteType::Undefined)
             | (ConcreteType::Undefined, ConcreteType::Null) => Ok(()),
 
-            // Null can unify with reference types (strings, arrays, classes)
-            (ConcreteType::Null, ConcreteType::String)
-            | (ConcreteType::String, ConcreteType::Null) => Ok(()),
-
-            (ConcreteType::Null, ConcreteType::Array(_))
-            | (ConcreteType::Array(_), ConcreteType::Null) => Ok(()),
-
-            (ConcreteType::Null, ConcreteType::Class { .. })
-            | (ConcreteType::Class { .. }, ConcreteType::Null) => Ok(()),
+            // Null can unify with ANY type — per type-system.md §5 row 121:
+            // "Every type accepts null. There is no non-nullable type annotation."
+            // This includes Integer, Number, Boolean, String, Array, Class, etc.
+            (ConcreteType::Null, _) | (_, ConcreteType::Null) => Ok(()),
 
             // Unknown type unifies with anything (error recovery)
             (ConcreteType::Unknown, _) | (_, ConcreteType::Unknown) => Ok(()),

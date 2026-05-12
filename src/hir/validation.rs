@@ -194,6 +194,28 @@ impl HirValidator {
                 context.classes.insert(class.name.clone(), class.clone());
             }
         }
+
+        // Collect top-level state variables into global scope so expressions
+        // referencing them do not produce spurious "Undefined variable" errors.
+        // (SCOPE005 enforcement is handled later by the resolver.)
+        if let Some(ref state_block) = hir.state {
+            for decl in &state_block.declarations {
+                context.declare_variable(decl.name.clone(), decl.state_type.clone());
+            }
+        }
+
+        // Collect screen-local state variables into global scope.
+        // The validator cannot enforce SCOPE005 (that requires symbol table metadata);
+        // we simply make the names known so the validator does not reject them.
+        // The resolver will emit SCOPE005 when a screen-local variable is accessed
+        // outside its owning screen.
+        for screen in &hir.screen_blocks {
+            if let Some(ref screen_state) = screen.state {
+                for decl in &screen_state.declarations {
+                    context.declare_variable(decl.name.clone(), decl.state_type.clone());
+                }
+            }
+        }
     }
 
     /// Validate the entire program structure
@@ -334,13 +356,15 @@ impl HirValidator {
         // Validate parent class exists if specified
         if let Some(parent_name) = &class.parent {
             if !context.classes.contains_key(parent_name) {
-                context.error(
+                // CLASS001: parent class not found
+                context.error_with_code(
                     &format!("Parent class '{}' is not defined", parent_name),
                     class.location.clone(),
+                    "CLASS001",
                 );
             }
 
-            // Check for circular inheritance
+            // Check for circular inheritance (SEM008: InheritanceCycle)
             if Self::has_circular_inheritance(&context.classes, &class.name, parent_name) {
                 context.error(
                     &format!("Circular inheritance detected for class '{}'", class.name),
@@ -353,9 +377,11 @@ impl HirValidator {
         let mut field_names = HashSet::new();
         for field in &class.fields {
             if !field_names.insert(&field.name) {
-                context.error(
+                // CLASS002: duplicate field in class
+                context.error_with_code(
                     &format!("Duplicate field '{}' in class '{}'", field.name, class.name),
                     field.location.clone(),
+                    "CLASS002",
                 );
             }
 
@@ -365,18 +391,32 @@ impl HirValidator {
         // Validate constructor
         if let Some(constructor) = &class.constructor {
             Self::validate_constructor(context, constructor, &class.name);
+        } else if !class.fields.is_empty() && class.fields.iter().any(|f| f.initializer.is_none()) {
+            // CLASS004: class has uninitialized fields but declares no constructor.
+            // This is a warning because the compiler may synthesize a default constructor,
+            // but the programmer should be explicit about field initialization.
+            context.warning_with_code(
+                &format!(
+                    "Class '{}' has fields without initializers but declares no constructor",
+                    class.name
+                ),
+                class.location.clone(),
+                "CLASS004",
+            );
         }
 
         // Validate methods
         let mut method_names = HashSet::new();
         for method in &class.methods {
             if !method_names.insert(&method.name) {
-                context.error(
+                // CLASS003: duplicate method in class
+                context.error_with_code(
                     &format!(
                         "Duplicate method '{}' in class '{}'",
                         method.name, class.name
                     ),
                     method.location.clone(),
+                    "CLASS003",
                 );
             }
 
@@ -479,6 +519,29 @@ impl HirValidator {
 
     /// Validate a block of statements
     fn validate_block(context: &mut ValidationContext, block: &HirBlock) {
+        // CLASS005: `ensure` must appear before any non-require/non-ensure logic.
+        // Track whether we have seen a statement that is neither `require` nor `ensure`.
+        let mut seen_non_contract = false;
+        for statement in &block.statements {
+            match statement {
+                HirStatement::Require { .. } => {
+                    // `require` may appear anywhere before other logic — no ordering constraint here.
+                }
+                HirStatement::Ensure { location, .. } => {
+                    if seen_non_contract {
+                        context.error_with_code(
+                            "`ensure` must appear before other statements in the function body",
+                            location.clone(),
+                            "CLASS005",
+                        );
+                    }
+                }
+                _ => {
+                    seen_non_contract = true;
+                }
+            }
+        }
+
         for statement in &block.statements {
             Self::validate_statement(context, statement);
         }
@@ -531,7 +594,12 @@ impl HirValidator {
                     Self::validate_expression(context, return_expr);
                 } else if let Some(expected_type) = &context.current_return_type {
                     if *expected_type != HirType::Void {
-                        context.warning("Empty return in non-void function", location.clone());
+                        // FUNC005: empty return statement in a non-void function
+                        context.warning_with_code(
+                            "Empty return in non-void function",
+                            location.clone(),
+                            "FUNC005",
+                        );
                     }
                 }
             }
@@ -637,8 +705,44 @@ impl HirValidator {
             }
 
             HirExpression::Variable { name, location } => {
-                // Check if it's a variable or a function reference
-                if context.lookup_variable(name).is_none() && !context.functions.contains_key(name)
+                // Check if it's a variable or a function reference.
+                // Builtin namespaces (string, list, math, etc.) are valid as receiver
+                // expressions in method calls even though they are not declared as local
+                // variables.  The resolver converts these to qualified namespace calls in
+                // stage 4; at the HIR validation stage we simply skip the undefined-variable
+                // check for known namespace names.
+                const BUILTIN_NAMESPACES: &[&str] = &[
+                    "string",
+                    "list",
+                    "math",
+                    "http",
+                    "file",
+                    "json",
+                    "input",
+                    "validator",
+                    "compare",
+                    "logical",
+                    "conditional",
+                    "integer",
+                    "number",
+                    "boolean",
+                ];
+                // Inside a class constructor or method, unqualified field names are valid
+                // as expressions (the resolver adds implicit `this.` in stage 4).
+                let is_class_field = if let Some(ref class_name) = context.current_class {
+                    if let Some(class_def) = context.classes.get(class_name) {
+                        class_def.fields.iter().any(|f| f.name == *name)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if context.lookup_variable(name).is_none()
+                    && !context.functions.contains_key(name)
+                    && !BUILTIN_NAMESPACES.contains(&name.as_str())
+                    && !context.classes.contains_key(name)
+                    && !is_class_field
                 {
                     context.error(&format!("Undefined variable '{}'", name), location.clone());
                 }
@@ -658,11 +762,37 @@ impl HirValidator {
                 arguments,
                 location,
             } => {
-                if !context.functions.contains_key(function) {
-                    context.error(
-                        &format!("Undefined function '{}'", function),
+                if context.lookup_variable(function).is_some()
+                    && !context.functions.contains_key(function)
+                    && !context.classes.contains_key(function)
+                {
+                    // FUNC003: identifier is a variable, not a callable function
+                    context.error_with_code(
+                        &format!("'{}' is not a function and cannot be called", function),
                         location.clone(),
+                        "FUNC003",
                     );
+                }
+                // NOTE: FUNC001 (undefined function) is intentionally NOT checked here.
+                // The HIR validator runs before name resolution (stage 4) and does not
+                // have access to builtin functions, bridge functions, or class constructors.
+                // The resolver and type-checker catch undefined function calls with full
+                // context.  Emitting FUNC001 here would produce false positives for every
+                // builtin (print, math.*, string.*, input, etc.) and class constructor call.
+                if let Some(func_def) = context.functions.get(function) {
+                    // FUNC002: argument count must match the declared parameter count
+                    let expected = func_def.parameters.len();
+                    let actual = arguments.len();
+                    if actual != expected {
+                        context.error_with_code(
+                            &format!(
+                                "Function '{}' expects {} argument(s) but {} were provided",
+                                function, expected, actual
+                            ),
+                            location.clone(),
+                            "FUNC002",
+                        );
+                    }
                 }
 
                 for arg in arguments {
@@ -801,7 +931,21 @@ impl HirValidator {
     fn validate_lvalue(context: &mut ValidationContext, lvalue: &HirLValue) {
         match lvalue {
             HirLValue::Variable { name, location } => {
-                if context.lookup_variable(name).is_none() {
+                // Inside a class constructor or method, unqualified field names are valid
+                // assignment targets even though they are not in the variable scope.  The
+                // resolver adds the implicit `this.` prefix in stage 4; at the HIR validation
+                // stage we accept any name that belongs to the current class's fields.
+                let is_class_field = if let Some(ref class_name) = context.current_class {
+                    if let Some(class_def) = context.classes.get(class_name) {
+                        class_def.fields.iter().any(|f| f.name == *name)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if context.lookup_variable(name).is_none() && !is_class_field {
                     context.error(&format!("Undefined variable '{}'", name), location.clone());
                 }
             }
@@ -929,6 +1073,7 @@ mod tests {
                 },
                 is_start: false,
                 is_private: false,
+                owner_screen: None,
                 location: test_location(),
             }],
             classes: vec![],
@@ -965,6 +1110,7 @@ mod tests {
                 },
                 is_start: false,
                 is_private: false,
+                owner_screen: None,
                 location: test_location(),
             }],
             classes: vec![],
@@ -1005,6 +1151,7 @@ mod tests {
                     },
                     is_start: false,
                     is_private: false,
+                    owner_screen: None,
                     location: test_location(),
                 },
                 HirFunction {
@@ -1017,6 +1164,7 @@ mod tests {
                     },
                     is_start: false,
                     is_private: false,
+                    owner_screen: None,
                     location: test_location(),
                 },
             ],
@@ -1124,5 +1272,80 @@ mod tests {
         assert!(errors
             .iter()
             .any(|e| e.message().contains("Circular inheritance")));
+    }
+}
+
+#[cfg(test)]
+mod class005_tests {
+    use super::*;
+    use crate::hir::hir_builder::HirBuilder;
+    use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
+    use crate::parser::SpecificationParser;
+
+    fn build_hir(source: &str) -> crate::hir::HirProgram {
+        let source_code = SourceCode::new(source.to_string(), "test.cln".to_string());
+        let mut lexer = SpecificationLexer::new(&source_code);
+        let tokens = lexer.tokenize().expect("lex failed");
+        let mut parser = SpecificationParser::new(tokens, "test.cln".to_string());
+        let ast = parser.parse_program().expect("parse failed");
+        let mut hir_builder = HirBuilder::new();
+        hir_builder.build_hir(ast).expect("hir build failed").hir
+    }
+
+    /// CLASS005: `ensure` appearing after non-contract logic must be rejected.
+    #[test]
+    fn test_class005_ensure_after_logic_is_error() {
+        let source = concat!(
+            "start:\n",
+            "\tprint(divide(10, 2).toString())\n",
+            "\nfunctions:\n",
+            "\tinteger divide(integer a, integer b)\n",
+            "\t\trequire b != 0\n",
+            "\t\tinteger result = a / b\n",
+            "\t\tensure result * b == a\n",
+            "\t\treturn result\n",
+        );
+        let hir = build_hir(source);
+        let result = HirValidator::validate(&hir);
+        assert!(
+            result.is_err(),
+            "CLASS005: expected error when ensure appears after variable declaration"
+        );
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.to_string().contains("CLASS005") || e.to_string().contains("ensure")),
+            "Expected CLASS005 error, got: {:?}",
+            errors
+        );
+    }
+
+    /// CLASS005 negative: `ensure` before any logic is valid.
+    #[test]
+    fn test_class005_ensure_at_top_is_valid() {
+        let source = concat!(
+            "start:\n",
+            "\tprint(\"ok\")\n",
+            "\nfunctions:\n",
+            "\tinteger double(integer x)\n",
+            "\t\trequire x >= 0\n",
+            "\t\tensure result > 0\n",
+            "\t\treturn x * 2\n",
+        );
+        let hir = build_hir(source);
+        // ensure comes before the return statement — this is valid ordering
+        let result = HirValidator::validate(&hir);
+        // The result may fail for other reasons (undefined 'result' variable) but
+        // must NOT fail specifically because of CLASS005 ensure ordering.
+        if let Err(ref errors) = result {
+            for e in errors {
+                assert!(
+                    !e.to_string().contains("CLASS005"),
+                    "Unexpected CLASS005 error when ensure is correctly placed: {:?}",
+                    e
+                );
+            }
+        }
     }
 }

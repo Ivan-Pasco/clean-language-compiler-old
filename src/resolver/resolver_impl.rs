@@ -492,6 +492,13 @@ impl NameResolver {
             });
         }
 
+        // If this function belongs to a screen (owner_screen is set), temporarily
+        // set current_screen so that SCOPE005 allows access to that screen's state.
+        let previous_screen = self.current_screen.clone();
+        if let Some(ref screen_name) = function.owner_screen {
+            self.current_screen = Some(screen_name.clone());
+        }
+
         // Resolve function body
         let resolved_body = self.resolve_block(&function.body)?;
 
@@ -499,6 +506,7 @@ impl NameResolver {
         self.symbol_table.exit_scope();
         self.current_function = None;
         self.current_function_return_type = previous_return_type;
+        self.current_screen = previous_screen;
 
         Ok(ResolvedHirFunction {
             name: function.name,
@@ -1615,9 +1623,29 @@ impl NameResolver {
                     resolved_arguments.push(self.resolve_expression(arg)?);
                 }
 
-                // Check if this is actually a namespace (cannot be called directly)
+                // Check if this is actually a namespace (cannot be called directly).
+                //
+                // Special case: `input(prompt)` is sugar for `input.string(prompt)` per
+                // stdlib-reference.md §Console I/O.  The spec lists `input(prompt) → string`
+                // as a valid call form even though `input` is registered as a namespace so
+                // that `input.integer(...)` etc. also resolve.  Allow the direct call by
+                // rewriting the function name to `input.string`.
                 if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
                     if matches!(symbol.kind, SymbolKind::Namespace { .. }) {
+                        if function == "input" {
+                            // Rewrite `input(prompt)` → `input.string(prompt)`
+                            let input_string_id = self
+                                .symbol_table
+                                .lookup_symbol("input.string")
+                                .or_else(|| self.symbol_table.lookup_symbol("input"));
+                            let resolved_id = input_string_id.unwrap_or(function_symbol_id);
+                            return Ok(ResolvedHirExpression::Call {
+                                function: "input.string".to_string(),
+                                function_symbol_id: resolved_id,
+                                arguments: resolved_arguments,
+                                location: location.clone(),
+                            });
+                        }
                         self.error(
                             &format!(
                                 "'{}' is a namespace, not a function — use '{}.function_name()' syntax",
@@ -3452,6 +3480,7 @@ mod scope_tests {
                 body: start_body,
                 is_start: true,
                 is_private: false,
+                owner_screen: None,
                 location: loc(),
             }),
             imports: vec![],

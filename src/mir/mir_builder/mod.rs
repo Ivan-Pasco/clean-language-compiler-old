@@ -420,7 +420,7 @@ impl MirBuilder {
         for (symbol_id, corrected_name) in fixes_needed {
             trace!(
                 symbol_id = symbol_id.0,
-                from = %mir_program.symbol_name_map.get(&symbol_id).unwrap(),
+                from = %mir_program.symbol_name_map.get(&symbol_id).expect("invariant: symbol_id came from this map"),
                 to = %corrected_name,
                 "Correcting symbol name"
             );

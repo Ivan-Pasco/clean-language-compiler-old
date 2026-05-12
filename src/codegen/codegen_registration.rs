@@ -28,9 +28,15 @@ impl super::CodeGenerator {
         use std::cell::RefCell;
         use std::rc::Rc;
 
-        // Create a MemoryManager and ValidatorManager instance
+        // Create a MemoryManager and ValidatorManager instance.
+        // Resolve mem_alloc index dynamically so the validator is resilient to
+        // import ordering changes (e.g. when input_* imports are gated out).
         let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
-        let validator_manager = ValidatorManager::new(memory_manager);
+        let mem_alloc_idx = self
+            .get_function_index("mem_alloc")
+            .unwrap_or(crate::stdlib::validator::DEFAULT_MEM_ALLOC_CALL_INDEX);
+        let validator_manager =
+            ValidatorManager::new_with_mem_alloc_idx(memory_manager, mem_alloc_idx);
         validator_manager.register_functions(self)?;
 
         Ok(())
@@ -589,8 +595,11 @@ impl super::CodeGenerator {
             Some(WasmType::I32),
         )?;
 
-        // Add canonical alias
-        self.add_function_alias("string.compare", idx);
+        // Add canonical alias — skip when the import was tree-shaken (u32::MAX sentinel)
+        // to avoid inserting a bogus index that would generate an invalid Call instruction.
+        if idx != u32::MAX {
+            self.add_function_alias("string.compare", idx);
+        }
 
         Ok(())
     }
@@ -609,10 +618,13 @@ impl super::CodeGenerator {
             Some(WasmType::I32),
         )?;
 
-        // Add canonical aliases
-        self.add_function_alias("string.replace", idx);
-        // replaceAll uses the same host function (replaces all occurrences)
-        self.add_function_alias("string.replaceAll", idx);
+        // Add canonical aliases — skip when the import was tree-shaken (u32::MAX sentinel)
+        // to avoid inserting a bogus index that would generate an invalid Call instruction.
+        if idx != u32::MAX {
+            self.add_function_alias("string.replace", idx);
+            // replaceAll uses the same host function (replaces all occurrences)
+            self.add_function_alias("string.replaceAll", idx);
+        }
 
         Ok(())
     }
@@ -647,8 +659,12 @@ impl super::CodeGenerator {
     pub(crate) fn register_list_class_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::list_class::ListClass;
 
-        // Create a ListClass instance and register its functions
-        let list_class = ListClass::new();
+        // Create a ListClass instance with the dynamically resolved mem_alloc index
+        // so list operations are resilient to import ordering changes.
+        let mem_alloc_idx = self
+            .get_function_index("mem_alloc")
+            .unwrap_or(crate::stdlib::list_class::DEFAULT_MEM_ALLOC_CALL_INDEX_PUB);
+        let list_class = ListClass::new_with_mem_alloc_idx(mem_alloc_idx);
         list_class.register_functions(self)?;
 
         Ok(())

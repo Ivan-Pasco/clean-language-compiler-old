@@ -57,10 +57,11 @@ const _RESULT_SIZE: i32 = 24;
 ///  12:  name_ptr     (4 bytes, 0 if unnamed)
 const _RULES_HEADER_SIZE: i32 = 16;
 
-/// Call index for mem_alloc(type_id: i32, size: i32) -> i32.
-/// This is imported as the first type-conversion import and resolves to index 7
-/// in the standard module layout. This matches existing usage in this file.
-const MEM_ALLOC_CALL_INDEX: u32 = 7;
+/// Fallback call index for mem_alloc when dynamic resolution is not available.
+/// In the standard layout: 0=print, 1=printl, 2=input, 3=input_integer,
+/// 4=input_float, 5=input_yesno, 6=input_range, 7=mem_alloc.
+/// Prefer dynamic resolution via ValidatorManager::mem_alloc_idx where possible.
+pub const DEFAULT_MEM_ALLOC_CALL_INDEX: u32 = 7;
 
 // Call index for pairs.get(pairs_ptr: i32, key_ptr: i32) -> i32.
 // pairs.get is registered as a WASM stdlib function by PairsTypeManager.
@@ -91,11 +92,30 @@ const MEM_ALLOC_CALL_INDEX: u32 = 7;
 pub struct ValidatorManager {
     #[allow(dead_code)] // Held for future direct allocations; codegen uses global memory manager
     memory_manager: Rc<RefCell<MemoryManager>>,
+    /// Dynamically resolved index for mem_alloc in the current module's import table.
+    /// Set at registration time so the validator is resilient to import ordering changes.
+    mem_alloc_idx: u32,
 }
 
 impl ValidatorManager {
     pub fn new(memory_manager: Rc<RefCell<MemoryManager>>) -> Self {
-        Self { memory_manager }
+        Self {
+            memory_manager,
+            mem_alloc_idx: DEFAULT_MEM_ALLOC_CALL_INDEX,
+        }
+    }
+
+    /// Create a ValidatorManager with a specific mem_alloc call index.
+    /// Use this from `register_validator_operations` after mem_alloc has been
+    /// registered, so the index reflects the actual module layout.
+    pub fn new_with_mem_alloc_idx(
+        memory_manager: Rc<RefCell<MemoryManager>>,
+        mem_alloc_idx: u32,
+    ) -> Self {
+        Self {
+            memory_manager,
+            mem_alloc_idx,
+        }
     }
 
     /// Register all validator functions as stdlib functions
@@ -571,7 +591,7 @@ impl ValidatorManager {
             // Allocate ValidationRules header (16 bytes): field_count, capacity, fields_ptr, name_ptr
             Instruction::I32Const(16),
             Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(MEM_ALLOC_CALL_INDEX),
+            Instruction::Call(self.mem_alloc_idx),
             Instruction::LocalTee(0), // rules_ptr
             // field_count = 0 at offset 0
             Instruction::I32Const(0),
@@ -599,7 +619,7 @@ impl ValidatorManager {
             // Allocate field array: INITIAL_FIELD_CAPACITY * FIELD_ENTRY_SIZE bytes
             Instruction::I32Const(INITIAL_FIELD_CAPACITY * FIELD_ENTRY_SIZE),
             Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(MEM_ALLOC_CALL_INDEX),
+            Instruction::Call(self.mem_alloc_idx),
             Instruction::LocalSet(1), // fields_ptr — use Set (not Tee) to avoid leaving value on stack
             // Store fields_ptr at offset 8 of rules header
             Instruction::LocalGet(0),
@@ -624,7 +644,7 @@ impl ValidatorManager {
             // Allocate 16-byte header
             Instruction::I32Const(16),
             Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(MEM_ALLOC_CALL_INDEX),
+            Instruction::Call(self.mem_alloc_idx),
             Instruction::LocalTee(1), // rules_ptr (extra local 1, since param is 0)
             // field_count = 0
             Instruction::I32Const(0),
@@ -652,7 +672,7 @@ impl ValidatorManager {
             // Allocate field array
             Instruction::I32Const(INITIAL_FIELD_CAPACITY * FIELD_ENTRY_SIZE),
             Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(MEM_ALLOC_CALL_INDEX),
+            Instruction::Call(self.mem_alloc_idx),
             Instruction::LocalSet(2), // fields_ptr (extra local 2) — use Set (not Tee) to avoid leaving value on stack
             // Store fields_ptr at offset 8
             Instruction::LocalGet(1),
@@ -695,7 +715,7 @@ impl ValidatorManager {
         instrs.extend([
             Instruction::I32Const(24),
             Instruction::I32Const(VALIDATION_RESULT_TYPE_ID as i32),
-            Instruction::Call(MEM_ALLOC_CALL_INDEX),
+            Instruction::Call(self.mem_alloc_idx),
             Instruction::LocalSet(2), // result_ptr
         ]);
 
@@ -1077,7 +1097,7 @@ impl ValidatorManager {
         instrs.extend([
             Instruction::I32Const(24),
             Instruction::I32Const(VALIDATION_RESULT_TYPE_ID as i32),
-            Instruction::Call(MEM_ALLOC_CALL_INDEX),
+            Instruction::Call(self.mem_alloc_idx),
             Instruction::LocalSet(3), // result_ptr
         ]);
 
@@ -1386,7 +1406,7 @@ impl ValidatorManager {
         vec![
             Instruction::I32Const(24),
             Instruction::I32Const(VALIDATION_RESULT_TYPE_ID as i32),
-            Instruction::Call(MEM_ALLOC_CALL_INDEX),
+            Instruction::Call(self.mem_alloc_idx),
             Instruction::LocalTee(1), // result_ptr
             // is_ok = 1
             Instruction::I32Const(1),
@@ -1448,7 +1468,7 @@ impl ValidatorManager {
         vec![
             Instruction::I32Const(24),
             Instruction::I32Const(VALIDATION_RESULT_TYPE_ID as i32),
-            Instruction::Call(MEM_ALLOC_CALL_INDEX),
+            Instruction::Call(self.mem_alloc_idx),
             Instruction::LocalTee(1), // result_ptr
             // is_ok = 0
             Instruction::I32Const(0),
@@ -1797,7 +1817,7 @@ impl ValidatorManager {
         instrs.extend([
             Instruction::I32Const(8),
             Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(MEM_ALLOC_CALL_INDEX),
+            Instruction::Call(self.mem_alloc_idx),
             Instruction::LocalTee(3), // range_rule_ptr
             Instruction::LocalGet(1), // min
             Instruction::I32Store(MemArg {
@@ -2166,7 +2186,7 @@ impl ValidatorManager {
         instrs.extend([
             Instruction::I32Const(16),
             Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(MEM_ALLOC_CALL_INDEX),
+            Instruction::Call(self.mem_alloc_idx),
             Instruction::LocalSet(2), // new_rules_ptr
         ]);
 
@@ -2209,7 +2229,7 @@ impl ValidatorManager {
             Instruction::I32Const(FIELD_ENTRY_SIZE),
             Instruction::I32Mul,
             Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(MEM_ALLOC_CALL_INDEX),
+            Instruction::Call(self.mem_alloc_idx),
             Instruction::LocalSet(6), // new_fields_ptr — use Set (not Tee) to avoid leaving value on stack
         ]);
 

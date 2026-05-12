@@ -7,6 +7,14 @@ start:
 	number b = getBalance(acc)
 	print(b)
 
+class BankAccount
+	string owner
+	number balance
+
+	constructor(string initialOwner, number initialBalance)
+		owner = initialOwner
+		balance = initialBalance
+
 functions:
 	void deposit(BankAccount account, number amount)
 		account.balance = account.balance + amount
@@ -16,7 +24,3 @@ functions:
 
 	void withdraw(BankAccount account, number amount)
 		account.balance = account.balance - amount
-
-class BankAccount
-	string owner
-	number balance
