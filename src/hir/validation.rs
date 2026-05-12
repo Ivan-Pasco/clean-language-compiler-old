@@ -998,14 +998,10 @@ impl HirValidator {
 
                 HirStatement::If {
                     then_branch,
-                    else_branch,
+                    else_branch: Some(else_block),
                     ..
-                } if Self::block_has_return(then_branch) => {
-                    if let Some(else_block) = else_branch {
-                        if Self::block_has_return(else_block) {
-                            return true;
-                        }
-                    }
+                } if Self::block_has_return(then_branch) && Self::block_has_return(else_block) => {
+                    return true;
                 }
                 HirStatement::If { .. } => {}
 
