@@ -1059,11 +1059,8 @@ pub fn parse_test_case(test_pair: Pair<Rule>) -> Result<TestCase, CompilerError>
 
                 for named_inner in inner.into_inner() {
                     match named_inner.as_rule() {
-                        Rule::string => {
-                            if description.is_none() {
-                                description =
-                                    Some(named_inner.as_str().trim_matches('"').to_string());
-                            }
+                        Rule::string if description.is_none() => {
+                            description = Some(named_inner.as_str().trim_matches('"').to_string());
                         }
                         Rule::expression => {
                             if test_expression.is_none() {

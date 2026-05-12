@@ -976,11 +976,10 @@ impl HirValidator {
         location: &SourceLocation,
     ) {
         match hir_type {
-            HirType::Named { name, .. } => {
-                if !context.classes.contains_key(name) {
-                    context.error(&format!("Undefined type '{}'", name), location.clone());
-                }
+            HirType::Named { name, .. } if !context.classes.contains_key(name) => {
+                context.error(&format!("Undefined type '{}'", name), location.clone());
             }
+            HirType::Named { .. } => {}
 
             HirType::List(element_type) | HirType::Matrix(element_type) => {
                 Self::validate_type(context, element_type, location);
@@ -1001,15 +1000,14 @@ impl HirValidator {
                     then_branch,
                     else_branch,
                     ..
-                } => {
-                    if Self::block_has_return(then_branch) {
-                        if let Some(else_block) = else_branch {
-                            if Self::block_has_return(else_block) {
-                                return true;
-                            }
+                } if Self::block_has_return(then_branch) => {
+                    if let Some(else_block) = else_branch {
+                        if Self::block_has_return(else_block) {
+                            return true;
                         }
                     }
                 }
+                HirStatement::If { .. } => {}
 
                 _ => {}
             }

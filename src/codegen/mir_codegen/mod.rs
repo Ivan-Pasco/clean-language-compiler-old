@@ -591,8 +591,7 @@ impl MirCodeGenerator<'_> {
         let mut sorted_globals: Vec<_> = mir_program.globals.into_iter().collect();
         sorted_globals.sort_by_key(|(symbol_id, _)| symbol_id.0);
 
-        let mut next_global_index: u32 = 1;
-        for (symbol_id, global) in sorted_globals {
+        for (next_global_index, (symbol_id, global)) in (1_u32..).zip(sorted_globals) {
             self.state_global_indices
                 .insert(symbol_id, next_global_index);
             self.state_globals.push((
@@ -609,7 +608,6 @@ impl MirCodeGenerator<'_> {
                 initializer = ?global.initializer,
                 "Registered state variable as WASM global"
             );
-            next_global_index += 1;
         }
         debug_mir!(
             total_state_globals = self.state_globals.len(),

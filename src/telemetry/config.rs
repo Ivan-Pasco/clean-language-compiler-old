@@ -10,21 +10,16 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Consent level for error reporting — controls what data is included
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ConsentLevel {
     /// Only error code, compiler version, OS — no code snippets
     ErrorOnly,
     /// Error code + AI-generated minimal reproduction (default)
+    #[default]
     ErrorWithCode,
     /// Full report including AI analysis and suggested fix
     Full,
-}
-
-impl Default for ConsentLevel {
-    fn default() -> Self {
-        Self::ErrorWithCode
-    }
 }
 
 impl std::fmt::Display for ConsentLevel {

@@ -766,8 +766,8 @@ impl SemanticRecovery {
         for (i, row) in matrix.iter_mut().enumerate().take(s1_len + 1) {
             row[0] = i;
         }
-        for j in 0..=s2_len {
-            matrix[0][j] = j;
+        for (j, cell) in matrix[0].iter_mut().enumerate() {
+            *cell = j;
         }
 
         for i in 1..=s1_len {

@@ -2167,12 +2167,12 @@ impl<'a> TypeInference<'a> {
                 TastStatement::Return { return_type, .. } => {
                     block_return_type = return_type.clone();
                 }
-                TastStatement::Expression { expression, .. } => {
+                TastStatement::Expression { expression, .. }
                     // Only the LAST expression statement becomes the block's return type
                     // Other expression statements are discarded (will need DROP in codegen)
-                    if is_last_statement {
-                        block_return_type = expression.expr_type.clone();
-                    }
+                    if is_last_statement =>
+                {
+                    block_return_type = expression.expr_type.clone();
                 }
                 TastStatement::If {
                     result_type,
@@ -5451,10 +5451,10 @@ impl<'a> TypeInference<'a> {
                         }
                     }
                 }
-                TastStatement::While { body, .. } | TastStatement::For { body, .. } => {
-                    if Self::block_has_none_return(body) {
-                        return true;
-                    }
+                TastStatement::While { body, .. } | TastStatement::For { body, .. }
+                    if Self::block_has_none_return(body) =>
+                {
+                    return true;
                 }
                 _ => {}
             }
@@ -5515,10 +5515,10 @@ impl<'a> TypeInference<'a> {
                         }
                     }
                 }
-                TastStatement::While { body, .. } | TastStatement::For { body, .. } => {
-                    if Self::block_has_non_none_return(body) {
-                        return true;
-                    }
+                TastStatement::While { body, .. } | TastStatement::For { body, .. }
+                    if Self::block_has_non_none_return(body) =>
+                {
+                    return true;
                 }
                 _ => {}
             }

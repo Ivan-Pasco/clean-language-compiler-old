@@ -134,19 +134,15 @@ impl MirCodeGenerator<'_> {
             let mut predecessor_count = 0;
             for block in function.blocks.values() {
                 match &block.terminator {
-                    MirTerminator::Jump { target } => {
-                        if *target == false_block {
-                            predecessor_count += 1;
-                        }
+                    MirTerminator::Jump { target } if *target == false_block => {
+                        predecessor_count += 1;
                     }
                     MirTerminator::Branch {
                         true_block: tb,
                         false_block: fb,
                         ..
-                    } => {
-                        if *tb == false_block || *fb == false_block {
-                            predecessor_count += 1;
-                        }
+                    } if *tb == false_block || *fb == false_block => {
+                        predecessor_count += 1;
                     }
                     _ => {}
                 }

@@ -71,7 +71,7 @@ impl PendingQueue {
         }
 
         // Sort by timestamp (oldest first) for FIFO processing
-        reports.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        reports.sort_by_key(|a| a.timestamp);
         reports
     }
 
@@ -120,7 +120,7 @@ impl PendingQueue {
         }
 
         // Sort by modification time (oldest first)
-        files.sort_by(|a, b| a.1.cmp(&b.1));
+        files.sort_by_key(|a| a.1);
 
         // Remove oldest files to get back under cap
         let to_remove = files.len() - MAX_PENDING_REPORTS + 1; // +1 to make room for the new one
