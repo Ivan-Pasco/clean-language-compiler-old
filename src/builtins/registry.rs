@@ -229,7 +229,7 @@ impl BuiltinRegistry {
     }
 
     /// Register I/O functions (print, input, etc.)
-    /// Note: Use print("text") for no newline, print("text") + for newline
+    /// Note: Use print("text") for newline (default), print("text") + for no newline (continuation)
     fn register_io_functions(&mut self) {
         let io_functions = vec![
             BuiltinFunction::new(

@@ -947,7 +947,8 @@ impl TokenParser {
             self.parse_expression()?
         };
 
-        // Consume trailing '+' for print-with-newline: print("Hello") +
+        // print("Hello")   → newline=true  (default: adds newline)
+        // print("Hello") + → newline=false (continuation: stays on same line)
         self.skip_whitespace();
         let newline = if self.check(&TokenKind::Plus) {
             let saved = self.cursor;
@@ -958,13 +959,13 @@ impl TokenParser {
                 self.current_kind(),
                 TokenKind::Newline | TokenKind::Eof | TokenKind::Dedent(_) | TokenKind::Indent(_)
             ) {
-                true
+                false // print(...) + stays on same line — no newline
             } else {
                 self.cursor = saved;
-                false
+                true // not a trailing +, treat as default (newline)
             }
         } else {
-            false
+            true // no + suffix → default form, adds newline
         };
 
         Ok(Statement::Print {

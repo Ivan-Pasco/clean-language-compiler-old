@@ -881,14 +881,14 @@ fn parse_print_newline_statement(
                 .into_iter()
                 .next()
                 .expect("invariant: single-element vec verified above"),
-            newline: true, // print(...) + explicitly adds newline
+            newline: true, // print(...) + adds newline (legacy pest-based parser path)
             location: Some(ast_location),
         })
     } else {
         // Multiple arguments - use PrintBlock
         Ok(Statement::PrintBlock {
             expressions,
-            newline: true,
+            newline: true, // print(...) + adds newline (legacy pest-based parser path)
             location: Some(ast_location),
         })
     }
@@ -941,14 +941,14 @@ fn parse_print_parenthesized_statement(
                 .into_iter()
                 .next()
                 .expect("invariant: single-element vec verified above"),
-            newline: true, // print(...) acts like print(...) + without explicit +
+            newline: false, // legacy pest-based parser path (not used by 7-stage pipeline)
             location: Some(ast_location),
         })
     } else {
         // Multiple arguments - use PrintBlock
         Ok(Statement::PrintBlock {
             expressions,
-            newline: true,
+            newline: false,
             location: Some(ast_location),
         })
     }

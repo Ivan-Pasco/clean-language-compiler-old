@@ -362,7 +362,7 @@ impl TokenParser {
     /// Parse a print block statement: print:\n\texpr1\n\texpr2
     ///
     /// Each indented expression is printed on its own line (equivalent to
-    /// `print(expr) +` for each line).  The parser cursor must be positioned
+    /// `print(expr)` for each line).  The parser cursor must be positioned
     /// at the `print` token on entry.
     pub(super) fn parse_print_block(&mut self) -> Result<Statement, CompilerError> {
         let location = self.current().location.clone();
