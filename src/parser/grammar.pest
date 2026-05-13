@@ -1,6 +1,6 @@
 // Basic tokens - DISABLE AUTOMATIC WHITESPACE for indentation-sensitive parsing
 WHITESPACE = _{ " " | "\r" }
-COMMENT = _{ ("#" | "//") ~ (!"\n" ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 
 // Trivia rules for handling comments in indented contexts
 // LINE_TRIVIA handles single-line comments with proper indentation preservation

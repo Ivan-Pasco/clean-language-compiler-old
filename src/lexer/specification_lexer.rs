@@ -216,9 +216,6 @@ impl<'a> SpecificationLexer<'a> {
                     Ok(Token::simple(TokenKind::At, loc))
                 }
 
-                // Hash-style comments
-                '#' => self.handle_hash_comment(),
-
                 // Single quotes are valid in framework blocks (e.g. html: attribute values)
                 // Emitted as an Identifier token so the token stream flows through without
                 // error; the parser's extract_block_content_raw() reconstructs raw text from
@@ -290,12 +287,6 @@ impl<'a> SpecificationLexer<'a> {
                     return self.handle_slash();
                 }
             }
-        }
-
-        if let Some(&'#') = self.peek() {
-            // Hash-style comment line - handle the comment normally without recursion
-            self.at_line_start = false;
-            return self.handle_hash_comment();
         }
 
         self.at_line_start = false;
@@ -457,9 +448,6 @@ impl<'a> SpecificationLexer<'a> {
                     self.advance();
                     Ok(Token::simple(TokenKind::At, loc))
                 }
-
-                // Hash-style comments
-                '#' => self.handle_hash_comment(),
 
                 // Single quotes are valid in framework blocks (e.g. html: attribute values)
                 // Emitted as an Identifier token so the token stream flows through without
@@ -1396,28 +1384,6 @@ impl<'a> SpecificationLexer<'a> {
                 Ok(Token::simple(TokenKind::Divide, start_location))
             }
         }
-    }
-
-    /// Handle hash-style comment (#)
-    fn handle_hash_comment(&mut self) -> Result<Token, LexError> {
-        let start_location = self.current_location();
-        self.advance(); // Skip '#'
-
-        let mut comment = String::new();
-
-        while let Some(&ch) = self.peek() {
-            if ch == '\n' {
-                break;
-            }
-            comment.push(ch);
-            self.advance();
-        }
-
-        Ok(Token::new(
-            TokenKind::Comment(comment.clone()),
-            start_location,
-            format!("#{}", comment),
-        ))
     }
 
     /// Handle equals (= or ==)

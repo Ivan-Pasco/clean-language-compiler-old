@@ -932,18 +932,6 @@ impl TokenParser {
 
         let mut import_items = Vec::new();
 
-        // Check for file path import: import "path/to/file.cln"
-        if let TokenKind::StringLiteral(path) = self.current_kind() {
-            let file_path = path.clone();
-            self.bump(); // consume string literal
-            import_items.push(ImportItem {
-                name: file_path,
-                alias: None,
-                is_file_import: true,
-            });
-            return Ok(import_items);
-        }
-
         // Only the block form is supported: import:\n\tmodule\n\t...
         // The inline form `import module` is not part of the specification.
         if !self.eat(&TokenKind::Colon) {
@@ -1221,15 +1209,34 @@ impl TokenParser {
                     let inner_type = self.parse_type()?;
                     self.skip_whitespace();
                     self.expect(&TokenKind::Greater)?; // expect '>'
-                                                       // Consume optional list_behavior suffix: .line .pile .unique (and combos)
-                                                       // The behavior is parsed and discarded here — full codegen wiring is in TASKS.md.
-                    let behavior_keywords = ["line", "pile", "unique"];
-                    while matches!(self.current_kind(), TokenKind::Dot) {
-                        // Peek at the identifier after the dot
+                                                       // Consume optional list_behavior suffix.
+                                                       // Canonical order: .line then .unique then .pile
+                                                       // Any other ordering is a parse error (grammar.ebnf list_behavior).
+                    let behavior_order = ["line", "unique", "pile"];
+                    let mut last_index: i32 = -1;
+                    loop {
+                        if !matches!(self.current_kind(), TokenKind::Dot) {
+                            break;
+                        }
                         let saved = self.cursor;
                         self.bump(); // consume '.'
                         if let TokenKind::Identifier(kw) = self.current_kind() {
-                            if behavior_keywords.contains(&kw.as_str()) {
+                            let kw = kw.clone();
+                            if let Some(idx) = behavior_order.iter().position(|&s| s == kw.as_str())
+                            {
+                                let idx = idx as i32;
+                                if idx <= last_index {
+                                    return Err(CompilerError::parse_error(
+                                        format!(
+                                            "List behavior modifier '.{}' is out of canonical order. \
+                                             Modifiers must follow the order: .line → .unique → .pile",
+                                            kw
+                                        ),
+                                        Some(self.current().location.clone()),
+                                        Some("Use the canonical order: .line.unique.pile (omitting unused modifiers)".to_string()),
+                                    ));
+                                }
+                                last_index = idx;
                                 self.bump(); // consume the behavior keyword
                             } else {
                                 // Not a behavior keyword — restore cursor (method call follows)
