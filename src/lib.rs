@@ -1650,7 +1650,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     let unit = compiler.build_from_file(&entry_path)?;
 
     // Step 2: Merge all HIR programs into a single unified program
-    let merged_hir = {
+    let mut merged_hir = {
         use crate::hir::HirProgram;
 
         let mut all_functions = Vec::new();
@@ -1725,6 +1725,42 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         .as_ref()
         .map(|r| r.language_to_bridge_map())
         .unwrap_or_default();
+
+    // Add language-name alias externals to merged_hir BEFORE validation so the
+    // HIR validator can derive plugin namespaces (e.g. "req.query" → "req").
+    if !lang_to_bridge.is_empty() {
+        use crate::hir::{HirExternalFunction, HirParameter, HirType};
+        let bridge_by_name: std::collections::HashMap<&str, &crate::plugins::BridgeFunction> =
+            bridge_functions
+                .iter()
+                .map(|bf| (bf.name.as_str(), bf))
+                .collect();
+        for (lang_name, bridge_name) in &lang_to_bridge {
+            if merged_hir.externals.iter().any(|e| e.name == *lang_name) {
+                continue;
+            }
+            if let Some(bf) = bridge_by_name.get(bridge_name.as_str()) {
+                let parameters: Vec<HirParameter> = bf
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| HirParameter {
+                        name: format!("arg{}", i),
+                        param_type: HirType::Integer,
+                        default_value: None,
+                        location: Default::default(),
+                    })
+                    .collect();
+                merged_hir.externals.push(HirExternalFunction {
+                    name: lang_name.clone(),
+                    parameters,
+                    return_type: HirType::Void,
+                    module: bf.module.clone(),
+                    location: Default::default(),
+                });
+            }
+        }
+    }
 
     // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
     use crate::hir::validation::HirValidator;
