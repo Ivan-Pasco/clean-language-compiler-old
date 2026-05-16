@@ -442,9 +442,17 @@ pub fn type_check_with_plugins(
         )]
     })?;
 
-    // Stage 2.6: Bridge function registration
+    // Stage 2.6: Bridge function registration + language alias registration
     let bridge_functions = registry.bridge_functions();
+    let lang_to_bridge = registry.language_to_bridge_map();
     if !bridge_functions.is_empty() {
+        // Build lookup: bridge name → BridgeFunction for alias registration below
+        let bridge_by_name: std::collections::HashMap<&str, &crate::plugins::BridgeFunction> =
+            bridge_functions
+                .iter()
+                .map(|bf| (bf.name.as_str(), bf))
+                .collect();
+
         for bf in bridge_functions {
             if ast.externals.iter().any(|e| e.name == bf.name) {
                 continue;
@@ -469,6 +477,34 @@ pub fn type_check_with_plugins(
             };
             ast.externals.push(external_fn);
         }
+
+        // Register language-name aliases (e.g. "req.query", "db.query") so that
+        // the resolver recognises dot-notation calls as valid external functions.
+        for (lang_name, bridge_name) in &lang_to_bridge {
+            if ast.externals.iter().any(|e| e.name == *lang_name) {
+                continue;
+            }
+            if let Some(bf) = bridge_by_name.get(bridge_name.as_str()) {
+                let parameters: Vec<crate::ast::Parameter> = bf
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, type_str)| crate::ast::Parameter {
+                        name: format!("arg{}", i),
+                        type_: parse_bridge_type(type_str),
+                        default_value: None,
+                    })
+                    .collect();
+                let external_fn = crate::ast::ExternalFunction {
+                    name: lang_name.clone(),
+                    parameters,
+                    return_type: parse_bridge_type(&bf.returns),
+                    module: bf.module.clone(),
+                    location: None,
+                };
+                ast.externals.push(external_fn);
+            }
+        }
     }
 
     // Stage 3: AST to HIR
@@ -484,8 +520,14 @@ pub fn type_check_with_plugins(
     let bridge_functions = registry.bridge_functions();
     let resolution_result = if bridge_functions.is_empty() {
         Resolver::resolve(hir_result.hir)?
-    } else {
+    } else if lang_to_bridge.is_empty() {
         Resolver::resolve_with_bridge_functions(hir_result.hir, bridge_functions)?
+    } else {
+        Resolver::resolve_with_bridge_and_language_aliases(
+            hir_result.hir,
+            bridge_functions,
+            &lang_to_bridge,
+        )?
     };
     let resolved_hir = resolution_result.resolved_hir;
 

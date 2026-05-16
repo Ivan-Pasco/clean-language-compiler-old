@@ -542,6 +542,37 @@ impl CompilerError {
         }
     }
 
+    /// FUNC012 — Method-style call on a standalone function.
+    ///
+    /// Raised when the programmer writes `value.functionName(args)` but `functionName`
+    /// is a user-defined standalone function (declared in a `functions:` block), not a
+    /// built-in type method or a class instance method.
+    ///
+    /// Rule: user-defined standalone functions must always be called as
+    /// `functionName(value, args)`.
+    pub fn method_call_on_standalone_function<T: Into<String>>(
+        function_name: T,
+        location: SourceLocation,
+    ) -> Self {
+        let name = function_name.into();
+        let message = format!(
+            "`{}` is a standalone function — call it as `{}(value, args)` not `value.{}(args)`",
+            name, name, name
+        );
+        let help = format!(
+            "Method-style calling is only valid for built-in type methods (e.g. `.length()`, \
+             `.toString()`) and class instance methods. User-defined functions declared in a \
+             `functions:` block must always be called using regular call syntax: `{}(value, args)`.",
+            name
+        );
+        CompilerError::Validation {
+            context: Box::new(
+                ErrorContext::new(message, Some(help), ErrorType::Semantic, Some(location))
+                    .with_error_code("FUNC012"),
+            ),
+        }
+    }
+
     pub fn validation_warning<T: Into<String>>(message: T, location: SourceLocation) -> Self {
         CompilerError::Validation {
             context: Box::new(

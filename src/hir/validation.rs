@@ -19,7 +19,7 @@ pub struct ValidationContext {
     /// Functions available in the current scope
     pub functions: HashMap<String, HirFunction>,
 
-    /// Classes available in the current scope  
+    /// Classes available in the current scope
     pub classes: HashMap<String, HirClass>,
 
     /// Variables in the current scope stack
@@ -30,6 +30,11 @@ pub struct ValidationContext {
 
     /// Current function return type (for return validation)
     pub current_return_type: Option<HirType>,
+
+    /// Plugin-registered namespace prefixes (e.g. "req", "db") derived from
+    /// external functions whose names contain a dot (e.g. "req.query").
+    /// These are valid as method-call receivers without being declared variables.
+    pub plugin_namespaces: HashSet<String>,
 
     /// Validation errors and warnings
     pub errors: Vec<CompilerError>,
@@ -50,6 +55,7 @@ impl ValidationContext {
             variables: vec![HashMap::new()], // Global scope
             current_class: None,
             current_return_type: None,
+            plugin_namespaces: HashSet::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
         }
@@ -135,6 +141,19 @@ impl HirValidator {
     /// Validate a complete HIR program
     pub fn validate(hir: &HirProgram) -> Result<(), Vec<CompilerError>> {
         let mut context = ValidationContext::new();
+
+        // Derive plugin-registered namespace prefixes from externals whose names
+        // contain a dot (e.g. "req.query" → namespace "req", "db.query" → "db").
+        // These must be accepted as valid method-call receivers without being
+        // declared as local variables — the resolver wires them up in stage 4.
+        for external in &hir.externals {
+            if let Some(dot_pos) = external.name.find('.') {
+                let ns = &external.name[..dot_pos];
+                if !ns.is_empty() {
+                    context.plugin_namespaces.insert(ns.to_string());
+                }
+            }
+        }
 
         // First pass: collect all function and class definitions
         Self::collect_definitions(&mut context, hir);
@@ -741,6 +760,7 @@ impl HirValidator {
                 if context.lookup_variable(name).is_none()
                     && !context.functions.contains_key(name)
                     && !BUILTIN_NAMESPACES.contains(&name.as_str())
+                    && !context.plugin_namespaces.contains(name.as_str())
                     && !context.classes.contains_key(name)
                     && !is_class_field
                 {

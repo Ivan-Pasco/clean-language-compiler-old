@@ -1814,6 +1814,29 @@ impl NameResolver {
                     }
                 }
 
+                // FUNC012 — Reject method-style calls on user-defined standalone functions.
+                //
+                // At this point we have already ruled out class static calls and namespace
+                // calls above. If `method` resolves to a SymbolKind::Function in the
+                // symbol table, it is a user-defined standalone function and the caller
+                // must use regular call syntax: `functionName(value, args)`.
+                //
+                // Built-in type methods and class instance methods are NOT registered as
+                // SymbolKind::Function in the user symbol table, so they pass through
+                // unaffected.
+                if let Some(symbol_id) = self.symbol_table.lookup_symbol(method) {
+                    if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
+                        if matches!(symbol.kind, SymbolKind::Function { .. }) {
+                            self.errors
+                                .push(CompilerError::method_call_on_standalone_function(
+                                    method.as_str(),
+                                    location.clone(),
+                                ));
+                            return Err(());
+                        }
+                    }
+                }
+
                 // Regular instance method call
                 let resolved_receiver = self.resolve_expression(receiver)?;
 
