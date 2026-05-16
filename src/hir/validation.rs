@@ -764,7 +764,26 @@ impl HirValidator {
                     && !context.classes.contains_key(name)
                     && !is_class_field
                 {
-                    context.error(&format!("Undefined variable '{}'", name), location.clone());
+                    // SEM007: emit a context-aware message for well-known
+                    // plugin-injected implicit variables so developers get
+                    // actionable guidance rather than a generic error.
+                    const SERVER_IMPLICIT_VARS: &[&str] = &["req", "res", "session"];
+                    if SERVER_IMPLICIT_VARS.contains(&name.as_str()) {
+                        context.error_with_code(
+                            &format!(
+                                "Undefined variable '{}' — '{}' is provided by the \
+                                 frame.server plugin and is only available inside \
+                                 endpoint handler bodies (e.g. `GET /path:`, \
+                                 `POST /path:`). Make sure frame.server is loaded \
+                                 and that you are inside a route handler.",
+                                name, name
+                            ),
+                            location.clone(),
+                            "SEM007",
+                        );
+                    } else {
+                        context.error(&format!("Undefined variable '{}'", name), location.clone());
+                    }
                 }
             }
 

@@ -1818,15 +1818,18 @@ impl NameResolver {
                 //
                 // At this point we have already ruled out class static calls and namespace
                 // calls above. If `method` resolves to a SymbolKind::Function in the
-                // symbol table, it is a user-defined standalone function and the caller
-                // must use regular call syntax: `functionName(value, args)`.
+                // symbol table AND the symbol is not a builtin, it is a user-defined
+                // standalone function and the caller must use regular call syntax:
+                // `functionName(value, args)`.
                 //
-                // Built-in type methods and class instance methods are NOT registered as
-                // SymbolKind::Function in the user symbol table, so they pass through
-                // unaffected.
+                // Builtin functions like `toString` and `toInteger` are registered as
+                // SymbolKind::Function but are valid as method-style calls (e.g.
+                // `value.toString()`), so they are excluded from this check.
                 if let Some(symbol_id) = self.symbol_table.lookup_symbol(method) {
                     if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
-                        if matches!(symbol.kind, SymbolKind::Function { .. }) {
+                        if matches!(symbol.kind, SymbolKind::Function { .. })
+                            && !self.symbol_table.is_builtin(symbol_id)
+                        {
                             self.errors
                                 .push(CompilerError::method_call_on_standalone_function(
                                     method.as_str(),
