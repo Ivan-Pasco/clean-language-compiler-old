@@ -454,6 +454,13 @@ impl HirBuilder {
                     ..
                 } => {
                     for import_item in import_list {
+                        // File path imports ("./module.cln") are resolved by the multi-file
+                        // compiler before HIR is built — skip them here to avoid creating
+                        // HirImport entries with empty module names (SEM007).
+                        if import_item.is_file_import {
+                            continue;
+                        }
+
                         // Parse import name to separate module and symbol
                         // Examples:
                         //   "Math" → module: "Math", items: None (whole module)
@@ -496,6 +503,12 @@ impl HirBuilder {
         // Process imports from program.imports (top-level import declarations)
         // The parser stores `import Module` statements in program.imports, not in statements.
         for import_item in &program.imports {
+            // File path imports ("./module.cln") are resolved by the multi-file compiler
+            // before HIR is built — skip them here to avoid SEM007 (empty module name).
+            if import_item.is_file_import {
+                continue;
+            }
+
             let (module_name, symbol_items) = if let Some(dot_pos) = import_item.name.find('.') {
                 let module = &import_item.name[..dot_pos];
                 let symbol = &import_item.name[dot_pos + 1..];
