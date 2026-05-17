@@ -20,6 +20,11 @@ pub struct NameResolver {
     errors: Vec<CompilerError>,
     warnings: Vec<CompilerError>,
     expression_recursion_depth: usize,
+    /// Plugin bridge functions deferred until after `register_top_level_symbols` runs,
+    /// so they are applied AFTER builtins and are never overwritten by them.
+    pending_bridge_functions: Vec<crate::plugins::BridgeFunction>,
+    /// Language-name aliases deferred alongside `pending_bridge_functions`.
+    pending_language_aliases: std::collections::HashMap<String, String>,
 }
 
 #[allow(dead_code)] // NameResolver not yet wired into the main compilation pipeline
@@ -35,6 +40,8 @@ impl NameResolver {
             errors: Vec::new(),
             warnings: Vec::new(),
             expression_recursion_depth: 0,
+            pending_bridge_functions: Vec::new(),
+            pending_language_aliases: std::collections::HashMap::new(),
         }
     }
 
@@ -52,8 +59,22 @@ impl NameResolver {
 
     /// Resolve the entire HIR program
     fn resolve_program(&mut self, hir: HirProgram) -> Result<ResolvedHirProgram, ()> {
-        // First pass: Register all top-level symbols
+        // First pass: Register all top-level symbols (includes builtins)
         self.register_top_level_symbols(&hir)?;
+
+        // Apply plugin bridge registrations AFTER builtins so plugin signatures
+        // are never overwritten by hardcoded builtin entries.
+        let pending_bridges = std::mem::take(&mut self.pending_bridge_functions);
+        let pending_aliases = std::mem::take(&mut self.pending_language_aliases);
+        self.register_plugin_bridge_functions(&pending_bridges);
+        if !pending_aliases.is_empty() {
+            let bridge_by_name: std::collections::HashMap<&str, &crate::plugins::BridgeFunction> =
+                pending_bridges
+                    .iter()
+                    .map(|bf| (bf.name.as_str(), bf))
+                    .collect();
+            self.register_language_function_aliases(&pending_aliases, &bridge_by_name);
+        }
 
         // Second pass: Resolve all symbol references
         let resolved_functions = self.resolve_functions(&hir.functions)?;
@@ -346,13 +367,13 @@ impl NameResolver {
                 .symbol_table
                 .has_symbol_in_current_scope(&external.name)
             {
-                // NOTE: Allow external functions that match existing builtin functions
-                // This is necessary because plugin bridge functions may declare functions that
-                // are already registered as builtins (e.g., _http_route from frame.httpserver)
-                // We skip registration in this case since the builtin already provides the signature
+                // If an external function declaration collides with a builtin (e.g. a
+                // user-defined wrapper that shadows a builtin name), skip re-registration
+                // rather than emitting a spurious conflict error.  Plugin bridge functions
+                // are no longer hardcoded here — they are registered after builtins via
+                // `pending_bridge_functions`, so there is no collision to defend against.
                 if let Some(existing_symbol_id) = self.symbol_table.lookup_symbol(&external.name) {
                     if self.symbol_table.is_builtin(existing_symbol_id) {
-                        // External function matches a builtin - skip registration, this is OK
                         tracing::debug!(
                             name = %external.name,
                             "External function matches existing builtin, skipping registration"
@@ -2854,155 +2875,6 @@ impl NameResolver {
             builtin_location.clone(),
         );
 
-        // _http_route(method: string, path: string, handler: integer) -> integer
-        // _http_route_protected(method: string, path: string, handler: integer, role: string) -> integer
-        // When frame.server plugin is loaded, register_plugin_bridge_functions overwrites
-        // these with the same signature (plugin adds expand_strings flag at codegen level only).
-        self.register_builtin_fn(
-            "_http_route",
-            vec![HirType::String, HirType::String, HirType::Integer],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "_http_route_protected",
-            vec![
-                HirType::String,
-                HirType::String,
-                HirType::Integer,
-                HirType::String,
-            ],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-
-        // _http_listen(port: integer) -> integer
-        self.register_builtin_fn(
-            "_http_listen",
-            vec![HirType::Integer],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-
-        // Request context access functions (for reading request data in handlers)
-        // _req_param(name: string) -> string
-        self.register_builtin_fn(
-            "_req_param",
-            vec![HirType::String],
-            Some(HirType::String),
-            builtin_location.clone(),
-        );
-        // _req_query(name: string) -> string
-        self.register_builtin_fn(
-            "_req_query",
-            vec![HirType::String],
-            Some(HirType::String),
-            builtin_location.clone(),
-        );
-        // _req_body() -> string
-        self.register_builtin_fn(
-            "_req_body",
-            vec![],
-            Some(HirType::String),
-            builtin_location.clone(),
-        );
-        // _req_header(name: string) -> string
-        self.register_builtin_fn(
-            "_req_header",
-            vec![HirType::String],
-            Some(HirType::String),
-            builtin_location.clone(),
-        );
-        // _req_method() -> string
-        self.register_builtin_fn(
-            "_req_method",
-            vec![],
-            Some(HirType::String),
-            builtin_location.clone(),
-        );
-        // _req_path() -> string
-        self.register_builtin_fn(
-            "_req_path",
-            vec![],
-            Some(HirType::String),
-            builtin_location.clone(),
-        );
-        // _req_cookie(name: string) -> string
-        self.register_builtin_fn(
-            "_req_cookie",
-            vec![HirType::String],
-            Some(HirType::String),
-            builtin_location.clone(),
-        );
-
-        // Session management functions
-        // NOTE: _http_route_protected is also a Layer 3 function registered via plugin.toml.
-        // _session_store(user_id: integer, role: string, claims: string) -> string
-        self.register_builtin_fn(
-            "_session_store",
-            vec![HirType::Integer, HirType::String, HirType::String],
-            Some(HirType::String),
-            builtin_location.clone(),
-        );
-        // _session_get() -> string
-        self.register_builtin_fn(
-            "_session_get",
-            vec![],
-            Some(HirType::String),
-            builtin_location.clone(),
-        );
-        // _session_delete() -> integer
-        self.register_builtin_fn(
-            "_session_delete",
-            vec![],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        // _http_set_cookie(cookie: string) -> integer
-        self.register_builtin_fn(
-            "_http_set_cookie",
-            vec![HirType::String],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-
-        // Authentication context functions
-        // _auth_get_session() -> string
-        self.register_builtin_fn(
-            "_auth_get_session",
-            vec![],
-            Some(HirType::String),
-            builtin_location.clone(),
-        );
-        // _auth_require_auth() -> integer
-        self.register_builtin_fn(
-            "_auth_require_auth",
-            vec![],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        // _auth_require_role(role: string) -> integer
-        self.register_builtin_fn(
-            "_auth_require_role",
-            vec![HirType::String],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        // _auth_can(permission: string) -> integer
-        self.register_builtin_fn(
-            "_auth_can",
-            vec![HirType::String],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        // _auth_has_any_role(roles_json: string) -> integer
-        self.register_builtin_fn(
-            "_auth_has_any_role",
-            vec![HirType::String],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-
         // Validator namespace functions
         // validator.create() -> Integer (pointer to validation rules)
         self.register_builtin_fn(
@@ -3194,14 +3066,16 @@ impl NameResolver {
     ///
     /// This allows plugins to declare bridge functions in their plugin.toml
     /// that will be recognized by the compiler during name resolution.
+    /// Bridge functions are applied AFTER builtin registration (inside
+    /// `resolve_program`) so their signatures are never overwritten.
     pub fn resolve_with_bridge_functions(
         hir: HirProgram,
         bridge_functions: &[crate::plugins::BridgeFunction],
     ) -> Result<ResolutionResult, Vec<CompilerError>> {
         let mut resolver = Self::new();
 
-        // Register plugin bridge functions before resolving
-        resolver.register_plugin_bridge_functions(bridge_functions);
+        // Defer bridge registration — applied inside resolve_program after builtins
+        resolver.pending_bridge_functions = bridge_functions.to_vec();
 
         match resolver.resolve_program(hir) {
             Ok(resolved_hir) => Ok(ResolutionResult {
@@ -3217,6 +3091,8 @@ impl NameResolver {
     /// Extends `resolve_with_bridge_functions` by also registering dot-notation
     /// language API names (e.g. `"db.query"`) as builtin functions with the same
     /// signature as the underlying bridge function they map to.
+    /// Both bridge functions and aliases are applied AFTER builtin registration
+    /// (inside `resolve_program`) so plugin signatures are never overwritten.
     pub fn resolve_with_bridge_and_language_aliases(
         hir: crate::hir::HirProgram,
         bridge_functions: &[crate::plugins::BridgeFunction],
@@ -3224,19 +3100,9 @@ impl NameResolver {
     ) -> Result<ResolutionResult, Vec<CompilerError>> {
         let mut resolver = Self::new();
 
-        // Register bridge functions first
-        resolver.register_plugin_bridge_functions(bridge_functions);
-
-        // Register language-name aliases so "db.query" etc. resolve correctly
-        if !language_to_bridge.is_empty() {
-            let bridge_by_name: std::collections::HashMap<&str, &crate::plugins::BridgeFunction> =
-                bridge_functions
-                    .iter()
-                    .map(|bf| (bf.name.as_str(), bf))
-                    .collect();
-
-            resolver.register_language_function_aliases(language_to_bridge, &bridge_by_name);
-        }
+        // Defer both bridge and alias registration — applied inside resolve_program after builtins
+        resolver.pending_bridge_functions = bridge_functions.to_vec();
+        resolver.pending_language_aliases = language_to_bridge.clone();
 
         match resolver.resolve_program(hir) {
             Ok(resolved_hir) => Ok(ResolutionResult {
