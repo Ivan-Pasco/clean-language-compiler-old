@@ -947,72 +947,69 @@ impl super::CodeGenerator {
         self.file_import_indices.get(func_name).copied()
     }
 
-    /// Register Layer 2 host bridge imports for the `db` namespace.
+    /// Register Layer 2 host bridge imports for the `db` namespace (imports only).
     ///
-    /// Registers raw WASM imports (`db_query`, `db_execute`, `db_begin`,
-    /// `db_commit`, `db_rollback`) plus thin wrapper functions that expand
-    /// Clean string pointers (length-prefixed) to the (ptr, len) pair the
-    /// host bridge expects. The wrapper indices are stored in `function_map`
-    /// under the dot-notation names (`db.query`, etc.) so that MIR call sites
-    /// that resolve to those names can look them up.
+    /// Registers raw WASM imports (`db_query`, `db_execute`, `db_begin`, `db_commit`,
+    /// `db_rollback`). Does NOT create local wrapper functions — call
+    /// `register_db_builtin_wrappers()` AFTER all imports are registered to avoid
+    /// corrupting function indices (WASM requires all imports before local functions).
     ///
-    /// This registration is used only when no plugin bridge (e.g. `frame.data`)
-    /// provides these functions. When the plugin is loaded the plugin's bridge
-    /// functions take precedence via `register_plugin_bridge_imports`, so this
-    /// code is never called in that path.
+    /// Used only when no plugin bridge (e.g. `frame.data`) provides these functions.
     pub(crate) fn register_db_builtin_imports(&mut self) -> Result<(), CompilerError> {
-        // db_query(sql_ptr: i32, sql_len: i32, params_ptr: i32, params_len: i32) -> i32
-        let query_raw_idx = self.register_import_function(
+        self.register_import_function(
             "env",
             "db_query",
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-
-        if query_raw_idx != u32::MAX {
-            // Wrapper: expand two Clean string ptrs → (ptr+4, *ptr) each
-            let wrap_idx = self.register_function(
-                "db.query",
-                &[WasmType::I32, WasmType::I32],
-                Some(WasmType::I32),
-                &[
-                    // sql string: ptr+4 (data start)
-                    Instruction::LocalGet(0),
-                    Instruction::I32Const(4),
-                    Instruction::I32Add,
-                    // sql length: *ptr
-                    Instruction::LocalGet(0),
-                    Instruction::I32Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 2,
-                        memory_index: 0,
-                    }),
-                    // params string: ptr+4
-                    Instruction::LocalGet(1),
-                    Instruction::I32Const(4),
-                    Instruction::I32Add,
-                    // params length: *ptr
-                    Instruction::LocalGet(1),
-                    Instruction::I32Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 2,
-                        memory_index: 0,
-                    }),
-                    Instruction::Call(query_raw_idx),
-                ],
-            )?;
-            self.function_map.insert("db.query".to_string(), wrap_idx);
-        }
-
-        // db_execute(sql_ptr: i32, sql_len: i32, params_ptr: i32, params_len: i32) -> i32
-        let execute_raw_idx = self.register_import_function(
+        self.register_import_function(
             "env",
             "db_execute",
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
+        self.register_import_function("env", "db_begin", &[], Some(WasmType::I32))?;
+        self.register_import_function("env", "db_commit", &[], Some(WasmType::I32))?;
+        self.register_import_function("env", "db_rollback", &[], Some(WasmType::I32))?;
+        Ok(())
+    }
 
-        if execute_raw_idx != u32::MAX {
+    /// Create local wrapper functions for the `db` namespace.
+    ///
+    /// MUST be called AFTER all imports are registered. Wrappers expand Clean
+    /// length-prefixed string pointers to the (ptr+4, len) pair the host bridge expects.
+    pub(crate) fn register_db_builtin_wrappers(&mut self) -> Result<(), CompilerError> {
+        if let Some(&raw_idx) = self.function_map.get("db_query") {
+            let wrap_idx = self.register_function(
+                "db.query",
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                &[
+                    Instruction::LocalGet(0),
+                    Instruction::I32Const(4),
+                    Instruction::I32Add,
+                    Instruction::LocalGet(0),
+                    Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }),
+                    Instruction::LocalGet(1),
+                    Instruction::I32Const(4),
+                    Instruction::I32Add,
+                    Instruction::LocalGet(1),
+                    Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }),
+                    Instruction::Call(raw_idx),
+                ],
+            )?;
+            self.function_map.insert("db.query".to_string(), wrap_idx);
+        }
+
+        if let Some(&raw_idx) = self.function_map.get("db_execute") {
             let wrap_idx = self.register_function(
                 "db.execute",
                 &[WasmType::I32, WasmType::I32],
@@ -1036,47 +1033,38 @@ impl super::CodeGenerator {
                         align: 2,
                         memory_index: 0,
                     }),
-                    Instruction::Call(execute_raw_idx),
+                    Instruction::Call(raw_idx),
                 ],
             )?;
             self.function_map.insert("db.execute".to_string(), wrap_idx);
         }
 
-        // db_begin() -> i32
-        let begin_raw_idx =
-            self.register_import_function("env", "db_begin", &[], Some(WasmType::I32))?;
-        if begin_raw_idx != u32::MAX {
+        if let Some(&raw_idx) = self.function_map.get("db_begin") {
             let wrap_idx = self.register_function(
                 "db.begin",
                 &[],
                 Some(WasmType::I32),
-                &[Instruction::Call(begin_raw_idx)],
+                &[Instruction::Call(raw_idx)],
             )?;
             self.function_map.insert("db.begin".to_string(), wrap_idx);
         }
 
-        // db_commit() -> i32
-        let commit_raw_idx =
-            self.register_import_function("env", "db_commit", &[], Some(WasmType::I32))?;
-        if commit_raw_idx != u32::MAX {
+        if let Some(&raw_idx) = self.function_map.get("db_commit") {
             let wrap_idx = self.register_function(
                 "db.commit",
                 &[],
                 Some(WasmType::I32),
-                &[Instruction::Call(commit_raw_idx)],
+                &[Instruction::Call(raw_idx)],
             )?;
             self.function_map.insert("db.commit".to_string(), wrap_idx);
         }
 
-        // db_rollback() -> i32
-        let rollback_raw_idx =
-            self.register_import_function("env", "db_rollback", &[], Some(WasmType::I32))?;
-        if rollback_raw_idx != u32::MAX {
+        if let Some(&raw_idx) = self.function_map.get("db_rollback") {
             let wrap_idx = self.register_function(
                 "db.rollback",
                 &[],
                 Some(WasmType::I32),
-                &[Instruction::Call(rollback_raw_idx)],
+                &[Instruction::Call(raw_idx)],
             )?;
             self.function_map
                 .insert("db.rollback".to_string(), wrap_idx);
@@ -1085,20 +1073,23 @@ impl super::CodeGenerator {
         Ok(())
     }
 
-    /// Register Layer 2 host bridge imports for the `env` namespace.
+    /// Register Layer 2 host bridge import for the `env` namespace (import only).
     ///
-    /// Registers `env_get` raw import plus a wrapper function stored as `env.get`
-    /// in `function_map`. Used when no plugin bridge provides `env.*`.
+    /// Call `register_env_builtin_wrappers()` AFTER all imports to create the
+    /// local string-expansion wrapper.
     pub(crate) fn register_env_builtin_imports(&mut self) -> Result<(), CompilerError> {
-        // env_get(name_ptr: i32, name_len: i32) -> i32
-        let raw_idx = self.register_import_function(
+        self.register_import_function(
             "env",
             "env_get",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
+        Ok(())
+    }
 
-        if raw_idx != u32::MAX {
+    /// Create local wrapper function for `env.get`. Must be called AFTER all imports.
+    pub(crate) fn register_env_builtin_wrappers(&mut self) -> Result<(), CompilerError> {
+        if let Some(&raw_idx) = self.function_map.get("env_get") {
             let wrap_idx = self.register_function(
                 "env.get",
                 &[WasmType::I32],
@@ -1118,20 +1109,21 @@ impl super::CodeGenerator {
             )?;
             self.function_map.insert("env.get".to_string(), wrap_idx);
         }
-
         Ok(())
     }
 
-    /// Register Layer 2 host bridge imports for the `time` namespace.
+    /// Register Layer 2 host bridge import for the `time` namespace (import only).
     ///
-    /// Registers `time_now` raw import stored as `time.now` in `function_map`.
-    /// Used when no plugin bridge provides `time.*`.
+    /// Call `register_time_builtin_wrappers()` AFTER all imports to create the
+    /// local passthrough wrapper.
     pub(crate) fn register_time_builtin_imports(&mut self) -> Result<(), CompilerError> {
-        // time_now() -> i64 (Unix epoch seconds)
-        // Return as i32 to match the builtins registry signature (integer).
-        let raw_idx = self.register_import_function("env", "time_now", &[], Some(WasmType::I32))?;
+        self.register_import_function("env", "time_now", &[], Some(WasmType::I32))?;
+        Ok(())
+    }
 
-        if raw_idx != u32::MAX {
+    /// Create local wrapper function for `time.now`. Must be called AFTER all imports.
+    pub(crate) fn register_time_builtin_wrappers(&mut self) -> Result<(), CompilerError> {
+        if let Some(&raw_idx) = self.function_map.get("time_now") {
             let wrap_idx = self.register_function(
                 "time.now",
                 &[],
@@ -1140,101 +1132,102 @@ impl super::CodeGenerator {
             )?;
             self.function_map.insert("time.now".to_string(), wrap_idx);
         }
-
         Ok(())
     }
 
-    /// Register Layer 2 host bridge imports for the `crypto` namespace.
+    /// Register Layer 2 host bridge imports for the `crypto` namespace (imports only).
     ///
-    /// Registers raw WASM imports for hash/random crypto operations and creates
-    /// wrapper functions stored under dot-notation names (`crypto.sha256`, etc.)
-    /// in `function_map`. Used when no plugin bridge provides `crypto.*`.
+    /// Call `register_crypto_builtin_wrappers()` AFTER all imports to create local
+    /// string-expansion wrappers.
     pub(crate) fn register_crypto_builtin_imports(&mut self) -> Result<(), CompilerError> {
-        // Helper: register a single-string-param → string-result import + wrapper
-        macro_rules! single_str_import {
-            ($raw_name:expr, $lang_name:expr) => {{
-                let raw_idx = self.register_import_function(
-                    "env",
-                    $raw_name,
-                    &[WasmType::I32, WasmType::I32],
-                    Some(WasmType::I32),
-                )?;
-                if raw_idx != u32::MAX {
-                    let wrap_idx = self.register_function(
-                        $lang_name,
-                        &[WasmType::I32],
-                        Some(WasmType::I32),
-                        &[
-                            Instruction::LocalGet(0),
-                            Instruction::I32Const(4),
-                            Instruction::I32Add,
-                            Instruction::LocalGet(0),
-                            Instruction::I32Load(wasm_encoder::MemArg {
-                                offset: 0,
-                                align: 2,
-                                memory_index: 0,
-                            }),
-                            Instruction::Call(raw_idx),
-                        ],
-                    )?;
-                    self.function_map.insert($lang_name.to_string(), wrap_idx);
-                }
-            }};
-        }
-
-        // crypto_hash_password(pw_ptr, pw_len) -> i32
-        single_str_import!("crypto_hash_password", "crypto.hashPassword");
-
-        // crypto_random_bytes(len: i32) -> i32 (no string expansion needed)
-        let rb_idx = self.register_import_function(
+        self.register_import_function(
+            "env",
+            "crypto_hash_password",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+        self.register_import_function(
             "env",
             "crypto_random_bytes",
             &[WasmType::I32],
             Some(WasmType::I32),
         )?;
-        if rb_idx != u32::MAX {
-            let wrap_idx = self.register_function(
-                "crypto.randomBytes",
-                &[WasmType::I32],
-                Some(WasmType::I32),
-                &[Instruction::LocalGet(0), Instruction::Call(rb_idx)],
-            )?;
-            self.function_map
-                .insert("crypto.randomBytes".to_string(), wrap_idx);
-        }
-
-        // crypto_random_hex(len: i32) -> i32 (no string expansion needed)
-        let rh_idx = self.register_import_function(
+        self.register_import_function(
             "env",
             "crypto_random_hex",
             &[WasmType::I32],
             Some(WasmType::I32),
         )?;
-        if rh_idx != u32::MAX {
-            let wrap_idx = self.register_function(
-                "crypto.randomHex",
-                &[WasmType::I32],
-                Some(WasmType::I32),
-                &[Instruction::LocalGet(0), Instruction::Call(rh_idx)],
-            )?;
-            self.function_map
-                .insert("crypto.randomHex".to_string(), wrap_idx);
-        }
-
-        // crypto_hash_sha256(data_ptr, data_len) -> i32
-        single_str_import!("crypto_hash_sha256", "crypto.sha256");
-
-        // crypto_hash_sha512(data_ptr, data_len) -> i32
-        single_str_import!("crypto_hash_sha512", "crypto.sha512");
-
-        // crypto_verify_password(pw_ptr, pw_len, hash_ptr, hash_len) -> i32
-        let vp_idx = self.register_import_function(
+        self.register_import_function(
+            "env",
+            "crypto_hash_sha256",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+        self.register_import_function(
+            "env",
+            "crypto_hash_sha512",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+        self.register_import_function(
             "env",
             "crypto_verify_password",
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        if vp_idx != u32::MAX {
+        Ok(())
+    }
+
+    /// Create local wrapper functions for the `crypto` namespace.
+    /// Must be called AFTER all imports are registered.
+    pub(crate) fn register_crypto_builtin_wrappers(&mut self) -> Result<(), CompilerError> {
+        // Single-string-param wrappers (expand ptr → ptr+4, len)
+        for (raw_name, lang_name) in &[
+            ("crypto_hash_password", "crypto.hashPassword"),
+            ("crypto_hash_sha256", "crypto.sha256"),
+            ("crypto_hash_sha512", "crypto.sha512"),
+        ] {
+            if let Some(&raw_idx) = self.function_map.get(*raw_name) {
+                let wrap_idx = self.register_function(
+                    lang_name,
+                    &[WasmType::I32],
+                    Some(WasmType::I32),
+                    &[
+                        Instruction::LocalGet(0),
+                        Instruction::I32Const(4),
+                        Instruction::I32Add,
+                        Instruction::LocalGet(0),
+                        Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }),
+                        Instruction::Call(raw_idx),
+                    ],
+                )?;
+                self.function_map.insert(lang_name.to_string(), wrap_idx);
+            }
+        }
+
+        // Pass-through wrappers (no string expansion needed)
+        for (raw_name, lang_name) in &[
+            ("crypto_random_bytes", "crypto.randomBytes"),
+            ("crypto_random_hex", "crypto.randomHex"),
+        ] {
+            if let Some(&raw_idx) = self.function_map.get(*raw_name) {
+                let wrap_idx = self.register_function(
+                    lang_name,
+                    &[WasmType::I32],
+                    Some(WasmType::I32),
+                    &[Instruction::LocalGet(0), Instruction::Call(raw_idx)],
+                )?;
+                self.function_map.insert(lang_name.to_string(), wrap_idx);
+            }
+        }
+
+        // Two-string-param wrapper for verifyPassword
+        if let Some(&raw_idx) = self.function_map.get("crypto_verify_password") {
             let wrap_idx = self.register_function(
                 "crypto.verifyPassword",
                 &[WasmType::I32, WasmType::I32],
@@ -1258,7 +1251,7 @@ impl super::CodeGenerator {
                         align: 2,
                         memory_index: 0,
                     }),
-                    Instruction::Call(vp_idx),
+                    Instruction::Call(raw_idx),
                 ],
             )?;
             self.function_map

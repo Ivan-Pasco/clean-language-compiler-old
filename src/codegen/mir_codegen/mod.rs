@@ -488,12 +488,13 @@ impl MirCodeGenerator<'_> {
                     .map_err(|e| vec![e])?;
             }
 
-            // Register Layer 2 host bridge builtin imports for db/env/time/crypto namespaces.
-            // These are registered only when the plugin bridge does NOT already provide them
-            // (checked via language_to_bridge_map). When a plugin like frame.data is loaded
-            // it supplies `_db_query` etc. via register_plugin_bridge_imports above;
-            // this fallback path covers the case where those namespaces are used directly
-            // without a plugin (they are always in the resolver's builtin symbol table).
+            // Register Layer 2 host bridge builtin IMPORTS for db/env/time/crypto namespaces.
+            // These register only raw WASM imports — NO local wrapper functions.
+            // Wrapper functions are created later (register_db_builtin_wrappers etc.) after
+            // ALL imports are registered, to prevent WASM function index corruption
+            // (imports must precede local functions in the index space).
+            //
+            // Skipped when a plugin bridge (e.g. `frame.data`) already provides the functions.
             if !self.language_to_bridge_map.contains_key("db.query") {
                 debug_mir!("DEBUG MIR: Registering db builtin imports (no plugin bridge for db)");
                 self.wasm_generator
@@ -613,6 +614,33 @@ impl MirCodeGenerator<'_> {
             // HTTP server wrapper functions for string expansion
             debug_mir!("DEBUG MIR: Registering HTTP server wrapper functions");
             self.register_http_server_wrappers().map_err(|e| vec![e])?;
+
+            // Layer 2 builtin namespace wrappers — created AFTER all imports so
+            // WASM function indices are correct (imports before local functions).
+            if !self.language_to_bridge_map.contains_key("db.query") {
+                debug_mir!("DEBUG MIR: Registering db builtin wrappers");
+                self.wasm_generator
+                    .register_db_builtin_wrappers()
+                    .map_err(|e| vec![e])?;
+            }
+            if !self.language_to_bridge_map.contains_key("env.get") {
+                debug_mir!("DEBUG MIR: Registering env builtin wrappers");
+                self.wasm_generator
+                    .register_env_builtin_wrappers()
+                    .map_err(|e| vec![e])?;
+            }
+            if !self.language_to_bridge_map.contains_key("time.now") {
+                debug_mir!("DEBUG MIR: Registering time builtin wrappers");
+                self.wasm_generator
+                    .register_time_builtin_wrappers()
+                    .map_err(|e| vec![e])?;
+            }
+            if !self.language_to_bridge_map.contains_key("crypto.sha256") {
+                debug_mir!("DEBUG MIR: Registering crypto builtin wrappers");
+                self.wasm_generator
+                    .register_crypto_builtin_wrappers()
+                    .map_err(|e| vec![e])?;
+            }
         }
 
         // Set up memory section
