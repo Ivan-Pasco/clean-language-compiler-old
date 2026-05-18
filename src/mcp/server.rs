@@ -947,7 +947,7 @@ fn get_available_tools() -> Vec<Tool> {
         },
         Tool {
             name: "list_plugins".to_string(),
-            description: "List all available plugins with their AI context. Returns plugin names, descriptions, block types, bridge functions, and AI-specific metadata (description, examples, constraints).".to_string(),
+            description: "List all available plugins with their AI context. Returns plugin names, descriptions, block types, bridge functions, and AI-specific metadata (description, examples, constraints, patterns). The 'patterns' field lists named architectural recipes — call get_plugin_examples with a pattern name to get the full example and anti-pattern guidance.".to_string(),
             input_schema: ToolInputSchema {
                 type_: "object".to_string(),
                 properties: json!({
@@ -1020,13 +1020,17 @@ fn get_available_tools() -> Vec<Tool> {
         },
         Tool {
             name: "get_plugin_examples".to_string(),
-            description: "Read example source files from an installed plugin. Plugins declare example files in their [ai] section — this tool reads and returns their contents so you can learn the plugin's DSL syntax.".to_string(),
+            description: "Read example source files from an installed plugin. When called with a 'pattern' name (e.g. 'multilingual-site'), returns the full architectural example with use-when guidance and anti-pattern warning. Without 'pattern', returns all generic example files declared in the plugin's [ai] section.".to_string(),
             input_schema: ToolInputSchema {
                 type_: "object".to_string(),
                 properties: json!({
                     "plugin_name": {
                         "type": "string",
-                        "description": "Plugin name (e.g., 'frame.data', 'frame.endpoints')"
+                        "description": "Plugin name (e.g., 'frame.data', 'frame.server')"
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Optional pattern name to load a specific architectural recipe (e.g. 'multilingual-site', 'soft-delete'). Use list_plugins to see available pattern names."
                     },
                     "project_dir": {
                         "type": "string",
@@ -1931,11 +1935,23 @@ fn tool_list_plugins(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
                     if ai.description.is_some()
                         || !ai.examples.is_empty()
                         || !ai.constraints.is_empty()
+                        || !ai.patterns.is_empty()
                     {
+                        let patterns_index: Vec<serde_json::Value> = ai
+                            .patterns
+                            .iter()
+                            .map(|p| {
+                                json!({
+                                    "name": p.name,
+                                    "use_when": p.use_when
+                                })
+                            })
+                            .collect();
                         plugin_json["ai"] = json!({
                             "description": ai.description,
                             "examples": ai.examples,
-                            "constraints": ai.constraints
+                            "constraints": ai.constraints,
+                            "patterns": patterns_index
                         });
                     }
 
@@ -1974,6 +1990,7 @@ fn tool_get_plugin_examples(id: serde_json::Value, args: &serde_json::Value) -> 
             )
         }
     };
+    let pattern_name = args.get("pattern").and_then(|v| v.as_str());
     let project_dir = args.get("project_dir").and_then(|v| v.as_str());
 
     let mut discovery = PluginDiscovery::new();
@@ -1981,12 +1998,59 @@ fn tool_get_plugin_examples(id: serde_json::Value, args: &serde_json::Value) -> 
         discovery = discovery.with_project_dir(dir);
     }
 
-    // Load the specific plugin
     match discovery.load_plugin(plugin_name) {
         Ok(manifest) => {
+            let plugin_dir = find_plugin_dir(plugin_name, project_dir);
+
+            // Pattern-specific request: return one named architectural recipe
+            if let Some(pname) = pattern_name {
+                let found = manifest.ai.patterns.iter().find(|p| p.name == pname);
+                return match found {
+                    Some(pattern) => {
+                        let full_path = if let Some(ref pdir) = plugin_dir {
+                            pdir.join(&pattern.example)
+                        } else {
+                            std::path::PathBuf::from(&pattern.example)
+                        };
+                        let content = std::fs::read_to_string(&full_path)
+                            .unwrap_or_else(|e| format!("// Could not read example file: {}", e));
+                        JsonRpcResponse::success(
+                            id,
+                            json!({
+                                "success": true,
+                                "plugin": plugin_name,
+                                "pattern": {
+                                    "name": pattern.name,
+                                    "use_when": pattern.use_when,
+                                    "anti_pattern": pattern.anti_pattern,
+                                    "example": content
+                                }
+                            }),
+                        )
+                    }
+                    None => {
+                        let available: Vec<&str> = manifest
+                            .ai
+                            .patterns
+                            .iter()
+                            .map(|p| p.name.as_str())
+                            .collect();
+                        JsonRpcResponse::success(
+                            id,
+                            json!({
+                                "success": false,
+                                "error": format!("Pattern '{}' not found in plugin '{}'", pname, plugin_name),
+                                "available_patterns": available
+                            }),
+                        )
+                    }
+                };
+            }
+
+            // Generic request: return all example files declared in [ai]
             let example_paths = &manifest.ai.examples;
 
-            if example_paths.is_empty() {
+            if example_paths.is_empty() && manifest.ai.patterns.is_empty() {
                 return JsonRpcResponse::success(
                     id,
                     json!({
@@ -1997,10 +2061,6 @@ fn tool_get_plugin_examples(id: serde_json::Value, args: &serde_json::Value) -> 
                     }),
                 );
             }
-
-            // Resolve example paths relative to the plugin directory
-            // Try project dir first, then global
-            let plugin_dir = find_plugin_dir(plugin_name, project_dir);
 
             let mut examples: Vec<serde_json::Value> = Vec::new();
             for example_path in example_paths {
@@ -2026,12 +2086,21 @@ fn tool_get_plugin_examples(id: serde_json::Value, args: &serde_json::Value) -> 
                 }
             }
 
+            let patterns_index: Vec<serde_json::Value> = manifest
+                .ai
+                .patterns
+                .iter()
+                .map(|p| json!({"name": p.name, "use_when": p.use_when}))
+                .collect();
+
             JsonRpcResponse::success(
                 id,
                 json!({
                     "success": true,
                     "plugin": plugin_name,
                     "examples": examples,
+                    "patterns": patterns_index,
+                    "tip": "Call get_plugin_examples with a 'pattern' name to get the full architectural recipe and anti-pattern guidance.",
                     "language": {
                         "blocks": manifest.handles.blocks,
                         "keywords": manifest.language.keywords.iter()

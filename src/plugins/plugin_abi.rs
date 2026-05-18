@@ -262,6 +262,12 @@ fn default_bridge_module() -> String {
 /// description = "HTTP endpoint DSL for Clean Language"
 /// examples = ["examples/basic_api.cln", "examples/crud.cln"]
 /// constraints = ["All endpoints must have authentication", "Use REST conventions"]
+///
+/// [[ai.patterns]]
+/// name = "versioned-api"
+/// use_when = "public API that must stay stable across releases"
+/// anti_pattern = "no versioning — a breaking change breaks all clients"
+/// example = "patterns/versioned-api.cln"
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginAiContext {
@@ -274,6 +280,27 @@ pub struct PluginAiContext {
     /// Constraints or rules that AI agents should follow when generating code for this plugin
     #[serde(default)]
     pub constraints: Vec<String>,
+    /// Named architectural patterns with use-when guidance and anti-pattern warnings
+    #[serde(default)]
+    pub patterns: Vec<PluginPattern>,
+}
+
+/// A named architectural pattern declared in a plugin's [ai] section.
+///
+/// Patterns give AI assistants the knowledge to choose the RIGHT architecture
+/// for a problem class — not just write syntactically valid code. Each pattern
+/// has a name, a one-sentence use-when guide, an anti-pattern warning, and a
+/// path to a complete example file.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginPattern {
+    /// Kebab-case identifier (e.g. "multilingual-site")
+    pub name: String,
+    /// One sentence: when an AI should reach for this pattern
+    pub use_when: String,
+    /// What an AI without guidance would do instead, and precisely why it's wrong
+    pub anti_pattern: String,
+    /// Path to the example .cln file, relative to the plugin directory
+    pub example: String,
 }
 
 /// Path ownership for manifest-driven plugin detection
@@ -818,6 +845,42 @@ mod tests {
     }
 
     #[test]
+    fn test_manifest_with_ai_patterns() {
+        let toml_str = r#"
+            [plugin]
+            name = "frame.data"
+            version = "1.0.0"
+
+            [handles]
+            blocks = ["data"]
+
+            [[ai.patterns]]
+            name = "multilingual-site"
+            use_when = "app serves content in more than one language"
+            anti_pattern = "storing translations as a JSON column — prevents SQL indexing"
+            example = "patterns/multilingual-site.cln"
+
+            [[ai.patterns]]
+            name = "soft-delete"
+            use_when = "records must be deactivatable without permanent removal"
+            anti_pattern = "boolean is_deleted column — loses the deletion timestamp"
+            example = "patterns/soft-delete.cln"
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(manifest.ai.patterns.len(), 2);
+        assert_eq!(manifest.ai.patterns[0].name, "multilingual-site");
+        assert_eq!(
+            manifest.ai.patterns[0].example,
+            "patterns/multilingual-site.cln"
+        );
+        assert!(!manifest.ai.patterns[0].use_when.is_empty());
+        assert!(!manifest.ai.patterns[0].anti_pattern.is_empty());
+        assert_eq!(manifest.ai.patterns[1].name, "soft-delete");
+    }
+
+    #[test]
     fn test_ai_context_defaults() {
         let toml_str = r#"
             [plugin]
@@ -834,6 +897,7 @@ mod tests {
         assert!(manifest.ai.description.is_none());
         assert!(manifest.ai.examples.is_empty());
         assert!(manifest.ai.constraints.is_empty());
+        assert!(manifest.ai.patterns.is_empty());
     }
 
     #[test]
