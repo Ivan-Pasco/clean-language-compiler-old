@@ -881,12 +881,11 @@ impl HirBuilder {
                 location: SourceLocation::default(),
             }),
             Type::Any => {
-                // Treat 'any' as a named generic type, not inferred
-                // This allows proper type checking with empty literals
-                Ok(HirType::Named {
-                    name: "any".to_string(),
-                    location: SourceLocation::default(),
-                })
+                // 'any' is the top type — compatible with all other types.
+                // Map to HirType::Any so the type checker accepts it everywhere,
+                // and so HirValidator::validate_type does not reject it as an
+                // unknown Named type (it falls through to the _ arm → valid).
+                Ok(HirType::Any)
             }
             _ => {
                 // For unsupported types, create an inferred type for now

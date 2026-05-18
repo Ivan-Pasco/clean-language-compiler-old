@@ -488,6 +488,41 @@ impl MirCodeGenerator<'_> {
                     .map_err(|e| vec![e])?;
             }
 
+            // Register Layer 2 host bridge builtin imports for db/env/time/crypto namespaces.
+            // These are registered only when the plugin bridge does NOT already provide them
+            // (checked via language_to_bridge_map). When a plugin like frame.data is loaded
+            // it supplies `_db_query` etc. via register_plugin_bridge_imports above;
+            // this fallback path covers the case where those namespaces are used directly
+            // without a plugin (they are always in the resolver's builtin symbol table).
+            if !self.language_to_bridge_map.contains_key("db.query") {
+                debug_mir!("DEBUG MIR: Registering db builtin imports (no plugin bridge for db)");
+                self.wasm_generator
+                    .register_db_builtin_imports()
+                    .map_err(|e| vec![e])?;
+            }
+            if !self.language_to_bridge_map.contains_key("env.get") {
+                debug_mir!("DEBUG MIR: Registering env builtin imports (no plugin bridge for env)");
+                self.wasm_generator
+                    .register_env_builtin_imports()
+                    .map_err(|e| vec![e])?;
+            }
+            if !self.language_to_bridge_map.contains_key("time.now") {
+                debug_mir!(
+                    "DEBUG MIR: Registering time builtin imports (no plugin bridge for time)"
+                );
+                self.wasm_generator
+                    .register_time_builtin_imports()
+                    .map_err(|e| vec![e])?;
+            }
+            if !self.language_to_bridge_map.contains_key("crypto.sha256") {
+                debug_mir!(
+                    "DEBUG MIR: Registering crypto builtin imports (no plugin bridge for crypto)"
+                );
+                self.wasm_generator
+                    .register_crypto_builtin_imports()
+                    .map_err(|e| vec![e])?;
+            }
+
             // Pre-register list.push_f64 as an import BEFORE any local functions
             {
                 use crate::types::WasmType;

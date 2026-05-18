@@ -731,6 +731,7 @@ impl HirValidator {
                 // stage 4; at the HIR validation stage we simply skip the undefined-variable
                 // check for known namespace names.
                 const BUILTIN_NAMESPACES: &[&str] = &[
+                    // Core language namespaces
                     "string",
                     "list",
                     "math",
@@ -745,6 +746,20 @@ impl HirValidator {
                     "integer",
                     "number",
                     "boolean",
+                    // Layer 2 host bridge namespaces (registered in symbol_table.rs builtins).
+                    // These are available without a plugin declaration because they are part
+                    // of the host bridge contract, not plugin-specific DSL.
+                    "db",
+                    "crypto",
+                    "jwt",
+                    "env",
+                    "time",
+                    // Layer 3 server namespaces (registered in symbol_table.rs builtins).
+                    // These are server-only but still declared as builtins so the resolver
+                    // can validate them; the host enforces server-context restrictions at runtime.
+                    "req",
+                    "auth",
+                    "session",
                 ];
                 // Inside a class constructor or method, unqualified field names are valid
                 // as expressions (the resolver adds implicit `this.` in stage 4).

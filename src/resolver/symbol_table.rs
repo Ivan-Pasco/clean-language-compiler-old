@@ -1170,7 +1170,7 @@ impl GlobalSymbolTable {
             ("env.get", vec![HirType::String], HirType::String),
             // time namespace functions — Layer 2 host bridge
             ("time.now", vec![], HirType::Integer),
-            // req namespace functions — Layer 3 server-only
+            // req namespace functions — Layer 3 server-only (language API)
             ("req.param", vec![HirType::String], HirType::String),
             ("req.query", vec![HirType::String], HirType::String),
             ("req.body", vec![], HirType::String),
@@ -1181,6 +1181,17 @@ impl GlobalSymbolTable {
             ("req.ip", vec![], HirType::String),
             ("req.form", vec![], HirType::String),
             ("req.cookie", vec![HirType::String], HirType::String),
+            // Bridge-level request context functions (underscore prefix) — Layer 3 server-only.
+            // These are the raw WASM import names used by frame.server.  They are registered
+            // as builtins so the resolver accepts calls to them even when the plugin declaration
+            // is implicit (e.g. files in app/server/ directories auto-load frame.server).
+            ("_req_param", vec![HirType::String], HirType::String),
+            ("_req_query", vec![HirType::String], HirType::String),
+            ("_req_body", vec![], HirType::String),
+            ("_req_header", vec![HirType::String], HirType::String),
+            ("_req_method", vec![], HirType::String),
+            ("_req_path", vec![], HirType::String),
+            ("_req_cookie", vec![HirType::String], HirType::String),
             // auth namespace functions — Layer 3 server-only
             ("auth.getSession", vec![], HirType::String),
             ("auth.requireAuth", vec![], HirType::Boolean),

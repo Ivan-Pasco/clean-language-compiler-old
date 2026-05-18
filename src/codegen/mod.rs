@@ -465,7 +465,16 @@ pub(crate) fn is_reachability_gated_import(field: &str) -> bool {
     if field.starts_with("_crypto_") || field.starts_with("crypto_") {
         return true;
     }
-    if field.starts_with("_db_") {
+    if field.starts_with("_db_") || field.starts_with("db_") {
+        return true;
+    }
+    if field.starts_with("_env_") || field.starts_with("env_") {
+        return true;
+    }
+    if field.starts_with("_time_") || field.starts_with("time_") {
+        return true;
+    }
+    if field.starts_with("_jwt_") || field.starts_with("jwt_") {
         return true;
     }
 
