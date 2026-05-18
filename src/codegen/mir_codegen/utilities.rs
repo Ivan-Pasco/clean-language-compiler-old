@@ -1417,10 +1417,9 @@ impl MirCodeGenerator<'_> {
         Ok(())
     }
 
-    // Dual-naming: registers the dot-notation alias (e.g. "db.query") in function_map
-    // pointing to the wrapper index. The raw import ("_db_query") was already added by
-    // register_plugin_bridge_imports(). Both appear as separate WASM imports with different
-    // ABIs — see HOST_BRIDGE.md § Dual Naming.
+    // Registers the dot-notation call-site alias (e.g. "db.query") in function_map
+    // pointing to the wrapper index. The canonical import ("_db_query") was already added by
+    // register_plugin_bridge_imports(). Only the canonical name appears as a WASM import.
     /// Register pending bridge wrapper functions.
     ///
     /// CRITICAL: Must be called AFTER all imports are registered to avoid function
@@ -1738,6 +1737,23 @@ impl MirCodeGenerator<'_> {
         use crate::types::WasmType;
 
         for external in externals {
+            // Skip language-name aliases (dot-notation names like "db.query",
+            // "req.param"). These exist in ast.externals so the HIR validator
+            // recognises their namespace prefix, but they are NOT separate WASM
+            // imports. The canonical underscore bridge function ("_db_query") is
+            // registered by register_plugin_bridge_imports(), and the dot-alias
+            // is added to function_map by register_pending_bridge_wrappers().
+            // Emitting a second import for the alias causes dual-emission — the
+            // host would have to satisfy an orphaned "db.query" import that is
+            // never actually called from WASM bytecode.
+            if self.language_to_bridge_map.contains_key(&external.name) {
+                tracing::debug!(
+                    name = %external.name,
+                    "Skipping language-alias external (handled by bridge registration)"
+                );
+                continue;
+            }
+
             let wasm_params: Vec<WasmType> = external
                 .parameters
                 .iter()

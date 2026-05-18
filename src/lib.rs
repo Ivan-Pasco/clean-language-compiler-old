@@ -1767,6 +1767,15 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     HirValidator::validate(&merged_hir)?;
     tracing::debug!("Stage 3b complete: HIR validation passed");
 
+    // Remove dot-notation language alias externals: they existed only so HIR validation
+    // could derive plugin namespace prefixes. They must NOT become WASM imports.
+    // Canonical _namespace_fn names are registered separately via the plugin bridge path.
+    if !lang_to_bridge.is_empty() {
+        merged_hir
+            .externals
+            .retain(|e| !lang_to_bridge.contains_key(&e.name));
+    }
+
     // Stage 4: Resolution
     let resolution_result = if bridge_functions.is_empty() {
         Resolver::resolve(merged_hir)?

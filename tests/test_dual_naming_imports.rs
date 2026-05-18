@@ -1,14 +1,12 @@
-//! Verifies that the compiler emits WASM imports in **both** naming styles
-//! for bridge functions that have `expand_strings = true`.
+//! Bridge contract test: compiler must emit only canonical import names.
 //!
-//! Dual-naming behaviour (cln 0.30.120+):
-//!   canonical:  `_db_query`  — raw import, strings expanded to (ptr, len) pairs
-//!   dot-alias:  `db.query`   — LP-string import, same host callable, different ABI
+//! The compiler must emit exactly one WASM import per bridge function: the
+//! canonical `_namespace_fn` name defined in `function-registry.toml`.
+//! Dot-notation aliases (e.g. `db.query`) are syntactic sugar resolved at
+//! compile time — they must NOT appear as separate WASM imports.
 //!
-//! Both names MUST appear in the WASM import section. Hosts are required to
-//! register both. Missing either causes a LinkError at WASM instantiation.
-//!
-//! See: foundation/platform-architecture/HOST_BRIDGE.md § Dual Naming
+//! Dual emission of both `_db_query` and `db.query` is a bug, not a feature.
+//! This test guards against that regression.
 
 use wasmparser::{Parser as WasmParser, Payload};
 
@@ -26,13 +24,13 @@ fn list_import_names(wasm_bytes: &[u8]) -> Vec<String> {
 }
 
 #[test]
-fn db_query_emits_both_underscore_and_dot_imports() {
+fn db_query_emits_canonical_name_only_no_dot_notation() {
     use clean_language_compiler::plugins::WasmPluginLoader;
 
     let mut loader = match WasmPluginLoader::new() {
         Ok(l) => l,
         Err(_) => {
-            eprintln!("Skipping test_dual_naming_imports: WasmPluginLoader unavailable");
+            eprintln!("Skipping bridge contract test: WasmPluginLoader unavailable");
             return;
         }
     };
@@ -40,7 +38,7 @@ fn db_query_emits_both_underscore_and_dot_imports() {
     let registry = match loader.load_plugins(&["frame.data".to_string()]) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Skipping test_dual_naming_imports: frame.data not installed ({e})");
+            eprintln!("Skipping bridge contract test: frame.data not installed ({e})");
             return;
         }
     };
@@ -56,15 +54,27 @@ fn db_query_emits_both_underscore_and_dot_imports() {
 
     let imports = list_import_names(&wasm);
 
+    // Canonical name must be present.
     assert!(
         imports.contains(&"_db_query".to_string()),
-        "WASM import section must contain `_db_query` (raw expand_strings import). Got: {:?}",
+        "WASM import section must contain canonical `_db_query`. Got: {:?}",
         imports
     );
 
+    // Dot-notation alias must NOT appear as a WASM import.
     assert!(
-        imports.contains(&"db.query".to_string()),
-        "WASM import section must contain `db.query` (dot-notation LP-string import). Got: {:?}",
+        !imports.contains(&"db.query".to_string()),
+        "WASM import section must NOT contain dot-notation `db.query` — dual emission is a bug. Got: {:?}",
         imports
     );
+
+    // No import name should appear more than once.
+    let mut seen = std::collections::HashSet::new();
+    for name in &imports {
+        assert!(
+            seen.insert(name.clone()),
+            "Duplicate WASM import `{name}` — each bridge function must appear exactly once. All imports: {:?}",
+            imports
+        );
+    }
 }
