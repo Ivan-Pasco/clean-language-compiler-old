@@ -54,6 +54,23 @@ The compiler generates WASM imports — it does NOT implement runtime functions.
 
 Everything else comes from plugin `[bridge]` declarations in `plugin.toml`.
 
+### Dual-Naming WASM Import Generation
+
+For every bridge function with `expand_strings = true`, the compiler generates **two** WASM imports:
+
+| Import name | ABI | When present |
+|-------------|-----|-------------|
+| `_namespace_fn` | Strings expanded to `(ptr, len)` pairs | Always (raw host import) |
+| `namespace.fn` | LP-string pointers `(ptr)` per arg | When the dot-notation alias is called |
+
+Both names appear in the WASM import section with **different type signatures**. Every host (clean-server, clean-node-server, any custom host) must register both names. A missing registration causes a `LinkError` at WASM instantiation.
+
+**Derivation rule:** strip the leading `_`, replace the first `_` with `.` → `_db_query` → `db.query`.
+
+The authoritative alias list is in `foundation/platform-architecture/function-registry.toml`. The full spec is in `foundation/platform-architecture/HOST_BRIDGE.md § Dual Naming`.
+
+This behaviour is tested in `tests/test_dual_naming_imports.rs`.
+
 ### WAT Spec Compliance
 
 The compiler must generate WASM imports matching host bridge signatures exactly:

@@ -1417,6 +1417,10 @@ impl MirCodeGenerator<'_> {
         Ok(())
     }
 
+    // Dual-naming: registers the dot-notation alias (e.g. "db.query") in function_map
+    // pointing to the wrapper index. The raw import ("_db_query") was already added by
+    // register_plugin_bridge_imports(). Both appear as separate WASM imports with different
+    // ABIs — see HOST_BRIDGE.md § Dual Naming.
     /// Register pending bridge wrapper functions.
     ///
     /// CRITICAL: Must be called AFTER all imports are registered to avoid function
