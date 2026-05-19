@@ -578,9 +578,7 @@ impl TokenParser {
             }
             // reset_statement: "reset" , ( "state" | identifier )
             // grammar.ebnf reset_statement production.
-            TokenKind::Reset => {
-                return self.parse_reset_statement();
-            }
+            TokenKind::Reset => self.parse_reset_statement(),
             // Contextual keywords used as variable names in statements
             // (e.g., `rules = rules + ","` or `rules.trim()`)
             TokenKind::Rules
